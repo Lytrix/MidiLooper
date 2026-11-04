@@ -2,8 +2,8 @@
 
 **2026-11-04 — PAUSED by owner ruling (architecture direction change):** no further C3.4 / DEC-251 containment
 implementation. Authorized scope is design only: the [fixed-memory engine direct-cutover plan](../Plans/2026-11-04-fixed-memory-convergence.md)
-(revision 2; the owner dropped transitional coexistence). Production code starts only after the owner reviews the plan,
-on a dedicated rewrite branch.
+(revision 3; branch `rewrite/fixed-memory-engine`). Revision 2 approved as direction; **E0 (semantic oracle and
+measurements) is authorized**; E1 and later production code wait for owner authorization after revision 3.
 
 **2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.** The wrap hands its interval to a bounded obligation
 answered by the discharge lane against its own source cut. On device (`19f11706`) wraps run on schedule; the worst

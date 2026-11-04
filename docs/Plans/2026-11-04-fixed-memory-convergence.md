@@ -1,34 +1,45 @@
 # Fixed-memory MIDI engine — direct cutover plan
 
-Status: **revision 2, plan for owner review. No production code.** Revision 1 (staged, one routed track, legacy
-coexistence) is withdrawn by the owner's "direct end-state cutover" ruling of 2026-11-04:
-- no legacy/new coexistence, dual-writing, compatibility fallbacks, per-track routes or bridging;
-- intermediate firmware may be RED or unbootable;
-- one coherent architecture built on `RevisionStore`;
-- Git history, tests, evidence, musical contracts and proven algorithms are kept; components that conflict with the
-  target are deleted, not wrapped.
+Status: **revision 3, for owner review. No production code.**
+- Revision 2 was approved as the architectural direction on 2026-11-04: one authoritative `ContentEngine`, immutable
+  pages/runs/manifests, fixed worker scratch, three-window playback, independent raster/density display, direct cutover
+  with no coexistence.
+- E1 waits for this revision. E0 may proceed now.
+- Revision 1 (staged, routed track) stays withdrawn.
 
-C3.4 / DEC-251 containment work stays paused (DEC-250 — wrap obligation off the Clock, DEC-251 — non-fatal
-tile-preparation allocation); both mechanisms are deleted by this plan. Not authority: approval records a `DEC-###`
-and an OpenSpec change (§ 12).
+C3.4 / DEC-251 containment remains paused (DEC-250 — wrap obligation off the Clock, DEC-251 — non-fatal tile-preparation
+allocation); both mechanisms are deleted by this plan. Not authority: approval records a `DEC-###` and an OpenSpec change
+(§ 12).
+
+**What revision 3 changes (owner review items):**
+
+| # | Review item | Where | Change |
+|---|---|---|---|
+| 1 | Reservation proof altered accepted notes | § 6 | Overlap consequences are no longer stored rows. They are **derived at composition** from the later note's own span (occlusion), so an accepted note costs a fixed, fully reserved number of rows (NoteOn, NoteOff, ≤ 8 checkpoint carry rows) and is never closed early. Every MIDI class is accounted. |
+| 2 | Real scheduling envelope | § 7 | No assumed turn interval. Demand is stated per window period as CPU time; feasibility is an inequality over measured terms (other main-loop CPU, longest non-engine block, ISR load). EDF for playback, guaranteed display share and freshness bound, per-tick and per-port output bounds, storage density vs MIDI bandwidth. |
+| 3 | DEC-159 | § 8.3 | Record Stop creates the Record manifest at acceptance; an immediate overdub pins it as its base without waiting for any later Record work. |
+| 4 | Complete memory budget | § 4, § 5 | Joint workload (full committed content **and** 8 active writers **and** one NOTE_EDIT session **and** all consumers); partial-page and directory proof; descriptor, manifest and pin accounting; reserves that optional work cannot borrow; RAM2 initialization; the non-content allowance as a measured precondition. |
+| 5 | E0 oracle | § 10 | Expected outcomes come from ratified contracts and reviewed fixtures, written independently of the legacy code. Legacy output is only a cross-check, and its disagreements are classified. Known defects are listed as historical incorrect behavior. |
+| 6 | Development model | § 10 | Unchanged: RED/unbootable branch, small commits, no transition-only abstractions. Milestones change only where items 1–5 change dependencies. |
 
 Contents:
 1. Current state (input evidence)
 2. Target invariants and supported workload
 3. Module boundaries and ownership
-4. Boot-time memory budgets (PSRAM, RAM2, RAM1)
-5. Pages, reclamation and source pinning
-6. Event encoding and the consequence-reservation proof
-7. Composition and worker scheduling bounds
-8. Record / overdub / Stop / undo / redo state transitions
-9. Playback and display consumer contracts
-10. Implementation milestones
+4. Boot-time memory budgets
+5. Pages, descriptors, reclamation and source pinning
+6. Event encoding, derived consequences and the reservation proof
+7. Realtime scheduling envelope
+8. State transitions (Record, overdub, DEC-159 handoff, Stop, undo, redo)
+9. Playback, output and display consumer contracts
+10. E0 semantic oracle and implementation milestones
 11. Final acceptance gates
-12. Reuse / delete, DEC disposition, owner decisions
+12. Reuse, deletion, DEC disposition and owner decisions
 
-Evidence base: intense lane-cadence run on DEC-251 image `3b95b40e…` (`captures/session_20261104_190805.log`);
-B.5b session high-water; stage A/B `RevisionStore` qualification; ELF section and symbol sizes of `3b95b40e…`;
-`RevisionStore` struct sizes compiled with the Teensy toolchain (32-bit).
+Evidence base: intense lane-cadence run on DEC-251 image `3b95b40e…` (`captures/session_20261104_190805.log`); B.5b
+session high-water; stage A/B `RevisionStore` qualification (B.4b, B.5d timings); ELF section and symbol sizes of
+`3b95b40e…`; `RevisionStore` struct sizes compiled with the Teensy toolchain; Teensy `startup.c` (only DTCM `.bss` is
+zeroed at reset); `docs/Guides/OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md` for the ratified occupy/overlap rules.
 
 ---
 
@@ -191,44 +202,50 @@ because the work is allowed to wait, and under exhaustion it waits without end.
 
 ## 2. Target invariants and supported workload
 
-The ten owner invariants (I1–I10) are the acceptance definition. They are restated where each is discharged:
-
-| | Invariant | Discharged in |
+| | Invariant (owner, 2026-11-04) | Discharged in |
 |---|---|---|
 | I1 | All MIDI content and edit history in fixed PSRAM pages, immutable runs, versioned manifests | § 5, § 6 |
 | I2 | No dynamic content-path heap allocation after boot | § 4, gate H2 |
-| I3 | Record, overdub, NoteOff, wrap, Stop, undo, redo fully accounted and pre-reserved | § 6.3 |
-| I4 | Stop acceptance O(1); completion bounded, never waits for allocation | § 8.3 |
+| I3 | Record, overdub, NoteOff, wrap, Stop, undo, redo fully accounted and pre-reserved | § 6.4 |
+| I4 | Stop acceptance constant-time; completion bounded, never waits for allocation | § 8.4 |
 | I5 | Playback only from qualified moving windows, deterministic succession, source identity | § 9.1 |
-| I6 | Piano roll from independent fixed raster/density tiles; never blanks on delay or exhaustion | § 9.2 |
-| I7 | Clock path: no content-sized work, scans, allocation or historical resolution | § 9.1, gate H5 |
-| I8 | Deferred workers bounded, with progress or a defined capacity outcome | § 7.3 |
-| I9 | Budget fits the hardware under the worst supported workload | § 4 |
+| I6 | Piano roll from independent fixed raster/density tiles; never blanks on delay or exhaustion | § 9.3 |
+| I7 | Clock path: no content-sized work, scans, allocation or historical resolution | § 9.1, § 9.2, gate H5 |
+| I8 | Deferred workers bounded, with progress or a defined capacity outcome | § 7 |
+| I9 | Budget fits the hardware under the worst **jointly** supported workload | § 4, § 5 |
 | I10 | Musical behavior equivalent to the ratified DEC contracts | § 10 E0, gate H1 |
 
-**Supported workload W** (every bound below is computed for W; anything beyond W gets a named capacity outcome at
-admission, never a failure after acceptance). Values are proposals for the owner (§ 12.3):
+**Supported workload W.** All limits hold **at the same time**: full committed content *and* all writers *and* one
+NOTE_EDIT session *and* all consumers. Anything beyond W gets a named capacity outcome at admission of *new* input, never
+a change to accepted content. The values are proposals for the owner (§ 12.3).
 
 | Parameter | W |
 |---|---|
 | Tracks × slots | 8 × 8 = 64 slots |
-| Concurrent writers (Record / overdub / NOTE_EDIT) | 8 (one per track) |
-| Loop length | ≤ 64 bars (49,152 ticks at 768 ticks/bar) |
-| Tempo | ≤ 300 BPM (2 bars = 1.6 s) |
-| Committed source rows, all slots and history | ≤ 131,072 (today's admission ceiling) |
-| Live runs, all slots and history | ≤ 512 |
-| Committed runs per manifest | ≤ 60 (+ ≤ 3 writer runs = 63, inside the 6-bit merge key) |
-| Hidden note ids per manifest | ≤ 4,096 |
-| Effective rows per 2-bar window | ≤ 2,048 (DEC-108 — window admission limit `L`) |
-| Source rows per 2-bar window (incl. hidden) | ≤ 8,192 |
+| Concurrent writers (Record / overdub) | 8, one per track |
+| Concurrent NOTE_EDIT sessions | 1, selection ≤ 512 notes |
+| Loop length | ≤ 64 bars (49,152 ticks) |
+| Tempo | ≤ 300 BPM: window period P = 2 bars = 1.6 s |
+| Content rows (committed + in flight + reserved), all slots and history | ≤ 133,888 |
+| Committed rows guaranteed alongside full writer reservations | ≤ 131,072 (today's admission ceiling) |
+| Live runs (committed, history, writer, edit, compaction) | ≤ 544 descriptors, of which ≤ 512 committed |
+| Runs per manifest | ≤ 60 committed + ≤ 3 writer runs |
+| Edit-hidden note ids per manifest | ≤ 4,096 |
+| Source rows per slot per 2-bar window | ≤ 2,816 (admission); window buffer 3,072 rows |
 | Open notes per writer | ≤ 128 (`ActiveNoteLedger::kMaxOpenNotes`) |
-| Undo history | 99 global entries (configurable 8–512), 32 per NOTE_EDIT session |
+| Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
+| Checkpoint entries per slot per 8-bar checkpoint | 64 (beyond that, the checkpoint is marked unusable; § 7.2) |
+| Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
+| Undo history | ≤ 99 global entries; 32 per NOTE_EDIT session |
 | Playing tracks | 8 (one slot each) |
-| Displayed piano roll | 1 focused slot + 1 successor; detailed window ≤ 16 bars |
+| Display | 1 focused slot + 1 successor in detail; density for all 64 slots |
+| MIDI outputs | DIN (Serial8, 31,250 baud), USB device, USB host |
 
 ---
 
 ## 3. Module boundaries and ownership
+
+Unchanged from revision 2 except where marked ⟳.
 
 ```mermaid
 flowchart TB
@@ -237,47 +254,48 @@ flowchart TB
     EM[EditManager / NoteEditSession: geometry]
   end
   subgraph ENGINE[ContentEngine - sole owner of content]
-    RES[Reservations: page, run, manifest, history quotas]
-    WR["Writer x8: Record / overdub / edit runs,<br/>consequence rows, closing-run ring"]
-    SLOT["SlotState x64: current manifest, history cursor,<br/>loop length, pending interaction"]
+    RES[Reservations: rows, pages, descriptors, manifest slots]
+    WR["Writer x8: append rows, open-note ledger,<br/>closing-run ring, live occupancy signal"]
+    ED[Edit writer x1: hide + replacement rows]
+    SLOT["SlotState x64: current manifest, history cursor,<br/>loop length, queued interaction"]
     TAB["PagePool / RunTable / ManifestTable / History<br/>(global, pooled, refcounted)"]
-    WK["Workers: seal, index, compose, sweep,<br/>compaction, reclaim, persistence"]
-    SCH[Scheduler: one grain per turn, priority + deadline]
+    CMP["Compose: runs merge + derived occlusion + edit hides<br/>+ DEC-244 order (one algorithm for playback and display)"]
+    WK["Workers: seal, index, compose, sweep + checkpoints,<br/>compaction, reclaim, persistence"]
+    SCH[Scheduler: EDF for playback, guaranteed shares]
   end
   subgraph CONSUMERS[Consumers - read only, hold pins]
-    WRG["Playback WindowRing x8 tracks<br/>3 windows each"] --> TICK["Clock tick: consume, ledger closure"]
-    TILES["Display TileStore: span + density tiles,<br/>live overlay"] --> DM[DisplayManager draw / DMA]
+    WRG["WindowRing x8: 3 windows each"] --> TICK["Clock tick: consume <= E_tick rows,<br/>sounding ledger, occupancy mask"]
+    TICK --> FIFO["Output FIFOs x3 ports"]
+    TILES["TileStore: span + density tiles,<br/>checkpoint tables, live overlay"] --> DM[DisplayManager: banded draw / DMA]
   end
   IO[Persistence: V1 import, save/load] <--> ENGINE
-  TM -->|commands: arm, start, stop, undo, redo, switch| ENGINE
+  TM -->|commands| ENGINE
   MH -->|rows| WR
-  EM -->|edit rows| WR
-  WR --> TAB
-  SLOT --> TAB
-  RES --- WR & WK
+  EM -->|edit rows| ED
+  WR & ED --> TAB
+  WR -->|occupancy bits| TICK
+  WK --> CMP
+  CMP -->|windows| WRG
+  CMP -->|tiles, checkpoints| TILES
+  WR -->|in-flight rows| TILES
   SCH --> WK
-  WK -->|compose| WRG
-  WK -->|sweep| TILES
-  WR -->|in-flight rows, read only| TILES
 ```
 
-| Module | Owns | May call | Never |
-|---|---|---|---|
-| `ContentEngine::PagePool` | pages, free stack | — | resize; heap |
-| `ContentEngine::RunTable` / `ManifestTable` / `History` | runs, manifests, undo entries (global pools, refcounted) | PagePool | per-slot tables (today's `StoreCore` is 49,592 B per slot; × 64 does not fit) |
-| `ContentEngine::Reservations` | every quota counter in § 6.3 | — | grant past a reserve |
-| `ContentEngine::Writer` (×8) | the active run, ≤ 2 closing runs, open-note ledger, consequence generation (overlap-resolve, ledger, C1 owed pitches) | PagePool via Reservations | allocate after acceptance |
-| `ContentEngine::SlotState` (×64) | current manifest, history cursor, loop length, one queued interaction | ManifestTable | read pages |
-| `ContentEngine::Workers` + `Scheduler` | job cursors, boot scratch | engine tables | run on the Clock path |
-| `Playback::WindowRing` (×8) | 3 window buffers, stamps | — (filled by the compose worker) | read pages; compose |
-| Clock tick (`ClockManager` → `Track` playback) | sounding ledger | WindowRing | anything content-sized |
-| `Display::TileStore` | span tiles, density tiles, overlay | — (filled by the sweep worker and the writer overlay) | read pages on the draw path |
-| `Persistence::EngineIo` | file cursors, I/O scratch | engine tables | write user files outside the save rule (§ 12.3) |
-| `TrackManager` / `Track` | transport, gesture routing, interval timing | engine commands | touch content |
-| `EditManager` / `NoteEditSession` | edit geometry over a fixed selection | edit writer | own content |
-
-Rule: only `ContentEngine` mutates pages, runs and manifests; consumers read prepared outputs and hold pins; the Clock
-reads only `WindowRing`.
+| Module | Owns | Never |
+|---|---|---|
+| `PagePool` | 4,096 pages, free stack | resize; heap |
+| `RunTable` / `ManifestTable` / `History` | 544 runs, 288 manifests, 512-entry history ring (global, refcounted) | per-slot tables (a per-slot `StoreCore` is 49,592 B; × 64 does not fit) |
+| `Reservations` | every quota in § 6.4 | lend a reserve to another owner |
+| `Writer` ×8 ⟳ | active run, ≤ 2 closing runs, open-note ledger, live occupancy bits | compute or store overlap consequences (they are derived, § 6.2) |
+| `EditWriter` ×1 ⟳ | the NOTE_EDIT edit run (hides + replacements for the selection) | exceed its admitted selection |
+| `SlotState` ×64 | current manifest, history cursor, loop length, one queued interaction | read pages |
+| `Compose` ⟳ | the single effective-content algorithm (§ 6.2, § 7.1) | allocate; run on the Clock |
+| Workers + `Scheduler` | job cursors, fixed scratch | run on the Clock |
+| `WindowRing` ×8 | 3 window buffers + stamps | read pages |
+| Clock tick ⟳ | sounding ledger, occupancy mask, per-tick emission cursor | compose, scan, allocate |
+| Output FIFOs ⟳ | 3 × 512 messages | grow |
+| `TileStore` ⟳ | span tiles, density tiles, checkpoint tables, overlay | read pages on the draw path |
+| `Persistence` | file cursors, I/O scratch | write user files outside the save rule (§ 12.3) |
 
 ---
 
@@ -287,352 +305,597 @@ All regions are carved once at boot, sized by `constexpr`, checked by `static_as
 `#CAP,MEM_REGION` census row per region. After boot no content-path code calls `malloc`, `new`, `extmem_malloc` or a
 growing container.
 
-### 4.1 PSRAM (measured pool 8,376,828 B = 8 MiB − 11,776 B `.bss.extram` statics)
+### 4.1 PSRAM (measured pool 8,376,828 B = 8 MiB − 11,776 B `.bss.extram`)
 
 | Region | Bytes | Sizing |
 |---|---|---|
-| Page pool data | 4,096,000 | 4,000 pages × 1,024 B (64 rows × 16 B) — split in § 5.1 |
-| Page free stack | 8,000 | 4,000 × 2 B |
-| Playback windows | 786,432 | 8 tracks × 3 windows × 2,048 rows × 16 B |
+| Page pool data | 4,194,304 | 4,096 pages × 1,024 B (64 rows × 16 B); split in § 5.1 |
+| Page free stack | 8,192 | 4,096 × 2 B |
+| Playback windows | 1,179,648 | 8 tracks × 3 windows × 3,072 rows × 16 B |
+| Compose carry state | 221,184 | 18 cursors × 12 KiB: 16 playback (2 per track: steady + transition) + 2 display. Each holds 128 sounding entries × 12 B, 128 pitch × 64 run occluder counters, 128 run masks |
+| Checkpoint tables | 262,144 | 64 slots × 8 checkpoints × 64 entries × 8 B |
 | Display span tiles | 337,920 | (2 slots × 64 bars + 4 spares) × 2,560 B |
 | Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
 | Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
-| Worker scratch | 58,368 | persistence 2 × 16 KiB, import 16 KiB, sweep carry 16 ch × 128 pitch × 4 B, merge heap 64 × 16 B |
-| **Engine total** | **5,557,312** | |
+| Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
+| **Engine total** | **6,524,160** | |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| Non-content residual (SD, USB, storage library), declared ceiling | 1,048,576 | measured by milestone E1's census; today it is inside the 4.46 MB boot figure |
-| **Total, capture build** | **7,654,464** | margin **722,364 B** |
-| Total, shipping build | 6,605,888 | margin 1,770,940 B |
+| **Allowance left for non-content PSRAM users** | **804,092** (capture build) / **1,852,668** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
-Retired relative to today: event chunks (up to 2.67 MB), per-slot capture stagings, rolling views and bridges
-(~1.79 MB per capturing slot; DEC-243 boot views ~215 KB per enabled slot), snapshot slabs (≤ 378 KB measured), stop-job
-buffers (630 KB tag 1 measured), wrap cuts, `visualCache`, tile preparation, content-resolution indexes.
+Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
+tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
 
 ### 4.2 RAM2 (DMAMEM, 524,288 B)
 
 | Item | Bytes |
 |---|---|
-| Today's statics (`.bss.dma`) | 186,597 |
-| − `RevisionShadow` `gShadow` (deleted) | −98,304 |
-| − `RollingSuccessorProbe::gCounters` (deleted) | −4,920 |
-| + RunTable 512 × 128 B (ceiling; today's `PassRun` is 84 B, grows with 16 inline pages) | +65,536 |
-| + ManifestTable 256 × 148 B | +37,888 |
+| Today's statics (`.bss.dma`, `3b95b40e…`) | 186,597 |
+| − `RevisionShadow` `gShadow` | −98,304 |
+| − `RollingSuccessorProbe::gCounters` | −4,920 |
+| + RunTable 544 × 128 B | +69,632 |
+| + ManifestTable 288 × 148 B (`RevisionManifest` with 64 run ids, measured 148 B) | +42,624 |
 | + History ring 512 × 8 B | +4,096 |
 | + SlotState 64 × 32 B | +2,048 |
-| + Writers 8 × 1,024 B (open-note ledger, cursors, reservations) | +8,192 |
-| + Window, tile and index-slot headers | +5,376 |
-| **Statics after cutover** | **206,509** |
-| Heap left for libraries (USB, SD, Serial) | 317,779 (today 337,568 arena, 172 KB free at boot) |
+| + Writers 8 × 1,024 B (open-note ledger 128 × 6 B, cursors, reservation counters, occupancy bits) | +8,192 |
+| + Edit writer selection 512 × 8 B | +4,096 |
+| + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
+| + Output FIFOs 3 × 512 × 4 B | +6,144 |
+| + Scheduler job table | +1,024 |
+| **Statics after cutover** | **225,581** |
+| Heap left for libraries (USB host, SD, Serial) | **298,707** (today: 337,568 arena, 172 KB free after boot) |
 
-Content code never allocates from this heap (gate H2 traps it).
+**Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
+cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
+therefore has an explicit `init()` called once in `setup()` before any input. It writes every field the engine reads
+before writing: free stack, run and manifest tables, history, slot states, writer state, window, tile and checkpoint
+headers, and FIFO indices. It never relies on zero. Page and window bodies are never read before written, so they need
+no clearing. Init cost is ≤ 4,096 + 544 + 288 + 512 + 64 + 24 + 132 + 4,096 (checkpoint headers) stores, well under
+1 ms. Gate H2b fills both regions with a poison pattern before `init()` and runs the corpus.
 
 ### 4.3 RAM1 (512 KiB: ITCM + DTCM)
 
-Today (`3b95b40e…`, succprobe): DTCM variables 96,224 B; ITCM 393,216 B (code 392,040 + padding 1,176); free for
-locals 34,848 B.
+Today (`3b95b40e…`): DTCM variables 96,224 B; ITCM 393,216 B (code 392,040 + padding 1,176); free for locals 34,848 B.
 
-| Budget (enforced by the build gate) | Value |
+| Budget (build gate) | Value |
 |---|---|
-| DTCM variables | ≤ 96,224 B (no growth; engine counters on the hot path ≤ 2 KiB, paid for by deleted statics) |
-| ITCM | ≤ 393,216 B (12 banks), padding ≥ 840 B (existing floor) |
+| DTCM variables | ≤ 96,224 B; engine hot counters ≤ 2 KiB, paid for by deleted statics |
+| ITCM | ≤ 393,216 B, padding ≥ 840 B |
 | Free for locals | ≥ 34,848 B |
-| Engine hot code in ITCM | append, NoteOff, wrap handover, window consume, tick; everything else `FLASHMEM` |
+| ITCM-resident engine code | row append, NoteOff, wrap handover, tick consume, FIFO enqueue; everything else `FLASHMEM` |
 
-ITCM is expected to shrink: the hot parts of the snapshot, stop-job, overlay and window-builder code are deleted. The
-exact final numbers are recorded at milestone E8 against these ceilings.
+### 4.4 The non-content allowance is a measured precondition, not an assumption
+
+Today's 4.46 MB PSRAM after boot mixes content (chunks), prewarmed views and non-content users, and no census
+attributes them. Before E1 (milestone E0, § 10):
+- one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
+  block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
+  storage buffers, telemetry);
+- the budget closes iff `non-content PSRAM ≤ 804,092 B` on capture builds (≤ 1,852,668 B shipping) and
+  `non-content RAM2 heap ≤ 298,707 B`.
+
+If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
+
+| Lever | Saves |
+|---|---|
+| Capture ring 1 MiB → 512 KiB in capture builds | 524,288 B |
+| Windows 3,072 → 2,560 rows (source admission 2,304) | 196,608 B |
+| Detail tiles for the focused slot only, no successor | 163,840 B |
+| Checkpoint entries 64 → 32 | 131,072 B |
 
 ---
 
-## 5. Pages, reclamation and source pinning
+## 5. Pages, descriptors, reclamation and source pinning
 
-### 5.1 Page pool split (4,000 pages)
+### 5.1 Page pool (4,096 pages) — joint-workload proof
 
-| Part | Pages | Bound it serves |
+| Part | Pages | Derivation |
 |---|---|---|
-| Content quota | 3,072 | 131,072 rows / 64 = 2,048 full pages + ≤ 2 partial pages (Midi + hide region) × 512 live runs |
-| Directory reserve | 256 | runs beyond 16 inline pages: ≤ 3,072 / 17 Midi + hide directories |
-| Writer reserve | 64 | 8 writers × 8 pages (§ 6.3) |
-| Compaction reserve | 256 | one history-closed range in flight (design D5c) |
-| Edit-index reserve | 352 | 11 index slots × 32 pages (4,096 hidden ids × 8 B) |
+| Content quota | 3,264 | rows ≤ 133,888 → ≤ 2,092 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 544, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,044; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,092 / 17⌋ + ⌈2,092 / 512⌉ = 123 + 5 = 128. **Total ≤ 2,092 + 1,044 + 128 = 3,264** |
+| Compaction reserve | 256 | one history-closed range in flight with its directories (design D5c); used by compaction only |
+| Edit-index reserve | 576 | 18 index slots (one per compose cursor) × 32 pages (4,096 ids × 8 B); used only by index builds for those cursors |
 
-Pages are non-contiguous (design D0); acquire and release are O(1) on the free stack.
+The **133,888 rows** are 131,072 committed rows plus the standing reservations of every writer at once:
+8 × (128 NoteOff + 32 controller closures) + 1,536 NOTE_EDIT rows = 2,816. So full committed content and all writers
+coexist by construction.
 
-### 5.2 Reference counting and reclamation
+### 5.2 Descriptors and manifest slots
 
-- A **run** counts the manifests that list it; a **manifest** counts history entries, slot currents, writer bases and
+| Table | Capacity | Holders, worst case at once |
+|---|---|---|
+| RunTable | 544 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 8 × 3 = 24; edit run 1; compaction output 1 → **538 ≤ 544**. Committed runs are admitted against 512. |
+| ManifestTable | 288 | slot currents 64; history 99; NOTE_EDIT session states 32; writer pending commits (2 closing + next) 8 × 3 = 24; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **270 ≤ 288** |
+| History ring | 512 | depth ≤ 99 in W; the ring size matches `ABSOLUTE_MAX_UNDO_ENTRIES`, but depth above 99 needs a larger ManifestTable (§ 12.3) |
+
+### 5.3 Reference counting, reclamation, retention
+
+- A run counts the manifests that list it. A manifest counts its slot current, history entries, writer bases and
   reader pins (design D6).
-- When a count reaches zero the object is queued for the **reclaim worker**, which returns its pages in grains of 64.
-  Nothing is freed on the Clock path or inside a command.
-- Pages return only through reclamation (released runs, dropped redo branches, aged undo history, superseded
-  compaction inputs). There is no other way content memory comes back, and no way it grows.
+- At zero the object goes to the **reclaim worker**, which returns pages in grains of 64. Nothing is freed on the Clock
+  path or inside a command.
+- **Retention bound:** after a manifest stops being current, it is held at most until (a) its last window retires at
+  succession (≤ 2 window periods), (b) its tiles are replaced, (c) its history entry is evicted or its redo branch
+  dropped. Only (c) holds pages indefinitely, and it is bounded by the 99-entry history inside the 512-run and
+  131,072-row caps.
 
-### 5.3 Source pinning
+### 5.4 Pins
 
 | Holder | Pins | Released when |
 |---|---|---|
 | Slot current | 1 manifest | next commit / undo / redo selects another |
-| History entry | 1 manifest | entry evicted (depth) or redo branch dropped |
-| Writer | its base manifest P (the interval's immutable source cut) | its last closing run seals |
-| Playback window | the manifest it composed + the open-run prefix ordinal | window retired at succession |
-| Display tile | the manifest it swept | tile replaced |
+| History entry | 1 manifest | evicted at depth, or redo branch dropped |
+| Writer | base manifest P (the interval's immutable source cut) | its last closing run seals |
+| Playback window | manifest + open-run serial and append ordinal | window retired |
+| Compose cursor | manifest + open-run prefix | cursor ends or is superseded |
+| Display tile / checkpoint table | manifest swept | replaced |
 | Worker job | its source manifest | job ends or is superseded |
 
-Pins per consumer are fixed (24 windows, 2 swept slots, ≤ 4 jobs), so the ManifestTable bound is: 64 currents + 99
-history + 32 edit-session + 16 writer (base + next) + 30 pins ≤ 241 ≤ 256.
+### 5.5 Reserved resources are never borrowed
+
+| Reserve | Only for | Optional work that may *not* use it |
+|---|---|---|
+| Writer holdings: rows, its partial pages, 3 descriptors, 3 manifest slots | that writer's accepted notes, wrap and Stop | other writers' new input, compaction, persistence, display |
+| Edit holdings: 1,536 rows, 1 descriptor, slots | that session's selection | all others |
+| Compaction 256 pages | compaction | — (compaction is itself optional; it can never take content quota) |
+| Index 576 pages, 18 fixed slots | the compose cursor the slot belongs to | — |
+| Compose carry, windows, tiles, checkpoints, FIFOs | their fixed owner | — (fixed regions, no pool) |
+
+Persistence *load* (boot or set load) is a writer-class admission. It reserves the file's row count against content
+quota before reading, or is denied by name. Persistence *save*, display, reclaim and compaction take nothing from
+content quota.
 
 ---
 
-## 6. Event encoding and the consequence-reservation proof
+## 6. Event encoding, derived consequences and the reservation proof
 
 ### 6.1 Rows (16 B, `PassEvent`, unchanged)
 
-`tick u32 | noteId u32 | seq u32 | status u8 | data1 u8 | data2 u8 | origin u8`. Two regions per run:
-- **Midi rows** (NoteOn, NoteOff, CC, pitch bend, program, aftertouch), kept as ≤ 8 sorted segments while appending
-  (design D5b);
-- **HideNote rows** (`noteId` target), sorted by noteId at seal. A hide applies to every earlier run (design D4); a
-  replacement is a Midi row with the same `noteId` in the hiding run.
+`tick u32 | noteId u32 | seq u32 | status u8 | data1 u8 | data2 u8 | origin u8`.
 
-Overlap-resolve outcomes per affected earlier note `e` (port of today's rules, DEC-030 / 031 / 033 / 034):
-`Hide` = 1 row; `Shorten` = hide + replacement NoteOn + NoteOff = 3 rows. So **c_max = 3 rows per affected note.**
-SysEx stays unsupported (design Q6).
-
-Playback window rows use the same 16-byte layout; `seq` carries the composed rank (DEC-244 — equal-tick order).
-
-### 6.2 What every accepted input can cost
-
-| Accepted | Immediate rows | Owed later | Owed rows are reserved |
-|---|---|---|---|
-| Writer admission | 0 | closure for ≤ 128 open notes; next-wrap run start | at admission |
-| NoteOn | 1 | its NoteOff (1); consequences at NoteOn for earlier notes sounding at that pitch (≤ 3 each) | at acceptance, before the row is written |
-| NoteOff of an open note | 1 (from its reservation) | — | already |
-| Consequence discovered during a hold (an earlier note starting inside the new note's span) | ≤ 3 | — | at discovery, before the condition is entered |
-| Other channel messages | 1 | — | at acceptance |
-| Wrap | 0 rows; 1 manifest slot + 1 run descriptor + next run's first pages | next wrap's start | the next wrap is re-reserved at each wrap |
-| Stop | ≤ 128 generated NoteOffs | seal, publish, undo entry | all already held |
-| Undo / redo | 0 | reclamation of a dropped redo branch (frees only) | n/a |
-
-### 6.3 Reservation invariant and proof
-
-Counters (all in `Reservations`, all O(1)):
-- `F` = free pages; `Rg` = global reserved pages (directory 256, compaction 256, index 352);
-- per writer `w`: `Hw` = free rows inside pages the writer already holds, `ow` = open notes, `Kw` = consequence rows
-  reserved but not yet written; `Nw` = next-wrap reservation held (bool);
-- `Ms`, `Rs` = free manifest slots and run descriptors, with reserved counts `Mr`, `Rr`.
-
-**Invariant R:** `F ≥ Rg` and, for every writer, `Hw ≥ ow + Kw`; `Ms ≥ Mr`, `Rs ≥ Rr`.
-
-Every operation checks before it mutates and is all-or-nothing:
-
-1. **admit(w):** requires `F − Rg ≥ 8`, `Ms − Mr ≥ 2`, `Rs − Rr ≥ 2`. Moves 8 pages into `w` (so `Hw` = 2 pages of
-   closure rows + current page + hide page + directory margin + next-wrap first pages), reserves 2 manifest slots
-   (this interval's commit, next wrap's commit) and 2 run descriptors. Otherwise a named denial before arming.
-2. **NoteOn(n):** let `c` = rows of its immediate consequences (`≤ 3 × sounding earlier notes at that pitch`). Requires
-   `ow < 128` and `Hw − (ow + Kw) ≥ 2 + c`; if short, take one page from `F − Rg` (if `≥ 1`). Then write the row,
-   `ow += 1`, write the immediate consequences. Otherwise the NoteOn is refused by name (capacity latch, § 8.5). R holds:
-   `Hw` drops by `1 + c` and the requirement `ow + Kw` grows by 1, with `2 + c` checked.
-3. **NoteOff(n open):** writes 1 row, `ow −= 1`. `Hw − 1 ≥ (ow − 1) + Kw` follows from R. **Never fails, never acquires.**
-4. **Consequence during a hold:** requires `Hw − (ow + Kw) ≥ 3` or one page from `F − Rg`. If neither, the new note
-   `n` is closed at this tick with its reserved NoteOff (so it no longer overlaps `e`, and no consequence is owed) and
-   the writer latches. R holds in both branches.
-5. **Wrap:** commits the active run with the reserved slot and descriptor, starts the next run on the held next-wrap
-   pages, then re-reserves the following wrap (`F − Rg ≥ 2`, one slot, one descriptor). If that fails the writer
-   enters **FinalInterval**: at the next wrap it stops as in 7 (named outcome). Nothing accepted is lost.
-6. **Seal:** sorts the hide region in place. No rows, no pages.
-7. **Stop:** writes `ow` closure NoteOffs (`≤ Hw` by R), seals (6) and publishes with the reserved slot, pushes the undo
-   entry into the history ring (eviction of the oldest entry is the normal depth rule), returns unused pages and
-   reservations. **No step acquires anything, so Stop cannot wait for memory.**
-8. **Undo / redo:** move the history cursor and the slot's current pin. A commit after undo drops the redo branch:
-   refcounts fall, pages return through reclamation. Frees only.
-9. **Workers:** compaction uses its 256-page reserve and the index builder its 352; neither ever touches writer pages or
-   `F − Rg`, so a stalled worker cannot block a writer and a writer cannot starve a worker below its reserve.
-
-By induction over these operations R holds at every step, and every owed row has a reserved home before the input that
-owes it was accepted (I3). Gate H3 fuzzes this.
-
----
-
-## 7. Composition and worker scheduling bounds
-
-### 7.1 Window composition
-
-Input: manifest M (≤ 60 runs) plus the writer's open-run prefix (≤ 3 runs) → ≤ 63 runs, each ≤ 8 sorted segments.
-Output: ≤ 2,048 effective rows for one 2-bar window, in DEC-244 order.
-
-| Step | Bound |
+| Region | Holds |
 |---|---|
-| Seek every segment to the window start | ≤ 63 × 8 × ⌈log2 131,072⌉ = 8,568 comparisons, one grain |
-| Merge | ≤ 8,192 source rows × ⌈log2 63⌉ = 6 heap steps |
-| Hide test per row | edit index, ≤ ⌈log2 4,096⌉ = 12 comparisons |
-| Total per window | ≤ 8,568 + 8,192 × 18 = 156,024 comparisons; **≤ 64 grains of 128 source rows + 1 seek grain** |
+| Midi | every channel message as recorded (NoteOn, NoteOff, CC, pitch bend, program change, channel and poly aftertouch) and engine-generated closure rows (flagged). ≤ 8 sorted segments while appending (design D5b). |
+| Hide (edit runs only) | `HideNote` rows by target `noteId`, sorted at seal |
 
-The edit index for M is built once per manifest identity: ≤ 4,096 entries, 256 per grain (1.12 ms measured, B.5d) →
-≤ 16 grains.
+SysEx stays unsupported (design Q6). Playback window rows use the same 16-byte layout, with `seq` carrying the
+composed rank (DEC-244 — equal-tick order).
 
-### 7.2 Display sweep
+### 6.2 Overlap consequences are derived, not stored
 
-Sequential over the loop with a carry table of open notes (≤ 16 ch × 128 pitches), so notes crossing bars are clipped
-correctly per bar. Per slot ≤ 64 bars × 4,096 source rows = 262,144 rows → ≤ 2,048 grains. Each finished bar swaps
-its tile atomically.
+Revision 2 stored ≤ 3 rows per affected earlier note and had to close an accepted note early when they could not be
+reserved. The ratified occupy/overlap rules (`OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`; DEC-033 — pitch only,
+channel ignored) depend only on spans at the same pitch and on run order:
 
-### 7.3 Scheduler
+| Earlier note A (run i) vs later note B (run j > i), same pitch | Ratified outcome |
+|---|---|
+| A sounding when B starts (`A.start < B.start < A.end`) | Shorten A to end at `B.start − 1` (occupy at B's NoteOn, or `OverlapNoteOff`) |
+| A starts at B's start (`A.start == B.start`) | Hide A |
+| A starts strictly inside B (`B.start < A.start < B.end`) | Hide A (`CompleteCover` / `OverlapNoteOn`) |
+| A ends exactly where B starts | unchanged (`BoundaryTouch`) |
+| Shortened remnant shorter than the min length | Hide (min-length remove) |
+| Wrap-crossing spans | linearized into two segments, as today |
 
-One grain per main-loop turn, from the highest-priority ready job. Target grain ≤ 500 µs; device-measured.
+So the composer derives them while merging runs (§ 7.1). It needs no stored consequence and no per-note growth:
+- an earlier-run NoteOn is **hidden** if a later-run note at that pitch is active at its tick (a 64-bit run mask per
+  pitch);
+- a sounding earlier note is **shortened** (generated NoteOff at `B.start − 1`, its own NoteOff suppressed) when a
+  later-run NoteOn at that pitch arrives.
 
-| Priority | Job | Grain | Worst job |
+Undo needs nothing either: selecting an older manifest removes the later run, and with it its occlusion.
+
+**Live effect during the interval being recorded:**
+- When B's NoteOn is accepted, the writer sets B's pitch in the track's **occupancy mask** (128 bits).
+- The tick consumer then ends any sounding earlier note at that pitch and suppresses earlier-content NoteOns at that
+  pitch until B's NoteOff clears the bit.
+- This is O(1) per event and reproduces "occupy at hold" live. From the next cycle on, the composed windows produce the
+  same result from the stored runs.
+- E0 must prove the live and composed results equal for every occupy fixture.
+
+**Adequacy is an E0 exit criterion.** Any ratified overlap or ledger clause that is not a pure function of (spans,
+pitch, run order) must be expressed by a bounded per-note flag stored in the note's own rows. Such a flag adds 0 rows,
+because it lives in `origin` or flag bits. If neither is possible, E1 does not start.
+
+### 6.3 What every accepted input costs
+
+| Accepted input | Rows now | Rows owed later | Owed rows reserved |
 |---|---|---|---|
-| 1 | Seal of an owed commit | 256 swaps | per-run hides ≤ 4,096 → ≤ 192 grains |
-| 2 | Edit index for a manifest a window needs | 256 entries | 16 grains |
-| 3 | Compose the next window of a playing track (earliest deadline first) | 128 rows | 65 grains |
-| 4 | Display sweep: focused slot, visible bars first in loop order from the carry start | 128 rows | 2,048 grains per slot |
-| 5 | Persistence | 16 KiB I/O | file-size bound |
-| 6 | Compaction | 256 rows | range-size bound |
-| 7 | Reclamation | 64 pages | run-size bound |
+| Writer admission | 0 | ≤ 128 NoteOff closures, ≤ 32 controller closures; next-wrap run start | at admission (the writer's standing reservation) |
+| NoteOn | 1 | its NoteOff: 1 (inside the standing 128) | yes, since `ow < 128` is checked at acceptance |
+| NoteOff of an open note | 1, taken from its reservation | — | — |
+| CC, pitch bend, program, aftertouch | 1 | ≤ 1 closure per tracked (channel, controller) inside the standing 32, if E0 confirms a closure contract | yes |
+| Overlap consequence (any time) | **0** (derived, § 6.2) | — | — |
+| Wrap | 0 rows; 1 descriptor + 1 manifest slot + the next run's first page | next wrap's start | the next wrap is reserved before this wrap releases its own |
+| Record / overdub Stop | ≤ `ow` closures + ≤ 32 controller closures | — | inside the standing reservation |
+| NOTE_EDIT session admission | 0 | hide + replacement NoteOn + NoteOff per selected note: ≤ 3 × 512 | at admission |
+| Undo / redo | 0 | — | — |
+| Load (boot / set) | the file's rows | — | at admission |
 
-**Deadline proof (playback):** each playing track needs its next window within one window period. Worst case per
-period: 8 tracks × 65 grains = 520 grains, plus one index (16) and one owed seal on a commit. At 300 BPM a period is
-1.6 s, so 536 grains fit if the main-loop turn is ≤ 2.98 ms with one grain each — the engine then uses ≤ 17 % CPU at
-500 µs grains. Gate D4 measures grain time and turn period. A missed deadline beyond W is a named miss, never a
-fallback.
+### 6.4 Reservation invariant and proof
 
-**Progress (I8):** every job has a step counter and a declared worst-case step count (table above). Each owed item
-either completes within it or ends in a named outcome (`CapacityDenied`, `Superseded`). The scheduler reports any job
-whose steps exceed its bound.
+Counters, all O(1), in `Reservations`:
+
+| Counter | Meaning |
+|---|---|
+| `Q` | content rows free = 133,888 − rows written − rows reserved |
+| `ow` | open notes of writer w |
+| `kw` | controller closures reserved by writer w (≤ 32) |
+| `Hw` | rows writer w holds and has not written: 128 + `kw` while admitted |
+| `Dfree`, `Dres` | free and reserved run descriptors |
+| `Mfree`, `Mres` | free and reserved manifest slots |
+
+Pages are derived from rows (§ 5.1), so row accounting is sufficient: the content quota in pages is proven to hold
+133,888 rows across ≤ 544 runs.
+
+**Invariant R:** `Q ≥ 0`; for each writer `ow ≤ 128`, `Hw = 128 + 32` while admitted; `Dfree ≥ Dres`;
+`Mfree ≥ Mres`.
+
+Each operation checks before it mutates, all or nothing:
+
+| Op | Precondition | Effect | Why R still holds |
+|---|---|---|---|
+| admit(w) | `Q ≥ 160`, `Dfree − Dres ≥ 2`, `Mfree − Mres ≥ 2` | `Q −= 160`, `Hw = 160`, reserve 2 descriptors (active, next) + 2 slots | all quantities checked |
+| new NoteOn | `ow < 128`, `Q ≥ 1` | write 1 row: `Q −= 1`, `ow += 1` | its NoteOff is one of the 128 already in `Hw` |
+| NoteOff (open note) | none | write 1 row from `Hw`, `ow −= 1` | `ow ≤ 128` rows are always in `Hw`; **cannot fail** |
+| other channel message | `Q ≥ 1` | write 1 row: `Q −= 1` | — |
+| overlap discovered | none | nothing written | consequence is derived |
+| wrap | next-wrap reservation held | commit the active run with its reserved slot; the run becomes closing if `ow(run) > 0`; start the next run on the reserved descriptor; re-reserve the following wrap (`Dfree − Dres ≥ 1`, `Mfree − Mres ≥ 1`, else **FinalInterval**) | commit uses only reserved items |
+| closing run seal | its last NoteOff written | publish with its reserved slot | reserved |
+| Stop | none | write `ow` NoteOffs + ≤ `kw` controller closures from `Hw`; seal; publish with reserved slots; push the undo entry (evicting the oldest at depth is the normal rule); return unused `Hw` to `Q` and unused descriptors/slots | uses only held items; **cannot fail or wait** |
+| edit admission | `Q ≥ 1,536`, 1 descriptor, slots | hold them | — |
+| edit commit / abandon | none | write ≤ 3 rows per selected note from the hold; seal; publish; or return everything | reserved |
+| undo / redo | none | move cursor and current pin | no rows |
+| commit after undo | none | drop the redo branch to reclaim | frees only |
+| compaction / index | their own reserves | — | never touch `Q`, `Hw`, `D`, `M` of writers |
+
+New input is refused by name **only at the first row of a new note or message**, never in the middle of an accepted note.
+Accepted notes are never shortened, closed early or dropped because of storage. Whether a refused NoteOn also ends the
+pass is the owner's latch decision (§ 12.3).
+
+By induction over the operations, R holds at every step. Every row owed by accepted input is reserved before that input
+is accepted (I3), and Stop consumes only held items (I4). Gate H3 fuzzes this and asserts accepted-content preservation
+against the reference model.
 
 ---
 
-## 8. Record / overdub / Stop / undo / redo state transitions
+## 7. Realtime scheduling envelope
 
-### 8.1 Slot and writer states
+### 7.1 Units of work
+
+- **Grain g:** the non-preemptible engine work unit (the Clock ISR still preempts): 128 source rows, or 256 index
+  entries, or 256 seal swaps, or 64 reclaimed pages, or one 16 KiB persistence step. Target ≤ 500 µs, from B.4b/B.5d
+  measurements (2,048-row compaction step ≤ 5.4 ms; 256 index entries 1.12 ms). E4 measures it per job type on the
+  device, and the worst measured value replaces 500 µs in every bound below.
+- **Window compose:** ≤ 2,816 source rows → ⌈2,816 / 128⌉ = 22 grains + 1 seek grain (≤ 63 runs × 8 segments ×
+  17 comparisons) = **23 grains**. Occlusion costs O(1) per row (run-mask test, counter update) and edit hides one index
+  probe (≤ 12 comparisons).
+
+### 7.2 Cold start and checkpoints
+
+- Steady playback composes windows in sequence, carrying state (sounding notes, occluder counters) from window k into
+  k+1, so steady composition never replays.
+- A wrap commit needs no replay either. The next cycle's first windows are composed during the current cycle over
+  (M + the writer's open-run prefix). Their rows were appended a full loop earlier, so the window composed before the
+  commit already equals the window of the committed manifest. The exception is a loop no longer than one window, which
+  recomposes its single window (23 grains).
+- **Mid-loop cold starts** (undo, redo, edit commit, slot switch) begin from the nearest **checkpoint** at or before
+  the start position. Checkpoints sit every 8 bars. Each holds ≤ 64 entries: occluders active from later runs, and
+  effective sounding notes. The sweep worker writes them as a by-product.
+  - Replay with a usable checkpoint: ≤ 3 windows → ≤ 3 × 22 + 23 = **89 grains**.
+  - If a checkpoint overflowed 64 entries or is not yet built for that manifest, replay starts at the previous usable
+    one, at worst the loop start: ≤ 31 × 22 + 23 = **705 grains**.
+  - Both paths are the same algorithm with a bounded cost. This is not a fallback reader.
+- Edit index for a manifest with edit hides: ≤ 4,096 / 256 = 16 grains, before its first window.
+
+### 7.3 Demand per window period (P = 1.6 s at 300 BPM), all 8 tracks
+
+| Class | Job | Grains per P, worst |
+|---|---|---|
+| Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 23 = **184** |
+| Hard | edit-run seal (one session) | ≤ ⌈512 × 9 / 256⌉ = 18 per edit commit |
+| Hard | one cold start (gesture), checkpoint usable / worst | 89 + 16 / 705 + 16 |
+| Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 |
+| Soft, bounded | density + checkpoints after any slot commit | ≤ 64 bars × 11 = 704 per committed slot, amortized: a slot commits at most once per loop length, so ≤ 11 grains per 0.8 s per writing slot → ≤ 8 × 11 × 2 = **176 per P** |
+| Soft | persistence save | ≤ 4 MiB / 16 KiB = 256 per save (autosave every 300 s) |
+| Soft | reclaim, compaction | ≤ released pages / 64; range size / 256 |
+
+Sustained worst (8 writers on 2-bar loops, focused slot committing every P): 184 + 176 + 22 ≈ **382 grains per P ≈
+191 ms per 1.6 s = 12 % CPU** at 500 µs grains.
+
+Burst (scene switch of 8 tracks with usable checkpoints): 8 × (89 + 16) = 840 extra grains = 420 ms. Without usable
+checkpoints: 8 × 721 = 5,768 grains = 2.9 s of CPU, spread over the following periods. The switching tracks keep playing
+their previous source until the new windows are complete, so nothing goes silent.
+
+### 7.4 Feasibility condition (no assumed loop-turn interval)
+
+The main loop runs the engine grains and other tasks. No turn period is assumed. Instead three device-measured terms
+must satisfy:
+
+- **U_isr:** share of CPU used by interrupts (Clock tick, USB, serial), measured over any interval of length P.
+- **U_other:** worst share of CPU used by non-engine main-loop tasks over any interval of length P: MIDI ingress drain,
+  display draw (banded, § 9.3), DMA setup, USB host, SD, telemetry flush.
+- **B_max:** the longest single non-engine block in the main loop.
+
+The engine gets `U_e = 1 − U_isr − U_other`.
+
+| Condition | Meaning |
+|---|---|
+| C1: `184 × g + 18 × g ≤ U_e × P − B_max − g` | every playing track's next window is ready by its boundary, even if the composer is blocked once for B_max and one grain is in flight |
+| C2: `(184 + 176 + 22) × g ≤ U_e × P` | sustained work does not accumulate |
+| C3: `B_max ≤ P / 4` (400 ms at 300 BPM) | a single blocking task cannot eat a window's lead |
+
+With g = 500 µs, C1 needs `U_e ≥ 6.3 % + B_max / P`, and C2 needs `U_e ≥ 12 %`.
+
+Today's evidence shows the blocking terms are the risk, not compute:
+- `disp_frame_slow` measured a 6.4 ms draw and 20 ms resolve. Resolve disappears with tiles, but draw must be banded:
+  ≤ 8 bands of ≤ 1 ms each.
+- SD write latency on a busy card is unmeasured.
+
+E7 and E9 must measure SD worst-case latency. If it breaks C3, persistence moves to a non-blocking (DMA / multi-turn)
+write path; it does not get an exception.
+
+### 7.5 Scheduler
+
+- **Hard jobs:** earliest-deadline-first by window boundary. Before taking a soft grain, the scheduler checks that every
+  hard job's remaining grains × g fit in its slack minus B_max.
+- **Display share:** while display work is pending, at least every fourth grain goes to display, unless the slack check
+  above fails.
+- **Persistence share:** at least 1 in 16.
+- **Reclaim and compaction:** take the rest.
+- **Display freshness bound:** with grain rate `r = U_e / g`:
+  - visible bars of the focused slot reflect a new manifest within `F_vis = 264 / (r / 4)`;
+  - the whole slot reflects it within `704 / (r / 4)`.
+  - At U_e = 50 %, r = 1,000 grains/s: **F_vis ≤ 1.06 s**, whole slot ≤ 2.8 s.
+  - Non-focused density: ≤ 2.8 s per committed slot, queued; worst 8 pending → ≤ 22.5 s for the last.
+  - Until then the previous tiles show, so the roll never blanks.
+- **Progress:** every job has a declared worst-case grain count (above). It either completes within it or ends named
+  (`CapacityDenied`, `Superseded`). The scheduler reports any job exceeding its count.
+
+---
+
+## 8. State transitions
+
+### 8.1 States
 
 ```mermaid
 stateDiagram-v2
   [*] --> Empty
-  Empty --> Armed: arm Record (admission, reserve)
-  Armed --> Empty: cancel (release reserve)
+  Empty --> Armed: arm Record (admission)
+  Armed --> Empty: cancel (release)
   Armed --> Recording: start tick
-  Recording --> Sealing: Stop (O(1) accept)
-  Committed --> Overdubbing: start overdub (admission, reserve)
-  Overdubbing --> Overdubbing: wrap (commit run i, start run i+1)
-  Overdubbing --> Sealing: Stop (O(1) accept)
+  Recording --> Committed: Stop (accept: closures written, manifest created)
+  Committed --> Overdubbing: start overdub (admission, pins base P)
+  Overdubbing --> Overdubbing: wrap (commit run i, closing if held notes, start run i+1)
   Overdubbing --> FinalInterval: next-wrap re-reservation refused
-  FinalInterval --> Sealing: next wrap or Stop
-  Sealing --> Committed: closures written, runs sealed, manifests published, undo entry pushed
+  FinalInterval --> Committed: next wrap or Stop
+  Overdubbing --> Committed: Stop (accept: closures written, runs committed)
   Committed --> Committed: undo / redo (manifest selection)
-  Committed --> Editing: NOTE_EDIT session (edit writer admission)
-  Editing --> Committed: commit edit run, or abandon (pages return)
+  Committed --> Editing: NOTE_EDIT (edit admission)
+  Editing --> Committed: commit edit run (seal) or abandon
 ```
 
 ### 8.2 Record
 
-- **Arm:** admission (§ 6.3 step 1) or a named denial; nothing is half-started.
-- **Recording:** rows append to run R0; NoteOn/NoteOff per § 6.3. The Clock plays the take through windows composed
-  over (base manifest = empty, open run R0 prefix).
-- **Stop:** sets the loop length from the stop tick, writes closures by today's Record-stop closure rules (DEC-136 /
-  137 / 138 — held-leg Stop terminals), seals, publishes manifest M1 = {R0}.
+- **Arm:** admission (§ 6.4), or a named denial before anything starts.
+- **Recording:** rows append to R0. Checkpoints every 8 bars from the take's start are written by the sweep after Stop,
+  not during recording.
+- **Stop (acceptance, constant bound):**
+  1. Record the stop tick.
+  2. Set the loop length.
+  3. Write the closure rows by the ratified Record-stop terminal rules (DEC-136 / 137 / 138 / 144 — held-leg Stop
+     terminals): ≤ 128 + 32 rows from the reservation, about 100 µs worst; E9 measures it.
+  4. Create manifest M_A = {R0} with a fresh identity from the reserved slot.
+  5. Make it the slot current and push the undo entry.
 
-### 8.3 Overdub and wrap
+  A Record run has no hide region, so there is no seal work. The **only** later work is derived: windows, tiles,
+  checkpoints, persistence.
 
-- **Start:** admission pins the base manifest P (the interval's source cut, immutable by construction).
-- **Writing:** rows and consequences go to the active run; consequences are computed against P plus the writer's own
-  rows (DEC-250 cut rule: records before P visible, P's and later excluded) using windowed composition, never
-  whole-loop.
-- **Wrap** (DEC-069 — the wrap is a revision transition; DEC-051 — the wrap seals at loop end): constant-time
-  handover. The active run becomes a *closing run* if it still has open notes, otherwise it seals at once. A closing
-  run keeps accepting only its own NoteOffs and their consequences (DEC-250 — late companions belong to the
-  originating record P) and seals when its last note closes. Manifests publish in run order.
-- **Closing ring full (2 closing runs):** the wrap's commit is owed (DEC-069 owed commit): the active run continues
-  across the wrap as a new segment, and the revision is not advanced until the ring has room. Bounded by 8 segments per
-  run, after which the run seals with its counted commit-time sort (design D5b).
-- **C1 owed pitches:** NoteOn/NoteOff on a pitch owed by a closing run is deferred exactly as today's C1 rule, inside
-  the writer, with no separate obligation queue.
+### 8.3 DEC-159 — immediate Record → Overdub handoff
 
-### 8.4 Stop
+DEC-159 (immediate first overdub with pre-admitted per-interval custody) requires:
+- the Record predecessor A stays immutable and need not be published;
+- overdub B accepts and stops, then C accepts and stops;
+- A's late completion preserves exact content, causal overlap, geometry, undo and save;
+- overdub never waits for Record publication.
 
-- **Acceptance, O(1):** record the stop tick, close input for this interval (DEC-233 — input closes independently of
-  finalization), mark the writer `Sealing`. The user's gesture is done (DEC-078).
-- **Completion, bounded:** ≤ 128 closure rows, seal of ≤ 3 runs (≤ 192 grains each), ≤ 3 manifest publishes, 1 undo
-  entry. **≤ 128 + 3 × 192 + 4 = 708 grains, from reserved resources only** (§ 6.3 step 7). At a 3 ms turn that is
-  ≤ 2.1 s in the worst case; typical runs have few hides and seal in a few grains.
-- Gestures arriving while `Sealing` follow DEC-096 (slot gestures during pending finalization select, they do not undo
-  or clear), queued one per slot in `SlotState`.
+| Step | Engine action | Identity and lifetime |
+|---|---|---|
+| A Stop accepted | closures written, M_A = {R0} created (§ 8.2) | identity I_A is monotonic and never reused; R0 is immutable from this instant |
+| B start (same turn or later) | admission pins **P = M_A** as B's base; no check of any A derived work | B's writer holds a pin on M_A, so M_A and R0 live at least until B's last closing run seals |
+| B writing | consequences derived against M_A + B's rows (§ 6.2); live occupancy against what is sounding | B never reads A's windows, tiles or files |
+| B Stop | M_B = {R0, R_B}; slot current = M_B; undo entry B | M_B pins R0 through its run list |
+| C start / Stop | same with P = M_B | — |
+| A's late completion (windows, tiles, checkpoints, save) | each job is stamped with I_A and reads only M_A | stays correct because M_A is immutable; a job for I_A that is no longer current finishes or ends `Superseded`, never writes into B's or C's state |
+| Undo C, B | select M_B, then M_A | exact content of each; nothing to rebuild except windows |
 
-### 8.5 Capacity latch
+"Unpublished" in DEC-159 means today's snapshot and publication machinery. In the engine, a manifest exists at Stop
+acceptance, and all later Record work is derived and stamped. Overdub therefore can never wait for it.
 
-When a NoteOn or a consequence cannot be reserved, the writer latches: new NoteOns are refused by name; open notes still
-close; the take stays valid and every accepted row is kept. Whether the pass then continues for NoteOffs only or ends
-at the next wrap is an owner decision (§ 12.3).
+**Playback across the handoff:**
+- For a take longer than one window, window 0 of M_A was composed during recording over the open R0 prefix, so it is
+  ready at Stop.
+- A take of one window or less composes it at Stop: 23 grains.
 
-### 8.6 Undo / redo
+### 8.4 Overdub, wrap and Stop
 
-- Acceptance O(1): history cursor move and slot current swap (DEC-095 — one undo entry per interval; DEC-038 — wrap
-  commit and session undo).
-- Audible at the next window boundary once that manifest's windows are composed (§ 9.1).
-- A new commit after undo drops the redo branch to the reclaim worker.
-- Undo during `Sealing` is queued (DEC-096) and applies after the seal.
-- NOTE_EDIT session undo (32) selects among the session's edit-run manifests; the session commit publishes one.
-- Load rebuilds history from saved runs (DEC-088 — undo reconstructed from saved passes on load).
+- **Start:** admission pins P (DEC-250 cut rule: records before P visible; P's and later excluded).
+- **Wrap:** constant-time handover (DEC-069 — the wrap is a revision transition; DEC-051 — the wrap seals at loop end):
+  - The active run commits with its reserved slot. If it still has open notes it becomes a **closing run**: it accepts
+    only its own NoteOffs (DEC-250 — late companions belong to the originating record P) and seals when they arrive.
+  - Manifests publish in run order.
+  - If both closing slots are taken, the wrap's commit is owed (DEC-069 owed commit). The active run continues across
+    the wrap as a new segment, up to 8 segments, then seals with its counted commit-time sort (design D5b).
+- **C1 owed pitches:** the live occupancy mask and derived occlusion cover the musical intent. E0 checks C1's fixtures
+  against both; if a clause remains, it becomes a writer-local rule with no queue.
+- **Stop:**
+  - *Acceptance:* record the tick, close input (DEC-233 — input closes independently), write closures from the
+    reservation, commit the active run. All are bounded constants, so acceptance is constant-time.
+  - *Completion:* closing runs seal as soon as their closures are written, which happens in acceptance. Publishes use
+    reserved slots. Edit runs only sort their hides: ≤ 18 grains.
+  - So a record or overdub Stop **completes inside acceptance plus ≤ 1 grain**, and an edit commit within ≤ 19 grains,
+    from held resources only.
+  - Gestures during completion follow DEC-096.
+
+### 8.5 Undo / redo
+
+- Acceptance O(1): cursor move and current swap (DEC-095 — one undo entry per interval; DEC-038 — wrap commit and session
+  undo).
+- Audible at the first window boundary after the new source's window is ready: ≤ 105 grains with a usable checkpoint,
+  ≤ 721 worst.
+- A commit after undo drops the redo branch to reclaim.
+- NOTE_EDIT session undo (32) selects among the session's manifests.
+- Load rebuilds history from saved runs (DEC-088).
 
 ---
 
 ## 9. Consumer contracts
 
-### 9.1 Playback
+### 9.1 Playback windows
 
-- **Window** = `{slot, manifest identity, open-run serial and append ordinal, loop length, index k, [start, end), rows,
-  status}`. It is filled only by the compose worker and is immutable once `Complete`.
-- **Succession is deterministic:** at a window boundary the tick switches to the prepared window whose stamp names the
-  slot's current source and whose start equals the boundary. A new manifest (commit, undo, redo, switch) becomes audible
-  at the first boundary after its window is `Complete`; § 7.3 bounds that to one window period.
-- **Writer rows are audible on the next cycle** because windows compose over the open-run prefix; a row appended at
-  tick t is composed long before the playhead returns to t, except in loops shorter than the two-window lead, which the
-  geometry clamp (DEC-242 — length is window geometry) already handles.
-- **Clock tick:** advance through due rows of the current window, emit, update the sounding ledger (DEC-148 — a NoteOff
-  behind the served position ends the sounding instance; a closure the ledger no longer holds is suppressed), swap the
-  window pointer at the boundary. Work is proportional to the rows due at this tick. No composition, scan, lookup into
-  pages or allocation (DEC-241 — consume-only tick).
-- **Capacity:** effective rows per window are counted at writer acceptance against `L` (DEC-108), so `OutputFull`
-  cannot occur inside W.
+- A **window** = `{slot, manifest identity, open-run serial + append ordinal, loop length, index k, [start, end), rows ≤
+  3,072, status}`. It is written only by the compose worker and is immutable once `Complete`.
+- **Three per track:** current, next (same source), transition (new source being prepared).
+- **Succession is deterministic.** At a boundary the tick takes the `Complete` window whose stamp names the slot's
+  current source and whose start equals the boundary. Otherwise it takes the next window of the previous source, and
+  counts a named late switch. Equal stamps imply equal content.
+- **Capacity:** source rows per window are admitted ≤ 2,816 per slot. Generated NoteOffs (shortening, closure) need
+  ≤ 128 per window, because the sounding ledger holds ≤ 128. 2,816 + 128 ≤ 3,072, so `OutputFull` is impossible
+  inside W.
 
-### 9.2 Piano roll
+### 9.2 Clock tick and physical output
 
-- **Span tile** per (slot, bar): ≤ 256 note segments × 8 B (start, length, pitch, velocity, flags) + a 32 × 128 × 1-bit
-  raster = 2,560 B, stamped `(manifest identity, sweep id)`. A bar with more than 256 notes draws its raster in a named
-  **dense** state.
-- **Density tile** per (slot, bar): 16 columns × 32 pitch bands × 1 bit = 64 B, for all 64 slots, maintained by the same
-  sweep.
-- **Draw rule:** for each visible bar, the span tile if the slot has one, else its density tile. Tiles are replaced
-  only by a complete tile (atomic swap with a spare), so a delayed or starved sweep shows the previous content, a
-  focus switch shows density at once and detail when swept, and exhaustion cannot affect drawing because nothing on the
-  display path allocates (I6).
-- **Live overlay:** writer rows for the visible bars are painted O(1) per appended row into an 8 KiB overlay raster;
+**Per tick, per playing track:**
+1. Take up to **E_tick = 32** due rows from the current window cursor.
+2. Apply the occupancy mask.
+3. Update the sounding ledger (DEC-148 — a NoteOff behind the served position ends the sounding instance; a closure
+   the ledger no longer holds is suppressed).
+4. Enqueue to the port FIFOs.
+
+**Bounds:**
+- Rows still due stay for the next tick (counted `tick_spill`).
+- Work per tick ≤ 8 × 32 = 256 row moves, each a bounded copy, ledger probe and enqueue. E9 measures the cost; the
+  target is ≤ 1 µs per row, so ≤ 256 µs per tick worst.
+- If a port FIFO is full, the track stops for this tick (counted `fifo_full`).
+- **Sustained ISR work is bounded by the drain rate, not by content:** enqueues per second ≤ the sum of port drain
+  rates.
+- No composition, page read, scan or allocation (DEC-241).
+
+**Storage density vs physical bandwidth** (300 BPM, P = 1.6 s):
+
+| | Messages per P |
+|---|---|
+| Storage admitted, one track | ≤ 2,816 |
+| Storage admitted, 8 tracks | ≤ 22,528 (≈ 14,080/s) |
+| DIN (31,250 baud, 3-byte / running-status 2-byte messages) | ≈ 1,667 / 2,500 (1,042–1,562/s) |
+| USB device MIDI (4-byte events, 64-byte packets per 1 ms frame) | ≤ ~25,600 theoretical (16,000/s); practical rate measured in E9 |
+| USB host MIDI | same order; measured in E9 |
+
+- W lets one dense track exceed DIN by about 1.7×, and all 8 tracks exceed it by about 13×. Storage density is
+  therefore not output feasibility.
+- On overload, output is **late, never unbounded work**:
+  - FIFOs hold 512 messages per port;
+  - NoteOffs and closures are never dropped;
+  - lateness is counted per port.
+- Whether NoteOns later than a threshold are dropped instead of sent late is an owner decision (§ 12.3).
+
+### 9.3 Piano roll
+
+- **Span tile** per (slot, bar): ≤ 256 note segments × 8 B plus a 32 × 128 × 1-bit raster = 2,560 B, stamped
+  `(manifest identity, sweep id)`. A bar with > 256 notes draws its raster in a named **dense** state.
+- **Density tile** per (slot, bar): 64 B for all 64 slots. The same sweep writes it, along with the checkpoint table.
+- **Draw rule:** for each visible bar draw the span tile, else the density tile. A tile is replaced only by a complete
+  one (atomic swap with a spare). A starved sweep, a focus switch, an undo or pool exhaustion therefore show the
+  previous or the density content, never blank. Nothing on the display path allocates.
+- **Live overlay:** writer rows for the visible bars are painted O(1) per appended row into the 8 KiB overlay.
   NOTE_EDIT selection draws from `EditManager` geometry.
-- An empty slot is legitimately empty; a loaded slot always has density tiles, built during load before it becomes
-  playable.
+- **Draw cost:** the frame is drawn in ≤ 8 bands of ≤ 1 ms each, so drawing never contributes more than 1 ms to B_max.
+- **Freshness:** bounded by § 7.5.
+- A loaded slot has density tiles before it becomes playable; an empty slot is legitimately empty.
 
 ---
 
-## 10. Implementation milestones (dependency order)
+## 10. E0 semantic oracle and implementation milestones
 
-Branch `rewrite/fixed-memory-engine` from `feature/revision-manifest-prototype` at `7cc0901e`. Intermediate states may
-be RED and unbootable; there is no scaffolding to keep them green. Each milestone is a series of small, reviewable
-commits with its own host checks; the device is used from E8.
+### 10.1 E0 — semantic oracle (may proceed now)
 
-| # | Milestone | Depends on | Content | Host checks at the milestone |
+The legacy implementation is **not** the oracle. E0 has six deliverables:
+
+1. **Contract register.**
+   - Every musical clause of every ratified DEC and of the guides they ratify, numbered, quoted by reference
+     (`DEC-xxx §y`).
+   - Each tagged *musical* or *mechanism*. Mechanism DECs are listed as superseded by the cutover.
+   - The owner reviews the register.
+2. **Reference semantic model.** A small host-only executable specification written from the register, not from the
+   legacy code; no legacy includes. It covers:
+   - effective content of runs (§ 6.2 occlusion, edit hides, DEC-244 order);
+   - live occupancy;
+   - wrap and closing-run rules;
+   - Record / overdub / Stop closures (DEC-136–138 / 144);
+   - undo / redo;
+   - emission with ledger closure (DEC-148).
+
+   Each function cites the clauses it implements.
+3. **Fixtures.**
+   - Each fixture is a scenario (input timeline, gestures, tempo, loop length) with expected outcomes: effective
+     content per revision, emitted MIDI stream per cycle, undo/redo states and closures.
+   - Small fixtures are written by hand from the clause text. Larger ones are computed by the reference model and
+     spot-checked by hand.
+   - Every fixture lists its clauses and has a status: `draft` → `reviewed` (owner, in batches).
+4. **Legacy cross-check.**
+   - Run today's native model on the same scenarios where a harness exists, and diff.
+   - Each disagreement is classified:
+     - (a) **historical incorrect behavior** in legacy, with evidence;
+     - (b) an error in the reference model or fixture, which gets fixed;
+     - (c) a contract ambiguity, which becomes an owner question.
+   - Legacy output is never adopted unclassified.
+5. **Historical incorrect behavior register** (initial entries, each to be cited in fixtures that touch it):
+
+   | Behavior | Evidence |
+   |---|---|
+   | committed revision 7 served by a 0-event merged window while passes held 98–101 rows | overdub-audibility investigation 2026-11-01 |
+   | forced C3.4 deadline answers that missed the interval's own pending rows | DEC-250 evidence |
+   | dropped companion under heap-tail pressure | `MEMORY_PRESSURE_RED` |
+   | companion path skipped "canonical derivation unavailable", raw pass only (companions lost) | `session_20261104_190805` 208.7 s |
+   | Stop held in `AtomicTransfer` 176 s | same run |
+   | piano roll `win=0` for 55 beats | same run |
+   | unspecified within-class equal-tick order where `std::sort` is used | B.2a |
+
+6. **Measurements on the current image** (they close § 4.4 and § 7.4). They read the card only and write no user files.
+   Flashing for measurement is pre-authorized; HITL runs only on track 8 slot 4.
+   - Heap-owner boot census, splitting PSRAM and RAM2 into content and non-content.
+   - SD worst-case write latency on the device card's file system, using a scratch file the owner approves, or
+     measuring read paths only if not approved.
+   - Display draw time per band.
+   - U_isr and U_other per P on the owner chain.
+
+**E0 acceptance (gate for E1):**
+- register reviewed;
+- every musical clause has ≥ 1 reviewed fixture;
+- the reference model passes all reviewed fixtures;
+- 0 unclassified cross-check discrepancies;
+- the § 6.2 adequacy check passed;
+- the census closes the § 4 budget, or the owner chooses levers;
+- SD latency, draw and U terms recorded against § 7.4.
+
+### 10.2 Milestones (direct cutover, dependency order)
+
+Branch `rewrite/fixed-memory-engine`. Intermediate states may be RED and unbootable. There are no transition-only
+abstractions. Small commits, focused component tests. ⟳ marks a dependency changed by revision 3.
+
+| # | Milestone | Depends on | Content | Host checks |
 |---|---|---|---|---|
-| **E0** | Semantic oracle corpus | — | Before anything is deleted: run today's native model over a scenario set covering every musical DEC (§ 12.2) and record golden outputs (effective content per revision, emitted MIDI stream, undo/redo results, closure behavior) as data fixtures. Classify all 147 native suites as *semantic* (port) or *mechanism* (deleted with its component). | corpus reviewed; every musical DEC has ≥ 1 scenario |
-| **E1** | Engine core and memory map | E0 | `ContentEngine` with global PagePool, RunTable, ManifestTable, History, SlotState, Reservations; boot region carve + census; allocation trap. Promote `RevisionStore` code; split `StoreCore`'s per-slot tables into the global pools. | conservation; invariant R under random admit/append/stop; zero allocation after init |
-| **E2** | Writer | E1 | Record, overdub, NoteOff, wrap, closing ring, Stop, FinalInterval, latch; overlap-resolve, ledger and C1 ported as pure functions; `LanePairer` NoteOff attribution reused | corpus content parity for record/overdub/stop scenarios; H3 fuzz |
-| **E3** | History and edits | E2 | undo/redo selection, redo drop, depth eviction; NOTE_EDIT edit runs and session undo; fixed-size selection in `NoteEditSession` | corpus parity for undo/redo and NOTE_EDIT |
-| **E4** | Workers and scheduler | E1 | seal, index, compose, sweep, compaction, reclaim; scheduler with priorities and deadlines; per-job step bounds | H4 bounds; progress or named outcome for every job |
-| **E5** | Playback | E2, E4 | `WindowRing`, succession, tick consumer, ledger closure; delete the snapshot readers, rolling-view builders, bridges and stagings | emitted-MIDI parity with the corpus; H5 tick-work bound |
-| **E6** | Display | E4 | `TileStore`, sweep, overlay, renderer; delete `visualCache`, display projection, `DisplayBasePreparation`, the coverage worker, tile preparation, `LoopContentResolution` | H6 no-blank tests |
-| **E7** | Persistence | E3 | V1 file import into runs (reuse `RevisionImport` / `LanePairer`); save per § 12.3 decision; history reconstruction (DEC-088) | round-trip; import parity on copies of the device card's files (read-only) |
-| **E8** | Integration and deletion | E5, E6, E7 | wire `TrackManager` / `Track` / `EditManager` / `ClockManager` to engine commands; delete `LoopEventStore`, `LoopPass` lists, `LoopSnapshot`, stop job, `PendingNoteChange`, `EditPasses`, wrap obligation, `CheckedCapacity`, pressure reclaim; **first bootable image** | full native suite (remaining + ported) green; RAM1/RAM2 build gates |
-| **E9** | Device bring-up | E8 | boot, census = budget, owner chain on track 8 slot 4 | — |
-| **E10** | Final qualification | E9 | § 11 gates | all |
+| E0 ⟳ | Semantic oracle and measurements | — | § 10.1 | E0 acceptance |
+| E1 | Engine core and memory map | E0 | global PagePool, RunTable, ManifestTable, History, SlotState, Reservations; region carve, explicit `init()`, census, allocation trap; `StoreCore` per-slot tables split into global pools | conservation; invariant R; poison-init test; zero allocation |
+| E2 ⟳ | Writer | E1 | append, open-note ledger, closures, wrap with closing ring and owed commit, FinalInterval, Stop, latch, occupancy signal, edit writer. **No consequence generation** (moved to E3) | invariant R fuzz; rows per input as in § 6.3 |
+| E3 ⟳ | Compose | E1 | merge, derived occlusion, edit hides and index, DEC-244 order, carry state, checkpoints | reference-model parity on effective content (H1, content part) |
+| E4 | History and edits | E2, E3 | undo/redo, redo drop, depth eviction, NOTE_EDIT selection and session undo | H1 undo/redo and NOTE_EDIT fixtures |
+| E5 ⟳ | Workers and scheduler | E3 | seal, index, compose, sweep, compaction, reclaim, persistence jobs; EDF, shares, slack check; per-job grain bounds | H4; simulated C1–C3 with injected U and B terms |
+| E6 ⟳ | Playback and output | E2, E5 | WindowRing, succession, tick with E_tick, ledger, occupancy mask, port FIFOs | H1 emitted-stream fixtures; H5 |
+| E7 ⟳ | Display | E5 | TileStore, sweep with checkpoints, overlay, banded draw | H6 |
+| E8 ⟳ | Persistence | E4 | V1 import, save per § 12.3, history reconstruction; non-blocking SD path if E0's latency breaks C3 | round trip; import parity on copies of the card's files |
+| E9 | Integration and deletion | E6, E7, E8 | wire `TrackManager` / `Track` / `EditManager` / `ClockManager`; delete the legacy owners (§ 12.1); **first bootable image** | full native suite; RAM1/RAM2 gates |
+| E10 | Device bring-up and qualification | E9 | § 11 device gates | — |
 
-E1 → E2 → E3 and E1 → E4 are independent chains, so E4 can be built alongside E2/E3. The tests that verify deleted
-mechanisms go with their component in the same commit, after E0 has captured their musical assertions.
+Tests that verify deleted mechanisms are removed with their component in the same commit, after E0 has captured the
+musical clauses they protected.
 
 ---
 
@@ -642,25 +905,26 @@ mechanisms go with their component in the same commit, after E0 has captured the
 
 | Gate | Pass condition |
 |---|---|
-| H1 Semantics | 100 % of the E0 corpus: effective content per revision, emitted MIDI stream, undo/redo, closures |
-| H2 No allocation | `operator new`, `malloc` and the PSRAM allocator trap after boot init across the whole corpus and fuzz: 0 calls |
-| H3 Reservation | fuzz random accepted inputs and gestures at pool fill 0–100 %: invariant R at every step; every accepted NoteOn gets its NoteOff; every Stop completes in ≤ 708 grains; no failure after acceptance |
-| H4 Workers | every grain within its declared rows/steps; every job completes or ends named within its bound |
-| H5 Clock | instrumented tick touches only due rows; 0 engine or page calls from the tick |
-| H6 Display | zero-budget sweep, exhausted pool, focus switch, undo: every visible non-empty bar drawn from a span or density tile on every frame |
-| H7 Budget | `static_assert` per region; a fixture filled to every W limit runs the corpus |
+| H1 Semantics | 100 % of reviewed E0 fixtures pass: effective content per revision, emitted stream, undo/redo, closures; every historical-incorrect entry behaves as its fixture says, not as legacy did |
+| H2 No allocation | allocation trap after `init()` across all fixtures and fuzz: 0 calls |
+| H2b Initialization | RAM2 / EXTMEM poisoned before `init()`: H1 still passes |
+| H3 Reservation | random accepted inputs and gestures at content fill 0–100 %: invariant R at every step; every accepted note's effective content equals the reference model (**no accepted note shortened, closed or dropped by storage**); every Stop completes inside acceptance + ≤ 1 grain (edit ≤ 19) |
+| H4 Workers | every grain within its declared size; every job completes or ends named within its declared grains |
+| H5 Clock | the tick touches ≤ E_tick rows per track and no engine or page function |
+| H6 Display | zero sweep budget, exhausted pool, focus switch, undo: every visible non-empty bar is drawn from a span or density tile on every frame |
+| H7 Budget | `static_assert` per region; a fixture at every W limit simultaneously runs the corpus |
 | H8 Suite | full native suite green |
 
 ### Device (track 8 slot 4, authoritative HITL entry points)
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 206,509 B; PSRAM census = § 4.1 per region |
-| D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's existing slots import and play; no file written before the owner's save decision |
-| D3 Owner chain | HITL parity with the corpus |
-| D4 Intense | lane-cadence intense at 300 BPM to W: 0 `MEM_*` refusal rows, PSRAM flat after boot, Stop complete within bound, piano roll 0 `win=0` beats and 0 blank frames, `tick_playback_miss` = 0, MIDI gaps ≤ the qualified baseline; grain time and turn period inside § 7.3 |
-| D5 Saturation | drive past W: named capacity outcome, all accepted content kept, Stop completes |
-| D6 Restore | reboot-restore parity; undo/redo on device |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 225,581 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
+| D3 Owner chain | parity with reviewed fixtures for the same stimulus |
+| D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |
+| D5 Saturation | drive past W: only new input refused, by name; every accepted note intact; Stop completes |
+| D6 Restore | reboot-restore parity; undo/redo on device; DEC-159 trace (A stop → B → C → late A completion) on device |
 
 ---
 
@@ -668,89 +932,98 @@ mechanisms go with their component in the same commit, after E0 has captured the
 
 ### 12.1 Reuse vs delete
 
-**Reused (moved into the engine or kept as is):**
-- `RevisionStore`: `PassEvent`, `PagePool`, run append with sorted segments, seal, composition merge, edit index,
-  compaction, `ManifestWindowCursor`, `RevisionImport`, `LanePairer`.
-- `ActiveNoteLedger`, `ClockManager`, `MidiHandler`.
-- `DisplayManager` drawing and DMA transport; `DisplayWindowUtils` geometry.
-- `EditManager` geometry and `NoteEditFocus` (their vectors become fixed selections in E3).
-- `StorageManager` queueing, budgets and SD I/O.
-- `NoteUtils` order comparators.
-- HITL, `#CAP` telemetry, the profiler.
+**Reused:**
+- `RevisionStore`: `PassEvent`, `PagePool`, append with sorted segments, seal, merge, edit index, compaction,
+  `ManifestWindowCursor`, `RevisionImport`, `LanePairer`.
+- `ActiveNoteLedger`, `ClockManager`, `MidiHandler` (ingress), `DisplayManager` drawing and DMA,
+  `DisplayWindowUtils` geometry.
+- The overlap classifier rules (`classifyEditSessionInteraction`, `resolveConstrainedGeometry`,
+  `computeShortenedEndTick`) re-expressed as pure span functions inside `Compose`.
+- `EditManager` / `NoteEditFocus` geometry, with fixed selections.
+- `StorageManager` queueing and SD I/O; `NoteUtils` comparators; HITL, `#CAP` telemetry, the profiler.
 
 **Deleted:**
-- `LoopEventStore` and `LoopPass` chunk-id lists.
-- `CaptureAdmissionStaging`, `RuntimePlaybackViewSet` views, bridges and bridge bases.
-- `LoopSnapshot`, its slabs and publication; the merged fallback; overlay and frozen Record readers.
-- `PendingNoteChange`, `EditPasses`, session id vectors.
-- The stop job's canonical and companion phases (`TrackPreparedStopCommit` phases, `RuntimeCompanion*`,
-  `RuntimeCanonicalPassInputs`).
-- `LoopWrapObligation` and the C2 flip journal (DEC-250 mechanism); `CheckedCapacity` and DEC-251's checked growths.
+- `LoopEventStore`, `LoopPass` chunk lists.
+- `CaptureAdmissionStaging`, the `RuntimePlaybackViewSet` views, bridges and bridge bases.
+- `LoopSnapshot` and its publication; the merged fallback; overlay and frozen Record readers.
+- `PendingNoteChange`, `EditPasses` and the session id vectors.
+- The stop job's canonical and companion phases (`RuntimeCompanion*`, `RuntimeCanonicalPassInputs`).
+- `LoopWrapObligation` and the C2 journal; `CheckedCapacity`.
 - `MemoryMonitor` pressure and reclaim (reporting kept).
-- `visualCache`, display projection, `DisplayBasePreparation`, coverage worker, `stepTilePreparation`,
+- `visualCache`, display projection, `DisplayBasePreparation`, the coverage worker, `stepTilePreparation`,
   `LoopContentResolution`.
-- `RevisionShadow`, the probe routes and `RollingSuccessorProbe`.
-- `ExternalMemoryFirstAllocator` / `InternalHeapFirstAllocator` on content paths.
-- `Loop` shrinks to a slot facade over `SlotState` or goes entirely.
+- `RevisionShadow`, the probe routes, `RollingSuccessorProbe`.
+- Content-path allocator adapters.
+- `Loop` becomes a slot facade or goes.
 
 ### 12.2 DEC disposition
 
-- **Musical — kept, each with E0 corpus scenarios:**
+**Musical clauses, kept and covered by E0 fixtures:**
 
-  | DEC | Short name |
-  |---|---|
-  | DEC-030 | sticky overlap end of participation |
-  | DEC-031 | overlap pending buffer encoded to the edit pass |
-  | DEC-033 | overlap ignores per-note channel |
-  | DEC-034 | overlap shorten seals at the user commit |
-  | DEC-038 | wrap commit and session undo |
-  | DEC-051 | wrap seals at loop end |
-  | DEC-068 | a session belongs to one interval |
-  | DEC-069 | wrap is a revision transition |
-  | DEC-078 | every interaction accepted |
-  | DEC-088 | undo from saved passes on load |
-  | DEC-095 | one undo entry per interval |
-  | DEC-096 | gestures during pending finalization select |
-  | DEC-136–138, DEC-144 | held-leg Stop terminals |
-  | DEC-148 | closure by served position |
-  | DEC-233 | Stop closes input independently |
-  | DEC-244 | equal-tick order |
-  | DEC-245 | lossless source |
-  | DEC-108 | window admission limit `L` |
-  | DEC-241 | consume-only tick |
-  | DEC-250 | the semantic rules only: late companions to P, cut rule, C1 owed pitches |
+| DEC | Short name |
+|---|---|
+| DEC-030 / 031 / 033 / 034 | NOTE_EDIT and overdub overlap rules |
+| DEC-038 | wrap commit and session undo |
+| DEC-051 | wrap seals at loop end |
+| DEC-068 | a session belongs to one interval |
+| DEC-069 | wrap is a revision transition |
+| DEC-078 | every interaction accepted |
+| DEC-088 | undo from saved passes |
+| DEC-095 | one undo entry per interval |
+| DEC-096 | gestures during pending finalization select |
+| DEC-108 | window admission limit |
+| DEC-136–138 / 144 | held-leg Stop terminals |
+| DEC-148 | closure by served position |
+| DEC-159 | immediate Record → Overdub handoff |
+| DEC-160 | predecessor finalization local to its interval |
+| DEC-233 | Stop closes input independently |
+| DEC-241 | consume-only tick |
+| DEC-244 | equal-tick order |
+| DEC-245 | lossless source |
+| DEC-250 | semantic rules only: late companions to P, cut rule, C1 intent |
 
-- **Mechanism — superseded by the cutover, recorded as such in the new DEC:**
+**Mechanisms, superseded by the cutover:**
 
-  | DEC | Short name |
-  |---|---|
-  | DEC-047 | bounded wrap publication |
-  | DEC-049 | stop accelerates publication |
-  | DEC-055 / DEC-056 | NOTE_EDIT overlay on snapshot |
-  | DEC-058 | runtime-owned views |
-  | DEC-063 | protected stop undo publication |
-  | DEC-066 | stop working-set capacity |
-  | DEC-070 / DEC-071 | stop retarget, stale-root view |
-  | DEC-073 | snapshot coverage |
-  | DEC-076 | role-owned working sets |
-  | DEC-102 / DEC-106 | switch occupancy owner |
-  | DEC-161 / DEC-164 / DEC-166–168 / DEC-172 / DEC-173 / DEC-176 | stop-job variants |
-  | DEC-243 | boot view reservation |
-  | DEC-246 | the probe routing part only |
-  | DEC-250 | the obligation queue and cut |
-  | DEC-251 | checked growths |
+| DEC | Short name |
+|---|---|
+| DEC-047 | bounded wrap publication |
+| DEC-049 | stop accelerates publication |
+| DEC-055 / 056 | NOTE_EDIT overlay on snapshot |
+| DEC-058 | runtime-owned views |
+| DEC-063 | protected stop undo publication |
+| DEC-066 | stop working-set capacity |
+| DEC-070 / 071 | stop retarget, stale-root view |
+| DEC-073 | snapshot coverage |
+| DEC-076 | role-owned working sets |
+| DEC-102 / 106 | switch occupancy owner (their musical switch timing goes to E0) |
+| DEC-161 / 164 / 166–168 / 172 / 173 / 176 | stop-job variants |
+| DEC-243 | boot view reservation |
+| DEC-246 | probe routing |
+| DEC-250 | obligation queue and cut |
+| DEC-251 | checked growths |
 
-- E0 completes this classification for all 253 entries. A DEC that mixes both kinds keeps its musical clause.
+E0 completes the classification of all 253 entries.
 
-### 12.3 Owner decisions before E1
+### 12.3 Owner decisions
 
-1. **Supported workload W** (§ 2), in particular 8 concurrent writers, 64-bar loops, 300 BPM, 512 live runs, 60 runs
-   per manifest, 4,096 hidden notes per manifest.
-2. **Capacity latch:** after a refused NoteOn, keep the pass open for NoteOffs only, or end it at the next wrap.
-3. **Undo history under pool pressure:** keep 99 and refuse new writers (default), or age history out (named).
-4. **Save format:** write a new run/manifest format (older firmware can no longer read saved slots; V1 import stays for
-   the card's existing files), or keep writing V1 from runs. Either way the first device boots import read-only until
-   you approve saving.
-5. **Dense bars:** draw the raster in a dense style beyond 256 notes per bar, or another rendering.
-6. **Record:** a new `DEC-###` "one bounded content engine" superseding the mechanism DECs, and a new OpenSpec change
-   for the cutover (`revision-manifest-prototype` closes as its investigation).
+Before E1:
+1. **W** (§ 2), including:
+   - 3,072-row windows with 2,816 source rows admitted per window;
+   - 8-bar checkpoints of 64 entries;
+   - ≤ 500 edit runs with hides (§ 5.1);
+   - history depth ≤ 99 (a deeper history needs a larger ManifestTable);
+   - 8 writers + 1 NOTE_EDIT session jointly.
+2. **Capacity latch:** after the first refused new NoteOn, keep the pass open (accepted notes still close normally), or
+   end it at the next wrap. Accepted content is unaffected either way.
+3. **Undo history under pressure:** keep 99 and refuse new input (default), or age history out, named.
+4. **Save format:** new run/manifest format (older firmware can no longer read saved slots; V1 import stays) or keep
+   writing V1. The first device boots import read-only until you approve saving.
+5. **Dense bars** beyond 256 notes: raster style.
+6. **Output overload:** send late (default) or drop NoteOns later than a threshold; NoteOffs never dropped.
+7. **Cold-start audibility:** undo / redo / switch become audible at the first boundary after their window is ready
+   (≤ 105 grains with a checkpoint, ≤ 721 worst). Accept, or name a tighter musical bound for E0 fixtures.
+8. **Record-keeping:** a new `DEC-###` "one bounded content engine" superseding the mechanism DECs, and a new OpenSpec
+   change for the cutover.
+
+Decision 9, controller closures (which controllers, if any, get closure rows at Stop, for example sustain off), is
+settled by E0 from the register, not assumed.

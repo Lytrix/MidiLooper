@@ -1,3 +1,17 @@
+**2026-11-04 — Fixed-memory engine plan revision 3 (owner review of revision 2).** Revision 2 approved as direction;
+E1 held for corrections. [Revision 3](../Plans/2026-11-04-fixed-memory-convergence.md):
+- overlap consequences are derived at composition from the later note's span, so an accepted note costs a fixed,
+  fully reserved row count and is never altered by storage exhaustion;
+- realtime envelope as measured-term feasibility conditions C1–C3 (no assumed loop-turn interval), EDF with display
+  and persistence shares, display freshness bound, per-tick and per-port output bounds, storage density vs MIDI
+  bandwidth;
+- DEC-159 handoff: the Record manifest exists at Stop acceptance and the overdub pins it;
+- joint-workload budget (PSRAM engine 6,524,160 B, non-content allowance 804,092 B capture build, RAM2 statics
+  225,581 B, explicit `init()` because RAM2/EXTMEM are not zeroed at reset);
+- E0 oracle from ratified contracts and an independent reference model, legacy as a classified cross-check only.
+
+E0 may proceed; E1 waits for owner authorization.
+
 **2026-11-04 — Architecture direction change: C3.4 / DEC-251 containment paused; fixed-memory convergence packet written.**
 - **Device (DEC-251 image `3b95b40e…`, fresh boot `boot_reset,crash=0`, `BOOT,load,ok`, `captures/session_20261104_190805.log`):**
   intense lane-cadence on track 8 slot 4 ran 385 s with no abort; MIDI and Clock kept running (`late_clk` 0). Not
