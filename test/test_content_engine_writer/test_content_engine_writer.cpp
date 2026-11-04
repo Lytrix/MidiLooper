@@ -147,22 +147,29 @@ void test_wrap_without_held_note_seals_immediately() {
   TEST_ASSERT_EQUAL_UINT16(first, sealed);
 }
 
-// Two closing runs already: the next wrap's commit is owed; the active run continues (DEC-069 owed commit).
-void test_third_held_wrap_owes_the_commit() {
+// A run never spans more than one cycle: with notes held across three wraps the writer has three closing runs, each
+// receiving only its own NoteOff and sealing when it arrives.
+void test_each_wrap_starts_a_new_run_even_with_held_notes() {
   gW.begin(0, 1);
   gW.noteOn(1, 1, 60, 100);
+  const RunId first = gW.activeRun();
   gW.wrap();
   gW.noteOn(2, 1, 61, 100);
+  const RunId second = gW.activeRun();
   gW.wrap();
   gW.noteOn(3, 1, 62, 100);
-  const RunId active = gW.activeRun();
-  TEST_ASSERT_EQUAL(WriterResult::CommitOwed, gW.wrap());
-  TEST_ASSERT_EQUAL_UINT16(active, gW.activeRun());
+  const RunId third = gW.activeRun();
+  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap());
+  TEST_ASSERT_TRUE(gW.activeRun() != third);
+  TEST_ASSERT_EQUAL_UINT8(3, gW.closingCount());
+  gW.noteOff(10, 1, 61, 0);  // the middle closing run seals first
+  TEST_ASSERT_EQUAL(RunState::Sealed, gRuns.run(second).state);
+  TEST_ASSERT_EQUAL(RunState::Writing, gRuns.run(first).state);
   TEST_ASSERT_EQUAL_UINT8(2, gW.closingCount());
-  gW.noteOff(10, 1, 60, 0);  // the oldest closing run seals
-  TEST_ASSERT_EQUAL_UINT8(1, gW.closingCount());
-  TEST_ASSERT_EQUAL(WriterResult::Ok, gW.wrap());  // now the wrap can hand over
-  TEST_ASSERT_EQUAL_UINT8(2, gW.closingCount());
+  gW.noteOff(11, 1, 60, 0);
+  gW.noteOff(12, 1, 62, 0);
+  TEST_ASSERT_EQUAL_UINT8(0, gW.closingCount());
+  TEST_ASSERT_EQUAL(RunState::Sealed, gRuns.run(third).state);
 }
 
 // Stop writes a generated closure (flagged) for every open note into the run that owes it, then seals everything.
@@ -246,9 +253,9 @@ void test_writer_random_input_fuzz() {
         } else {
           TEST_ASSERT_EQUAL(WriterResult::Unmatched, r);
         }
-      } else if (op < 90) {
+      } else if (op < 96) {
         if (gW.channelEvent(step, 0xB0, 1, 2) != WriterResult::Ok) ++refusals;
-      } else if (op < 99) {
+      } else if (op < 99) {  // wraps: each takes a run descriptor now (one run per cycle)
         const WriterResult r = gW.wrap(step);
         if (r == WriterResult::Stopped) writing = false;
       } else {
@@ -291,7 +298,7 @@ int main(int, char**) {
   RUN_TEST(test_exhaustion_refuses_new_input_but_closes_every_held_note);
   RUN_TEST(test_wrap_hands_held_note_to_closing_run);
   RUN_TEST(test_wrap_without_held_note_seals_immediately);
-  RUN_TEST(test_third_held_wrap_owes_the_commit);
+  RUN_TEST(test_each_wrap_starts_a_new_run_even_with_held_notes);
   RUN_TEST(test_stop_closes_open_notes_in_their_own_runs_and_seals);
   RUN_TEST(test_final_interval_when_descriptors_run_out);
   RUN_TEST(test_writer_random_input_fuzz);

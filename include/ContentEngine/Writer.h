@@ -7,10 +7,12 @@
 //   note: open-note cap (128), or capacity.
 // * NoteOff: pairs with the most recent open NoteOn on its (channel, pitch) lane (PAIR-1, LIFO) and is written into the
 //   run that owes it. Never refused while the note is open: its row is reserved.
-// * Wrap: the active run commits. With no open notes it seals at once; with open notes it becomes a closing run that
-//   accepts only its own NoteOffs and seals when the last one arrives (DEC-250 late companions belong to the
-//   originating record). With two closing runs already, the commit is owed and the active run continues (DEC-069).
-//   No descriptor for the next run: FinalInterval; the following wrap ends the take.
+// * Wrap: the active run commits and a new run starts, always: a run never spans more than one loop cycle (E3 slice 3).
+//   With no open notes the old run seals at once; with open notes it becomes a closing run that accepts only its own
+//   NoteOffs and seals when the last one arrives (DEC-250 late companions belong to the originating record). Several
+//   runs may be closing at once (each holds at least one open note, so at most 128); revision order is the manifest's
+//   concern (DEC-069 owed commit), not the storage layout's. No descriptor for the next run: FinalInterval; the
+//   following wrap ends the take.
 // * Stop: a generated closure (flagged in `origin`) for every open note, into its own run, then every run seals.
 //   Nothing it needs can be refused.
 // Overlap consequences are not written here (CE-E, derived at composition). No allocation; `init()` writes every field.
@@ -44,7 +46,6 @@ enum class WriterResult : uint8_t {
   DeniedOpenNotes,  // 128 notes already open
   DeniedCapacity,   // the row and what it owes do not fit
   Unmatched,        // NoteOff with no open note on its lane: nothing written
-  CommitOwed,       // wrap with two closing runs: the active run continues
   FinalInterval,    // wrap without a descriptor for the next run: the next wrap ends the take
   Stopped,          // the wrap ended a FinalInterval take
 };
@@ -54,8 +55,9 @@ class Writer {
  public:
   using Reservations = RowReservations<Pool, Runs>;
   static constexpr uint16_t kMaxOpen = Config::kMaxOpenNotesPerWriter;
-  static constexpr uint8_t kMaxClosing = 2;
-  static constexpr uint8_t kSealedQueue = 8;
+  static constexpr uint8_t kMaxClosing = Config::kMaxOpenNotesPerWriter;  // each closing run owes >= 1 NoteOff
+  // Stop may seal every closing run and the active run at once.
+  static constexpr uint8_t kSealedQueue = kMaxClosing + 2;
 
   void init(Pool& pool, Runs& runs, Reservations& res, NoteIdSource& ids) {
     pool_ = &pool;
@@ -133,7 +135,6 @@ class Writer {
       return WriterResult::Stopped;
     }
     const bool holds = res_->outstanding(active_) > 0;
-    if (holds && closingCount_ >= kMaxClosing) return WriterResult::CommitOwed;
     const RunId next = runs_->allocate(slot_, kind_);
     if (next == kNoRun) {
       finalInterval_ = true;
