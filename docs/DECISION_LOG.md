@@ -14555,3 +14555,83 @@ Design and proofs: `docs/Plans/2026-11-04-wrap-deadline-off-clock.md` (revision 
   - The run aborted at 201.7 s on PSRAM exhaustion (`MEM_EXT_REFUSED` 116,480 B in `stepTilePreparation`, 7,846 KB
     live).
 - **Evidence file:** `openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md`.
+
+## DEC-251 — Tile preparation checks its growths at the allocation boundary; a refusal is named, bounded and retried, never fatal
+
+**Date:** 2026-11-04
+**Owner:** `LoopContentResolution::stepTilePreparation` and its three callers: the coverage worker
+(`serviceOverdubCoverageTurn`), the wrap obligation's cut (DEC-250) and `DisplayBasePreparation`.
+`include/Utils/CheckedCapacity.h`. Formal trigger: a fatal path (`ExternalMemoryFirstAllocator` → `abort()`) reached
+from the deferred owner.
+**Status:** Accepted by owner (2026-11-04 PSRAM-exhaustion ruling, conditional approval: non-fatal allocation first,
+then cut retention); implemented; host verified. The device rerun waits for the owner (the ruling's order).
+
+### Problem
+
+The intense gesture aborted the device at 201.6 s (`captures/session_20261104_164023.log`).
+
+- **The failing allocation, statically attributed** (attribution ELF `79e7fde7`):
+  - the call site at `0x60046739` is `extmem_malloc(n × 20)`, then the `malloc` fallback;
+  - the vector written back is at cursor offset `0x2c`, which is `TilePrepCursor::rawEvents`;
+  - `rawEvents` was growing from 2,304 to 4,608 `MidiEvent`s;
+  - the request was 92,160 B in one contiguous block, with the 46,080 B old buffer still alive (138 KB coexisting);
+  - PSRAM was at 7,861 KB live.
+- **The caller is narrowed, not proven.** The cut's tag (17) was not active. That leaves the coverage worker or the
+  display base preparation; both widen tile lookups to the longest note span, about the whole loop here. The new
+  per-lane refusal counters name it on the next device run.
+- **At the same moment the cut retained 185 KB** (tag 17).
+
+### Decision
+
+1. **Checked capacity at the boundary.** Before each growth in `stepTilePreparation`, `CheckedCapacity` probes the exact
+   contiguous block the growth will request, with the old buffer still live, through the allocator's own two pools.
+   The growths are:
+   - the pass layer per grain;
+   - the edit-row copy;
+   - the layer after edits;
+   - `rawEvents`;
+   - `notes`.
+
+   The probe block is returned and the vector reserves that size at once, on the same thread. The checks run before
+   any mutation, so a refusal leaves no event consumed, no edit applied and no cursor moved. A free-byte precheck alone
+   is not relied on.
+2. **The callers' growths are checked the same way:** the coverage worker's tile publication into the span cache, and
+   the cut's assembly.
+3. **Refusal policy (`RefusalBackoff`), per lane:**
+   - The work stays owed and is retried after a doubling wait of 64 to 1,024 turns, never busy.
+   - A request larger than both pools' total capacity is **permanently insufficient**. The lane parks, named, until its
+     source generation changes (worker and display), or until the obligation is cancelled (cut). That is the overload
+     policy left to the owner.
+4. **Cut retention:**
+   - The assembled cut swaps in the prepared notes, with no copy.
+   - The layer, the raw events and the membership are released after their last consumer.
+   - A retired or cancelled slot releases its cut buffers instead of keeping their capacity.
+   - The pitch filter is applied per grain.
+
+### Evidence
+
+- **Host:** `wrap_deadline_reds.inc`.
+  - RED at the baseline: the fatal branch was reached 394 times.
+  - GREEN now:
+    - the abort point is never reached;
+    - 12 probe refusals over 2,000 lane turns (bounded);
+    - MIDI input is served under refusal;
+    - after reclaim, the result equals the unpressured run;
+    - the permanent case: 1 refusal over 4,000 turns, the obligation still owed.
+- **Cut memory, measured by buffer** (host sizes, dense five-lap backlog, every pitch owed): the preparation peak went
+  from 305 KB to 253 KB, with the assembled cut no longer coexisting with the cursor.
+  - The answering phase went from 167 KB to 149 KB: the cut notes plus the interval's own pending set.
+  - Retired slots keep 0 B of cut buffers.
+- **Native full:** 4,030 cases, 0 failed.
+- **RAM1 / ITCM:** unchanged. A function-local static was moved to RAM2; it had cost 32 B.
+- **`sizeof(Loop)`:** 2,296 → 2,304 B (external pool).
+
+### Capacity (not containment)
+
+- On the intense gesture PSRAM grows at about **4.8 KB/s** during the overdub (7,231 → 7,861 KB over 70–201 s). That is
+  about 120 KB per 25.6 s lap of 512 notes, or **about 240 B per accepted overdub note**, including the session's
+  passes, pending rows and caches.
+- At that rate the external pool (about 7.9 MB usable) holds roughly **2,600 more notes** past the 70 s mark: about
+  **5 laps**, or 130 s of this gesture.
+- Containment makes the overflow non-fatal: preparation work parks, named. It does not make the content fit. What
+  happens once accepted events cannot be stored is an owner decision; nothing is discarded silently.

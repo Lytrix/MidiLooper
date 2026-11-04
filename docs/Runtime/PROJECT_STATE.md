@@ -1,3 +1,16 @@
+**2026-11-04 — DEC-251: tile preparation can no longer abort the device.**
+- **Attribution:** the 201.6 s abort was a `TilePrepCursor::rawEvents` growth: 92,160 B in one block, the 46 KB old
+  buffer coexisting, at 7.86 MB PSRAM. The caller is the coverage worker or the display base preparation, not the cut.
+- **Fix:**
+  - Checked capacity at the allocation boundary in `stepTilePreparation` and its callers: a refusal is named, moves
+    nothing and retries after a bounded wait. A permanently insufficient request parks.
+  - The cut's retention: peak 305 → 253 KB, answering 167 → 149 KB, retired slots keep 0 B.
+- **Host:** RED → GREEN (394 → 0 fatal-branch hits); native full 4,030 / 0; RAM1 and ITCM unchanged.
+- **Capacity:** about 240 B per accepted overdub note, about 2,600 notes of headroom on the intense gesture. The overload
+  policy is the owner's.
+- **Device:** qualified image `3772f91c` restored and boot-verified. The intense rerun waits for the owner.
+- [DEC-251](../DECISION_LOG.md)
+
 **2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.**
 - **Cause:** the intense-gesture wedge was one overdub wrap answering 518 owed completions with whole-loop derives on
   the Clock: 123.46 s, 0 allocation failures. The forced answers were also wrong (a long source note re-shortened by

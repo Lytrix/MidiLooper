@@ -1138,3 +1138,20 @@ No storage or overdub semantics are changed.
 - Transient derive buffers ride 160–280 KB above live. The run now lives long enough to reach the ceiling, and the
   allocator aborts. The log does not attribute the refusing caller to the obligation cut or to the live coverage worker
   (both run `stepTilePreparation`). This is the memory-pressure scope, not C3.4.
+
+## DEC-251: non-fatal tile-preparation allocation (2026-11-04)
+
+- **Attribution** (`session_20261104_164023`, ELF `79e7fde7`):
+  - The refused request was a `TilePrepCursor::rawEvents` growth, 2,304 → 4,608 `MidiEvent`s: 92,160 B in one block,
+    with the 46,080 B old buffer coexisting, at 7,861 KB PSRAM live.
+  - The cut's tag (17) was not active, so the caller is the coverage worker or the display base preparation.
+  - The cut retained 185 KB at that moment.
+- **Host:**
+  - The allocation-refusal RED reached the fatal branch 394 times. GREEN: 0 aborts, 12 refusals in 2,000 turns, MIDI
+    served, parity after reclaim.
+  - The permanent case parks and keeps the obligation owed.
+  - Cut peak 305 → 253 KB; answering 167 → 149 KB.
+- **Capacity:** about 4.8 KB/s of PSRAM growth during the intense overdub, about 240 B per accepted note, about 2,600
+  notes of headroom past 70 s. That is the capacity report, separate from containment.
+- **Device:** the qualified image `3772f91c` is restored and boot-verified (`session_20261104_164814`). The intense rerun
+  waits for the owner.
