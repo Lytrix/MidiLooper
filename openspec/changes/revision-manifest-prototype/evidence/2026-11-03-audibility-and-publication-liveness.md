@@ -281,3 +281,56 @@ No Ready retirement, no timeout, no fallback, no DEC-147 change.
    `ServingViewSourceStale`. It is the E2 route's frame, not a stale committed one.
 
 The 8 s completion-placement delay stays separate.
+
+### DEC-136 next-boundary repair: blocked by DEC-147's lead floor (owner ruling 2026-11-04, approved narrow repair)
+
+**REDs** (`test_revision_manifest_lane`, gated `RECORD_RETURN_RED`, failing on unchanged production code):
+
+| case | result today |
+|---|---|
+| `test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once` | "the root handoff waited for a later traversal" |
+| `test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation` | "traversal 1: the take's bar-2 note was not played" |
+
+- The delayed-root case withholds every lane turn while a root qualification counts, for the first three bars after the
+  stop, using the harness's test-only `gWithholdLaneTurn`. Non-vacuous: `withheld > 0`.
+- Both cases also gate exactly-once root handoff, no Capture view after the root, and every NoteOn closed by exactly
+  one NoteOff.
+
+**What the trial implementation showed (host; reverted, not committed):**
+1. Retargeting worked. Root requests named the boundary after the frozen `ready`: requested at 3276 for 1536 while the
+   frozen 768 ready held the role, then qualified and awaiting admission at 3278.
+2. At the frozen handoff (3841, the first instant the single successor role is free) admission refused it:
+   `start=1536 deadline=4608 lead=767 price=4 leadTooShort=1 privateRoot=1`.
+   - `CoverageServiceContract::canCompleteWithinLead` requires `available >= leadTicks + turns x advance`, with
+     `leadTicks = TICKS_PER_BAR` (768).
+   - Admitted at the handoff into bar B, the next unconsumed boundary B+1 is at most 768 ticks away. So **every**
+     next-boundary root window is refused, whatever its grains.
+   - The DEC-136 waiver (`ordinaryAdmissionCannotServeDemand`) applies only when no lead in the whole loop could serve
+     it, so it does not apply.
+3. The current code works only because the interval-containing-the-playhead target puts the deadline a traversal
+   away. That same choice is what parks the root in `ready`.
+4. A second, independent defect, needed for outcome 2: the Record-return branch discards any active build whose source
+   is not the committed root (`SourceSuperseded`). That discards the frozen reader's own continuation build every turn.
+   Frozen continuation also needs that discard to exempt the job's own frozen build.
+
+**Conflict.** The approved target ("next unconsumed handoff boundary") cannot satisfy outcome 1 with:
+- DEC-147 admission unchanged;
+- one-bar frozen windows;
+- the single `ready` role (admission waits for it).
+
+Without outcome 1 the root never takes over, and the Record-return job never releases.
+
+**Options for the owner** (preferred first):
+- **(a) Park the root beside the frozen ready.** Admit the root-return successor into the free third view *while* the
+  frozen Capture `ready` holds the next boundary, targeting the boundary after it (lead ≥ one span). Keep it complete
+  and unpublished in `build`, and publish it at the frozen handoff without a rebuild. This is the three-view parking
+  shape slice 2 proved, applied as its own narrow Record-return exception, not the two-span requester. DEC-147
+  unchanged.
+  - Late (incomplete at the frozen handoff): its build is retired through the existing transitions, and the frozen
+    reader prepares the next bar (outcome 2).
+- **(b) Waive the DEC-147 lead for the root-return successor at the next boundary.** Simpler, but a DEC-147 change.
+- **(c) Keep the traversal-later target,** but hold the root candidate outside `ready` until its boundary. That needs
+  a role for a parked committed window for a whole traversal; it is a lifecycle change.
+
+The `ServingViewSourceStale` correction (authorized frozen predecessor) is independent and was not started. It touches
+the clock-path resolver, and the ruling sequences it with this repair.

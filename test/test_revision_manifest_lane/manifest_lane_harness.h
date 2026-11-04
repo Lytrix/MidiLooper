@@ -135,6 +135,10 @@ void uninstallReader() {
   CommittedManifestLane::gWindowSource = nullptr;
 }
 
+/// Test-only arbitration: while it answers true for a tick, the chosen holder's turn serves no one (the device lane's
+/// withheld grant, applied by the fixture's own predicate instead of a fixed rate).
+std::function<bool(uint32_t)> gWithholdLaneTurn;
+
 // The production deferred-owner offer/select/step shape (`main.cpp`'s window lane), as the rolling Record fixtures use.
 struct RollingOwnerLane {
   MidiServiceDrain::PlaybackHolderCursor cursor{};
@@ -150,7 +154,7 @@ struct RollingOwnerLane {
       offers[i] = trackManager.getTrack(i).playbackWindowServiceOffer(tick, clock);
     uint8_t chosen = MidiServiceDrain::kNoPlaybackHolder;
     const auto selection = MidiServiceDrain::selectPlaybackHolderRoundRobin(cursor, offers, Config::NUM_TRACKS, chosen);
-    if (selection == MidiServiceDrain::PlaybackHolderSelection::Service)
+    if (selection == MidiServiceDrain::PlaybackHolderSelection::Service && !(gWithholdLaneTurn && gWithholdLaneTurn(tick)))
       (void)trackManager.getTrack(chosen).stepPlaybackViewMaintenance(tick, nullptr, true, clock);
   }
 };

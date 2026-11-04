@@ -12,6 +12,7 @@
 #include <cstdlib>
 
 extern "C" void setUp() {
+  gWithholdLaneTurn = {};
   sharedCaptureFinalizationSuiteSetUp();
   uninstallReader();
 }
@@ -765,6 +766,101 @@ void test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice() {
   }
 }
 
+/// The Record-return handoff witness: every change of the served view's origin, and the take's notes paired.
+struct RootHandoffWitness {
+  uint32_t rootHandoffs = 0;        // `current` went from a Capture (frozen Record-return) view to a Committed one
+  uint32_t captureAfterRoot = 0;    // a Capture view served again after the root took over
+  uint32_t firstRootTick = 0;
+  int lastOrigin = -1;
+};
+
+void observeRootHandoff(LoopPlaybackRuntime& runtime, uint32_t tick, RootHandoffWitness& w) {
+  const auto* set = runtime.viewSetIfPrewarmed();
+  if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+  const auto& cur = set->views[set->lifecycle.current];
+  if (!cur.complete || !cur.published) return;
+  const int origin = static_cast<int>(cur.source.origin);
+  if (w.lastOrigin == static_cast<int>(PlaybackWindowOrigin::Capture) &&
+      origin == static_cast<int>(PlaybackWindowOrigin::Committed)) {
+    if (w.rootHandoffs++ == 0) w.firstRootTick = tick;
+  }
+  if (w.rootHandoffs != 0 && origin == static_cast<int>(PlaybackWindowOrigin::Capture)) ++w.captureAfterRoot;
+  w.lastOrigin = origin;
+}
+
+/// Traversals [from, to): every take note plays exactly once, and every NoteOn of a pitch is closed by exactly one
+/// NoteOff before that pitch sounds again (no duplicate, missing or orphaned NoteOn/NoteOff).
+void assertTakeNotesPairedExactlyOnce(const PlaybackObservation& obs, uint32_t from, uint32_t to) {
+  assertEveryTakeNotePlayed(obs, from, to);
+  for (uint32_t pass = from; pass < to; ++pass) {
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+  std::map<uint8_t, int> open;
+  for (const auto& [tick, e] : obs.sent) {
+    if (tick < from * kLength || tick >= to * kLength) continue;
+    const uint8_t pitch = e.data.noteData.note;
+    if (e.isNoteOn()) {
+      TEST_ASSERT_EQUAL_INT_MESSAGE(0, open[pitch], "a NoteOn sounded over an unclosed NoteOn");
+      open[pitch] = 1;
+    } else if (e.isNoteOff() && open.count(pitch) != 0) {
+      TEST_ASSERT_EQUAL_INT_MESSAGE(1, open[pitch], "a NoteOff without its NoteOn");
+      open[pitch] = 0;
+    }
+  }
+}
+
+// DEC-136 Record-return ruling (2026-11-04), outcome 1: the root candidate qualifies before the frozen reader's next
+// unconsumed handoff boundary and replaces the frozen reader **exactly once**; the Record-only stop stays audible across
+// every traversal, with no duplicate or missing NoteOn/NoteOff.
+void test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness w;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, w);
+  });
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, w.rootHandoffs, "the root did not replace the frozen reader exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.captureAfterRoot, "a frozen view served again after the root handoff");
+  TEST_ASSERT_TRUE_MESSAGE(w.firstRootTick < 2 * kLength, "the root handoff waited for a later traversal");
+  assertTakeNotesPairedExactlyOnce(obs, 1, 6);
+}
+
+// Outcome 2, deliberately delayed root: every root qualification is withheld (its lane turns serve no one while it
+// counts) for the first three bars after the stop. The root misses those boundaries; the frozen reader keeps preparing
+// and serving at least two further bars without a gap, and once the delay lifts the root replaces it exactly once.
+void test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness w;
+  const uint32_t releaseTick = kLength + 3 * kBar;
+  uint32_t withheld = 0;
+  gWithholdLaneTurn = [&](uint32_t tick) {
+    if (tick >= releaseTick || tick < kLength) return false;
+    const auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    const bool rootCounting = runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Counting;
+    if (rootCounting) ++withheld;
+    return rootCounting;
+  };
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, w);
+  });
+  gWithholdLaneTurn = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, withheld, "no root qualification was delayed: the RED would be vacuous");
+  TEST_ASSERT_TRUE_MESSAGE(w.rootHandoffs == 0 || w.firstRootTick >= releaseTick,
+                           "the root took over while it was still being withheld");
+  assertTakeNotesPairedExactlyOnce(obs, 1, 6);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, w.rootHandoffs, "the root did not replace the frozen reader exactly once");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.captureAfterRoot, "a frozen view served again after the root handoff");
+}
+
 // Two-span requester, essential RED (owner ruling 2026-11-03; controlled eligibility: the probe image's successor
 // knobs, DEC-147 price waived). While N-1 serves and N waits complete in `ready`, N+1 must be prepared in `build`
 // (the depth-2 obligation): at some tick all three stages coexist -- current = the serving window, ready = its
@@ -1014,6 +1110,10 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_two_span_mid_build_successor_survives_the_handoff);
   RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
+  if (getenv("RECORD_RETURN_RED") != nullptr) {
+    RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
+    RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
+  }
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
