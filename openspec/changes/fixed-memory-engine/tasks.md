@@ -26,7 +26,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] B.2a Effective-polyphony analysis: same-pitch exclusivity lemma tested; T not guaranteed (384 constructed).
 - [x] B.2 OUT-POLY ratified: T = 16 (`Config::kMaxSoundingPerTrack`); bound 2,832 ≤ 3,072; RAM2 recalculated.
 - [x] B.3 `TerminalScheduler` (fixed T): live / composed closure, duplicate suppression, late terminals, transition reconcile, live occupy count; 10 tests.
-- [ ] B.4 Window carry list in the engine composer (E3).
+- [x] B.4 Window carry list in the engine composer (E3).
 
 ## E1 — storage core
 
@@ -43,7 +43,23 @@ revision 3 is the baseline; no whole-plan revisions.
 ## E2 — writer
 
 - [x] E2.1 Fixed-page writer: NoteOn reservation, LIFO lane NoteOff into the owing run, closing runs, owed commit, FinalInterval, Stop closures (`test_content_engine_writer` 9, RED → GREEN).
-- [ ] E2.2 Writer fuzz with conservation; live occupancy signal to the track's scheduler; segment bound for owed-commit runs.
+- [x] E2.2a Writer random-input fuzz (100 k steps, R + conservation, NoteOff never refused).
+- [ ] E2.2b Live occupancy signal from writer to scheduler; segment bound for owed-commit runs.
+
+## E3 — composer (slice 1)
+
+- [x] E3.1 `Composer` + `SpanWindow` + `WindowPlayer`: integrated with writer runs and `TerminalScheduler`
+      (`test_content_engine_compose` 4, RED → GREEN).
+  - Scenarios: 384 source notes / 16 sent across windows with cross-window shortening; live held note closed live
+    then its recorded end next cycle; revision switch.
+  - Mutation: disabling shortening fails 2 cases.
+- [ ] E3.2 Wrap-held notes, owed-commit multi-cycle runs, edit hides (index), checkpoints / cold start.
+- [ ] E3.3 Composer NoteOff matching by (noteId, run): add a same-id-across-runs case (mutation not yet caught).
+
+## CE-C1 — output
+
+- [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).
+- [ ] C.2 Owner: CC vs NoteOn share under saturation; multi-port routing per track.
 
 ## Blocked (by ruling)
 

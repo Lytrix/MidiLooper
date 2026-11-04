@@ -12,8 +12,9 @@ whole-plan revisions (owner, 2026-11-04).
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
 | CE-B1 | Span windows (START + carry / TERMINAL entries) with a fixed terminal set of **T = 16** sounding output instances per track (OUT-POLY, owner-ratified end-state constant). `entries(W) ≤ startRows(W) + 16 = 2,816 + 16 = 2,832 ≤ 3,072` (`static_assert` in `EngineConfig.h`; tight in `test_span_window_bound_is_tight`). The 3,072-entry buffer is kept pending E3 qualification. | **Bound settled with OUT-POLY**; the E3 composer and its carry list are not built yet | `test_engine_window_bound` (8), `test_content_engine_terminals` (12) |
-| CE-C1 | Physical output: per-port admission and overload policy. | Open | — |
+| CE-C1 | Physical output: one bounded FIFO per port (`OutputPort<C>`) with **protected NoteOff capacity**. A NoteOn is admitted only if `queued + reserved + 2 ≤ C` and then reserves its NoteOff slot; a NoteOff is queued only against that reservation (never refused, never sent for an unadmitted note); other messages need one unreserved slot or are suppressed by name; strict FIFO (a NoteOff never overtakes its NoteOn); residence ≤ C × message time, measured. | **Settled (host)** for one port per track; the CC-vs-NoteOn share under saturation is an owner question | `test_content_engine_output` (3) |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
+| CE-E0 | **Sounding-instance identity is (noteId, run)**, not noteId alone, and not a window-level stamp. An edit run's replacement row keeps the hidden note's id, so across a revision switch an old instance and the replacement share the id. `runKey` = run descriptor (10 bits) + pass order (6 bits) keeps the instance at 12 B. | **Settled (host)** | `test_instance_identity_includes_run` |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
 | CE-E2 | Live occupancy is a **count per pitch** (u8, 128 per track), not a bit: two held notes on one pitch, for example on two channels, release independently. | **Settled (design)** | — |
 | CE-E3 | Derived occlusion reproduces the ratified overlap rules: same-pitch overlaps, equal tick, wrap-crossing, channel ignored, min-length hide. | In progress (E0 fixtures, draft) | `test_engine_semantic_oracle` |
@@ -139,3 +140,40 @@ other pitches add to sounding content recorded earlier. The bound therefore need
 
 Windows must carry a **carry list** (every instance sounding across the window start, with its end or open) so a
 transition can reconcile. The carry list replaces the TERMINAL-only list at the same bound (≤ T entries).
+
+## E3 composer slice (as built)
+
+`Composer<Pool, Runs>` merges a source's runs (a manifest in pass order, each read to a row limit, so a writer's open
+prefix composes like a sealed run) in DEC-244 order and writes `SpanWindow`s in sequence. Effective content is derived
+on the fly:
+- an earlier-pass NoteOn is hidden by a later pass sounding on its pitch, or by a later pass starting on its pitch
+  within `[on, on + 8]` (OVL-2 equal start, OVL-6 minimum length);
+- a later-pass NoteOn shortens admitted earlier-pass notes on that pitch to one tick before it (OVL-1). A NoteOn on a
+  window's first tick is caught by looking one tick past the previous window's end, so the generated end is never
+  late.
+
+The window carries the admitted set (≤ 16). `WindowPlayer` drives the track's `TerminalScheduler`: on a source change
+it closes uncarried instances; it applies TERMINAL entries; at each tick it sends NoteOffs before STARTs.
+
+Fixed scratch: 128 × 64 source counters, 16 admitted, one cursor per run. Zero heap in the integrated run.
+
+**Named preconditions of this slice:**
+- each run's rows are tick-monotonic within one loop cycle;
+- no wrap-held notes;
+- no owed-commit runs spanning cycles;
+- cold start mid-loop recomposes from the loop start (checkpoints not built).
+
+**Authority split:**
+- The composer simulates OUT-POLY only to bound its TERMINAL entries. The scheduler decides what actually sounds.
+- Live occupancy suppression or a revision switch can make the scheduler sound fewer instances than the composer
+  admitted. That is safe: TERMINAL or carry entries for instances that are not sounding are ignored.
+- A switch to a source that does not admit an instance still sounding closes it at the switch boundary. That
+  instance is cut early at the switch, never left hanging.
+- The composer never consults port admission.
+
+## CE-C1 finding for the owner
+
+Under sustained DIN saturation (5× offered load, 10 s), a NoteOn needs two free slots and a CC one. CCs therefore win
+most of the queue: 8,813 CCs went out against 830 NoteOns, and the 830 NoteOffs all went out. Whether CCs should have
+a share limit, or NoteOns a guaranteed share, is a policy choice. The current port is neutral FIFO with only NoteOff
+protection.
