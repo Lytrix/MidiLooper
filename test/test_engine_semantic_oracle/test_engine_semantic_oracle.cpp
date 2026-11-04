@@ -191,13 +191,11 @@ void test_qovl2_other_channel_shortened_even_with_same_channel_sounding() {
   TEST_ASSERT_EQUAL_UINT8(2, fateOf(eff, 2).note.channel);
 }
 
-// Q-OVL-3 (owner default): a later note starting at tick 0 inside a wrap-held note's head keeps the pre-wrap portion.
-// Legacy `resolveOccupancyAtNoteOn` requires holdPhaseTick > 0 and hides the note (HIB-8).
-void test_qovl3_hold_at_zero_keeps_pre_wrap_portion() {
+// Q-OVL-3 (owner ruling): the ratified occupy rule stands. A later note starting at tick 0 inside a wrap-held note's
+// head hides it (guide lifecycle: head shorten requires holdStart > 0). AMD-1 (keep the pre-wrap portion) is optional.
+void test_qovl3_hold_at_zero_hides_wrap_held_note() {
   const std::vector<Note> n = {{1, 0, 0, 60, 3000, 200}, {2, 1, 0, 60, 0, 100}};
-  const auto eff = effective(n, kLoop);
-  TEST_ASSERT_EQUAL(Fate::Shortened, fateOf(eff, 1).fate);
-  TEST_ASSERT_EQUAL_UINT32(kLoop - 1, fateOf(eff, 1).note.off);
+  TEST_ASSERT_EQUAL(Fate::Hidden, fateOf(effective(n, kLoop), 1).fate);
 }
 
 int main(int, char**) {
@@ -216,6 +214,6 @@ int main(int, char**) {
   RUN_TEST(test_ceb1_effective_row_identity_holds);
   RUN_TEST(test_qovl1_same_pass_overlap_keeps_both_notes);
   RUN_TEST(test_qovl2_other_channel_shortened_even_with_same_channel_sounding);
-  RUN_TEST(test_qovl3_hold_at_zero_keeps_pre_wrap_portion);
+  RUN_TEST(test_qovl3_hold_at_zero_hides_wrap_held_note);
   return UNITY_END();
 }

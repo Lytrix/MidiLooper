@@ -24,9 +24,21 @@ needed).
 
 | Id | Default | Check against ratified clauses and code | Fixture | Status |
 |---|---|---|---|---|
-| Q-OVL-1 | Within one pass, notes keep their NoteId and NoteOn/NoteOff pairing; occlusion is later vs earlier pass only. | Consistent: Record runs no resolver; overdub candidates come from the ledger and source view of earlier passes. | `test_qovl1_…` | draft |
-| Q-OVL-2 | Matching ignores channel (DEC-033); emission and NoteOff attribution keep original channels. | **Contradiction with legacy code:** `collectOverdubNoteOnParticipantIds` filters ledger candidates by channel, and `resolveOccupancyAtNoteOn` skips the channel-free geometric lookup when the ledger set is complete. A same-pitch note on another channel therefore escapes shortening whenever a same-channel note is sounding. DEC-033 and the default both say it is shortened → **HIB-9** (code reading; cross-check run pending). | `test_qovl2_…` | draft |
-| Q-OVL-3 | Linearize wrap-crossing notes; a hold at tick 0 keeps the valid pre-wrap portion; Hide only by equal start or min length. | **Contradiction with legacy code and guide text:** the occupy rule shortens a wrap-held note only for `holdPhaseTick > 0` and otherwise hides it. `computeShortenedEndTick` already maps a hold at 0 to `loopLength − 1`, which matches the default → **HIB-8**. | `test_qovl3_…` | draft |
+| Q-OVL-1 | **Confirmed by owner.** Within one pass, notes keep their NoteId and NoteOn/NoteOff pairing; occlusion is later vs earlier pass only. | Consistent: Record runs no resolver; overdub candidates come from the ledger and source view of earlier passes. | `test_qovl1_…` | draft |
+| Q-OVL-2 | **Confirmed by owner.** Matching ignores channel (DEC-033); emission and NoteOff attribution keep original channels. | **Contradiction with legacy code:** `collectOverdubNoteOnParticipantIds` filters ledger candidates by channel, and `resolveOccupancyAtNoteOn` skips the channel-free geometric lookup when the ledger set is complete. A same-pitch note on another channel therefore escapes shortening whenever a same-channel note is sounding. DEC-033 and the default both say it is shortened → **HIB-9** (code reading; cross-check run pending). | `test_qovl2_…` | draft |
+| Q-OVL-3 | **Owner ruling: the ratified rule stands.** A hold at tick 0 in a wrap-held note's head hides it (`holdPhaseTick > 0` required for shorten). | Guide lifecycle and `resolveOccupancyAtNoteOn` agree with the ruling. Keeping the pre-wrap portion is recorded as optional amendment **AMD-1** (needs owner approval), not as a defect. | `test_qovl3_hold_at_zero_hides_wrap_held_note` | draft |
+
+## Optional amendments (not adopted; owner approval needed)
+
+| Id | Proposal | Status |
+|---|---|---|
+| AMD-1 | Hold at tick 0 inside a wrap-held note's head shortens it to `loopLength − 1` (keeps the pre-wrap portion) instead of hiding it. `computeShortenedEndTick` already maps 0 that way. | proposed only |
+
+## Pairing
+
+| Id | Clause | Source | Fixture | Status |
+|---|---|---|---|---|
+| PAIR-1 | A NoteOff pairs with the most recent open NoteOn on the same (channel, pitch) lane in the same pass (LIFO); at an equal tick NoteOff before NoteOn. | production `findNoteOffForOnIndex` as documented in `RevisionImport.h` (`LanePairer`) | `test_content_engine_writer` | draft |
 
 ## Order (source: DEC-244)
 
@@ -59,7 +71,6 @@ needed).
 | HIB-5 | Stop held in `AtomicTransfer` for 176 s under exhaustion | same log |
 | HIB-6 | Piano roll `win=0` for 55 beats; 186 `display_projection` refusals | same log |
 | HIB-7 | Within-class equal-tick order unspecified where `std::sort` is used | revision-manifest B.2a |
-| HIB-8 | Wrap-held note hidden (not shortened) when a later note starts at tick 0 in its head | `resolveOccupancyAtNoteOn` (`holdPhaseTick > 0`); Q-OVL-3 |
 | HIB-9 | Same-pitch note on another channel not shortened when a same-channel note is also sounding at the hold | `collectOverdubNoteOnParticipantIds` channel filter + skipped geometric fallback; Q-OVL-2 |
 
 ## Cross-check

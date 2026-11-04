@@ -56,9 +56,9 @@ inline std::vector<Effective> effective(const std::vector<Note>& notes, uint32_t
       if (b.run <= a.run || b.pitch != a.pitch) continue;
       const uint32_t h = b.on;
       if (presentAt(a, h)) {
-        // Q-OVL-3 (owner default 2026-11-04): a hold anywhere in a wrap-held note's head shortens it, including h = 0,
-        // which keeps the pre-wrap portion (end = loopLength - 1). Legacy requires h > 0 and hides at 0 (HIB-8).
-        const bool wrapHeldHead = a.off < a.on && h < a.off && h != a.on;
+        // Q-OVL-3 (owner ruling 2026-11-04): the ratified rule stands: a hold in a wrap-held note's head shortens it
+        // only for h > 0; a hold at 0 hides it. Keeping the pre-wrap portion is optional amendment AMD-1 (not adopted).
+        const bool wrapHeldHead = a.off < a.on && h < a.off && h > 0 && h != a.on;
         if (a.on < h || wrapHeldHead) {  // OVL-1 shorten to h - 1
           const uint32_t end = h == 0 ? loopLength - 1 : h - 1;
           if (e.fate != Fate::Hidden && (e.fate == Fate::Kept || end < e.note.off)) {
