@@ -40,9 +40,11 @@ void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
 
-using Port = OutputPort<>;  // 128 sounding, 64 ordered, 16 essential reserve
-static Port gPort;
-static Port gUsb;
+using Hub = OutputHub<>;  // 128 shared logical notes, 3 ports (64 ordered, 16 essential reserve, 256 lanes each)
+using Port = Hub::Port;
+static Hub gHub;
+static Port gPort;  // DIN
+static Port gUsb;   // USB device
 static TerminalScheduler<Config::kMaxSoundingPerTrack> gSched;
 static std::vector<Port::Sent> gSent;
 
@@ -57,8 +59,11 @@ static void drainUntil(Port& p, uint32_t until) {
 }
 
 void setUp() {
-  gPort.init(kDinMessageMicros);
-  gUsb.init(kUsbMessageMicros);
+  gHub.init();
+  gHub.configure(0, kDinMessageMicros);
+  gHub.configure(1, kUsbMessageMicros);
+  gPort = gHub.port(0);
+  gUsb = gHub.port(1);
   gSched.init();
   gSent.clear();
   gSent.reserve(200000);
@@ -255,8 +260,55 @@ void test_ports_are_independent() {
   TEST_ASSERT_EQUAL(1, gUsb.transmit(0, buf, 64));
   TEST_ASSERT_EQUAL_UINT32(0, buf[0].micros);
   char line[80];
-  std::snprintf(line, sizeof line, "OutputPort<> fixed size: %u B per port", static_cast<unsigned>(sizeof(Port)));
+  std::snprintf(line, sizeof line, "OutputHub<> fixed size: %u B for 3 ports and 128 shared notes",
+                static_cast<unsigned>(sizeof(Hub)));
   TEST_MESSAGE(line);
+}
+
+// Broadcast: one logical note routed to DIN and USB keeps one identity with per-port states. USB plays and terminates
+// it at its own pace while DIN is saturated; a NoteOff before DIN sent the NoteOn cancels it on DIN only.
+void test_broadcast_note_shares_identity_with_per_port_states() {
+  for (uint32_t i = 0; i < 40; ++i) gPort.noteOn(0, 0x90, static_cast<uint8_t>(i), 100, 100 + i);  // DIN backlog
+  TEST_ASSERT_EQUAL(PortResult::Queued, gPort.noteOn(0, 0x90, 60, 100, 7));  // queued behind 40 on DIN
+  TEST_ASSERT_EQUAL(PortResult::Queued, gUsb.noteOn(0, 0x90, 60, 100, 7));   // same key on USB: same logical note
+  Port::Sent buf[64];
+  TEST_ASSERT_EQUAL(1, gUsb.transmit(0, buf, 64));
+  TEST_ASSERT_EQUAL(OutClass::NoteOn, buf[0].cls);
+  TEST_ASSERT_EQUAL(PortResult::CancelledUnsent, gPort.noteOff(1000, 7));  // DIN never sent it
+  TEST_ASSERT_EQUAL(PortResult::Queued, gUsb.noteOff(1000, 7));            // USB terminates its own instance
+  TEST_ASSERT_EQUAL(1, gUsb.transmit(1000, buf, 64));
+  TEST_ASSERT_EQUAL(OutClass::NoteOff, buf[0].cls);
+  TEST_ASSERT_EQUAL_UINT32(7, buf[0].key);
+  TEST_ASSERT_TRUE(gHub.check());
+}
+
+// Logical note capacity is tracks x 16 across all ports, not per port.
+void test_logical_note_capacity_is_shared_across_ports() {
+  uint32_t admitted = 0;
+  for (uint32_t t = 0; admitted < 128 && t < 400; ++t) {
+    Port& p = (admitted % 2) ? gUsb : gPort;
+    if (p.noteOn(t * kTick, 0x90, static_cast<uint8_t>(admitted % 128), 90, 1000 + admitted) == PortResult::Queued)
+      ++admitted;
+    Port::Sent buf[64];
+    gPort.transmit(t * kTick, buf, 64);
+    gUsb.transmit(t * kTick, buf, 64);
+  }
+  TEST_ASSERT_EQUAL_UINT32(128, admitted);
+  TEST_ASSERT_EQUAL(PortResult::Suppressed, gUsb.noteOn(500000, 0x90, 1, 1, 9999));
+  TEST_ASSERT_EQUAL(PortResult::Suppressed, gPort.noteOn(500000, 0x90, 1, 1, 9998));
+}
+
+// Sparse automation lanes: only lanes in use take entries; a clean lane is evicted for a new one; only when every lane
+// has a pending value is a new lane's value suppressed (counted).
+void test_automation_lanes_are_sparse_and_bounded() {
+  for (uint16_t i = 0; i < 256; ++i)  // 16 channels x 16 automation CCs (10..25)
+    TEST_ASSERT_EQUAL(PortResult::Queued,
+                      gPort.control(0, static_cast<uint8_t>(0xB0 | (i / 16)), static_cast<uint8_t>(10 + i % 16), 1));
+  TEST_ASSERT_EQUAL(PortResult::Suppressed, gPort.control(0, 0xBF, 90, 5));  // all 256 pending
+  TEST_ASSERT_EQUAL_UINT32(1, gPort.counters().automationLanesFull);
+  Port::Sent buf[64];
+  gPort.transmit(2000, buf, 64);  // one lane goes out and is clean now
+  TEST_ASSERT_EQUAL(PortResult::Queued, gPort.control(3000, 0xBF, 90, 5));  // evicts the clean lane
 }
 
 int main(int, char**) {
@@ -269,5 +321,8 @@ int main(int, char**) {
   RUN_TEST(test_note_burst_behind_full_automation);
   RUN_TEST(test_sustained_din_saturation_regression);
   RUN_TEST(test_ports_are_independent);
+  RUN_TEST(test_broadcast_note_shares_identity_with_per_port_states);
+  RUN_TEST(test_logical_note_capacity_is_shared_across_ports);
+  RUN_TEST(test_automation_lanes_are_sparse_and_bounded);
   return UNITY_END();
 }

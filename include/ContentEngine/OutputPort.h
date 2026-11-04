@@ -1,27 +1,28 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Physical MIDI output port (fixed-memory-engine CE-C1). One instance per port (DIN, USB device, USB host), each with
-// its own message time; fixed memory, no allocation.
+// Physical MIDI output (fixed-memory-engine CE-C1, memory-ownership correction 2026-11-04).
 //
-// Message classes and what the port guarantees for each:
-//   * NoteOn: admitted only if the port's sounding table has an entry (<= 8 tracks x 16 = 128) and the ordered queue
-//     has note space; otherwise suppressed by name (the stored event is unchanged).
-//   * NoteOff: needs no queue entry. It is owed by the sounding table, sent with priority once due, and never before its
-//     own NoteOn. A NoteOff whose NoteOn is still queued cancels both: nothing is sent for a note that never sounded.
-//     Long held notes therefore hold a sounding entry, never a FIFO slot.
-//   * Essential state: Bank Select (CC0/32), Program Change, sustain-family pedals (CC64-69), channel mode (CC120-127).
-//     Ordered with notes (state before dependent NoteOns), never dropped. A state message coalesces with the same
-//     queued state of its channel only when no NoteOn of that channel sits between them. Beyond the ordered queue it
-//     waits in a per-(channel, state) table in arrival order, and new NoteOns are held back until it is queued (causal).
-//   * Parameter (RPN/NRPN select, data entry, increment/decrement: CC6/38/96-101): ordered, never coalesced; beyond the
-//     queue a 64-message overflow ring; only past that is one counted as dropped (`parameterDropped`).
-//   * Continuous automation (all other CCs, pitch bend, channel pressure, poly aftertouch): coalesced per
-//     (channel, controller) to the latest pending value; a value equal to the last sent one is not re-sent; the final
-//     value always goes out.
-// Transmit scheduling (per message slot, causal): due NoteOffs first; then the ordered queue, with continuous automation
-// guaranteed one slot in four while both are pending. Shares are of actual transmissions. Lateness is measured per class
-// (NoteOn: since queued; NoteOff: since due) and is what the port can do, not a promise beyond its bandwidth.
+// One `OutputHub` owns the output state of all destinations (DIN, USB device, USB host); fixed memory, no allocation.
+//   * Logical notes are shared: one table sized tracks x 16 (`Notes`), not ports x tracks x 16. A note routed to
+//     several ports keeps one identity with a 2-bit state per port (queued / playing / off pending), so each port sends
+//     and terminates it independently.
+//   * Each port keeps only what is destination-specific: its bounded ordered TX queue, timing, essential-state overflow
+//     (dense per channel/state, because essential state must never be dropped) and RPN/NRPN overflow, and a *sparse*
+//     automation-lane table holding only the controller lanes in use on that port.
+//
+// Semantics per port (unchanged from the previous OutputPort; see test_content_engine_output):
+//   * NoteOn: admitted only if a logical note entry exists or can be taken and the port's ordered queue has note space;
+//     otherwise suppressed by name for that port (the stored event is unchanged).
+//   * NoteOff: needs no queue entry; owed by the port's note state, sent with priority once due and never before its own
+//     NoteOn; a NoteOff whose NoteOn is still queued on that port cancels both there.
+//   * Essential state (Bank Select, Program Change, CC64-69, CC120-127): ordered with notes, never dropped; coalesces only
+//     without a dependent NoteOn between; overflow waits per channel/state and holds back new NoteOns.
+//   * Parameter (CC6/38/96-101): ordered, never coalesced; 64-message overflow; beyond it counted as dropped.
+//   * Continuous automation: coalesced per lane to its latest value, unchanged values not re-sent, final value sent.
+//     A lane exists only while in use; a clean lane (nothing pending) is evicted for a new one when the table is full;
+//     only if every lane has a pending value is the new value counted (`automationLanesFull`) and suppressed.
+//   * Scheduling per port: due NoteOffs, then the ordered queue, with automation one slot in four while both wait.
 
 #pragma once
 
@@ -35,11 +36,13 @@ constexpr uint32_t kUsbMessageMicros = 125;  // declared estimate for USB full-s
 enum class PortResult : uint8_t { Queued, Coalesced, Deduplicated, Suppressed, CancelledUnsent, NotAdmitted };
 enum class OutClass : uint8_t { NoteOff, NoteOn, Essential, Parameter, Continuous };
 
-template <uint16_t Sounding = 128, uint16_t Ordered = 64, uint16_t EssentialReserve = 16>
-class OutputPort {
+template <uint16_t Notes = 128, uint8_t Ports = 3, uint16_t Ordered = 64, uint16_t EssentialReserve = 16,
+          uint16_t Lanes = 256>
+class OutputHub {
+  static_assert(Ports <= 4, "per-port note state is 2 bits in one byte");
+
  public:
-  static constexpr uint16_t kContinuousSlots = 16 * 258;  // per channel: 128 CC, bend, pressure, 128 poly aftertouch
-  static constexpr uint16_t kStateSlots = 17;             // per channel: CC0, CC32, program, CC64-69, CC120-127
+  static constexpr uint16_t kStateSlots = 17;  // per channel: CC0, CC32, program, CC64-69, CC120-127
   static constexpr uint16_t kParameterOverflow = 64;
 
   struct Sent {
@@ -55,125 +58,214 @@ class OutputPort {
     uint32_t deduplicated;
     uint32_t stateOverflowCoalesced;
     uint32_t parameterDropped;
+    uint32_t automationLanesFull;
     uint32_t maxNoteOnLateMicros, maxNoteOffLateMicros;
     uint64_t sumNoteOnLateMicros, sumNoteOffLateMicros;
     uint32_t sent[5];
   };
 
-  void init(uint32_t messageMicros) {
-    messageMicros_ = messageMicros;
-    txFreeAt_ = 0;
-    for (auto& e : sounding_) e = Entry{};
-    for (auto& q : ring_) q = Item{};
-    head_ = count_ = noteOnsQueued_ = 0;
-    for (auto& v : pending_) v = 0;
-    for (auto& v : lastSent_) v = kUnknown;
-    dirtyHead_ = dirtyCount_ = 0;
-    for (auto& v : statePending_) v = 0;
-    stateHead_ = stateCount_ = 0;
-    paramHead_ = paramCount_ = 0;
-    sinceContinuous_ = 0;
-    counters_ = Counters{};
+  /// A per-destination view with the single-port API.
+  class Port {
+   public:
+    using Sent = typename OutputHub::Sent;
+    using Counters = typename OutputHub::Counters;
+    Port() = default;
+    Port(OutputHub* hub, uint8_t p) : hub_(hub), p_(p) {}
+    bool canAdmitNoteOn() const { return hub_->canAdmitNoteOn(p_); }
+    PortResult noteOn(uint32_t now, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key) {
+      return hub_->noteOn(now, p_, status, pitch, vel, key);
+    }
+    PortResult noteOff(uint32_t now, uint32_t key) { return hub_->noteOff(now, p_, key); }
+    PortResult control(uint32_t now, uint8_t status, uint8_t d1, uint8_t d2) {
+      return hub_->control(now, p_, status, d1, d2);
+    }
+    uint8_t transmit(uint32_t now, Sent* out, uint8_t max) { return hub_->transmit(now, p_, out, max); }
+    uint16_t soundingCount() const { return hub_->soundingCount(p_); }
+    uint16_t orderedQueued() const { return hub_->ports_[p_].count; }
+    const Counters& counters() const { return hub_->ports_[p_].counters; }
+    bool check() const { return hub_->check(); }
+
+   private:
+    OutputHub* hub_ = nullptr;
+    uint8_t p_ = 0;
+  };
+
+  void init() {
+    for (auto& n : notes_) n = Note{};
+    for (uint8_t p = 0; p < Ports; ++p) initPort(ports_[p], kDinMessageMicros);
+  }
+  void configure(uint8_t p, uint32_t messageMicros) { initPort(ports_[p], messageMicros); }
+  Port port(uint8_t p) { return Port(this, p); }
+
+  bool canAdmitNoteOn(uint8_t p) const {
+    const PortData& d = ports_[p];
+    return d.noteOnsQueued < Ordered - EssentialReserve && d.count < Ordered && d.stateCount == 0 &&
+           d.paramCount == 0;
   }
 
-  bool canAdmitNoteOn() const {
-    return freeEntry() >= 0 && noteOnsQueued_ < Ordered - EssentialReserve && count_ < Ordered && stateCount_ == 0 &&
-           paramCount_ == 0;
-  }
-
-  PortResult noteOn(uint32_t now, uint8_t status, uint8_t pitch, uint8_t velocity, uint32_t key) {
-    if (!canAdmitNoteOn()) {
-      ++counters_.suppressedNoteOn;
+  /// Admits a NoteOn on port `p`. The logical note (by key) is shared: routing the same key to another port attaches
+  /// that port to the same entry.
+  PortResult noteOn(uint32_t now, uint8_t p, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key) {
+    PortData& d = ports_[p];
+    int n = find(key);
+    if (n >= 0 && stateOf(notes_[n], p) != State::None) return PortResult::Queued;  // already on this port
+    if (!canAdmitNoteOn(p) || (n < 0 && (n = freeNote()) < 0)) {
+      ++d.counters.suppressedNoteOn;
       return PortResult::Suppressed;
     }
-    const int e = freeEntry();
-    sounding_[e] = Entry{key, now, 0, status, pitch, State::QueuedOn};
-    push(Item{Kind::NoteOn, status, pitch, velocity, static_cast<uint8_t>(e), now});
-    ++noteOnsQueued_;
+    Note& note = notes_[n];
+    if (note.portStates == 0) note = Note{key, now, 0, status, pitch, 0};
+    setState(note, p, State::QueuedOn);
+    push(d, Item{Kind::NoteOn, status, pitch, vel, static_cast<uint16_t>(n), now});
+    ++d.noteOnsQueued;
     return PortResult::Queued;
   }
 
-  PortResult noteOff(uint32_t now, uint32_t key) {
-    for (uint16_t i = 0; i < Sounding; ++i) {
-      Entry& e = sounding_[i];
-      if (e.state == State::Free || e.key != key) continue;
-      if (e.state == State::QueuedOn) {
-        for (uint16_t k = 0; k < count_; ++k) {
-          Item& it = ring_[(head_ + k) % Ordered];
-          if (it.kind == Kind::NoteOn && it.entry == i) it.kind = Kind::Tombstone;
+  PortResult noteOff(uint32_t now, uint8_t p, uint32_t key) {
+    const int n = find(key);
+    if (n < 0) return PortResult::NotAdmitted;
+    Note& note = notes_[n];
+    PortData& d = ports_[p];
+    switch (stateOf(note, p)) {
+      case State::QueuedOn:
+        for (uint16_t k = 0; k < d.count; ++k) {
+          Item& it = d.ring[(d.head + k) % Ordered];
+          if (it.kind == Kind::NoteOn && it.note == n) it.kind = Kind::Tombstone;
         }
-        --noteOnsQueued_;
-        e = Entry{};
-        ++counters_.cancelledUnsent;
+        --d.noteOnsQueued;
+        setState(note, p, State::None);
+        ++d.counters.cancelledUnsent;
         return PortResult::CancelledUnsent;
-      }
-      if (e.state == State::Playing) {
-        e.state = State::OffPending;
-        e.dueMicros = now;
-      }
-      return PortResult::Queued;
+      case State::Playing:
+        setState(note, p, State::OffPending);
+        note.dueMicros = now;
+        return PortResult::Queued;
+      case State::OffPending:
+        return PortResult::Queued;
+      default:
+        return PortResult::NotAdmitted;
     }
-    return PortResult::NotAdmitted;
   }
 
-  PortResult control(uint32_t now, uint8_t status, uint8_t d1, uint8_t d2) {
+  PortResult control(uint32_t now, uint8_t p, uint8_t status, uint8_t d1, uint8_t d2) {
     const uint8_t type = status & 0xF0, ch = status & 0x0F;
     const int state = stateSlot(type, d1);
-    if (state >= 0) return essential(now, status, d1, d2, ch, static_cast<uint8_t>(state));
-    if (type == 0xB0 && isParameter(d1)) return parameter(now, status, d1, d2);
-    return continuous(status, d1, d2);
+    if (state >= 0) return essential(ports_[p], now, status, d1, d2, ch, static_cast<uint8_t>(state));
+    if (type == 0xB0 && isParameter(d1)) return parameter(ports_[p], now, status, d1, d2);
+    return continuous(ports_[p], status, d1, d2);
   }
 
-  /// Starts every message the port can start by `now`, in priority and causal order. Returns how many were started.
-  uint8_t transmit(uint32_t now, Sent* out, uint8_t max) {
-    refillFromOverflow(now);
+  uint8_t transmit(uint32_t now, uint8_t p, Sent* out, uint8_t max) {
+    PortData& d = ports_[p];
+    refillFromOverflow(d, now);
     uint8_t n = 0;
-    while (n < max && txFreeAt_ <= now) {
+    while (n < max && d.txFreeAt <= now) {
       Sent s;
-      if (!next(now, s)) break;
+      if (!next(d, p, s)) break;
       out[n++] = s;
-      refillFromOverflow(now);
+      refillFromOverflow(d, now);
     }
     return n;
   }
 
-  uint16_t soundingCount() const {
-    uint16_t n = 0;
-    for (const auto& e : sounding_) n += e.state != State::Free ? 1 : 0;
-    return n;
+  uint16_t soundingCount(uint8_t p) const {
+    uint16_t c = 0;
+    for (const auto& n : notes_) c += stateOf(n, p) != State::None ? 1 : 0;
+    return c;
   }
-  uint16_t orderedQueued() const { return count_; }
-  const Counters& counters() const { return counters_; }
 
   bool check() const {
-    uint16_t queuedOn = 0;
-    for (const auto& e : sounding_) queuedOn += e.state == State::QueuedOn ? 1 : 0;
-    return count_ <= Ordered && noteOnsQueued_ == queuedOn && noteOnsQueued_ <= Ordered - EssentialReserve &&
-           dirtyCount_ <= kContinuousSlots && stateCount_ <= 16 * kStateSlots && paramCount_ <= kParameterOverflow;
+    for (uint8_t p = 0; p < Ports; ++p) {
+      const PortData& d = ports_[p];
+      uint16_t queuedOn = 0;
+      for (const auto& n : notes_) queuedOn += stateOf(n, p) == State::QueuedOn ? 1 : 0;
+      if (d.count > Ordered || d.noteOnsQueued != queuedOn || d.noteOnsQueued > Ordered - EssentialReserve ||
+          d.laneCount > Lanes || d.dirtyCount > Lanes || d.stateCount > 16 * kStateSlots ||
+          d.paramCount > kParameterOverflow)
+        return false;
+    }
+    return true;
   }
 
  private:
-  static constexpr uint16_t kUnknown = 0xFFFF;
   static constexpr uint16_t kPendingBit = 0x8000;
-  enum class State : uint8_t { Free, QueuedOn, Playing, OffPending };
+  static constexpr uint16_t kNoNote = 0xFFFF;
+  enum class State : uint8_t { None = 0, QueuedOn = 1, Playing = 2, OffPending = 3 };
   enum class Kind : uint8_t { Tombstone, NoteOn, Essential, Parameter };
-  struct Entry {
+
+  struct Note {  // 16 B, shared by every port the note is routed to
     uint32_t key = 0;
-    uint32_t queuedMicros = 0;
+    uint32_t onMicros = 0;
     uint32_t dueMicros = 0;
     uint8_t status = 0, pitch = 0;
-    State state = State::Free;
+    uint8_t portStates = 0;  // 2 bits per port
+    uint8_t pad = 0;
   };
-  struct Item {
+  struct Item {  // 12 B
     Kind kind = Kind::Tombstone;
     uint8_t status = 0, data1 = 0, data2 = 0;
-    uint8_t entry = 0;
+    uint16_t note = kNoNote;
     uint32_t queuedMicros = 0;
   };
-  struct Param {
-    uint8_t status, data1, data2;
-    uint32_t queuedMicros;
+  struct Param {  // 4 B
+    uint8_t status, data1, data2, pad;
   };
+  struct Lane {  // 8 B: one controller lane in use on this port
+    uint16_t key;       // channel x 258 + slot (128 CC, bend, pressure, 128 poly aftertouch)
+    uint16_t lastSent;  // 0xFFFF unknown
+    uint16_t pending;   // kPendingBit | value
+    uint16_t pad;
+  };
+  struct PortData {
+    uint32_t messageMicros, txFreeAt;
+    Item ring[Ordered];
+    uint16_t head, count, noteOnsQueued;
+    uint16_t statePending[16 * kStateSlots];
+    uint16_t stateOrder[16 * kStateSlots];
+    uint16_t stateHead, stateCount;
+    Param params[kParameterOverflow];
+    uint16_t paramHead, paramCount;
+    Lane lanes[Lanes];
+    uint16_t laneCount;
+    uint16_t dirty[Lanes];
+    uint16_t dirtyHead, dirtyCount;
+    uint8_t sinceContinuous;
+    Counters counters;
+  };
+
+  static State stateOf(const Note& n, uint8_t p) { return static_cast<State>((n.portStates >> (2 * p)) & 3u); }
+  static void setState(Note& n, uint8_t p, State s) {
+    n.portStates = static_cast<uint8_t>((n.portStates & ~(3u << (2 * p))) | (static_cast<uint8_t>(s) << (2 * p)));
+  }
+
+  static void initPort(PortData& d, uint32_t messageMicros) {
+    d.messageMicros = messageMicros;
+    d.txFreeAt = 0;
+    for (auto& q : d.ring) q = Item{};
+    d.head = d.count = d.noteOnsQueued = 0;
+    for (auto& v : d.statePending) v = 0;
+    for (auto& v : d.stateOrder) v = 0;
+    d.stateHead = d.stateCount = 0;
+    for (auto& v : d.params) v = Param{0, 0, 0, 0};
+    d.paramHead = d.paramCount = 0;
+    for (auto& l : d.lanes) l = Lane{0, 0xFFFF, 0, 0};
+    d.laneCount = 0;
+    for (auto& v : d.dirty) v = 0;
+    d.dirtyHead = d.dirtyCount = 0;
+    d.sinceContinuous = 0;
+    d.counters = Counters{};
+  }
+
+  int find(uint32_t key) const {
+    for (uint16_t i = 0; i < Notes; ++i)
+      if (notes_[i].portStates != 0 && notes_[i].key == key) return i;
+    return -1;
+  }
+  int freeNote() const {
+    for (uint16_t i = 0; i < Notes; ++i)
+      if (notes_[i].portStates == 0) return i;
+    return -1;
+  }
 
   static int stateSlot(uint8_t type, uint8_t d1) {
     if (type == 0xC0) return 2;
@@ -184,57 +276,55 @@ class OutputPort {
     if (d1 >= 120) return 9 + (d1 - 120);
     return -1;
   }
+  static uint8_t stateStatus(uint16_t idx) {
+    const uint8_t ch = static_cast<uint8_t>(idx / kStateSlots), slot = static_cast<uint8_t>(idx % kStateSlots);
+    return static_cast<uint8_t>((slot == 2 ? 0xC0 : 0xB0) | ch);
+  }
   static bool isParameter(uint8_t d1) { return d1 == 6 || d1 == 38 || (d1 >= 96 && d1 <= 101); }
 
-  int freeEntry() const {
-    for (uint16_t i = 0; i < Sounding; ++i)
-      if (sounding_[i].state == State::Free) return i;
-    return -1;
+  static void push(PortData& d, const Item& it) {
+    d.ring[(d.head + d.count) % Ordered] = it;
+    ++d.count;
   }
 
-  void push(const Item& it) {
-    ring_[(head_ + count_) % Ordered] = it;
-    ++count_;
-  }
-
-  PortResult essential(uint32_t now, uint8_t status, uint8_t d1, uint8_t d2, uint8_t ch, uint8_t slot) {
-    // Coalesce with the latest queued same-state message of this channel if no NoteOn of the channel follows it.
-    for (int k = static_cast<int>(count_) - 1; k >= 0; --k) {
-      Item& it = ring_[(head_ + k) % Ordered];
+  PortResult essential(PortData& d, uint32_t now, uint8_t status, uint8_t d1, uint8_t d2, uint8_t ch, uint8_t slot) {
+    for (int k = static_cast<int>(d.count) - 1; k >= 0; --k) {
+      Item& it = d.ring[(d.head + k) % Ordered];
       if (it.kind == Kind::NoteOn && (it.status & 0x0F) == ch) break;
       if (it.kind == Kind::Essential && it.status == status && ((status & 0xF0) == 0xC0 || it.data1 == d1)) {
         it.data1 = d1;
         it.data2 = d2;
-        ++counters_.coalesced;
+        ++d.counters.coalesced;
         return PortResult::Coalesced;
       }
     }
-    if (count_ < Ordered && stateCount_ == 0 && paramCount_ == 0) {
-      push(Item{Kind::Essential, status, d1, d2, 0, now});
+    if (d.count < Ordered && d.stateCount == 0 && d.paramCount == 0) {
+      push(d, Item{Kind::Essential, status, d1, d2, kNoNote, now});
       return PortResult::Queued;
     }
     const uint16_t idx = static_cast<uint16_t>(ch * kStateSlots + slot);
-    if (statePending_[idx] & kPendingBit) ++counters_.stateOverflowCoalesced;
-    else stateOrder_[(stateHead_ + stateCount_++) % (16 * kStateSlots)] = idx;
-    statePending_[idx] = static_cast<uint16_t>(kPendingBit | (d1 << 7) | (d2 & 0x7F));
-    stateStatus_[idx] = status;
+    if (d.statePending[idx] & kPendingBit)
+      ++d.counters.stateOverflowCoalesced;
+    else
+      d.stateOrder[(d.stateHead + d.stateCount++) % (16 * kStateSlots)] = idx;
+    d.statePending[idx] = static_cast<uint16_t>(kPendingBit | (d1 << 7) | (d2 & 0x7F));
     return PortResult::Queued;
   }
 
-  PortResult parameter(uint32_t now, uint8_t status, uint8_t d1, uint8_t d2) {
-    if (count_ < Ordered && stateCount_ == 0 && paramCount_ == 0) {
-      push(Item{Kind::Parameter, status, d1, d2, 0, now});
+  PortResult parameter(PortData& d, uint32_t now, uint8_t status, uint8_t d1, uint8_t d2) {
+    if (d.count < Ordered && d.stateCount == 0 && d.paramCount == 0) {
+      push(d, Item{Kind::Parameter, status, d1, d2, kNoNote, now});
       return PortResult::Queued;
     }
-    if (paramCount_ >= kParameterOverflow) {
-      ++counters_.parameterDropped;
+    if (d.paramCount >= kParameterOverflow) {
+      ++d.counters.parameterDropped;
       return PortResult::Suppressed;
     }
-    params_[(paramHead_ + paramCount_++) % kParameterOverflow] = Param{status, d1, d2, now};
+    d.params[(d.paramHead + d.paramCount++) % kParameterOverflow] = Param{status, d1, d2, 0};
     return PortResult::Queued;
   }
 
-  PortResult continuous(uint8_t status, uint8_t d1, uint8_t d2) {
+  PortResult continuous(PortData& d, uint8_t status, uint8_t d1, uint8_t d2) {
     const uint8_t type = status & 0xF0, ch = status & 0x0F;
     uint16_t slot, value;
     if (type == 0xB0) {
@@ -246,119 +336,140 @@ class OutputPort {
     } else if (type == 0xD0) {
       slot = 129;
       value = d1 & 0x7F;
-    } else {  // 0xA0 poly aftertouch
+    } else {
       slot = static_cast<uint16_t>(130 + (d1 & 0x7F));
       value = d2 & 0x7F;
     }
-    const uint16_t idx = static_cast<uint16_t>(ch * 258 + slot);
-    if (pending_[idx] & kPendingBit) {
-      pending_[idx] = static_cast<uint16_t>(kPendingBit | value);
-      ++counters_.coalesced;
+    const uint16_t key = static_cast<uint16_t>(ch * 258 + slot);
+    int l = -1;
+    for (uint16_t i = 0; i < d.laneCount; ++i)
+      if (d.lanes[i].key == key) {
+        l = i;
+        break;
+      }
+    if (l < 0) {
+      if (d.laneCount < Lanes) {
+        l = d.laneCount++;
+      } else {
+        for (uint16_t i = 0; i < Lanes; ++i)  // evict a clean lane (its dedupe memory is all that is lost)
+          if (!(d.lanes[i].pending & kPendingBit)) {
+            l = i;
+            break;
+          }
+        if (l < 0) {
+          ++d.counters.automationLanesFull;
+          return PortResult::Suppressed;
+        }
+      }
+      d.lanes[l] = Lane{key, 0xFFFF, 0, 0};
+    }
+    Lane& lane = d.lanes[l];
+    if (lane.pending & kPendingBit) {
+      lane.pending = static_cast<uint16_t>(kPendingBit | value);
+      ++d.counters.coalesced;
       return PortResult::Coalesced;
     }
-    if (lastSent_[idx] == value) {
-      ++counters_.deduplicated;
+    if (lane.lastSent == value) {
+      ++d.counters.deduplicated;
       return PortResult::Deduplicated;
     }
-    pending_[idx] = static_cast<uint16_t>(kPendingBit | value);
-    dirty_[(dirtyHead_ + dirtyCount_++) % kContinuousSlots] = idx;
+    lane.pending = static_cast<uint16_t>(kPendingBit | value);
+    d.dirty[(d.dirtyHead + d.dirtyCount++) % Lanes] = static_cast<uint16_t>(l);
     return PortResult::Queued;
   }
 
-  /// Moves waiting state and parameter messages into the ordered queue, oldest first, while it has room.
-  void refillFromOverflow(uint32_t now) {
-    while (count_ < Ordered && stateCount_ > 0) {
-      const uint16_t idx = stateOrder_[stateHead_];
-      stateHead_ = static_cast<uint16_t>((stateHead_ + 1) % (16 * kStateSlots));
-      --stateCount_;
-      const uint16_t v = statePending_[idx];
-      statePending_[idx] = 0;
-      push(Item{Kind::Essential, stateStatus_[idx], static_cast<uint8_t>((v >> 7) & 0x7F), static_cast<uint8_t>(v & 0x7F),
-                0, now});
+  static void refillFromOverflow(PortData& d, uint32_t now) {
+    while (d.count < Ordered && d.stateCount > 0) {
+      const uint16_t idx = d.stateOrder[d.stateHead];
+      d.stateHead = static_cast<uint16_t>((d.stateHead + 1) % (16 * kStateSlots));
+      --d.stateCount;
+      const uint16_t v = d.statePending[idx];
+      d.statePending[idx] = 0;
+      push(d, Item{Kind::Essential, stateStatus(idx), static_cast<uint8_t>((v >> 7) & 0x7F),
+                   static_cast<uint8_t>(v & 0x7F), kNoNote, now});
     }
-    while (count_ < Ordered && stateCount_ == 0 && paramCount_ > 0) {
-      const Param& p = params_[paramHead_];
-      push(Item{Kind::Parameter, p.status, p.data1, p.data2, 0, p.queuedMicros});
-      paramHead_ = static_cast<uint16_t>((paramHead_ + 1) % kParameterOverflow);
-      --paramCount_;
+    while (d.count < Ordered && d.stateCount == 0 && d.paramCount > 0) {
+      const Param& p = d.params[d.paramHead];
+      push(d, Item{Kind::Parameter, p.status, p.data1, p.data2, kNoNote, now});
+      d.paramHead = static_cast<uint16_t>((d.paramHead + 1) % kParameterOverflow);
+      --d.paramCount;
     }
   }
 
-  bool orderedReady() {
-    while (count_ > 0 && ring_[head_].kind == Kind::Tombstone) {
-      head_ = static_cast<uint16_t>((head_ + 1) % Ordered);
-      --count_;
+  static bool orderedReady(PortData& d) {
+    while (d.count > 0 && d.ring[d.head].kind == Kind::Tombstone) {
+      d.head = static_cast<uint16_t>((d.head + 1) % Ordered);
+      --d.count;
     }
-    return count_ > 0;
+    return d.count > 0;
   }
 
-  bool next(uint32_t now, Sent& s) {
-    (void)now;
-    // 1. Due NoteOffs (their NoteOn has been sent: only Sounding entries become OffPending).
+  bool next(PortData& d, uint8_t p, Sent& s) {
     int off = -1;
-    for (uint16_t i = 0; i < Sounding; ++i)
-      if (sounding_[i].state == State::OffPending && (off < 0 || sounding_[i].dueMicros < sounding_[off].dueMicros)) off = i;
+    for (uint16_t i = 0; i < Notes; ++i)
+      if (stateOf(notes_[i], p) == State::OffPending && (off < 0 || notes_[i].dueMicros < notes_[off].dueMicros)) off = i;
     if (off >= 0) {
-      Entry& e = sounding_[off];
-      const uint32_t start = txFreeAt_ > e.dueMicros ? txFreeAt_ : e.dueMicros;
-      account(start - e.dueMicros, counters_.maxNoteOffLateMicros, counters_.sumNoteOffLateMicros);
-      s = Sent{start, e.key, static_cast<uint8_t>(0x80 | (e.status & 0x0F)), e.pitch, 0, OutClass::NoteOff};
-      e = Entry{};
-      return sendAt(start, s, false);
+      Note& n = notes_[off];
+      const uint32_t start = d.txFreeAt > n.dueMicros ? d.txFreeAt : n.dueMicros;
+      account(start - n.dueMicros, d.counters.maxNoteOffLateMicros, d.counters.sumNoteOffLateMicros);
+      s = Sent{start, n.key, static_cast<uint8_t>(0x80 | (n.status & 0x0F)), n.pitch, 0, OutClass::NoteOff};
+      setState(n, p, State::None);  // the entry frees itself when no port holds it
+      return sendAt(d, start, s, false);
     }
-    const bool ordered = orderedReady();
-    const bool cont = dirtyCount_ > 0;
-    if (cont && (!ordered || sinceContinuous_ >= 3)) return sendContinuous(s);
+    const bool ordered = orderedReady(d);
+    const bool cont = d.dirtyCount > 0;
+    if (cont && (!ordered || d.sinceContinuous >= 3)) return sendContinuous(d, s);
     if (!ordered) return false;
-    Item& it = ring_[head_];
-    const uint32_t start = txFreeAt_ > it.queuedMicros ? txFreeAt_ : it.queuedMicros;
+    Item& it = d.ring[d.head];
+    const uint32_t start = d.txFreeAt > it.queuedMicros ? d.txFreeAt : it.queuedMicros;
     if (it.kind == Kind::NoteOn) {
-      Entry& e = sounding_[it.entry];
-      e.state = State::Playing;
-      --noteOnsQueued_;
-      account(start - it.queuedMicros, counters_.maxNoteOnLateMicros, counters_.sumNoteOnLateMicros);
-      s = Sent{start, e.key, it.status, it.data1, it.data2, OutClass::NoteOn};
+      Note& n = notes_[it.note];
+      setState(n, p, State::Playing);
+      --d.noteOnsQueued;
+      account(start - it.queuedMicros, d.counters.maxNoteOnLateMicros, d.counters.sumNoteOnLateMicros);
+      s = Sent{start, n.key, it.status, it.data1, it.data2, OutClass::NoteOn};
     } else {
       s = Sent{start, 0, it.status, it.data1, it.data2,
                it.kind == Kind::Essential ? OutClass::Essential : OutClass::Parameter};
     }
-    head_ = static_cast<uint16_t>((head_ + 1) % Ordered);
-    --count_;
-    return sendAt(start, s, cont);
+    d.head = static_cast<uint16_t>((d.head + 1) % Ordered);
+    --d.count;
+    return sendAt(d, start, s, cont);
   }
 
-  bool sendContinuous(Sent& s) {
-    while (dirtyCount_ > 0) {
-      const uint16_t idx = dirty_[dirtyHead_];
-      dirtyHead_ = static_cast<uint16_t>((dirtyHead_ + 1) % kContinuousSlots);
-      --dirtyCount_;
-      if (!(pending_[idx] & kPendingBit)) continue;
-      const uint16_t value = pending_[idx] & 0x3FFF;
-      pending_[idx] = 0;
-      lastSent_[idx] = value;
-      const uint8_t ch = static_cast<uint8_t>(idx / 258);
-      const uint16_t slot = idx % 258;
+  static bool sendContinuous(PortData& d, Sent& s) {
+    while (d.dirtyCount > 0) {
+      const uint16_t l = d.dirty[d.dirtyHead];
+      d.dirtyHead = static_cast<uint16_t>((d.dirtyHead + 1) % Lanes);
+      --d.dirtyCount;
+      Lane& lane = d.lanes[l];
+      if (!(lane.pending & kPendingBit)) continue;
+      const uint16_t value = lane.pending & 0x3FFF;
+      lane.pending = 0;
+      lane.lastSent = value;
+      const uint8_t ch = static_cast<uint8_t>(lane.key / 258);
+      const uint16_t slot = lane.key % 258;
       if (slot < 128)
-        s = Sent{txFreeAt_, 0, static_cast<uint8_t>(0xB0 | ch), static_cast<uint8_t>(slot), static_cast<uint8_t>(value),
-                 OutClass::Continuous};
+        s = Sent{d.txFreeAt, 0, static_cast<uint8_t>(0xB0 | ch), static_cast<uint8_t>(slot),
+                 static_cast<uint8_t>(value), OutClass::Continuous};
       else if (slot == 128)
-        s = Sent{txFreeAt_, 0, static_cast<uint8_t>(0xE0 | ch), static_cast<uint8_t>(value & 0x7F),
+        s = Sent{d.txFreeAt, 0, static_cast<uint8_t>(0xE0 | ch), static_cast<uint8_t>(value & 0x7F),
                  static_cast<uint8_t>(value >> 7), OutClass::Continuous};
       else if (slot == 129)
-        s = Sent{txFreeAt_, 0, static_cast<uint8_t>(0xD0 | ch), static_cast<uint8_t>(value), 0, OutClass::Continuous};
+        s = Sent{d.txFreeAt, 0, static_cast<uint8_t>(0xD0 | ch), static_cast<uint8_t>(value), 0, OutClass::Continuous};
       else
-        s = Sent{txFreeAt_, 0, static_cast<uint8_t>(0xA0 | ch), static_cast<uint8_t>(slot - 130),
+        s = Sent{d.txFreeAt, 0, static_cast<uint8_t>(0xA0 | ch), static_cast<uint8_t>(slot - 130),
                  static_cast<uint8_t>(value), OutClass::Continuous};
-      sinceContinuous_ = 0;
-      return sendAt(txFreeAt_, s, false);
+      d.sinceContinuous = 0;
+      return sendAt(d, d.txFreeAt, s, false);
     }
     return false;
   }
 
-  bool sendAt(uint32_t start, const Sent& s, bool continuousWaiting) {
-    txFreeAt_ = start + messageMicros_;
-    ++counters_.sent[static_cast<uint8_t>(s.cls)];
-    if (continuousWaiting && sinceContinuous_ < 0xFF) ++sinceContinuous_;
+  static bool sendAt(PortData& d, uint32_t start, const Sent& s, bool continuousWaiting) {
+    d.txFreeAt = start + d.messageMicros;
+    ++d.counters.sent[static_cast<uint8_t>(s.cls)];
+    if (continuousWaiting && d.sinceContinuous < 0xFF) ++d.sinceContinuous;
     return true;
   }
 
@@ -367,23 +478,8 @@ class OutputPort {
     sum += late;
   }
 
-  uint32_t messageMicros_;
-  uint32_t txFreeAt_;
-  Entry sounding_[Sounding];
-  Item ring_[Ordered];
-  uint16_t head_, count_, noteOnsQueued_;
-  uint16_t pending_[kContinuousSlots];
-  uint16_t lastSent_[kContinuousSlots];
-  uint16_t dirty_[kContinuousSlots];
-  uint16_t dirtyHead_, dirtyCount_;
-  uint16_t statePending_[16 * kStateSlots];
-  uint8_t stateStatus_[16 * kStateSlots];
-  uint16_t stateOrder_[16 * kStateSlots];
-  uint16_t stateHead_, stateCount_;
-  Param params_[kParameterOverflow];
-  uint16_t paramHead_, paramCount_;
-  uint8_t sinceContinuous_;
-  Counters counters_;
+  Note notes_[Notes];
+  PortData ports_[Ports];
 };
 
 }  // namespace ContentEngine
