@@ -19,9 +19,14 @@ needed).
 | OVL-6 | A shortened remnant shorter than `noteMinLengthTicks` (8) is hidden when min-length remove is enabled. | Guide classifier table, min-length remove | `test_ovl6_…` | draft |
 | OVL-7 | Outcomes compose monotonically: Hide absorbs; Shorten takes the minimum end and never lengthens. | Guide § Pending overwrite (`upsertSourceTransform`) | `test_ovl7_…` | draft |
 | OVL-8 | A later note's effect on earlier passes persists even if that later note is itself hidden by a still later pass (companion rows are sealed per pass). | Guide § Seal: Shorten/Hide → companion EditPass | `test_ovl8_…` | draft |
-| Q-OVL-1 | Do same-pitch overlapping notes **within one pass** occlude each other? The register assumes not, because overlap resolution runs against the source view of earlier passes. | — | `test_ovl8_…` (asserts not) | **question** |
-| Q-OVL-2 | Live occupy uses "open ledger identities on this channel+pitch" first, then present-at-hold source-view identities. Is the channel filter on the ledger branch musical (a contract) or a lookup detail? DEC-033 says overlap ignores channel. | Guide lifecycle | — | **question** |
-| Q-OVL-3 | The wrap-held head rule requires `h > 0`. A hold at tick 0 on a wrap-held note therefore hides instead of shortening. Is that intended? | Guide lifecycle | — | **question** |
+
+### Owner semantic defaults (2026-11-04), checked against the sources
+
+| Id | Default | Check against ratified clauses and code | Fixture | Status |
+|---|---|---|---|---|
+| Q-OVL-1 | Within one pass, notes keep their NoteId and NoteOn/NoteOff pairing; occlusion is later vs earlier pass only. | Consistent: Record runs no resolver; overdub candidates come from the ledger and source view of earlier passes. | `test_qovl1_…` | draft |
+| Q-OVL-2 | Matching ignores channel (DEC-033); emission and NoteOff attribution keep original channels. | **Contradiction with legacy code:** `collectOverdubNoteOnParticipantIds` filters ledger candidates by channel, and `resolveOccupancyAtNoteOn` skips the channel-free geometric lookup when the ledger set is complete. A same-pitch note on another channel therefore escapes shortening whenever a same-channel note is sounding. DEC-033 and the default both say it is shortened → **HIB-9** (code reading; cross-check run pending). | `test_qovl2_…` | draft |
+| Q-OVL-3 | Linearize wrap-crossing notes; a hold at tick 0 keeps the valid pre-wrap portion; Hide only by equal start or min length. | **Contradiction with legacy code and guide text:** the occupy rule shortens a wrap-held note only for `holdPhaseTick > 0` and otherwise hides it. `computeShortenedEndTick` already maps a hold at 0 to `loopLength − 1`, which matches the default → **HIB-8**. | `test_qovl3_…` | draft |
 
 ## Order (source: DEC-244)
 
@@ -54,6 +59,8 @@ needed).
 | HIB-5 | Stop held in `AtomicTransfer` for 176 s under exhaustion | same log |
 | HIB-6 | Piano roll `win=0` for 55 beats; 186 `display_projection` refusals | same log |
 | HIB-7 | Within-class equal-tick order unspecified where `std::sort` is used | revision-manifest B.2a |
+| HIB-8 | Wrap-held note hidden (not shortened) when a later note starts at tick 0 in its head | `resolveOccupancyAtNoteOn` (`holdPhaseTick > 0`); Q-OVL-3 |
+| HIB-9 | Same-pitch note on another channel not shortened when a same-channel note is also sounding at the hold | `collectOverdubNoteOnParticipantIds` channel filter + skipped geometric fallback; Q-OVL-2 |
 
 ## Cross-check
 
@@ -64,4 +71,4 @@ HIB, a fixture error, or an owner question.
 ## Review
 
 Every row is `draft` until the owner reviews it. The fixtures are executable in
-`test/test_engine_semantic_oracle/` (12 cases, all passing against the reference model).
+`test/test_engine_semantic_oracle/` (15 cases, all passing against the reference model).

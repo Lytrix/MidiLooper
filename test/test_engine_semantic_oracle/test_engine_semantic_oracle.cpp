@@ -170,6 +170,36 @@ void test_ceb1_effective_row_identity_holds() {
                            static_cast<uint32_t>(rows.size()));
 }
 
+// Q-OVL-1 (owner default): within one pass, independently recorded notes keep their identities; occlusion is between
+// later and earlier passes only. Two overlapping same-pitch notes of one Record pass both survive unchanged.
+void test_qovl1_same_pass_overlap_keeps_both_notes() {
+  const std::vector<Note> n = {{1, 0, 0, 60, 100, 400}, {2, 0, 0, 60, 200, 300}};
+  const auto eff = effective(n, kLoop);
+  TEST_ASSERT_EQUAL(Fate::Kept, fateOf(eff, 1).fate);
+  TEST_ASSERT_EQUAL(Fate::Kept, fateOf(eff, 2).fate);
+}
+
+// Q-OVL-2 (owner default): matching ignores channel (DEC-033) even when a same-channel note is also sounding; emission
+// keeps each note's own channel. Legacy picks occupy candidates from the ledger by channel first and skips the
+// geometric lookup when the ledger set is complete, so the channel-2 note escapes (HIB-9).
+void test_qovl2_other_channel_shortened_even_with_same_channel_sounding() {
+  const std::vector<Note> n = {{1, 0, 1, 60, 100, 600}, {2, 0, 2, 60, 150, 700}, {3, 1, 1, 60, 300, 400}};
+  const auto eff = effective(n, kLoop);
+  TEST_ASSERT_EQUAL(Fate::Shortened, fateOf(eff, 1).fate);
+  TEST_ASSERT_EQUAL(Fate::Shortened, fateOf(eff, 2).fate);
+  TEST_ASSERT_EQUAL_UINT32(299, fateOf(eff, 2).note.off);
+  TEST_ASSERT_EQUAL_UINT8(2, fateOf(eff, 2).note.channel);
+}
+
+// Q-OVL-3 (owner default): a later note starting at tick 0 inside a wrap-held note's head keeps the pre-wrap portion.
+// Legacy `resolveOccupancyAtNoteOn` requires holdPhaseTick > 0 and hides the note (HIB-8).
+void test_qovl3_hold_at_zero_keeps_pre_wrap_portion() {
+  const std::vector<Note> n = {{1, 0, 0, 60, 3000, 200}, {2, 1, 0, 60, 0, 100}};
+  const auto eff = effective(n, kLoop);
+  TEST_ASSERT_EQUAL(Fate::Shortened, fateOf(eff, 1).fate);
+  TEST_ASSERT_EQUAL_UINT32(kLoop - 1, fateOf(eff, 1).note.off);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_ovl1_sounding_earlier_note_is_shortened_to_hold_minus_one);
@@ -184,5 +214,8 @@ int main(int, char**) {
   RUN_TEST(test_dec244_equal_tick_order_in_window);
   RUN_TEST(test_ceb1_window_effective_rows_exceed_source_plus_polyphony);
   RUN_TEST(test_ceb1_effective_row_identity_holds);
+  RUN_TEST(test_qovl1_same_pass_overlap_keeps_both_notes);
+  RUN_TEST(test_qovl2_other_channel_shortened_even_with_same_channel_sounding);
+  RUN_TEST(test_qovl3_hold_at_zero_keeps_pre_wrap_portion);
   return UNITY_END();
 }

@@ -8,7 +8,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E0.1 Independent reference model for overlap/occupy (`test/test_engine_semantic_oracle/reference_model.h`).
 - [x] E0.2 Register clauses OVL-0..8, ORD-1 with draft fixtures (12 cases green).
 - [x] E0.3 CE-B1 counter-example and the effective-row identity as executable tests.
-- [ ] E0.4 Owner review of OVL / ORD clauses and the Q-OVL questions.
+- [ ] E0.4 Owner review of OVL / ORD clauses; Q-OVL defaults encoded (HIB-8, HIB-9 found against legacy).
 - [ ] E0.5 Register Stop closures, ledger closure, wrap, interval, interactions, undo, DEC-159, C1, controllers, switch timing.
 - [ ] E0.6 Legacy cross-check harness; classify every disagreement (HIB / fixture error / owner question).
 - [ ] E0.7 Device measurements on the current image:
@@ -19,6 +19,13 @@ revision 3 is the baseline; no whole-plan revisions.
   - per-job grain costs.
 - [ ] E0.8 Classify all 253 DECs as musical or mechanism.
 
+## CE-B1 — window representation
+
+- [x] B.1 Span-window reference model (START + TERMINAL entries, terminal set T = 256), exact-stream equality with
+      expanded rows, tight bound `startRows + T`, comparison against the three row-based options (`test_engine_window_bound`).
+- [ ] B.2 Owner acknowledgement of T = 256 as a named output limit, and of the cold-start note.
+- [ ] B.3 Late terminal for a writer's open note in the reference test.
+
 ## E1 — storage core
 
 - [x] E1.1 `PagePool` with owner tags, `RunTable` with directory pages and bounded reclaim, `ManifestTable` with
@@ -28,7 +35,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E1.3 Allocation witness (0 after init) and the heap gate script.
 - [x] E1.4 Production-capacity init over poisoned memory; budget `static_assert`s; measured region sizes.
 - [ ] E1.5 History ring and `SlotTable` (moved to E4 with undo/redo semantics).
-- [ ] E1.6 Extract `PassEvent` from the prototype header so the engine does not include `StoreCore`.
+- [x] E1.6 `PassEvent` owned by `ContentEngine` (`include/ContentEngine/PassEvent.h`); the prototype store aliases it.
 - [ ] E1.7 Device placement: EXTMEM pool and DMAMEM tables, with census rows (lands with integration, E9).
 
 ## Blocked (by ruling)

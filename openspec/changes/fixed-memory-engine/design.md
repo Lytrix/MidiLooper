@@ -11,7 +11,7 @@ whole-plan revisions (owner, 2026-11-04).
 |---|---|---|---|
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
-| CE-B1 | Window effective-row bound. Revision 3's `2,816 + 128 ≤ 3,072` is **not** a bound: generated NoteOffs come from shortened notes whose source NoteOff lies outside the window, and their number is bounded by source notes crossing the window edges, not by sounding polyphony. | **Open — counter-example recorded** | `test_engine_semantic_oracle` `window_effective_rows_exceed_source_plus_polyphony` |
+| CE-B1 | Window representation and bound. Row windows are unbounded in stacked passes (counter-example: 2,560 source → 4,992 rows). **Span windows** hold START entries (effective NoteOn or event, with an inline end when it falls in the window) and TERMINAL entries (end of a note sounding across the window start); NoteOffs are fired from a fixed terminal set of capacity **T = 256** admitted sounding notes per track. Bound: `entries(W) ≤ startRows(W) + T = 2,816 + 256 = 3,072` (tight). | **Settled (reference model)**; the engine composer is not built yet | `test_engine_window_bound` (6 cases, mutation-checked) |
 | CE-C1 | Physical output: per-port admission and overload policy. | Open | — |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
@@ -55,3 +55,33 @@ The arrays are fixed-width integers, so the layout is the same on the Teensy. Th
      shortened note to that window's count, computed from the live occupancy and ledger, which are O(1));
   2. bound the passes that can stack inside one window;
   3. split a window's emission across two buffers when generated rows overflow.
+
+## CE-B1 — representation comparison (executable: `test_engine_window_bound`)
+
+| Option | Counter-example (20 stacked passes, 2,560 source rows in one window) | Worst case in W | Cost |
+|---|---|---|---|
+| Row windows (rev 3) | 4,992 rows → **overflows 3,072** | ≈ 2 × source starts | — |
+| (1) effective-count admission | admits 12 of 20 passes; **refuses 1,024 notes** a user played | holds 3,072 | changes accepted-input behavior by stacking depth |
+| (2) bound stacked passes per window | same 12-pass limit | holds 3,072 | same refusal, coarser |
+| (3) split buffers | needs 5,632 rows per window | holds | **+983,040 B PSRAM** (24 windows) |
+| **Span windows + terminal set** | **2,560 entries, 0 refused** | **startRows + T ≤ 3,072, tight** | 0 extra memory; terminal set 256 × 12 B per track (RAM2, +24,576 B) |
+
+Properties shown on the reference model, compared with the expanded-row stream:
+- **Exact stream:** DEC-244 order at every tick (NoteOffs fired from the terminal set first, then START entries in pass
+  and id order).
+- **Identity:** each NoteOff carries its own NoteOn's pitch and channel (Q-OVL-2).
+- **Wrap notes:** the end lands in the next cycle's window as a TERMINAL entry.
+- **Held notes:** one START with an open end, nothing in between, one TERMINAL.
+- **Cross-window shortening:** the generated NoteOff is the TERMINAL entry.
+- **DEC-148 cold start:** TERMINAL entries for notes never sounded are ignored.
+- **Output admission:** a NoteOn is admitted only while fewer than T admitted notes sound; the same rule in composer
+  and consumer keeps them identical.
+
+Consequences that need the owner's acknowledgement:
+- T = 256 admitted sounding notes per track is a new **named output limit**. Legacy sends notes beyond its 128-entry
+  ledger, which only overflows its bookkeeping. Under the span model, note 257 sounding at once is refused at output,
+  and the stored content is unchanged.
+- A cold start inside a window whose composition refused notes may under-fill polyphony relative to a from-zero
+  playback (the composer decided admission). This only applies while the T limit is binding.
+- A writer's still-open note in a composed prefix gets its end from the writer's NoteOff at run time (late terminal,
+  O(1) in the terminal set). This path is modeled in the design but not yet in the reference test.
