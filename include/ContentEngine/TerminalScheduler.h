@@ -3,10 +3,10 @@
 //
 // Fixed terminal scheduler of one playback track (fixed-memory-engine CE-B1, DEC-148, DEC-244).
 //
-// Playback windows carry START entries (a NoteOn with its end inline, or an open end) and TERMINAL / carry entries for
-// notes sounding across a window start; NoteOffs are not rows. This scheduler holds every *sounding instance* the track
-// actually sent, at most T, and owns its NoteOff:
-//   * composed close: an inline end or a TERMINAL / carry entry sets the end;
+// Playback windows carry START entries (a NoteOn with its end inline, or an open end), TERMINAL entries and a carry list
+// (instances sounding across a window start); NoteOffs are not rows. This scheduler holds every *sounding instance* the
+// track actually sent, at most T, and owns its NoteOff:
+//   * composed close: an inline end or a TERMINAL entry sets the end;
 //   * live close: the writer's NoteOff for a still-held note whose window was composed before that NoteOff existed;
 //   * live occupy: a live NoteOn on the pitch ends every sounding instance on it now (DEC-033: any channel), and
 //     composed NoteOns on an occupied pitch are suppressed until every live note on it is released (a count, not a bit);
@@ -15,8 +15,11 @@
 // Whichever close comes first sends the NoteOff; later terminals for that instance are suppressed. Nothing is sent into
 // the past: an end already behind the current tick fires at the current tick (counted). A started instance always gets
 // its NoteOff; a new instance is refused by name when T are sounding (OUT-POLY, owner-ratified T = 16 per track:
-// `Config::kMaxSoundingPerTrack`). Source identity is checked by the window ring, not stored per instance.
-// O(T) per call; no allocation.
+// `Config::kMaxSoundingPerTrack`).
+//
+// Instance identity is (noteId, run): an edit run's replacement row keeps the hidden note's id, so the id alone does not
+// tell an old instance from the replacement across a revision switch. `runKey` packs the run descriptor (bits 6..15)
+// and the run's pass order in its manifest (bits 0..5, for DEC-244 ties). O(T) per call; no allocation.
 
 #pragma once
 
@@ -25,6 +28,12 @@
 namespace ContentEngine {
 
 constexpr uint32_t kOpenEnd = 0xFFFFFFFFu;
+
+inline uint16_t makeRunKey(uint16_t runId, uint8_t order) {
+  return static_cast<uint16_t>((runId << 6) | (order & 0x3Fu));
+}
+inline uint16_t runIdOf(uint16_t runKey) { return static_cast<uint16_t>(runKey >> 6); }
+inline uint8_t orderOf(uint16_t runKey) { return static_cast<uint8_t>(runKey & 0x3Fu); }
 
 enum class StartResult : uint8_t { Started, Duplicate, RefusedFull, SuppressedOccupied };
 enum class CloseResult : uint8_t { Closed, EndSet, NotSounding };
@@ -35,20 +44,21 @@ class TerminalScheduler {
   struct Out {
     uint32_t tick;
     uint32_t noteId;
+    uint16_t runKey;
     uint8_t channel;
     uint8_t pitch;
-    uint8_t run;
   };
   struct Carry {
     uint32_t noteId;
-    uint32_t end;  // kOpenEnd when still unknown
+    uint16_t runId;
+    uint32_t end;  // kOpenEnd when the new source supplies it later
   };
   struct Counters {
     uint32_t suppressedTerminals;  // a terminal for an instance that is not sounding (already closed, never sent)
     uint32_t lateTerminals;        // an end learned after its tick: fired at the current tick
     uint32_t suppressedOccupied;   // composed NoteOn on a live-occupied pitch
-    uint32_t refusedFull;          // composed NoteOn with T instances sounding (output-overload policy OUT-POLY)
-    uint32_t duplicates;           // START for an id already sounding
+    uint32_t refusedFull;          // composed NoteOn with T instances sounding (OUT-POLY)
+    uint32_t duplicates;           // START for an instance already sounding
     uint32_t transitionClosures;   // instances closed because the new source does not carry them
   };
 
@@ -57,16 +67,16 @@ class TerminalScheduler {
     for (auto& s : set_) s = Instance{};
     for (auto& o : occupied_) o = 0;
     counters_ = Counters{};
-    lastTick_ = 0;
   }
 
-  StartResult start(uint32_t tick, uint32_t noteId, uint8_t channel, uint8_t pitch, uint8_t run, uint32_t end) {
-    lastTick_ = tick;
+  StartResult start(uint32_t tick, uint32_t noteId, uint16_t runId, uint8_t order, uint8_t channel, uint8_t pitch,
+                    uint32_t end) {
+    (void)tick;
     if (occupied_[pitch & 0x7F] > 0) {
       ++counters_.suppressedOccupied;
       return StartResult::SuppressedOccupied;
     }
-    if (find(noteId) >= 0) {
+    if (find(noteId, runId) >= 0) {
       ++counters_.duplicates;
       return StartResult::Duplicate;
     }
@@ -74,13 +84,13 @@ class TerminalScheduler {
       ++counters_.refusedFull;
       return StartResult::RefusedFull;
     }
-    set_[count_++] = Instance{noteId, end, channel, pitch, run};
+    set_[count_++] = Instance{noteId, end, makeRunKey(runId, order), channel, pitch};
     return StartResult::Started;
   }
 
-  /// Composed end (TERMINAL / carry entry) for a sounding instance.
-  CloseResult composedEnd(uint32_t noteId, uint32_t end) {
-    const int i = find(noteId);
+  /// Composed end (TERMINAL entry) for a sounding instance.
+  CloseResult composedEnd(uint32_t noteId, uint16_t runId, uint32_t end) {
+    const int i = find(noteId, runId);
     if (i < 0) {
       ++counters_.suppressedTerminals;
       return CloseResult::NotSounding;
@@ -90,8 +100,8 @@ class TerminalScheduler {
   }
 
   /// The live writer's NoteOff for a note that may be sounding as a playback instance: it ends now.
-  CloseResult liveNoteOff(uint32_t noteId, uint32_t now) {
-    const int i = find(noteId);
+  CloseResult liveNoteOff(uint32_t noteId, uint16_t runId, uint32_t now) {
+    const int i = find(noteId, runId);
     if (i < 0) {
       ++counters_.suppressedTerminals;
       return CloseResult::NotSounding;
@@ -101,8 +111,8 @@ class TerminalScheduler {
   }
 
   /// Sends every NoteOff due at `tick` (ends at or before it), in DEC-244 order (pass, then id). Returns the count.
+  /// With `max` below the due count (port backpressure) the rest stay owned and go out on later calls.
   uint8_t due(uint32_t tick, Out* out, uint8_t max) {
-    lastTick_ = tick;
     uint8_t n = 0;
     while (n < max) {
       int best = -1;
@@ -120,7 +130,6 @@ class TerminalScheduler {
   /// A live NoteOn on `pitch`: every sounding instance on it ends now (any channel); the pitch stays occupied until
   /// `release`. Returns the NoteOffs sent; the caller sends the live NoteOn after them.
   uint8_t occupy(uint8_t pitch, uint32_t now, Out* out, uint8_t max) {
-    lastTick_ = now;
     uint8_t n = 0;
     for (uint16_t i = 0; i < count_ && n < max;) {
       if (set_[i].pitch == pitch)
@@ -139,12 +148,11 @@ class TerminalScheduler {
 
   /// Switch to a new source at `tick`: keep instances it carries (taking its end), close the others now.
   uint8_t transition(uint32_t tick, const Carry* carry, uint16_t carryCount, Out* out, uint8_t max) {
-    lastTick_ = tick;
     uint8_t n = 0;
     for (uint16_t i = 0; i < count_ && n < max;) {
       int k = -1;
       for (uint16_t c = 0; c < carryCount; ++c)
-        if (carry[c].noteId == set_[i].noteId) k = c;
+        if (carry[c].noteId == set_[i].noteId && carry[c].runId == runIdOf(set_[i].runKey)) k = c;
       if (k < 0) {
         ++counters_.transitionClosures;
         out[n++] = emit(i, tick);
@@ -164,13 +172,14 @@ class TerminalScheduler {
   struct Instance {
     uint32_t noteId = 0;
     uint32_t end = kOpenEnd;
+    uint16_t runKey = 0;
     uint8_t channel = 0;
     uint8_t pitch = 0;
-    uint8_t run = 0;
   };
+  static_assert(sizeof(Instance) == 12, "a sounding instance is 12 bytes (owner budget: 8 tracks x 16 x 12 B)");
 
   static bool before(const Instance& a, const Instance& b) {
-    if (a.run != b.run) return a.run < b.run;
+    if (orderOf(a.runKey) != orderOf(b.runKey)) return orderOf(a.runKey) < orderOf(b.runKey);
     return a.noteId < b.noteId;
   }
 
@@ -179,7 +188,8 @@ class TerminalScheduler {
     for (uint8_t i = 1; i < n; ++i) {
       const Out x = out[i];
       uint8_t j = i;
-      while (j > 0 && (out[j - 1].run > x.run || (out[j - 1].run == x.run && out[j - 1].noteId > x.noteId))) {
+      while (j > 0 && (orderOf(out[j - 1].runKey) > orderOf(x.runKey) ||
+                       (orderOf(out[j - 1].runKey) == orderOf(x.runKey) && out[j - 1].noteId > x.noteId))) {
         out[j] = out[j - 1];
         --j;
       }
@@ -187,25 +197,23 @@ class TerminalScheduler {
     }
   }
 
-  int find(uint32_t noteId) const {
+  int find(uint32_t noteId, uint16_t runId) const {
     for (uint16_t i = 0; i < count_; ++i)
-      if (set_[i].noteId == noteId) return i;
+      if (set_[i].noteId == noteId && runIdOf(set_[i].runKey) == runId) return i;
     return -1;
   }
 
   Out emit(uint16_t i, uint32_t tick) {
-    const Out o{tick, set_[i].noteId, set_[i].channel, set_[i].pitch, set_[i].run};
+    const Out o{tick, set_[i].noteId, set_[i].runKey, set_[i].channel, set_[i].pitch};
     set_[i] = set_[--count_];
     set_[count_] = Instance{};
     return o;
   }
 
-  static_assert(sizeof(Instance) == 12, "a sounding instance is 12 bytes (owner budget: 8 tracks x 16 x 12 B)");
   Instance set_[T];
   uint16_t count_;
   uint8_t occupied_[128];
   Counters counters_;
-  uint32_t lastTick_;
 };
 
 }  // namespace ContentEngine
