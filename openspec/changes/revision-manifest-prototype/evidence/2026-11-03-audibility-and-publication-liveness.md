@@ -1067,3 +1067,21 @@ No storage or overdub semantics are changed.
   - the restart cold start (about 120-130 s);
   - the default image and production C5.3b successors (not qualified here).
 - `midi_gap` max is 495 ms, as on earlier sweep runs.
+
+## Memory pressure under the intense gesture: heap-owner attribution (2026-11-04, diagnostic only)
+
+**Scope.** Classification only; no production repair. Diagnostic env `teensy41-capture-serial-revstore-succprobe-heapowners` (uncommitted): malloc/free/realloc/`operator new` wrapped, owner and live-block tables in EXTMEM, armed per boot. Image HEX `f0b80867…` (`captures/heapowners-f0b80867/`), run `captures/session_20261104_133244.log`, intense gesture (long overdub, full set).
+
+**Growing internal owners** (live bytes, sampled over the run):
+
+| owner (addr2line) | growth |
+|---|---|
+| `std::vector<PendingNoteChange, InternalHeapFirstAllocator>::_M_realloc_insert` (Loop `pendingNoteChanges_`, held until session commit) | 3 → 12 → 24 → 49 KB |
+| `std::vector<EditPass>::reserve` | 21 → 33 KB |
+| `LoopContentResolution::boundedDisplayStep` | about 31 KB from 79 s |
+
+- Tracked live grew about +76 KB while the arena tail went 94 KB → 0; largest free chunk 7.5–50 KB.
+- **Classification:** live session payload plus fragmentation from vector doubling peaks. No leak evidence (owners track the gesture's content; nothing grows without a live owner).
+- **Failing allocation:** 4 `alloc_census,fail` rows from 122.5 s, all site `0x00017665` (the `PendingNoteChange` vector growth), request 24,576 B, tail 0, largest free 7,576 B, untracked 0. A doubling request larger than any free chunk.
+- **Stalled owner:** the clock-path `tracks` segment blocked for 46.2 s (row at 202.5 s) and 131.3 s (row ending at 337.1 s), each bracketed by track 8 merged-fallback builds. The function inside the merged build that crawls or loops under heap pressure is **not yet named**; this needs a finer timing breakdown on the same diagnostic image.
+- Production probe image `3772f91c…` restored afterwards; boot verified (`boot_reset,crash=0`, `BOOT,load,ok`, `session_20261104_133955`).
