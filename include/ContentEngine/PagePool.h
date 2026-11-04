@@ -12,11 +12,9 @@
 #include <cstdint>
 
 #include "ContentEngine/EngineConfig.h"
-#include "RevisionStore/RevisionStore.h"
+#include "ContentEngine/PassEvent.h"
 
 namespace ContentEngine {
-
-using PassEvent = RevisionStore::PassEvent;
 
 /// Who holds a page. Values below `kOwnerReservedBase` are run ids.
 using PageOwner = uint16_t;

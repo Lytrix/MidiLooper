@@ -20,6 +20,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ContentEngine/PassEvent.h"
+
 namespace RevisionStore {
 
 using PageId = uint16_t;
@@ -29,21 +31,8 @@ constexpr PageId kNoPage = 0xFFFFu;
 constexpr RunId kNoRun = 0xFFFFu;
 constexpr ManifestId kNoManifest = 0xFFFFu;
 
-/// 16-byte committed source row (DEC-245 layer 1). A run keeps Midi rows and HideNote rows in separate regions; a
-/// HideNote row hides every Midi row carrying `noteId` in earlier passes (overlap-resolve, NOTE_EDIT).
-/// `seq` is the append ordinal inside the source pass and `origin` the source pass's ordinal inside a compacted run
-/// (0 in an ordinary run): both survive compaction unchanged, so provenance and DEC-244 order are kept.
-/// SysEx is not representable.
-struct PassEvent {
-  uint32_t tick = 0;
-  uint32_t noteId = 0;
-  uint32_t seq = 0;
-  uint8_t status = 0;
-  uint8_t data1 = 0;
-  uint8_t data2 = 0;
-  uint8_t origin = 0;
-};
-static_assert(sizeof(PassEvent) == 16, "PassEvent is a fixed 16-byte row");
+/// The committed source row is owned by the content engine (DEC-252); the prototype store uses the same type.
+using PassEvent = ContentEngine::PassEvent;
 
 /// Production's equal-tick class (`LoopEventStore` canonical order, `NoteUtils::midiEventChronologicalLess`):
 /// NoteOff (incl. NoteOn velocity 0) < NoteOn < every other message.
