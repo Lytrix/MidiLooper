@@ -1835,6 +1835,36 @@ void test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_e
   RollingSuccessorProbe::gKnobs = {};
 }
 
+// 33-bar first-traversal gap (owner ruling on 8539c5b1): the device take's geometry -- 33 bars, a 16th-note stream
+// from tick 192 -- recorded into PLAYING on the routed slot. Every committed NoteOn must be emitted exactly once in each
+// traversal after the stop, NoteOffs paired. The first traversal was measured at 370 of 525.
+void test_c5_3_long_take_first_traversal_plays_every_committed_note() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  constexpr uint32_t kBars33 = 33, kLen33 = kBars33 * kBar;
+  const ContentProvenance p = recordContentProvenance(t, kBars33, 192, 4);
+  RollingSuccessorProbe::gKnobs = {};
+  for (uint32_t pass = 1; pass <= 4; ++pass) {
+    std::map<std::pair<uint32_t, uint8_t>, uint32_t> seen;
+    uint32_t firstMissing = UINT32_MAX;
+    const auto it = p.perTraversal.find(pass);
+    if (it != p.perTraversal.end())
+      for (const auto& r : it->second) ++seen[{std::get<1>(r), std::get<2>(r)}];
+    uint32_t missing = 0, doubled = 0;
+    for (const auto& on : p.committed) {
+      const uint32_t n = seen.count(on) ? seen[on] : 0;
+      if (n == 0) { ++missing; firstMissing = std::min(firstMissing, on.first); }
+      if (n > 1) ++doubled;
+    }
+    printf("LONG33 pass %u: %zu committed, %u missing (first at %u), %u doubled\n", pass, p.committed.size(), missing,
+           firstMissing == UINT32_MAX ? 0u : firstMissing, doubled);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, missing, "a committed NoteOn was not emitted in a traversal");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, doubled, "a committed NoteOn was emitted twice in a traversal");
+  }
+  (void)kLen33;
+}
+
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
 // unaffected. The third view is made a complete retained window the moment the root becomes current.
 void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on() {
@@ -2204,6 +2234,7 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
   if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
   if (getenv("CONTENT_PARITY_REPORT") != nullptr) RUN_TEST(test_c5_3_content_parity_provenance_report);
+  if (getenv("LONG33_RED") != nullptr) RUN_TEST(test_c5_3_long_take_first_traversal_plays_every_committed_note);
   if (getenv("R3_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_r3_root_starvation_sweep);
   RUN_TEST(test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take);  // DEC-136.4b closeout P0 (green)
   RUN_TEST(test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_earlier_take);

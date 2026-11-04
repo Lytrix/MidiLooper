@@ -928,3 +928,90 @@ implemented.
 - So an earlier yield would give no additional useful frozen preparation in the measured cases. It would only discard
   root progress sooner.
 - The loaded-device root work budget is the open measurement.
+
+### 33-bar first-traversal gap: exact cause (owner ruling on `570095f7` / `8539c5b1`)
+
+**RED.** `test_c5_3_long_take_first_traversal_plays_every_committed_note` (gated `LONG33_RED`):
+- Shape: the device take's geometry. 33 bars, a 16th-note stream from tick 192, recorded into PLAYING on the routed
+  slot, then 4 traversals.
+- Assertion: every committed NoteOn is emitted exactly once per traversal.
+- Result: traversal 1 misses **155 of 525**, none doubled. The first missing NoteOn is at phase 3024; traversals 2-4
+  are complete.
+
+**Owner chain** (host trace, absolute ticks; loop 25,344; routed equal partition of 1,496/1,488-tick windows):
+
+| tick (phase) | owner and event |
+|---|---|
+| 26779 (1435) | DEC-136.4b speculative root requested: [2304+688], the grid window from bar 3 to the partition end at 2992. Built and parked by 26785, published as `ready` at 26881. |
+| 27649 (2305) | **root takeover** at its boundary. Frame start 2304, deadline 27648, span 688. The Record-return job releases on this boundary (`bound=0`). |
+| 27649 | **the Record-return branch's tail raises a one-bar committed demand [2304+768]** (reason `AwaitingSourceQualification`, deadline 52992). That is DEC-136 item 1's "return of the interval containing the playhead", positioned for the next traversal. Host backtrace and site tag: `record_return_tail`. |
+| 27650-27656 | that demand qualifies and builds into `ready`. It now holds the single `pending` and the `ready` role. The probe successor requester refuses while either is held (gates 1 and 16), so **no successor is ever requested for the root window's end (2992)**. |
+| 28337 (2993) | the root window expires (`ServingExpired`). The useless `ready` is reclaimed as an orphan. The ordinary requester positions [10464+1488] under DEC-147's lead (deadline 35808). |
+| 28337-35808 | **silence for 7,471 ticks (about 9.7 bars) = the 155 missing NoteOns.** Then [10464+1488] is adopted, and the depth-1 and depth-2 successors run normally. |
+
+**Classification, with the evidence for each.**
+- **Missing requester: yes, as a consequence.** The successor for 2992 is never requested, because the requester's
+  gates are held by the redundant demand.
+- **Role contention: the cause.** A redundant root-return demand holds `pending` and `ready` across the root window's
+  expiry.
+- **Price refusal: no.** There is no DEC-147 refusal before the expiry. The ~7.5k-tick wait afterwards is the ordinary
+  requester's positioned lead, which follows from the missed successor rather than causing it.
+- **Delayed placement: secondary.** It is the recovery path's lead, not the trigger.
+- **Content coverage: no.** Every window's rows are the committed rows. The RED counts no doubles, and traversals 2-4
+  are exact.
+
+**Why only long loops.** The tail is guarded by the bridge check ("a complete same-revision copy bridges the root
+identity swap" → `Idle`). That check is gated to `!shouldAvoidFullVisualRebuild(loopLength)`, so a 33-bar windowed loop
+skips it. A 4-bar loop takes it, and no demand is raised there.
+
+**Causality check (experiment, reverted, not a fix).** Returning `Idle` from the tail only when a published committed
+window already serves the playhead on the routed slot made the RED pass: 525 / 525 in all four traversals, 0 missing,
+0 doubled.
+
+**Device correspondence** (`session_20261104_114305`):
+- After the takeover at 66.16 s a demand qualifies (66.188) and is published straight into `ready` (66.285), with no
+  probe `succ` rows.
+- At the root window's expiry (67.40) it is reclaimed as an orphan, and the next window is positioned for 75.15 s.
+- That is the same chain, giving the ~7.7 s silence.
+
+**Not done here (the owner asked for the cause first).**
+- The repair needs a ruling: where the "root already served" discharge belongs for windowed loops.
+- NoteOff parity still has to be added to the RED before continuity can be declared fixed.
+
+### Memory pressure in the long dense overdub: classification so far (separate investigation)
+
+Evidence: `session_20261104_115912` (pre-repair image) and `session_20261104_115056` (repair image), both wedged.
+
+**Internal heap.**
+- `alloc_census.heap` is the arena's *untouched tail* (`_heap_end − __brkval`). It falls in steps of about 30 KB:
+  176 KB → 98 → 65 → 37 → 4 KB, at about 66, 78 and 108 s.
+- The steps track the committed overdub passes (`cap` 1 → 6). The tail never recovers.
+- `MEM_DENIED snapshot_reserve heap_low` from about 76 s.
+
+**Fragmentation is present.** At the end the free list still holds chunks of 13-37 KB (`largest_free`), while the
+tail is 4 KB. So the arena reached its peak extent, and part of it was freed back as fragments.
+
+**Not the census owners.**
+- The internal bytes the census attributes (`ib`: edit payloads, undo ids, live session lists) are only 8-32 bytes.
+- The external pass vectors and directories (`xb`) grow 5.6 → 57 KB, in PSRAM.
+- So the internal consumer is **unattributed** by the existing census.
+
+**PSRAM.** Live 4.4 → 7.5 MB of 8.38 MB (`snap` 300 → 426 KB). It is not exhausted at the wedge.
+
+**The wedge.**
+- The last row is at 181.27 s: a merged build for the routed track (360 events, the merged fallback serving track 8
+  under the overdub).
+- After that, silence. The next boot reports `crash=0`, so no fault was recorded.
+- That is consistent with a hang in an aborting allocation path, or with a stalled owner. **Neither the exact failing
+  allocation nor the stalled owner is identified yet.**
+
+**Classification.**
+- Peak-driven arena growth with retained fragments: live payload plus fragmentation, with no evidence of a leak yet.
+- The internal consumer that grows per committed pass is not visible in today's rows.
+
+**Next evidence:**
+- Device: a per-owner internal-allocation attribution, so the growing consumer is named.
+- Device: an allocation-failure hook that names the failing site, so the wedge is pinned to a site.
+- Host: the bounded allocation-failure RED (does MIDI servicing stay responsive, does Record or Overdub fail safely).
+
+No storage or overdub semantics are changed.
