@@ -1493,6 +1493,44 @@ void test_c5_3_record_return_a_frozen_build_past_its_boundary_never_holds_the_bu
   (void)heldAfter;
 }
 
+// DEC-136.4b device finding (captures/session_20261104_103529.log, `fp_yield_pend`): on the device a positioned
+// committed demand is re-raised between lane turns while the frozen reader's next bar is owed. A pending demand holds no
+// builder, so it must not make the frozen reader yield its own bar: with such a demand re-raised before every lane turn
+// (the device's producer), the frozen reader still prepares and serves every bar with no gap, and the root still takes
+// over exactly once.
+void test_c5_3_record_return_a_re_raised_pending_demand_never_starves_the_frozen_reader() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness h;
+  RecordReturnOwnershipWitness w;
+  uint32_t withheld = 0, reRaised = 0;
+  delayRootQualificationUntil(t, kLength + 3 * kBar, withheld);
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, h);
+    // The device's producer: an ordinary one-bar committed demand for the playhead's bar, before the next lane turn.
+    const uint32_t phase = (tick + 1) % kLength;
+    if (!t.recordReturnFrozenContinuationOwed(0, phase) || t.pendingViewRequest(0) != nullptr) return;
+    const uint32_t bar = (phase / kBar) * kBar;
+    if (t.requestCommittedPlaybackWindow(0, PlaybackCoverageInterval{bar, kBar, kLength}, phase,
+                                         PlaybackDeadlineClock{tick + 1, 1}) ==
+        Track::PlaybackViewRequestResult::DeferredSourceQualification)
+      ++reRaised;
+  });
+  gWithholdLaneTurn = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, reRaised, "no demand was re-raised while the frozen bar was owed: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "a re-raised pending demand starved the frozen reader");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once");
+  for (uint32_t pass = 1; pass < 6; ++pass) {
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+}
+
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
 // unaffected. The third view is made a complete retained window the moment the root becomes current.
 void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on() {
@@ -1878,6 +1916,7 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_record_return_speculative_refusal_by_a_sibling_restores_the_request);
   RUN_TEST(test_c5_3_record_return_authorized_frozen_frame_is_never_labelled_stale);
   RUN_TEST(test_c5_3_record_return_a_frozen_build_past_its_boundary_never_holds_the_builder);
+  RUN_TEST(test_c5_3_record_return_a_re_raised_pending_demand_never_starves_the_frozen_reader);
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)

@@ -444,6 +444,9 @@ public:
   /// DEC-136.4b: the holder selector's Record-return priority offer -- the frozen reader's owed next bar, else the
   /// speculative root while its target holds. True when it answered for `slot` (the offer is in `holder`).
   bool offerRecordReturnPriorityHolder(uint8_t slot, uint32_t phase, MidiServiceDrain::PlaybackHolder& holder) const;
+  /// DEC-136.4b: the owed frozen bar's offer alone, ahead of the selector's pending-demand rule.
+  bool offerOwedFrozenContinuationHolder(uint8_t slot, uint32_t currentPhase,
+                                         MidiServiceDrain::PlaybackHolder& holder) const;
   /// DEC-136.4b: `view` is the active Record-return job's own qualified frozen (Capture) window -- the job is bound and
   /// retiring, and the view carries its full frozen identity.
   bool recordReturnJobAuthorizesFrozenView(uint8_t slotIndex, const RuntimePlaybackView& view) const;

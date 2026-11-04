@@ -662,3 +662,45 @@ the C5.3b successor requester is absent. That dependency is named, not addressed
 | R3: root liveness depends on cost. A speculative root that cannot complete within the frozen bar it is prepared in (one bar, minus the frozen build) is yielded at each frozen handoff and re-raised one bar later, so a root costlier than that never takes over. Its dropped work carries no DEC-147 promise (speculative admission records none), so no miss is counted. | open, owner decision | Not patched: a bound would need a timeout or fallback, which the ruling excludes. On the device a frozen bar completes with 624-704 ticks spare and G_f = 3 grants. The two-bar root's actual grant time is what device qualification measures. Under the retained-role exclusion above, the pre-slice ordering still guarantees an eventual takeover. |
 | R4: once the frozen reader is late (a starved bar), the frozen branch is skipped and the next windows come from the root path. | noted | This is pre-slice behavior. The resolver comment was corrected: the next window is adopted from Idle at its own boundary, the frozen route's or the root's. |
 | `recordReturnSpeculativeRootOwedAfterHandoff` protects no production work while the yield applies | noted | It still classifies the span-shaped root in the retained-role case and keeps item 1 consistent with the speculative shape. |
+
+**First device qualification of `b0d63d25`, and the fix it drove (2026-11-04).**
+
+*Run 1.*
+- Image: succprobe at `b0d63d25`, plus the uncommitted TEMP boot breadcrumbs. HEX sha256 `396f08f9…7f8c`, retained in
+  `captures/succprobe-396f08f9/`.
+- Upload: the first `teensy-gui` attempt failed ("unable to read your compiled sketch"); the retry succeeded.
+- Boot: `boot_reset,crash=0`, `BOOT,load,ok`.
+- Gesture: `STIM-LANE-CADENCE-TEMP-01`, track 8 slot 4, the same command as before.
+- Capture: `captures/session_20261104_102248.log`.
+
+*Result.*
+- The routed slot's post-stop silence fell from about 33 s (61.8-94.9 s on the earlier runs) to about 9 s
+  (`none` 232/600/253 across 57-72 s).
+- The root becomes current at 59.28 s, on the boundary where frozen bar 8448 is adopted. The yield then fires
+  (`frozen_priority_yield`).
+- No frozen bar 9216 is built. `win_gap` shows the slot eligible on each turn with every turn denied. The frozen frame
+  expires at its end (60.08 s, `ServingExpired`) and the root path takes over.
+
+*Attribution (TEMP device diagnostic).*
+- Image: HEX `c0dbbcb2…86e2`, transition-cadenced decision codes, not committed. Capture
+  `captures/session_20261104_103529.log`.
+- It shows a single `fp_yield_pend`. The yield fired on a **pending committed demand alone**, which holds no builder.
+  Identical repeats are deduplicated by the drop trace.
+- A pending demand is re-raised between lane turns on the device. Separately, the holder selector served a pending
+  committed demand through its retry gate before the frozen offer was reached, so the owed frozen bar got no grain.
+
+*Fix.*
+- Only work that holds the builder yields: a qualification, a build, or its frozen request.
+- The owed frozen bar's holder offer (`offerOwedFrozenContinuationHolder`) now precedes the selector's pending-demand
+  rule.
+- F5, explicit: when the speculative target is requested, a committed demand for another interval is retired first,
+  never coalesced into it.
+- Budget: the `matches` lambda in `fillPlaybackHolders` is now `TRACK_COLD_MEM`, so an outlined copy stays in flash.
+  The first build of the fix had outlined it into ITCM (+128 B on both images).
+
+*Host RED.*
+- `..._a_re_raised_pending_demand_never_starves_the_frozen_reader`: a one-bar committed demand is re-raised before
+  every lane turn while the frozen bar is owed, which is the device's producer shape.
+- Before the fix: 10,752 gap ticks. After: no gap, one takeover, notes paired.
+
+*Gates.* Lane 33/33; native full 4,008 cases, 0 failed; ITCM byte-identical (392,072 + 1,144; 392,312 + 904).

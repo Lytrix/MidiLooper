@@ -5215,6 +5215,14 @@ TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootAdmissible(uint8_t slotInd
          request.coverage.loopLengthTicks == target.loopLengthTicks;
 }
 
+TRACK_COLD_MEM bool Track::offerOwedFrozenContinuationHolder(uint8_t slot, uint32_t currentPhase,
+                                                             MidiServiceDrain::PlaybackHolder& holder) const {
+  const uint32_t length = loopForSlot(slot).loopLengthTicks;
+  if (length == 0 || slot != activeLoopIndex) return false;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(currentPhase, projectionCycleStartTick, length);
+  return recordReturnFrozenContinuationOwed(slot, phase) && offerRecordReturnPriorityHolder(slot, phase, holder);
+}
+
 TRACK_COLD_MEM bool Track::offerRecordReturnPriorityHolder(uint8_t slot, uint32_t phase,
                                                            MidiServiceDrain::PlaybackHolder& holder) const {
   // Frozen priority: the frozen reader's next boundary is owed to it, with that boundary's lead. A frozen bar built
@@ -8414,6 +8422,8 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
 #endif
     // Task 3.7a (I2): a **retained-source gather** is a holder too -- it owes its next slice, and the frozen demand it
     // serves carries the deadline the urgency below is read from.
+    // DEC-136.4b: an owed frozen bar outranks a pending committed demand here (the demand holds no builder).
+    if (offerOwedFrozenContinuationHolder(slot, currentPhase, holders[slot])) continue;
     if (!runtime->coverageBuildNeedsService() && (runtime->ownsCoverageSource() || runtime->retainedGatherActive() ||
         // Task 3.7a (I3b): a **paged preparation in flight** owes pages, so it is a holder too -- with the deadline of
         // the demand it serves (read below from the frozen request, which is this lane's promise).
@@ -8520,7 +8530,7 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
             ? recordLoop.loopLengthTicks
             : std::min<uint32_t>(Config::TICKS_PER_BAR, recordLoop.loopLengthTicks - targetStart);
         const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
-        const auto matches = [&](uint8_t index, bool containsPhase) {
+        const auto matches = [&](uint8_t index, bool containsPhase) TRACK_COLD_MEM {
           if (set == nullptr || index >= set->views.size()) return false;
           const RuntimePlaybackView& view = set->views[index];
           return view.complete && view.source == source &&
@@ -9238,10 +9248,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
                 ? IntervalProjection::tickPhaseInProjectionCycle(currentPhase, projectionCycleStartTick,
                                                                  loopForSlot(slot).loopLengthTicks)
                 : 0u);
+  // Only work that holds the builder yields (a qualification, a build, or its frozen request). A pending demand alone
+  // holds none, so the frozen branch proceeds beside it; one is re-raised between lane turns on the device.
   if (frozenContinuationOwed && (!runtime->viewBuild.active() || runtime->viewBuild.coverageOwned()) &&
-      (runtime->ownsCoverageSource() || runtime->coverageBuildNeedsService() || runtime->frozenViewRequest.active ||
-       (runtime->pendingViewRequest_.active &&
-        runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot))) {
+      (runtime->ownsCoverageSource() || runtime->coverageBuildNeedsService() || runtime->frozenViewRequest.active)) {
     const uint32_t dropBefore = probeCoverageBuildDrop(slot);
     runtime->discardCoverageBuild();  // coalesces the frozen root demand into `pending`, retired just below
     if (runtime->pendingViewRequest_.active &&
@@ -9375,6 +9385,16 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           }
           // DEC-136.4b: the frozen authority holds but no grid window starts at that boundary -- wait for a later one.
           if (authorityHeld && rootCoverage.lengthTicks == 0) return PlaybackViewTurnResult::Idle;
+          // F5: a committed demand for another interval is retired before the speculative target is requested, never
+          // coalesced into it (the retained record would hand the new target the old demand's position).
+          if (authorityHeld) {
+            const PlaybackViewPendingRequest* stale = pendingViewRequest(slot);
+            if (stale != nullptr && stale->active &&
+                stale->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+                (stale->coverage.startPhase != rootCoverage.startPhase ||
+                 stale->coverage.lengthTicks != rootCoverage.lengthTicks))
+              runtime->clearViewPendingRequest();
+          }
           const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
           if (pending != nullptr) {
             if (pending->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot)
