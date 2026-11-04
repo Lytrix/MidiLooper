@@ -113,9 +113,12 @@ class WindowPlayer {
   /// NoteOn). Entry positions are offset by the window's cycle base.
   uint8_t tick(uint32_t t, Emit* out, uint8_t max) {
     uint8_t n = 0;
-    for (uint16_t i = next_; i < count_ && base_ + entries_[i].tick <= t; ++i)
-      if (entries_[i].terminal)
-        sched_->composedEnd(entries_[i].noteId, runIdOf(entries_[i].runKey), base_ + entries_[i].tick);
+    // A TERMINAL for `pos - 1` (an OVL-1 shorten or a Q-LEN-1 re-strike decided at `pos`) is appended after entries a
+    // lower pass already wrote at `pos`, so entries are tick-ordered except that a TERMINAL may sit one tick late: look
+    // one tick ahead for TERMINALs due exactly now.
+    for (uint16_t i = next_; i < count_ && base_ + entries_[i].tick <= t + 1; ++i)
+      if (entries_[i].terminal && base_ + entries_[i].tick == t)
+        sched_->composedEnd(entries_[i].noteId, runIdOf(entries_[i].runKey), t);
     typename Scheduler::Out offs[T];
     const uint8_t d = sched_->due(t, offs, static_cast<uint8_t>(T));
     for (uint8_t i = 0; i < d && n < max; ++i) out[n++] = fromOut(offs[i]);
