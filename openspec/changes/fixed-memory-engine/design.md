@@ -346,3 +346,35 @@ The 3-cycle reference comparison and the four mutations are kept.
   `(noteId, run)` has two open instances.
 - Overlap counters never emit; only admitted instances and the scheduler do.
 - `duplicates == 0` across cycles, because absolute ticks keep successive iterations apart.
+
+## E3 slice 3 — no multi-cycle runs (as built)
+
+**Writer change:** every wrap starts a new run, so a run never spans more than one loop cycle. This removes
+"multi-cycle runs" from storage instead of composing them.
+- The DEC-069 owed commit stays a manifest-order concern: a revision publishes when its runs have sealed, in order.
+- Several runs may be closing at once. Each holds at least one open note, so there are at most 128 per writer, and
+  each holds one descriptor.
+- With no descriptor left the writer enters FinalInterval (named).
+- The sealed queue is sized for a Stop that seals every closing run plus the active one; a 100 k-step fuzz found the
+  old 8-slot queue overflowing.
+- `CommitOwed` is gone from `WriterResult`.
+
+**RAM2 correction:** a writer measures 2,612 B on ARM, mostly the 128 × 16 B open-note table, against the 1,024 B
+budgeted.
+
+| Item | Before | Now |
+|---|---|---|
+| 8 writers | 8,192 B | 20,896 B |
+| RAM2 statics | 195,261 B | 207,965 B |
+| Heap left for libraries | 329,027 B | 316,323 B |
+
+**Q-LEN-1 — owner question, interim rule in place.** A note held across more than one wrap (longer than the loop)
+has its NoteOff in its run at ≥ 2 × loop. The interim rule, chosen only so that nothing sticks or duplicates:
+- that NoteOff plays in the cycle after the note's start, at `min(tick − 2·loop, loop − 1)`;
+- a note's restart ends its own previous iteration one tick earlier.
+
+`test_note_held_across_two_wraps_never_sticks`: no stuck instance, no duplicate, no phantom NoteOff. Disabling the
+band-2 stream fails it.
+
+The musical rule for notes longer than the loop (clip, sustain across iterations, or re-strike) is the owner's to
+choose. Legacy handles them through C3.4 private holds.
