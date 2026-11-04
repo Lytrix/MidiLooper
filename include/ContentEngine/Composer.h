@@ -29,8 +29,8 @@
 // newer iteration. Its source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the
 // effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
 // Edit runs (NOTE_EDIT): their HideNote rows hide every row of the named noteId in earlier runs (lineage: a replacement
-// keeps the noteId and lives in the edit run). A fixed hide table (noteId -> latest hiding pass) is built at `begin` and
-// looked up per NoteOn in O(log H). EDIT-1 (draft): an edit run is not a derived occluder; NOTE_EDIT writes its own
+// keeps the noteId and lives in the edit run). The hide index is shared per manifest identity (`EditIndexStore`, E3.3):
+// `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (draft): an edit run is not a derived occluder; NOTE_EDIT writes its own
 // overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
 // by an edit still counts as a source occluder (OVL-8).
 // Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 64 entries,
@@ -44,19 +44,16 @@
 #include <cstdint>
 #include <climits>
 
+#include "ContentEngine/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
 #include "ContentEngine/PassEvent.h"
+#include "ContentEngine/SourceRun.h"
 #include "ContentEngine/SpanWindow.h"
 
 namespace ContentEngine {
 
-struct SourceRun {
-  RunId run;
-  uint32_t rowLimit;  // rows readable now (a writer's prefix, or the sealed count)
-};
-
 template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
-          uint16_t MaxHides = 4096>
+          typename IndexStore = EditIndexStore<Pool, Runs>>
 class Composer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
@@ -70,30 +67,34 @@ class Composer {
   };
   const Stats& stats() const { return stats_; }
 
-  void init(const Pool& pool, const Runs& runs) {
+  /// `index` is the shared edit-hide index; required only for sources with edit runs.
+  void init(const Pool& pool, const Runs& runs, IndexStore* index = nullptr) {
     pool_ = &pool;
     runs_ = &runs;
+    index_ = index;
+    lease_ = IndexLease{};
+    indexResult_ = IndexResult::NotNeeded;
     count_ = 0;
     loop_ = 0;
     windowStart_ = 0;
     identity_ = 0;
     cycle_ = 0;
     admittedCount_ = 0;
-    hideCount_ = 0;
     stats_ = Stats{};
     lookaheadRows_ = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
   }
 
-  /// False (named) when the source holds more edit hides than the fixed hide table: nothing is composed.
+  /// False (named, `indexResult()`) when the source has edit runs and their index cannot be pinned: no store, every slot
+  /// pinned by other identities (`Busy`), or more hides than a slot holds (`CapacityExceeded`). Nothing is composed.
   bool begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
+    end();
     count_ = count > MaxRuns ? MaxRuns : count;
     loop_ = loopLength;
     for (auto& p : active_)
       for (auto& c : p) c = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
-    hideCount_ = 0;
     for (uint8_t r = 0; r < count_; ++r) {
       src_[r] = source[r];
       edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
@@ -102,13 +103,7 @@ class Composer {
       cursor_[r] = 0;
       wrapCursor_[r] = wrapStart_[r];
       band2Cursor_[r] = band2Start_[r];
-      if (edit_[r]) {
-        for (uint32_t i = 0; i < src_[r].rowLimit && row(r, i).status == kHideNoteStatus; ++i) {
-          if (hideCount_ >= MaxHides) return false;
-          hides_[hideCount_++] = Hide{row(r, i).noteId, r};
-        }
-        continue;  // EDIT-1: an edit run is not counted as a source occluder
-      }
+      if (edit_[r]) continue;  // EDIT-1: an edit run is not counted as a source occluder
       for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
         const PassEvent& e = row(r, i);
         if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
@@ -116,7 +111,17 @@ class Composer {
       for (uint32_t i = 0; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes starting at tick 0, per pitch
         if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
     }
-    sortHides();
+    if (index_ != nullptr) {
+      indexResult_ = index_->acquire(identity, source, count_, lease_);
+    } else {
+      indexResult_ = IndexResult::NotNeeded;
+      for (uint8_t r = 0; r < count_; ++r)
+        if (edit_[r]) indexResult_ = IndexResult::Busy;  // edit runs need the shared index
+    }
+    if (indexResult_ != IndexResult::Ready && indexResult_ != IndexResult::NotNeeded) {
+      count_ = 0;
+      return false;
+    }
     admittedCount_ = 0;
     windowStart_ = 0;
     cycle_ = 0;
@@ -143,6 +148,13 @@ class Composer {
     windowStart_ = b;
     return true;
   }
+
+  /// Releases the pinned edit-index slot (also done by the next `begin`).
+  void end() {
+    if (index_ != nullptr) index_->release(lease_);
+    lease_ = IndexLease{};
+  }
+  IndexResult indexResult() const { return indexResult_; }
 
   static constexpr uint8_t kCheckpointActive = 64;
 
@@ -356,50 +368,9 @@ class Composer {
     return false;
   }
 
-  /// Heapsort by noteId, then keep one entry per noteId with its latest hiding pass. O(H log H), in place.
-  void sortHides() {
-    auto less = [this](uint16_t a, uint16_t b) { return hides_[a].noteId < hides_[b].noteId; };
-    auto sift = [&](uint16_t start, uint16_t end) {
-      uint16_t root = start;
-      while (static_cast<uint32_t>(root) * 2 + 1 < end) {
-        uint16_t child = static_cast<uint16_t>(root * 2 + 1);
-        if (child + 1 < end && less(child, static_cast<uint16_t>(child + 1))) ++child;
-        if (!less(root, child)) return;
-        const Hide t = hides_[root];
-        hides_[root] = hides_[child];
-        hides_[child] = t;
-        root = child;
-      }
-    };
-    for (int32_t i = hideCount_ / 2 - 1; i >= 0; --i) sift(static_cast<uint16_t>(i), hideCount_);
-    for (uint16_t end = hideCount_; end > 1; --end) {
-      const Hide t = hides_[0];
-      hides_[0] = hides_[end - 1];
-      hides_[end - 1] = t;
-      sift(0, static_cast<uint16_t>(end - 1));
-    }
-    uint16_t w = 0;
-    for (uint16_t i = 0; i < hideCount_; ++i) {
-      if (w > 0 && hides_[w - 1].noteId == hides_[i].noteId) {
-        if (hides_[i].order > hides_[w - 1].order) hides_[w - 1].order = hides_[i].order;
-      } else {
-        hides_[w++] = hides_[i];
-      }
-    }
-    hideCount_ = w;
-  }
-
-  /// A later edit run (pass order > r) hides `noteId`. O(log H).
+  /// A later edit run (pass order > r) hides `noteId`: shared index of the composed identity. O(log H).
   bool hiddenByEdit(uint32_t noteId, uint8_t r) const {
-    uint16_t lo = 0, hi = hideCount_;
-    while (lo < hi) {
-      const uint16_t mid = static_cast<uint16_t>(lo + (hi - lo) / 2);
-      if (hides_[mid].noteId < noteId)
-        lo = static_cast<uint16_t>(mid + 1);
-      else
-        hi = mid;
-    }
-    return lo < hideCount_ && hides_[lo].noteId == noteId && hides_[lo].order > r;
+    return index_ != nullptr && index_->hidden(lease_, noteId, r);
   }
 
   bool laterPassSounding(uint8_t r, uint8_t pitch) const {
@@ -533,12 +504,9 @@ class Composer {
   uint32_t band2Cursor_[MaxRuns];
   uint8_t count_;
   bool edit_[MaxRuns];
-  struct Hide {
-    uint32_t noteId;
-    uint8_t order;  // latest hiding pass
-  };
-  Hide hides_[MaxHides];
-  uint16_t hideCount_;
+  IndexStore* index_;
+  IndexLease lease_;
+  IndexResult indexResult_;
   uint8_t active_[128][MaxRuns];  // source notes sounding per (pitch, pass), effective or not (OVL-8)
   Admitted admitted_[T];
   uint8_t admittedCount_;

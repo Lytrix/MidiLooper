@@ -13,6 +13,8 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ContentEngine/Composer.h"
+#include "ContentEngine/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
 #include "ContentEngine/ManifestTable.h"
 #include "ContentEngine/PagePool.h"
@@ -78,5 +80,15 @@ static_assert(sizeof(ProductionRuns::Run) <= 128u, "RAM2 budget assumes <= 128 B
 static_assert(sizeof(ProductionManifests::Manifest) <= 148u, "RAM2 budget assumes <= 148 B per manifest");
 static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
               "one run may hold the whole content quota through its directory pages");
+
+/// Composition (E3.3): 18 compose cursors (16 playback + 2 display) at <= 12 KiB each (221,184 B budget); the edit-hide
+/// index is shared per manifest identity, one store of 18 slots (each cursor pins at most one), not per cursor.
+using ProductionComposer = Composer<ProductionPool, ProductionRuns>;
+using ProductionEditIndex = EditIndexStore<ProductionPool, ProductionRuns>;
+constexpr uint8_t kComposeCursors = 18;
+static_assert(sizeof(ProductionComposer) <= 12288u, "a compose cursor stays within its 12 KiB budget");
+static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221184u, "compose cursors fit the 221,184 B budget");
+static_assert(ProductionEditIndex::kSlots >= kComposeCursors, "every cursor can pin a distinct identity: Busy is unreachable");
+static_assert(sizeof(ProductionEditIndex) <= 576u * 1024u + 4096u, "the shared index fits the plan's 576-page reserve");
 
 }  // namespace ContentEngine
