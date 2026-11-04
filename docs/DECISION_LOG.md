@@ -7576,6 +7576,9 @@ root-return preparation beside the frozen reader, with frozen priority.** Ratifi
   never takes over, so the Record-return transaction does not converge (host-reachable; owner decision pending). The
   routed manifest's currency collision after a slot clear (closeout evidence). C5.3b production successors. The
   default image is not device-qualified for this item.
+- **Tail discharge (2026-11-04, owner ruling on `9f555003`).** Once the committed root serves the playhead from the
+  frame it was re-keyed onto, the Record-return tail no longer raises item 1's containing-interval demand. Pending or
+  in-flight work keeps its retry turn. This closes the 33-bar first-traversal gap (`949daedc`, `fc1971af`).
 - Commits `ea05fb82`, `bfd9d94f`, `b0d63d25`, `01e9e9eb`. [Evidence](../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
 
 ### Related OpenSpec and migration

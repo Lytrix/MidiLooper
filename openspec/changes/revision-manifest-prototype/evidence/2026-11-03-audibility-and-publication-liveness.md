@@ -1015,3 +1015,55 @@ tail is 4 KB. So the arena reached its peak extent, and part of it was freed bac
 - Host: the bounded allocation-failure RED (does MIDI servicing stay responsive, does Record or Overdub fail safely).
 
 No storage or overdub semantics are changed.
+
+### DEC-136 tail repair: the 33-bar first-traversal gap closed (owner ruling on `9f555003`)
+
+**Change.**
+- `949daedc` adds `Track::recordReturnRootTakeoverDischarged`, cold and routed-slot only. It holds when the current
+  view is the published committed window of the slot's current committed source (revision, generation, servable
+  manifest identity) serving the playhead, and the Serving frame is bound to that very view with its own start and a
+  positioned deadline.
+- When it holds, the Record-return tail skips the containing-interval demand and the pending-clear ahead of it.
+- `fc1971af` (review R1): pending or in-flight work, including the rolling successor's own demand, keeps its
+  `stepCommittedPlaybackRetry` turn while the job stays bound.
+- DEC-147, `coverageRoleRefusal`, buffers, fallbacks and publication are unchanged. ITCM is byte-identical on both
+  images.
+
+**Host (default gate).**
+- `test_c5_3_long_take_first_traversal_plays_every_committed_note`, on four traversals:
+  - 525 / 525 NoteOns and 525 / 525 NoteOffs each, none doubled;
+  - every NoteOn is closed by exactly one NoteOff on the wire;
+  - a rolling successor is requested while the root window serves;
+  - no one-bar containing-interval demand is in `pending` during the root window;
+  - the job retires.
+  It fails with the discharge disabled ("no rolling successor was requested").
+- `test_c5_3_record_return_tail_discharge_requires_the_completed_exact_root_takeover` covers the guards: no discharge
+  while the frozen reader owns playback; none on an incomplete handoff (root complete in `ready`, not adopted); none
+  with a wrong revision or manifest identity; none with an unpositioned frame or a frame bound to other storage.
+- Lane 38 / 38. Native full 4,015 / 0 failed.
+- Harness fix: the lane suite's `setUp` resets `MidiSendCapture` (fixed capacity 8,192). The dense 33-bar cases had
+  filled it, so later cases silently lost their observed MIDI. The long test now asserts that it never saturates.
+
+**Independent review (one pass).**
+
+| finding | disposition |
+|---|---|
+| R1 (medium): an outright `Idle` also withheld the successor's own pending demand from its retry turn while the job stayed bound | fixed in `fc1971af`. The host fixture releases the job on the takeover turn, so this case is covered by the device run below (the job stays bound 18 s). |
+| R2 (low): the tail-demand check covered only the root window's first bar | fixed: it covers any bar of the root window. |
+| R3 (low): the predicate checks the slot's current committed source, not a recorded job identity | wording corrected. A newer revision makes it false, and the tail then owes that revision's root as before. |
+| Verified fine | everything before the inserted line still runs (frozen-build protection, speculative obligation, parked-root publication, completed-shell reset); job and frozen retirement are owned by `serviceCaptureStopPresentations`; non-routed slots and non-windowed loops are unchanged. |
+
+**Device (succprobe).**
+
+| image | run | post-stop routed silence | committed content (30-60 s after the stop) | job released |
+|---|---|---|---|---|
+| `570095f7` (before the tail repair) | `session_20261104_114305` | about 7.7 s (67.4-75.2 s) | 307 / 307 this take | 19 s after the stop |
+| `949daedc`, HEX `e7716414…` | `session_20261104_123626` | **none** (`none=0` from 52 to 107 s) | 307 / 307 this take, 0 previous | 20 s after the stop |
+| `fc1971af`, HEX `3772f91c…` | `session_20261104_124359` | **none** (`none=0` from 60 to 115 s) | **280 / 280 NoteOns and 280 / 280 NoteOffs** this take, 0 previous | 18 s after the stop |
+
+- Boot is clean on both runs.
+- Remaining, separate items:
+  - 8-20 unserved pulses in the 5 s row that contains the Record stop (earlier images showed 7-9);
+  - the restart cold start (about 120-130 s);
+  - the default image and production C5.3b successors (not qualified here).
+- `midi_gap` max is 495 ms, as on earlier sweep runs.

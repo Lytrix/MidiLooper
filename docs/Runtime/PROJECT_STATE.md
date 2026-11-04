@@ -1,3 +1,16 @@
+**2026-11-04 — DEC-136 tail repair: the 33-bar first-traversal gap is closed (`949daedc`, `fc1971af`).**
+- **Cause:** after the root took over, the Record-return tail raised a redundant containing-interval demand. It held
+  `pending` and `ready`, so the rolling successor for the root window's end was never requested.
+- **Fix:** a cold predicate discharges the obligation once the committed root serves from its re-keyed frame. Pending
+  work keeps its retry turn.
+- **Host:** 525 / 525 NoteOns and NoteOffs over four traversals, pairing on the wire, the successor requested, guards
+  in place. Lane 38 / 38; native full 4,015 / 0; ITCM byte-identical.
+- **Device** (`3772f91c…`, `session_20261104_124359`): no post-stop routed silence; 280 / 280 NoteOns and NoteOffs
+  are this take's.
+- **Open, separate:** the memory-pressure wedge (no repair yet); R3; the restart cold start; default-image and C5.3b
+  qualification.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-04 — DEC-136.4b closeout: content-provenance verdict and R3 reachability (no production change).**
 - **Content parity.** The first divergent representation is the routed manifest's currency: after a slot clear and a
   new take, `ImportSourceKey` is identical (`loop=0, prev=1, cpr=1, inventory` equal), so the reader serves the cleared
