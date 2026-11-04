@@ -1085,3 +1085,20 @@ No storage or overdub semantics are changed.
 - **Failing allocation:** 4 `alloc_census,fail` rows from 122.5 s, all site `0x00017665` (the `PendingNoteChange` vector growth), request 24,576 B, tail 0, largest free 7,576 B, untracked 0. A doubling request larger than any free chunk.
 - **Stalled owner:** the clock-path `tracks` segment blocked for 46.2 s (row at 202.5 s) and 131.3 s (row ending at 337.1 s), each bracketed by track 8 merged-fallback builds. The function inside the merged build that crawls or loops under heap pressure is **not yet named**; this needs a finer timing breakdown on the same diagnostic image.
 - Production probe image `3772f91c…` restored afterwards; boot verified (`boot_reset,crash=0`, `BOOT,load,ok`, `session_20261104_133955`).
+
+## Wrap-stall isolation: the C3.4 seal deadline (2026-11-04, diagnostic image `5a564c40…`)
+
+**Run.** Registered stimulus STIM-LANE-CADENCE-TEMP-01 (`lane_cadence --lane-cadence-mode intense`, track 8 slot 4, 33 bars), `captures/session_20261104_140156.log`. The scenario ended at the 360 s watchdog (`overdub_stop_not_confirmed_live`): the second wrap was still blocked. One `wrap_stall` row per wrap longer than 250 ms (phases and counts in the `noteoff_spans,wrap` order).
+
+| wrap tick | total | `WrapSeal` | deadline set | deadline overflow | completions / derives | resolve | longest completion | alloc fails in wrap |
+|---|---|---|---|---|---|---|---|---|
+| 99,072 | 6.97 s | 6.90 s | 4.71 s | 2.17 s | 24 / 24 | 6.46 s | 409 ms (resolve 350 ms) | 1 |
+| 123,648 | **123.46 s** | 123.40 s | 5.82 s | **117.53 s** | **518 / 518** | **120.35 s** | 514 ms (resolve 464 ms) | **0** |
+
+- **The blocked operation:** `Loop::materializeDeferredOverdubCompletionsAtDeadline` (inside `sealPendingNoteChangesToEditPasses`, inside `Track::commitOverdubWrap`, on the Clock's `track_order` segment: `tracks` 123.54 s, `track_order` 123.52 s). Each owed completion runs one `LoopContentResolution::resolveDisplayNotesInWindow`.
+- **Entry state of the longest completion:** span 23,552 ticks; lookup window 24,576 ticks, about the whole loop; 2,464 candidates; 5 layers; 0 edit passes; 983 pending rows. Entering the deadline: 16 in the full set, 502 in overflow.
+- **Exit state:** all 518 answered once (no retry loop); the wrap then completed.
+- **Allocation result:** zero internal-allocation failures during the 123 s wrap, so the time is the algorithm with allocations succeeding (owed completions × whole-loop resolve), not memory exhaustion. The `PendingNoteChange` growth failed outside the wrap (122.8 s: 49,152 B, largest 48,048) and fell back externally.
+- **The merged-fallback build is not the stall:** `track_rebuild` stays in milliseconds.
+- **Host REDs** (`test_pending_note_change`, `MEMORY_PRESSURE_RED` gate): deadline derives scale with owed completions (66 at 50 owed, 456 at 500); with the tail exhausted, the seal drops every refused companion (16 owed, 0 sealed, 0 represented). Default-gate characterization: a 24,576 B request above a 7,576 B largest block is served externally, with identical derives and content.
+- Production probe image `3772f91c…` restored afterwards; boot verified (`session_20261104_140904`).
