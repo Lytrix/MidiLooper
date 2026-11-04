@@ -14635,3 +14635,69 @@ The intense gesture aborted the device at 201.6 s (`captures/session_20261104_16
   **5 laps**, or 130 s of this gesture.
 - Containment makes the overflow non-fatal: preparation work parks, named. It does not make the content fit. What
   happens once accepted events cannot be stored is an owner decision; nothing is discarded silently.
+
+## DEC-252 — One bounded content engine: direct cutover to fixed pages, immutable runs and versioned manifests
+
+**Date:** 2026-11-04
+**Owner:** `ContentEngine` (new, `include/ContentEngine/`), the sole owner of MIDI content and edit history.
+OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/). Formal trigger: persistent state model
+and content ownership change (owner rulings 2026-11-04: architecture direction change; direct end-state cutover;
+revision 2 and revision 3 reviews).
+**Status:** Accepted by owner. Revision 3 of the [plan](Plans/2026-11-04-fixed-memory-convergence.md) is the
+architectural baseline. E0 (semantic oracle) and E1 (storage core) are authorized. The recording writer waits for
+CE-A1. The playback consumer waits for executable bounds for CE-B1, CE-C1 and CE-D1.
+
+### Decision
+
+- **Single owner.** All content and edit history live in fixed PSRAM pages as immutable runs and versioned
+  manifests. Every other structure is a fixed-size derived window or tile stamped with the manifest identity it read.
+- **No allocation after boot.** No dynamic content-path heap allocation happens after boot. Every region is carved
+  at boot and explicitly initialized, because RAM2 and EXTMEM are not zeroed at reset.
+- **Reserved before acceptance.** Every row an accepted input owes is reserved before that input is accepted. New
+  input is refused only at its first row. An accepted note is never shortened, closed early or dropped because storage
+  is exhausted.
+- **Derived overlap.** Overlap consequences are derived at composition from spans and pass order. They are not
+  stored.
+- **Direct cutover.** No coexistence, dual-writing, fallback reader or transitional route. Legacy content owners are
+  deleted at integration. Intermediate firmware may be RED or unbootable.
+- **Clause-level amendments.** Contract clauses are amended one at a time in the OpenSpec `design.md` as tests settle
+  them. There are no whole-plan revisions.
+
+### Supersedes (mechanism only; musical clauses move to the E0 register)
+
+| DEC | Short name |
+|---|---|
+| DEC-047 | bounded wrap publication |
+| DEC-049 | stop accelerates publication |
+| DEC-055 / DEC-056 | NOTE_EDIT overlay on snapshot |
+| DEC-058 | runtime-owned views |
+| DEC-063 | protected stop undo publication |
+| DEC-066 | stop working-set capacity |
+| DEC-070 / DEC-071 | stop retarget, stale-root view |
+| DEC-073 | snapshot coverage |
+| DEC-076 | role-owned working sets |
+| DEC-102 / DEC-106 | switch occupancy owner |
+| DEC-161, DEC-164, DEC-166–168, DEC-172, DEC-173, DEC-176 | stop-job variants |
+| DEC-243 | boot view reservation |
+| DEC-246 | probe routing |
+| DEC-250 | obligation queue and cut |
+| DEC-251 | checked growths |
+
+These stay in force on `dev` and the legacy branches until the cutover lands.
+
+### Evidence (E1 storage core, host)
+
+- `test_content_engine_core`: 10 / 10 pass.
+  - Page conservation by owner tag.
+  - `pagesToAppend` equals the pages appends actually consume.
+  - Directory read-back and reclamation in bounded grains.
+  - Manifest release that releases each run exactly once.
+  - Production-capacity init over 0xA5-poisoned memory, then a full-quota take: 208,448 rows; 832 reserve pages left
+    untouched.
+  - CE-A1 proofs: long sequential take, 128 open notes surviving exhaustion, closing runs with Stop at exhaustion, and
+    200,000 random interleaved steps with invariant R and conservation checked.
+  - 0 heap allocations after init, with the witness self-checked.
+- Mutation: removing the owed rows from admission fails the interleaving test.
+- `test_engine_semantic_oracle` (E0): 12 / 12 draft fixtures pass on the independent reference model.
+- **CE-B1 counter-example:** 2,560 source rows in one window give 4,992 effective rows, more than the 3,072-row buffer.
+- Heap gate `scripts/check_content_engine_no_heap.py`: OK.

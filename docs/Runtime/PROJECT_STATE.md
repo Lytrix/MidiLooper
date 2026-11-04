@@ -1,3 +1,16 @@
+**2026-11-04 — Fixed-memory engine: E0 and E1 started on `rewrite/fixed-memory-engine` (DEC-252).**
+- **E1 storage core** (`include/ContentEngine/`):
+  - page pool with owner tags, global run and manifest tables, row-reservation ledger (CE-A1), explicit `init()`;
+  - `test_content_engine_core` 10 / 10, including production-capacity init over poisoned memory, 0 heap allocations
+    after init, and 200 k random reservation steps;
+  - a mutation that ignores owed rows is caught.
+- **E0** (`test_engine_semantic_oracle`): independent reference model plus 12 draft overlap / order fixtures, all
+  green.
+- **CE-B1 counter-example:** 2,560 source rows in one window become 4,992 effective rows, more than the 3,072-row
+  window buffer.
+- **Blockers:** owner review of the register questions (Q-OVL-1..3); CE-B1 repair; CE-C1 output policy; CE-D1 device
+  grain measurements.
+
 **2026-11-04 — Fixed-memory engine plan revision 3 (owner review of revision 2).** Revision 2 approved as direction;
 E1 held for corrections. [Revision 3](../Plans/2026-11-04-fixed-memory-convergence.md):
 - overlap consequences are derived at composition from the later note's span, so an accepted note costs a fixed,
