@@ -1,5 +1,10 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-04 — PAUSED by owner ruling (architecture direction change):** no further C3.4 / DEC-251 containment
+implementation. Authorized scope is design only: the [fixed-memory engine direct-cutover plan](../Plans/2026-11-04-fixed-memory-convergence.md)
+(revision 2; the owner dropped transitional coexistence). Production code starts only after the owner reviews the plan,
+on a dedicated rewrite branch.
+
 **2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.** The wrap hands its interval to a bounded obligation
 answered by the discharge lane against its own source cut. On device (`19f11706`) wraps run on schedule; the worst
 per-wrap Clock is 150-235 ms (previously 123 s). The intense run then aborts at 201.7 s on PSRAM exhaustion. Next: the

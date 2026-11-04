@@ -1,3 +1,19 @@
+**2026-11-04 — Architecture direction change: C3.4 / DEC-251 containment paused; fixed-memory convergence packet written.**
+- **Device (DEC-251 image `3b95b40e…`, fresh boot `boot_reset,crash=0`, `BOOT,load,ok`, `captures/session_20261104_190805.log`):**
+  intense lane-cadence on track 8 slot 4 ran 385 s with no abort; MIDI and Clock kept running (`late_clk` 0). Not
+  acceptable as an end-state: the Stop accepted at 208.7 s waited in `AtomicTransfer` for 176 s on a wrap obligation
+  whose cut (150,400 B / 78,560 B, tag 17) was refused 42/41×; the companion path was skipped ("canonical derivation
+  unavailable"); the piano roll showed `win=0` in 55 beats with 186 `display_projection` denials; the internal heap sat
+  at its 4 KB floor from ~70 s (225 `snapshot_reserve` refusals).
+- **Owner ruling:** pause further C3.4 / DEC-251 containment; produce a resource map and a fixed-memory migration
+  design, no production code.
+- **Packet revision 2 (owner ruling: direct end-state cutover, no coexistence):** [fixed-memory engine — direct
+  cutover plan](../Plans/2026-11-04-fixed-memory-convergence.md). One `ContentEngine` on `RevisionStore` pages; exact
+  PSRAM / RAM2 / RAM1 budgets; reservation proof; composition and scheduler bounds; state transitions; consumer
+  contracts; milestones E0–E10 on a rewrite branch; host H1–H8 and device D1–D6 gates. Revision 1 (staged, routed
+  track) withdrawn. Awaiting owner review; no production code.
+- The device still runs `3b95b40e…` in the post-run state; the qualified image `3772f91c` is retained in `captures/`.
+
 **2026-11-04 — DEC-251: tile preparation can no longer abort the device.**
 - **Attribution:** the 201.6 s abort was a `TilePrepCursor::rawEvents` growth: 92,160 B in one block, the 46 KB old
   buffer coexisting, at 7.86 MB PSRAM. The caller is the coverage worker or the display base preparation, not the cut.
