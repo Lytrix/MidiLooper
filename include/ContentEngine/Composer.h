@@ -46,6 +46,15 @@ class Composer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
 
+  /// Look-ahead work, measured (row reads). Per NoteOn it is bounded by the source rows of all passes within the next
+  /// 9 ticks (R8; also across the loop end), plus the run's wrap section (<= notes held at the wrap) only when a later
+  /// pass starts a note on that pitch at tick 0.
+  struct Stats {
+    uint32_t maxLookaheadRowsPerNoteOn;
+    uint32_t lookaheadRowsLastWindow;
+  };
+  const Stats& stats() const { return stats_; }
+
   void init(const Pool& pool, const Runs& runs) {
     pool_ = &pool;
     runs_ = &runs;
@@ -55,6 +64,9 @@ class Composer {
     identity_ = 0;
     cycle_ = 0;
     admittedCount_ = 0;
+    stats_ = Stats{};
+    lookaheadRows_ = 0;
+    for (auto& z : zeroOnsetLast_) z = -1;
   }
 
   void begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
@@ -62,6 +74,8 @@ class Composer {
     loop_ = loopLength;
     for (auto& p : active_)
       for (auto& c : p) c = 0;
+    for (auto& z : zeroOnsetLast_) z = -1;
+    stats_ = Stats{};
     for (uint8_t r = 0; r < count_; ++r) {
       src_[r] = source[r];
       wrapStart_[r] = firstRowAtOrAfter(r, loop_);
@@ -71,6 +85,8 @@ class Composer {
         const PassEvent& e = row(r, i);
         if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
       }
+      for (uint32_t i = 0; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes starting at tick 0, per pitch
+        if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
     }
     admittedCount_ = 0;
     windowStart_ = 0;
@@ -86,6 +102,7 @@ class Composer {
     const uint32_t b = a + windowTicks < loop_ ? a + windowTicks : loop_;
     w.reset(identity_, a, b);
     w.cycleBase = cycle_ * loop_;
+    stats_.lookaheadRowsLastWindow = 0;
     for (uint8_t i = 0; i < admittedCount_; ++i) {
       w.carry[w.carryCount++] = {admitted_[i].noteId, admitted_[i].runKey};
       admitted_[i].entry = kNoEntry;
@@ -180,11 +197,13 @@ class Composer {
   /// cursor, then the wrap stream), else UINT32_MAX. Bounded by the rows in that span.
   uint32_t offTickWithin(uint8_t r, uint32_t noteId, uint32_t limitTick) const {
     for (uint32_t i = cursor_[r]; i < wrapStart_[r]; ++i) {
+      ++lookaheadRows_;
       const PassEvent& e = row(r, i);
       if (e.tick > limitTick) return UINT32_MAX;
       if (e.noteId == noteId && cls(e) == 0) return e.tick;
     }
     for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {
+      ++lookaheadRows_;
       const PassEvent& e = row(r, i);
       if (e.tick > limitTick) return UINT32_MAX;
       if (e.noteId == noteId && cls(e) == 0) return e.tick;
@@ -200,12 +219,14 @@ class Composer {
     const uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j) {
       for (uint32_t i = cursor_[j]; i < wrapStart_[j]; ++i) {
+        ++lookaheadRows_;
         const PassEvent& e = row(j, i);
         if (e.tick > to) break;
         if (e.tick >= on && cls(e) == 1 && e.data1 == pitch && e.tick < off) return true;
       }
       if (to < loop_) continue;
       for (uint32_t i = 0; i < wrapStart_[j]; ++i) {  // next cycle, positions [1, to - loop]
+        ++lookaheadRows_;
         const PassEvent& e = row(j, i);
         if (e.tick > to - loop_) break;
         if (e.tick > 0 && cls(e) == 1 && e.data1 == pitch && loop_ + e.tick < off) return true;
@@ -214,18 +235,14 @@ class Composer {
     return false;
   }
 
-  /// Q-OVL-3 (ratified): a wrap-held earlier note is hidden by a later-pass note starting on its pitch at tick 0.
+  /// Q-OVL-3 (ratified): a wrap-held earlier note is hidden by a later-pass note starting on its pitch at tick 0. The
+  /// per-pitch table makes the common case O(1); only then is the run's wrap section (notes held at the wrap) scanned.
   bool wrapHeldHiddenAtZero(uint8_t r, uint32_t noteId, uint8_t pitch) const {
-    bool wrapHeld = false;
-    for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit && !wrapHeld; ++i)
-      wrapHeld = row(r, i).noteId == noteId && cls(row(r, i)) == 0;
-    if (!wrapHeld) return false;
-    for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j)
-      for (uint32_t i = 0; i < wrapStart_[j]; ++i) {
-        const PassEvent& e = row(j, i);
-        if (e.tick > 0) break;
-        if (cls(e) == 1 && e.data1 == pitch) return true;
-      }
+    if (zeroOnsetLast_[pitch & 0x7F] <= static_cast<int8_t>(r)) return false;
+    for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {
+      ++lookaheadRows_;
+      if (row(r, i).noteId == noteId && cls(row(r, i)) == 0) return true;
+    }
     return false;
   }
 
@@ -286,8 +303,11 @@ class Composer {
       return;
     }
     const uint8_t pitch = e.data1 & 0x7F;
+    lookaheadRows_ = 0;
     const bool hidden = laterPassSounding(r, pitch) || laterPassStartsWhileSounding(r, e.noteId, pitch, pos) ||
                         wrapHeldHiddenAtZero(r, e.noteId, pitch);
+    if (lookaheadRows_ > stats_.maxLookaheadRowsPerNoteOn) stats_.maxLookaheadRowsPerNoteOn = lookaheadRows_;
+    stats_.lookaheadRowsLastWindow += lookaheadRows_;
     shorten(w, r, pitch, pos);
     if (active_[pitch][r] < 0xFF) ++active_[pitch][r];
     if (hidden) return;
@@ -326,6 +346,9 @@ class Composer {
   uint32_t windowStart_;
   uint32_t identity_;
   uint32_t cycle_;
+  int8_t zeroOnsetLast_[128];  // highest pass order with a NoteOn at tick 0, per pitch (-1: none)
+  Stats stats_;
+  mutable uint32_t lookaheadRows_;
 };
 
 }  // namespace ContentEngine
