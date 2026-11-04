@@ -447,6 +447,11 @@ public:
   /// DEC-136.4b: the owed frozen bar's offer alone, ahead of the selector's pending-demand rule.
   bool offerOwedFrozenContinuationHolder(uint8_t slot, uint32_t currentPhase,
                                          MidiServiceDrain::PlaybackHolder& holder) const;
+  /// DEC-136 tail (owner ruling on 9f555003): the job's root-return obligation is discharged on `slot` -- the committed
+  /// root has taken over: the current view is the published committed window of exactly the job's root source (revision,
+  /// generation, servable manifest identity) serving the playhead, and the Serving frame was re-keyed onto that very
+  /// view at the root-return handoff (bound view and storage, its own start, a positioned deadline). Routed slot only.
+  bool recordReturnRootTakeoverDischarged(uint8_t slot, uint32_t phase) const;
   /// DEC-136.4b: `view` is the active Record-return job's own qualified frozen (Capture) window -- the job is bound and
   /// retiring, and the view carries its full frozen identity.
   bool recordReturnJobAuthorizesFrozenView(uint8_t slotIndex, const RuntimePlaybackView& view) const;

@@ -18,6 +18,7 @@ extern "C" void setUp() {
   gWithholdRollingService = {};
   gPlayEpoch = 1;
   sharedCaptureFinalizationSuiteSetUp();
+  MidiSendCapture::reset();  // a fixed-capacity capture: dense earlier cases would otherwise silently fill it
   uninstallReader();
 }
 extern "C" void tearDown() {
@@ -1540,6 +1541,9 @@ void test_c5_3_record_return_a_re_raised_pending_demand_never_starves_the_frozen
 /// (event tick, pitch) and by the origin of the view serving it; the committed passes are the reference.
 struct ContentProvenance {
   std::set<std::pair<uint32_t, uint8_t>> committed;                    // committed passes' NoteOns
+  std::set<std::pair<uint32_t, uint8_t>> committedOffs;                // committed passes' NoteOffs
+  std::map<uint32_t, std::vector<std::pair<uint32_t, uint8_t>>> offsPerTraversal;  // evtTick, pitch
+  std::vector<std::tuple<uint32_t, bool, uint8_t>> wire;              // send tick, NoteOn?, pitch (after the stop)
   std::map<uint32_t, std::vector<std::tuple<uint32_t, uint32_t, uint8_t, int>>> perTraversal;  // phase, evtTick, pitch, origin
 };
 
@@ -1578,10 +1582,15 @@ ContentProvenance recordContentProvenance(Track& t, uint32_t bars, uint32_t firs
   ContentProvenance out;
   MidiEventVec merged;
   t.getLoop(0).mergeActiveCapturePasses(merged);
-  for (const auto& e : merged)
+  for (const auto& e : merged) {
     if (e.isNoteOn()) out.committed.insert({e.tick, e.data.noteData.note});
+    if (e.isNoteOff()) out.committedOffs.insert({e.tick, e.data.noteData.note});
+  }
   for (size_t i = sentBefore; i < obs.sent.size(); ++i) {
     const auto& [tick, e] = obs.sent[i];
+    if (tick >= length && (e.isNoteOn() || e.isNoteOff()))
+      out.wire.emplace_back(tick, e.isNoteOn(), e.data.noteData.note);
+    if (e.isNoteOff() && tick >= length) out.offsPerTraversal[tick / length].emplace_back(e.tick, e.data.noteData.note);
     if (!e.isNoteOn() || tick < length) continue;
     const auto it = originAt.find(tick);
     out.perTraversal[tick / length].emplace_back(tick % length, e.tick, e.data.noteData.note,
@@ -1843,26 +1852,126 @@ void test_c5_3_long_take_first_traversal_plays_every_committed_note() {
   enableProbeImageSuccessors();
   Track& t = trackManager.getTrack(0);
   constexpr uint32_t kBars33 = 33, kLen33 = kBars33 * kBar;
-  const ContentProvenance p = recordContentProvenance(t, kBars33, 192, 4);
+  RootHandoffWitness h;
+  uint32_t successorDemandedInRoot = 0, rootServingTicks = 0, tailDemands = 0, jobReleasedAt = 0;
+  PlaybackCoverageInterval rootCov{};
+  const ContentProvenance p = recordContentProvenance(t, kBars33, 192, 4, true, [&](uint32_t tick) {
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(rt, tick, h);
+    if (jobReleasedAt == 0 && h.rootHandoffs != 0 && !rt.hasBoundRecordReturnWindowForPendingJob()) jobReleasedAt = tick;
+    const auto* set = rt.viewSetIfPrewarmed();
+    if (h.rootHandoffs != 1 || set == nullptr || set->lifecycle.current >= set->views.size()) return;
+    const auto& cur = set->views[set->lifecycle.current];
+    if (rootCov.lengthTicks == 0) rootCov = cur.coverage;
+    if (cur.coverage.startPhase != rootCov.startPhase || cur.coverage.lengthTicks != rootCov.lengthTicks) return;
+    ++rootServingTicks;  // the adopted root window is serving
+    if (rt.rolling.successorState != 0) ++successorDemandedInRoot;
+    const auto& pd = rt.pendingViewRequest_;
+    if (pd.active && pd.coverage.startPhase == rootCov.startPhase && pd.coverage.lengthTicks == kBar) ++tailDemands;
+  });
   RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(MidiSendCapture::kCapacity, MidiSendCapture::count(),
+                                       "the MIDI capture saturated: the parity below would be unobserved");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, rootServingTicks, "the root window never served: vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, successorDemandedInRoot,
+                                          "no rolling successor was requested while the root window served");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, tailDemands, "a containing-interval tail demand occupied pending after takeover");
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, jobReleasedAt, "the Record-return job never retired after the takeover");
   for (uint32_t pass = 1; pass <= 4; ++pass) {
-    std::map<std::pair<uint32_t, uint8_t>, uint32_t> seen;
-    uint32_t firstMissing = UINT32_MAX;
-    const auto it = p.perTraversal.find(pass);
-    if (it != p.perTraversal.end())
-      for (const auto& r : it->second) ++seen[{std::get<1>(r), std::get<2>(r)}];
-    uint32_t missing = 0, doubled = 0;
+    std::map<std::pair<uint32_t, uint8_t>, uint32_t> ons, offs;
+    if (p.perTraversal.count(pass))
+      for (const auto& r : p.perTraversal.at(pass)) ++ons[{std::get<1>(r), std::get<2>(r)}];
+    if (p.offsPerTraversal.count(pass))
+      for (const auto& o : p.offsPerTraversal.at(pass)) ++offs[o];
+    uint32_t missing = 0, doubled = 0, offMissing = 0, offDoubled = 0, first = UINT32_MAX;
     for (const auto& on : p.committed) {
-      const uint32_t n = seen.count(on) ? seen[on] : 0;
-      if (n == 0) { ++missing; firstMissing = std::min(firstMissing, on.first); }
+      const uint32_t n = ons.count(on) ? ons[on] : 0;
+      if (n == 0) { ++missing; first = std::min(first, on.first); }
       if (n > 1) ++doubled;
     }
-    printf("LONG33 pass %u: %zu committed, %u missing (first at %u), %u doubled\n", pass, p.committed.size(), missing,
-           firstMissing == UINT32_MAX ? 0u : firstMissing, doubled);
+    for (const auto& off : p.committedOffs) {
+      const uint32_t n = offs.count(off) ? offs[off] : 0;
+      if (n == 0) ++offMissing;
+      if (n > 1) ++offDoubled;
+    }
+    printf("LONG33 pass %u: ons %zu missing %u (first %u) doubled %u | offs %zu missing %u doubled %u\n", pass,
+           p.committed.size(), missing, first == UINT32_MAX ? 0u : first, doubled, p.committedOffs.size(), offMissing,
+           offDoubled);
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, missing, "a committed NoteOn was not emitted in a traversal");
     TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, doubled, "a committed NoteOn was emitted twice in a traversal");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, offMissing, "a committed NoteOff was not emitted in a traversal");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, offDoubled, "a committed NoteOff was emitted twice in a traversal");
+  }
+  // On the wire: every NoteOn is closed by exactly one NoteOff before its pitch sounds again.
+  std::map<uint8_t, int> open;
+  for (const auto& [tick, on, pitch] : p.wire) {
+    if (on) {
+      TEST_ASSERT_EQUAL_INT_MESSAGE(0, open[pitch], "a NoteOn sounded while its pitch was still open");
+      open[pitch] = 1;
+    } else {
+      TEST_ASSERT_EQUAL_INT_MESSAGE(1, open[pitch], "an orphaned or duplicate NoteOff");
+      open[pitch] = 0;
+    }
   }
   (void)kLen33;
+}
+
+// DEC-136 tail guards: the discharge holds only for the completed takeover of exactly the job's root source.
+void test_c5_3_record_return_tail_discharge_requires_the_completed_exact_root_takeover() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RootHandoffWitness h;
+  uint32_t frozenTicks = 0, dischargedWhileFrozen = 0, rootReadyNotAdopted = 0, dischargedRootReady = 0;
+  uint32_t checked = 0;
+  const ContentProvenance p = recordContentProvenance(t, 33, 192, 2, true, [&](uint32_t tick) {
+    auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(rt, tick, h);
+    auto* set = rt.viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+    auto& cur = set->views[set->lifecycle.current];
+    const uint32_t phase = tick % (33 * kBar);
+    const bool discharged = t.recordReturnRootTakeoverDischarged(0, phase);
+    // An unfinished return: the frozen reader still owns playback (even with the root complete in ready).
+    if (cur.published && cur.source.origin == PlaybackWindowOrigin::Capture) {
+      ++frozenTicks;
+      if (discharged) ++dischargedWhileFrozen;
+      if (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete &&
+          set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Committed) {
+        ++rootReadyNotAdopted;  // an incomplete handoff: the root is prepared but not yet adopted
+        if (discharged) ++dischargedRootReady;
+      }
+      return;
+    }
+    if (checked != 0 || h.rootHandoffs != 1 || !discharged) return;
+    // The completed takeover discharges; a wrong source identity or a frame not re-keyed onto it does not.
+    ++checked;
+    const auto savedRevision = cur.source.playbackRevision;
+    cur.source.playbackRevision = savedRevision + 1;
+    TEST_ASSERT_FALSE_MESSAGE(t.recordReturnRootTakeoverDischarged(0, phase), "a wrong revision discharged");
+    cur.source.playbackRevision = savedRevision;
+    const auto savedIdentity = cur.source.manifestIdentity;
+    cur.source.manifestIdentity = savedIdentity + 7;
+    TEST_ASSERT_FALSE_MESSAGE(t.recordReturnRootTakeoverDischarged(0, phase), "a wrong manifest identity discharged");
+    cur.source.manifestIdentity = savedIdentity;
+    const auto savedDeadline = rt.rolling.deadlineTick;
+    rt.rolling.deadlineTick = 0;
+    TEST_ASSERT_FALSE_MESSAGE(t.recordReturnRootTakeoverDischarged(0, phase), "an unpositioned frame discharged");
+    rt.rolling.deadlineTick = savedDeadline;
+    const auto savedStorage = rt.rolling.boundStorageGeneration;
+    rt.rolling.boundStorageGeneration = savedStorage + 1;
+    TEST_ASSERT_FALSE_MESSAGE(t.recordReturnRootTakeoverDischarged(0, phase), "a frame bound elsewhere discharged");
+    rt.rolling.boundStorageGeneration = savedStorage;
+    TEST_ASSERT_TRUE(t.recordReturnRootTakeoverDischarged(0, phase));
+  });
+  (void)p;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, frozenTicks, "the frozen reader never served: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, dischargedWhileFrozen, "discharged while the frozen reader owned playback");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, rootReadyNotAdopted, "the root was never prepared before adoption: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, dischargedRootReady, "discharged on an incomplete handoff");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, checked, "the completed takeover never discharged: vacuous");
 }
 
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
@@ -2234,11 +2343,12 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
   if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
   if (getenv("CONTENT_PARITY_REPORT") != nullptr) RUN_TEST(test_c5_3_content_parity_provenance_report);
-  if (getenv("LONG33_RED") != nullptr) RUN_TEST(test_c5_3_long_take_first_traversal_plays_every_committed_note);
   if (getenv("R3_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_r3_root_starvation_sweep);
   RUN_TEST(test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take);  // DEC-136.4b closeout P0 (green)
   RUN_TEST(test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_earlier_take);
   RUN_TEST(test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_take);
+  RUN_TEST(test_c5_3_long_take_first_traversal_plays_every_committed_note);  // 33-bar gap (green)
+  RUN_TEST(test_c5_3_record_return_tail_discharge_requires_the_completed_exact_root_takeover);
   // DEC-136.4b root takeover geometry (green).
   RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
   RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);

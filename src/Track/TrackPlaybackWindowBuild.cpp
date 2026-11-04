@@ -5257,6 +5257,34 @@ TRACK_COLD_MEM bool Track::offerRecordReturnPriorityHolder(uint8_t slot, uint32_
   return true;
 }
 
+TRACK_COLD_MEM bool Track::recordReturnRootTakeoverDischarged(uint8_t slot, uint32_t phase) const {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
+  if (slot >= Config::MAX_LOOPS_PER_TRACK || slot != activeLoopIndex || !loopsAllocated() ||
+      !manifestLaneRoutesSlot(slot)) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr || set->lifecycle.current >= set->views.size()) return false;
+  const Loop& loop = loopForSlot(slot);
+  const RuntimePlaybackView& served = set->views[set->lifecycle.current];
+  // The job's own root source, exactly: the committed identity the obligation is owed for, servable now.
+  const PlaybackViewSourceIdentity root = committedSourceIdentityForSlot(slot, loop);
+  if (!served.complete || !served.published || served.source.origin != PlaybackWindowOrigin::Committed ||
+      !(served.source == root) || !manifestIdentityServable(slot, served.source) ||
+      served.coverage.loopLengthTicks != loop.loopLengthTicks || !served.coverage.contains(phase))
+    return false;
+  // The handoff identity: the Serving frame re-keyed onto this very view at the root-return adoption (positioned).
+  const auto& frame = runtime->rolling;
+  return frame.phase == LoopPlaybackRuntime::RollingPhase::Serving && frame.boundView == set->lifecycle.current &&
+         frame.boundStorageGeneration == served.storageGeneration && frame.deadlineTick != 0 &&
+         frame.startPhase == served.coverage.startPhase && frame.generation == playbackGeneration &&
+         frame.loopLength == loop.loopLengthTicks;
+#else
+  (void)slot;
+  (void)phase;
+  return false;
+#endif
+}
+
 TRACK_COLD_MEM bool Track::recordReturnJobAuthorizesFrozenView(uint8_t slotIndex, const RuntimePlaybackView& view) const {
 #if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
   // Routed active slot only, like every DEC-136.4b term; elsewhere the existing Defect-B retirement stands.
@@ -9456,6 +9484,10 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         runtime->overdubOverlayCandidate() != &set->views[set->lifecycle.build]) {
       set->views[set->lifecycle.build].resetMetadata();
     }
+    // DEC-136 tail (owner ruling on 9f555003): once the committed root has taken over, the job's root-return
+    // obligation is discharged. The containing-interval demand below would only occupy `pending`/`ready` (and the
+    // clear just after it would drop the rolling successor's own demand); the job's retirement runs on its own.
+    if (windowed && recordReturnRootTakeoverDischarged(slot, phase)) return PlaybackViewTurnResult::Idle;
     const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
     if (pending != nullptr && pending->active &&
         (!(pending->source == source) || pending->coverage.startPhase != coverage.startPhase ||
