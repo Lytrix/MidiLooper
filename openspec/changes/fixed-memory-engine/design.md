@@ -299,8 +299,9 @@ from the first cycle. It admits none of them: they were never sent, so their end
 - **Defect fixed (found while writing these tests):** the OVL-2 / OVL-6 look-ahead hid an earlier note whenever a
   later pass started on its pitch within 8 ticks, even if it had already ended. Hiding now requires the earlier note
   to still sound at that later start (its NoteOff after it), including across the loop end.
-- **Reference model:** OVL-6 is now wrap-aware. A wrap-held remnant's length runs across the loop end; the clause does
-  not exclude wrap-held notes. Recorded so the owner can confirm this is the intended reading.
+- **OVL-6 across the loop end (owner decision 2026-11-04):** the minimum-length rule uses the earlier note's entire
+  surviving duration in unwrapped time, pre-wrap portion included. Q-OVL-3 still hides a wrap-held note entirely at
+  tick 0.
 
 **Evidence:** `test_content_engine_compose_wrap` (6) compares 3 cycles from a cold start against the reference:
 - wrap-held note;
@@ -315,3 +316,33 @@ wrap stream ignored.
 
 **Still not in the composer:** owed-commit runs spanning more than one cycle; edit hides; checkpoints for mid-loop
 starts.
+
+### E3 slice 2 closure checks (owner review 2026-11-04)
+
+**Independently specified fixtures** (hand-written expectations, not the reference model):
+
+| Fixture | Case |
+|---|---|
+| `test_fixture_min_length_boundaries_7_8_9` | remnants 7 (hidden) / 8 / 9 within a cycle |
+| `test_fixture_min_length_across_loop_end` | the same boundaries across the loop end |
+| `test_fixture_end_abutment_in_cycle_and_across_loop_end` | abutment within a cycle and across the loop end |
+| `test_fixture_tick_zero_hides_wrap_held_note` | tick-0 hide over 3 cycles |
+| `test_fixture_successive_iterations_of_one_note` | a note one tick shorter than the loop, restarting each cycle |
+
+The 3-cycle reference comparison and the four mutations are kept.
+
+**Bounded look-ahead (composer worker, not the Clock path):**
+- Per NoteOn the composer reads at most the source rows of all passes in the next 9 ticks (across the loop end
+  too) for the hide check, plus its own run's rows in that span to find its NoteOff.
+- The run's wrap section (≤ notes held at the wrap) is read only when a later pass starts a note on that pitch at
+  tick 0. A per-pitch table built at `begin` makes that test O(1).
+- Measured on 8 stacked 128-note chords: 136 rows at most per NoteOn, against 2,048 rows within 9 ticks
+  (`test_lookahead_work_is_bounded_on_dense_chords`, `Composer::stats()`).
+- Theoretical worst case per composition grain is 128 × (R8 + 128). R8 is the rows within any 9-tick span, ≤ source
+  admission per window. A device grain measurement (E0.7) decides whether R8 needs its own admission limit.
+
+**No phantom NoteOffs:**
+- Every engine stream in these tests is checked: each NoteOff closes a started, open instance, and no
+  `(noteId, run)` has two open instances.
+- Overlap counters never emit; only admitted instances and the scheduler do.
+- `duplicates == 0` across cycles, because absolute ticks keep successive iterations apart.

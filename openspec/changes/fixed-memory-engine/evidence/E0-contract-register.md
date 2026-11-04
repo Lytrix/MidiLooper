@@ -16,7 +16,7 @@ needed).
 | OVL-3 | A starting strictly inside B's closed span `(B.on, B.off)` → hidden; a wrap-crossing B is two linear segments. | Guide § Lifecycle B Off; classifier `CompleteCover` / `OverlapNoteOn` → Hide | `test_ovl3_…`, `test_ovl_wrap_crossing` | draft |
 | OVL-4 | Abutting (`A.off = B.on`) → unchanged. | Guide § Inclusive classifier vs half-open covering (consume gate rejects abut) | `test_ovl4_…` | draft |
 | OVL-5 | Channel ignored; pitch alone decides. | DEC-033 | `test_ovl5_…` | draft |
-| OVL-6 | A shortened remnant shorter than `noteMinLengthTicks` (8) is hidden when min-length remove is enabled. A wrap-held remnant's length runs across the loop end (reading to confirm). | Guide classifier table, min-length remove | `test_ovl6_…`, `test_min_length_hide_requires_the_note_to_still_sound` | draft |
+| OVL-6 | A shortened remnant shorter than `noteMinLengthTicks` (8) is hidden when min-length remove is enabled. **Owner decision 2026-11-04:** evaluated on the earlier note's entire surviving duration in unwrapped time, including its pre-wrap portion (Q-OVL-3 still hides at tick 0). | Guide classifier table, min-length remove; owner ruling | `test_ovl6_…`, `test_fixture_min_length_boundaries_7_8_9`, `test_fixture_min_length_across_loop_end` | reviewed (cross-wrap reading) |
 | OVL-7 | Outcomes compose monotonically: Hide absorbs; Shorten takes the minimum end and never lengthens. | Guide § Pending overwrite (`upsertSourceTransform`) | `test_ovl7_…` | draft |
 | OVL-8 | A later note's effect on earlier passes persists even if that later note is itself hidden by a still later pass (companion rows are sealed per pass). | Guide § Seal: Shorten/Hide → companion EditPass | `test_ovl8_…` | draft |
 
