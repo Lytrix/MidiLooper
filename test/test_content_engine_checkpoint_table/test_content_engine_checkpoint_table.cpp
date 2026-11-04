@@ -5,6 +5,8 @@
 // the manifest identity swept and retired by the next sweep. A mid-loop cold start at any window boundary of any steady
 // playback cycle resumes from the nearest usable checkpoint and must compose exactly the windows uninterrupted playback
 // composes there, also while the sweep is still running; with a complete table it replays less than one spacing.
+// Both jobs run in grains of <= 128 source rows, pin the manifest while they read it and release it when they end;
+// a replaced sweep publishes nothing more, also when replaced between the grains of one window.
 
 #include <unity.h>
 
@@ -40,7 +42,9 @@ using Runs = RunTable<32, Pool>;
 using TestComposer = Composer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Table = CheckpointTable<TestComposer::Checkpoint, /*slots*/ 2, /*per slot*/ 8>;
-using Sweep = CheckpointSweep<TestComposer, Table, Window>;
+using Manifests = ManifestTable<16, 8>;
+using Sweep = CheckpointSweep<TestComposer, Table, Window, Manifests, Runs>;
+using Cold = ColdStart<TestComposer, Table, Window, Manifests, Runs>;
 using State = Table::EntryState;
 
 static Pool gPool;
@@ -50,6 +54,9 @@ static TestComposer gRef, gSweepComposer, gCold;
 static Window gWin, gScratch;
 static Table gTable;
 static Sweep gSweep;
+static Cold gColdJob;
+static Manifests gManifests;
+constexpr uint32_t kGrainRows = 128;
 
 constexpr uint32_t kLoop = 768 * 16;
 constexpr uint32_t kWin = 1536;
@@ -129,34 +136,61 @@ static bool same(const Snapshot& a, const Snapshot& b) {
 void setUp() {
   gPool.init();
   gRuns.init();
+  gManifests.init();
   gIndex.init(gPool, gRuns);
   gRef.init(gPool, gRuns, &gIndex);
   gSweepComposer.init(gPool, gRuns, &gIndex);
   gCold.init(gPool, gRuns, &gIndex);
   gTable.init();
+  gSweep = Sweep{};
+  gColdJob = Cold{};
 }
 void tearDown() {}
 
-/// Uninterrupted playback from the loop start: ref[c][w] is window w of cycle c.
+static ManifestId makeManifest(const SourceRun* src, uint8_t count, uint32_t revision = 1) {
+  RunId ids[8];
+  for (uint8_t i = 0; i < count; ++i) ids[i] = src[i].run;
+  const ManifestId m = gManifests.create(0, revision, kLoop, ids, count, gRuns);
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, m);
+  return m;
+}
+static uint32_t identityOf(ManifestId m) { return gManifests.manifest(m).identity; }
+
+/// Uninterrupted playback from the loop start, composed in grains of random size: ref[c][w] is window w of cycle c.
 static std::vector<std::vector<Snapshot>> reference(const SourceRun* src, uint8_t count, uint32_t identity) {
   std::vector<std::vector<Snapshot>> ref(kCycles);
   TEST_ASSERT_TRUE(gRef.begin(src, count, kLoop, identity));
+  uint32_t g = identity;
   for (uint32_t c = 0; c < kCycles; ++c) {
-    while (gRef.composeNext(gWin, kWin)) ref[c].push_back(snap(gWin));
+    while (gRef.openWindow(gWin, kWin)) {
+      while (!gRef.composeRows(gWin, 1 + (g = g * 1103515245u + 12345u) % 7)) {
+      }
+      ref[c].push_back(snap(gWin));
+    }
     gRef.nextCycle();
   }
   gRef.end();
   return ref;
 }
 
-/// Cold start at (cycle, window) and compare every following window with uninterrupted playback; returns the replay.
-static uint32_t checkColdStart(const SourceRun* src, uint8_t count, uint32_t identity,
-                               const std::vector<std::vector<Snapshot>>& ref, uint32_t cycle, uint32_t window) {
-  uint32_t replayed = 0;
+static void runSweep(ManifestId m) {
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
+  TEST_ASSERT_FALSE(gSweep.pinned());
+}
+
+/// Cold start at (cycle, window) through the grain job and compare every following window with uninterrupted
+/// playback; returns the windows replayed.
+static uint32_t checkColdStart(ManifestId m, const std::vector<std::vector<Snapshot>>& ref, uint32_t cycle,
+                               uint32_t window) {
   gTrap = true;
   const unsigned long heapBefore = gHeapAllocations;
-  TEST_ASSERT_TRUE(coldStart(gCold, gTable, 0, src, count, kLoop, identity, window * kWin, cycle, kWin, gScratch,
-                             replayed));
+  Cold::Status st = gColdJob.start(gCold, gTable, gManifests, gRuns, 0, m, window * kWin, cycle, kWin);
+  while (st == Cold::Status::Running) st = gColdJob.step(gScratch, kGrainRows);
+  TEST_ASSERT_EQUAL(Cold::Status::Done, st);
+  TEST_ASSERT_TRUE(gColdJob.pinned());
   for (uint32_t c = cycle, w = window; c < kCycles; ++c, w = 0) {
     for (; w < kWindowsPerLoop; ++w) {
       TEST_ASSERT_TRUE(gCold.composeNext(gWin, kWin));
@@ -168,11 +202,12 @@ static uint32_t checkColdStart(const SourceRun* src, uint8_t count, uint32_t ide
   }
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - heapBefore);
-  gCold.end();
-  return replayed;
+  gColdJob.release();
+  TEST_ASSERT_FALSE(gColdJob.pinned());
+  return gColdJob.replayed();
 }
 
-static uint8_t randomSource(uint32_t& seed, SourceRun* src) {
+static uint8_t randomSource(uint32_t& seed, SourceRun* src, uint32_t maxNotes = 14) {
   auto rnd = [&seed]() {
     seed ^= seed << 13;
     seed ^= seed >> 17;
@@ -185,7 +220,7 @@ static uint8_t randomSource(uint32_t& seed, SourceRun* src) {
   for (uint8_t p = 0; p < passes; ++p) {
     std::vector<N> notes;
     bool used[17][12] = {};
-    for (uint32_t k = 0, n = rnd() % 14; k < n; ++k) {
+    for (uint32_t k = 0, n = rnd() % maxNotes; k < n; ++k) {
       const uint8_t ch = static_cast<uint8_t>(1 + rnd() % 3), pitch = static_cast<uint8_t>(rnd() % 12);
       if (used[ch][pitch]) continue;
       used[ch][pitch] = true;
@@ -207,45 +242,46 @@ static uint8_t randomSource(uint32_t& seed, SourceRun* src) {
   return count;
 }
 
-// Every steady cold start equals uninterrupted playback: from a complete table (replay < one spacing), from an empty
-// one (warm-up from the loop start) and at every step of a running sweep (only usable checkpoints are resumed).
+// Every steady cold start equals uninterrupted playback: from an empty table (warm-up from the loop start), at every
+// grain of a running sweep (only usable checkpoints are resumed) and at every window of three steady cycles from a
+// complete table (replay < one spacing). The sweep proves periodicity and composes at most two loops.
 void test_cold_start_equals_uninterrupted_playback_random() {
   uint32_t seed = 0x5EED;
-  uint32_t starts = 0, maxSweepWindows = 0;
+  uint32_t starts = 0, maxSweepWindows = 0, periodic = 0;
   for (uint32_t trial = 0; trial < 25; ++trial) {
     setUp();
     SourceRun src[8];
     const uint8_t count = randomSource(seed, src);
-    const uint32_t identity = 100 + trial;
-    const auto ref = reference(src, count, identity);
+    const ManifestId m = makeManifest(src, count);
+    const auto ref = reference(src, count, identityOf(m));
 
-    // Empty table: warm-up path.
-    gTable.beginSweep(0, identity, kLoop, kSpacing);
-    const uint32_t cold = checkColdStart(src, count, identity, ref, 2, 5);
-    TEST_ASSERT_EQUAL_UINT32(kWindowsPerLoop + 5, cold);
+    gTable.beginSweep(0, identityOf(m), kLoop, kSpacing);  // empty table: warm-up path
+    TEST_ASSERT_EQUAL_UINT32(kWindowsPerLoop + 5, checkColdStart(m, ref, 2, 5));
 
-    // During the sweep.
-    TEST_ASSERT_EQUAL(Sweep::Status::Running,
-                      gSweep.start(gSweepComposer, gTable, 0, src, count, kLoop, identity, kWin, kSpacing));
+    TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
     uint32_t step = 0;
-    while (gSweep.step(gWin) == Sweep::Status::Running) {
+    while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
+      if (gSweepComposer.windowOpen()) continue;  // cold starts between windows (the sweep's window is its own)
       const uint32_t w = (seed = seed * 1103515245u + 12345u) % kWindowsPerLoop;
-      checkColdStart(src, count, identity, ref, 1 + step % 3, w);
+      checkColdStart(m, ref, 1 + step % 3, w);
       ++step;
       ++starts;
     }
     TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
+    TEST_ASSERT_FALSE(gSweep.pinned());
     TEST_ASSERT_TRUE(gSweep.windows() <= 2 * kWindowsPerLoop);
     if (gSweep.windows() > maxSweepWindows) maxSweepWindows = gSweep.windows();
+    periodic += gSweep.periodic() ? 1 : 0;
+    TEST_ASSERT_TRUE_MESSAGE(gSweep.periodic(), "below OUT-POLY saturation the composition is periodic from cycle 1");
 
-    // Complete table: every window of every steady cycle.
     for (uint32_t c = 1; c < kCycles; ++c)
       for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
-        const uint32_t replayed = checkColdStart(src, count, identity, ref, c, w);
+        const uint32_t replayed = checkColdStart(m, ref, c, w);
         const uint8_t k = static_cast<uint8_t>(w * kWin / kSpacing);
         if (gTable.state(0, k) == State::Usable) TEST_ASSERT_TRUE(replayed < kSpacing / kWin);
         ++starts;
       }
+    TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m).readerPins);
   }
   TEST_ASSERT_TRUE(starts > 600);
   TEST_ASSERT_TRUE(maxSweepWindows > kWindowsPerLoop);  // some source needed cycle-1 convergence windows
@@ -256,33 +292,206 @@ void test_cold_start_equals_uninterrupted_playback_random() {
 void test_sweep_keeps_cold_checkpoints_out_until_steady() {
   const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, kLoop - 100, kLoop + 4000}});
   const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
-  const auto ref = reference(src, 1, 9);
-  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, 0, src, 1, kLoop, 9, kWin, kSpacing));
-  for (uint32_t i = 0; i < kWindowsPerLoop; ++i) gSweep.step(gWin);
+  const ManifestId m = makeManifest(src, 1);
+  const auto ref = reference(src, 1, identityOf(m));
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  while (gSweep.windows() < kWindowsPerLoop) gSweep.step(gWin, kGrainRows);
   TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, 0));       // position 0 of cycle 1
   TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, 1));  // 3072: cold, the held note is missing
   TEST_ASSERT_EQUAL_UINT8(0, gTable.entry(0, 1).admittedCount);
-  while (gSweep.step(gWin) == Sweep::Status::Running) {
+  while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
   }
   TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
-  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, 1).admittedCount);  // steady: the held note sounds at 3072
+  TEST_ASSERT_TRUE(gSweep.periodic());
+  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, 1).admittedCount);     // steady: the held note sounds at 3072
   TEST_ASSERT_EQUAL_UINT32(kWindowsPerLoop + 4, gSweep.windows());  // converged at 6144 (note ended at 4000)
   for (uint8_t k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, k));
-  checkColdStart(src, 1, 9, ref, 2, 3);
+  checkColdStart(m, ref, 2, 3);
 }
 
-// A new sweep retires the slot's table at once; the old sweep ends Superseded and writes nothing more.
+// Convergence within two cycles (design.md E5): hand-specified sources for each mechanism that carries state across
+// the loop end. Each sweep proves periodicity, stays within two loops, and cold starts equal uninterrupted playback.
+void test_convergence_within_two_cycles_per_mechanism() {
+  struct Case {
+    const char* name;
+    std::vector<N> base, later;
+    bool edit;
+  };
+  const std::vector<Case> cases = {
+      {"Q-LEN-1 held-loop note (> 2L), re-struck every loop", {{1, 1, 60, kLoop - 10, kLoop - 10 + 2 * kLoop + 500}}, {}, false},
+      {"Q-LEN-1 note of exactly L", {{1, 1, 60, 3000, 3000 + kLoop}}, {}, false},
+      {"wrap hold shortened by a later pass in the next cycle", {{1, 1, 60, kLoop - 200, kLoop + 5000}}, {{2, 1, 60, 2000, 2400}}, false},
+      {"wrap hold hidden at tick 0 (Q-OVL-3)", {{1, 1, 62, kLoop - 50, kLoop + 900}}, {{2, 1, 62, 0, 300}}, false},
+      {"OVL-9 across cycles", {{1, 1, 64, 700, 900}}, {{2, 1, 64, kLoop - 100, kLoop + 1000}}, false},
+      {"edit hide of a wrap-held note plus its replacement", {{1, 1, 65, kLoop - 300, kLoop + 2000}}, {{1, 1, 65, kLoop - 300, kLoop + 600}}, true},
+  };
+  for (const auto& c : cases) {
+    setUp();
+    SourceRun src[2];
+    const RunId a = makeRun(RunKind::kRecord, {}, c.base);
+    src[0] = {a, gRuns.run(a).rowCount};
+    uint8_t count = 1;
+    if (!c.later.empty()) {
+      const RunId b = makeRun(c.edit ? RunKind::kEdit : RunKind::kOverdub, c.edit ? std::vector<uint32_t>{1} : std::vector<uint32_t>{}, c.later);
+      src[count++] = {b, gRuns.run(b).rowCount};
+    }
+    const ManifestId m = makeManifest(src, count);
+    const auto ref = reference(src, count, identityOf(m));
+    runSweep(m);
+    TEST_ASSERT_TRUE_MESSAGE(gSweep.periodic(), c.name);
+    TEST_ASSERT_TRUE_MESSAGE(gSweep.windows() <= 2 * kWindowsPerLoop, c.name);
+    for (uint32_t w = 0; w < kWindowsPerLoop; ++w) checkColdStart(m, ref, 1 + w % 3, w);
+  }
+}
+
+// Revision transition: the slot commits B = A + an overdub while A's sweep runs. A's sweep is superseded and publishes
+// nothing; B's sweep converges within two loops and B's cold starts equal B's uninterrupted playback.
+void test_revision_transition_sweeps_the_new_manifest() {
+  const RunId a = makeRun(RunKind::kRecord, {}, {{1, 1, 60, kLoop - 400, kLoop + 3000}, {2, 1, 62, 100, 900}});
+  const RunId b = makeRun(RunKind::kOverdub, {}, {{3, 1, 60, 1500, 1800}, {4, 1, 67, kLoop - 20, kLoop + 7000}});
+  const SourceRun srcA[] = {{a, gRuns.run(a).rowCount}};
+  const SourceRun srcB[] = {{a, gRuns.run(a).rowCount}, {b, gRuns.run(b).rowCount}};
+  const ManifestId mA = makeManifest(srcA, 1, 1);
+  const ManifestId mB = makeManifest(srcB, 2, 2);
+  const auto refB = reference(srcB, 2, identityOf(mB));
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, mA, kWin, kSpacing));
+  for (int i = 0; i < 5; ++i) gSweep.step(gWin, kGrainRows);
+  Sweep sweepB;
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, sweepB.start(gCold, gTable, gManifests, gRuns, 0, mB, kWin, kSpacing));
+  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));
+  TEST_ASSERT_FALSE(gSweep.pinned());
+  while (sweepB.step(gScratch, kGrainRows) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_TRUE(sweepB.periodic());
+  TEST_ASSERT_TRUE(sweepB.windows() <= 2 * kWindowsPerLoop);
+  TEST_ASSERT_NULL(gTable.nearest(0, identityOf(mA), 0));
+  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) checkColdStart(mB, refB, 2, w);
+}
+
+// A new sweep retires the slot's table at once; the old sweep ends Superseded, publishes nothing more and releases
+// its pin.
 void test_new_sweep_supersedes_the_old_one() {
   const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 2000}});
   const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
-  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, 0, src, 1, kLoop, 11, kWin, kSpacing));
-  for (uint32_t i = 0; i < kWindowsPerLoop; ++i) gSweep.step(gWin);
-  TEST_ASSERT_NOT_NULL(gTable.nearest(0, 11, 0));
-  gTable.beginSweep(0, 12, kLoop, kSpacing);  // the slot committed manifest 12
-  TEST_ASSERT_NULL(gTable.nearest(0, 11, 0));
-  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin));
+  const ManifestId m = makeManifest(src, 1);
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  while (gSweep.windows() < kWindowsPerLoop) gSweep.step(gWin, kGrainRows);
+  TEST_ASSERT_NOT_NULL(gTable.nearest(0, identityOf(m), 0));
+  TEST_ASSERT_EQUAL_UINT16(1, gManifests.manifest(m).readerPins);
+  gTable.beginSweep(0, 999, kLoop, kSpacing);  // the slot committed another manifest
+  TEST_ASSERT_NULL(gTable.nearest(0, identityOf(m), 0));
+  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));
   for (uint8_t k = 0; k < 8; ++k) TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, k));
-  TEST_ASSERT_TRUE(gTable.current(0, 12));
+  TEST_ASSERT_TRUE(gTable.current(0, 999));
+  TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m).readerPins);
+}
+
+// Replaced between the grains of one window (after composing, before the window's checkpoint is published): nothing
+// is published into the replaced slot.
+void test_replacement_between_grains_publishes_nothing() {
+  std::vector<N> notes;
+  for (uint32_t k = 0; k < 40; ++k) notes.push_back({k + 1, 1, static_cast<uint8_t>(40 + k), 10 + 70 * k, 60 + 70 * k});
+  const RunId r = makeRun(RunKind::kRecord, {}, notes);
+  const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
+  const ManifestId m = makeManifest(src, 1);
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  gSweep.step(gWin, kGrainRows);  // window [0, 1536): 44 rows, one grain
+  for (int i = 0; i < 3; ++i) TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.step(gWin, 4));  // window 2 in progress
+  TEST_ASSERT_TRUE(gSweepComposer.windowOpen());
+  gTable.beginSweep(0, 4242, kLoop, kSpacing);
+  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));  // would have completed 3072
+  TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, 1));
+  TEST_ASSERT_FALSE(gSweep.pinned());
+}
+
+// Reclamation safety: the slot drops the manifest while its sweep runs. The pin keeps the manifest and its runs
+// alive until the sweep ends; then the manifest is freed and its runs go to reclaim. Cancel releases the same way,
+// including the composer's edit-index lease.
+void test_pin_keeps_source_alive_until_the_sweep_ends() {
+  const RunId a = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 2000}, {2, 1, 61, 300, 900}});
+  const RunId e = makeRun(RunKind::kEdit, {2}, {{2, 1, 61, 300, 600}});
+  const SourceRun src[] = {{a, gRuns.run(a).rowCount}, {e, gRuns.run(e).rowCount}};
+  const ManifestId m = makeManifest(src, 2);
+  gRuns.release(a);  // drop the writers' references: the manifest is the only owner
+  gRuns.release(e);
+  const uint16_t freeBefore = gManifests.freeCount();
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  gSweep.step(gWin, kGrainRows);
+  TEST_ASSERT_FALSE(gManifests.release(m, gRuns));  // the slot replaced it: only the sweep's pin remains
+  TEST_ASSERT_TRUE(gManifests.manifest(m).live);
+  TEST_ASSERT_EQUAL(RunState::Sealed, gRuns.run(a).state);
+  while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
+  TEST_ASSERT_EQUAL_UINT16(freeBefore + 1, gManifests.freeCount());
+  TEST_ASSERT_EQUAL(RunState::Reclaiming, gRuns.run(a).state);
+  TEST_ASSERT_EQUAL(RunState::Reclaiming, gRuns.run(e).state);
+  TEST_ASSERT_EQUAL_UINT8(0, gIndex.slotsInUse() > 0 ? gIndex.pins(0) : 0);
+
+  setUp();
+  const RunId b = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 2000}});
+  const RunId f = makeRun(RunKind::kEdit, {1}, {{1, 1, 60, 100, 500}});
+  const SourceRun src2[] = {{b, gRuns.run(b).rowCount}, {f, gRuns.run(f).rowCount}};
+  const ManifestId m2 = makeManifest(src2, 2);
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m2, kWin, kSpacing));
+  gSweep.step(gWin, 1);
+  TEST_ASSERT_EQUAL_UINT16(1, gManifests.manifest(m2).readerPins);
+  gSweep.cancel();
+  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.status());
+  TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m2).readerPins);
+  TEST_ASSERT_FALSE(gIndex.holds(identityOf(m2)) && gIndex.pins(0) != 0);
+}
+
+// OUT-POLY saturation (more than T notes sounding): admission is first come, so which notes a cycle drops depends on
+// the notes carried in, and uninterrupted playback itself settles only after a few cycles. The sweep detects it
+// (`periodic()` false) and never promotes cold captures; a cold start then reconstructs the cycle-1 state
+// deterministically, within T. Open owner question Q-OUT-2 (design.md E5).
+void test_saturated_composition_is_flagged_aperiodic() {
+  uint32_t seed = 77;
+  auto rnd = [&seed]() {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+  };
+  std::vector<N> notes;
+  uint32_t id = 1;
+  for (int k = 0; k < 30; ++k) {
+    const uint32_t on = rnd() % kLoop;
+    notes.push_back({id++, 1, static_cast<uint8_t>(30 + k), on, on + 2000 + rnd() % kLoop});
+  }
+  std::vector<N> later;
+  for (int k = 0; k < 8; ++k) {
+    const uint32_t on = rnd() % kLoop;
+    later.push_back({id++, 1, static_cast<uint8_t>(30 + rnd() % 30), on, on + 100 + rnd() % 3000});
+  }
+  const RunId a = makeRun(RunKind::kRecord, {}, notes);
+  const RunId b = makeRun(RunKind::kOverdub, {}, later);
+  const SourceRun src[] = {{a, gRuns.run(a).rowCount}, {b, gRuns.run(b).rowCount}};
+  const ManifestId m = makeManifest(src, 2);
+  const auto ref = reference(src, 2, identityOf(m));
+  bool cycleDiffers = false;
+  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
+    Snapshot one = ref[1][w];
+    one.cycleBase = ref[3][w].cycleBase;
+    cycleDiffers |= !same(one, ref[3][w]);
+  }
+  TEST_ASSERT_TRUE(cycleDiffers);  // the fixture saturates: uninterrupted playback is not periodic from cycle 1
+  runSweep(m);
+  TEST_ASSERT_FALSE(gSweep.periodic());
+  TEST_ASSERT_TRUE(gSweep.windows() <= 2 * kWindowsPerLoop);
+  for (uint8_t k = 0; k < 4; ++k)  // a provisional (cold) capture is never resumed
+    if (gTable.state(0, k) == State::Provisional)
+      TEST_ASSERT_TRUE(gTable.nearest(0, identityOf(m), k * kSpacing) != &gTable.entry(0, k));
+  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {  // cold starts equal cycle 1 of uninterrupted playback
+    Cold::Status st = gColdJob.start(gCold, gTable, gManifests, gRuns, 0, m, w * kWin, 1, kWin);
+    while (st == Cold::Status::Running) st = gColdJob.step(gScratch, kGrainRows);
+    TEST_ASSERT_EQUAL(Cold::Status::Done, st);
+    TEST_ASSERT_TRUE(gCold.composeNext(gWin, kWin));
+    TEST_ASSERT_TRUE(same(snap(gWin), ref[1][w]));
+    TEST_ASSERT_TRUE(gWin.carryCount <= 16);
+    gColdJob.release();
+  }
 }
 
 // Lookup: nearest usable at or before the position, stamped identity only, other slots independent; an overflowed
@@ -319,7 +528,12 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_cold_start_equals_uninterrupted_playback_random);
   RUN_TEST(test_sweep_keeps_cold_checkpoints_out_until_steady);
+  RUN_TEST(test_convergence_within_two_cycles_per_mechanism);
+  RUN_TEST(test_revision_transition_sweeps_the_new_manifest);
   RUN_TEST(test_new_sweep_supersedes_the_old_one);
+  RUN_TEST(test_replacement_between_grains_publishes_nothing);
+  RUN_TEST(test_pin_keeps_source_alive_until_the_sweep_ends);
+  RUN_TEST(test_saturated_composition_is_flagged_aperiodic);
   RUN_TEST(test_table_lookup_and_unusable_entries);
   RUN_TEST(test_production_table_within_budget);
   return UNITY_END();

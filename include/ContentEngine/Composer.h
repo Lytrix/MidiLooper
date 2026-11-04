@@ -77,6 +77,8 @@ class Composer {
     count_ = 0;
     loop_ = 0;
     windowStart_ = 0;
+    windowEnd_ = 0;
+    windowOpen_ = false;
     identity_ = 0;
     cycle_ = 0;
     admittedCount_ = 0;
@@ -124,6 +126,7 @@ class Composer {
     }
     admittedCount_ = 0;
     windowStart_ = 0;
+    windowOpen_ = false;
     cycle_ = 0;
     identity_ = identity;
     return true;
@@ -132,22 +135,46 @@ class Composer {
   /// Composes the next window of `windowTicks` ticks into `w`. False at the end of the loop cycle.
   template <uint16_t Cap>
   bool composeNext(SpanWindow<Cap>& w, uint32_t windowTicks) {
-    if (windowStart_ >= loop_) return false;
+    if (!openWindow(w, windowTicks)) return false;
+    composeRows(w, 0xFFFFFFFFu);
+    return true;
+  }
+
+  /// Incremental composition (E5 grains): `openWindow` starts the next window in `w` (false at the end of the cycle);
+  /// each `composeRows` processes at most `maxRows` source rows and returns true once the window is complete. The
+  /// result equals `composeNext`. `w` belongs to the caller until the window completes; no other composer call may
+  /// run in between except `windowOpen()`.
+  template <uint16_t Cap>
+  bool openWindow(SpanWindow<Cap>& w, uint32_t windowTicks) {
+    if (windowStart_ >= loop_ || windowOpen_) return false;
     const uint32_t a = windowStart_;
-    const uint32_t b = a + windowTicks < loop_ ? a + windowTicks : loop_;
-    w.reset(identity_, a, b);
+    windowEnd_ = a + windowTicks < loop_ ? a + windowTicks : loop_;
+    w.reset(identity_, a, windowEnd_);
     w.cycleBase = cycle_ * loop_;
     stats_.lookaheadRowsLastWindow = 0;
     for (uint8_t i = 0; i < admittedCount_; ++i) {
       w.carry[w.carryCount++] = {admitted_[i].noteId, admitted_[i].runKey};
       admitted_[i].entry = kNoEntry;
     }
-    Stream s;
-    while (nextStream(b, s)) process(w, s);
-    endLookahead(w, b);
-    windowStart_ = b;
+    windowOpen_ = true;
     return true;
   }
+  template <uint16_t Cap>
+  bool composeRows(SpanWindow<Cap>& w, uint32_t maxRows) {
+    if (!windowOpen_) return true;
+    Stream s;
+    for (uint32_t n = 0; n < maxRows; ++n) {
+      if (!nextStream(windowEnd_, s)) {
+        endLookahead(w, windowEnd_);
+        windowStart_ = windowEnd_;
+        windowOpen_ = false;
+        return true;
+      }
+      process(w, s);
+    }
+    return false;
+  }
+  bool windowOpen() const { return windowOpen_; }
 
   /// Releases the pinned edit-index slot (also done by the next `begin`).
   void end() {
@@ -179,6 +206,7 @@ class Composer {
   /// nonzero; `cp.valid` is then false.
   bool capture(Checkpoint& cp) const {
     cp.valid = false;
+    if (windowOpen_) return false;  // only at a window boundary
     cp.identity = identity_;
     cp.loopLength = loop_;
     cp.position = windowStart_ < loop_ ? windowStart_ : 0;
@@ -230,7 +258,7 @@ class Composer {
 
   /// Continues into the next loop cycle with every carried state (admitted notes, source counters).
   bool nextCycle() {
-    if (windowStart_ < loop_) return false;
+    if (windowStart_ < loop_ || windowOpen_) return false;
     ++cycle_;
     windowStart_ = 0;
     for (uint8_t r = 0; r < count_; ++r) {
@@ -519,6 +547,8 @@ class Composer {
   uint8_t admittedCount_;
   uint32_t loop_;
   uint32_t windowStart_;
+  uint32_t windowEnd_;
+  bool windowOpen_;
   uint32_t identity_;
   uint32_t cycle_;
   int8_t zeroOnsetLast_[128];  // highest pass order with a NoteOn at tick 0, per pitch (-1: none)

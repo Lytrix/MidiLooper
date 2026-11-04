@@ -21,6 +21,7 @@
 
 #include <cstdint>
 
+#include "ContentEngine/EngineConfig.h"
 #include "ContentEngine/SourceRun.h"
 
 namespace ContentEngine {
@@ -113,52 +114,82 @@ bool sameState(const Checkpoint& a, const Checkpoint& b) {
   return true;
 }
 
-/// The sweep worker's checkpoint job for one manifest. `step` composes one window; the job is stamped with the
-/// identity it sweeps and ends `Superseded` once the slot's table belongs to another sweep.
-template <typename Composer, typename Table, typename Window>
+/// The sweep worker's checkpoint job for one manifest (E5). It pins the manifest while it reads it and releases the pin
+/// when it ends (done, superseded, refused or cancelled), so replacement and reclamation never free pages under it.
+/// `step` is one grain: at most `maxRows` source rows of the current window. A checkpoint is published only at a window
+/// boundary and only while the slot's table still belongs to this sweep; a sweep replaced at any point (also between
+/// the grains of one window) ends `Superseded` at its next step and publishes nothing more.
+///
+/// Work bound: the sweep composes at most two loops (cycle 0, then cycle 1 up to convergence), i.e. at most
+/// `2 x ceil(rows per loop / maxRows) + 2 x windows per loop` grains, however long the loop plays; it never waits for
+/// playback. `periodic()` (when Done) reports that state at the end of cycle 1 equals state at the end of cycle 0,
+/// i.e. that the composition is periodic from cycle 1 and every published checkpoint equals uninterrupted playback in
+/// any later cycle. It is proved by convergence (equal state at one position implies equal state from there on) or by
+/// comparing the position-0 states; see design.md E5 for when it holds.
+template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs>
 class CheckpointSweep {
  public:
-  enum class Status : uint8_t { Running, Done, Superseded, Refused };
+  enum class Status : uint8_t { Idle, Running, Done, Superseded, Refused };
   using Checkpoint = typename Composer::Checkpoint;
   using State = typename Table::EntryState;
 
-  /// Starts the sweep (retires the slot's previous table). Refused when the composer cannot begin the source.
-  Status start(Composer& composer, Table& table, uint8_t slot, const SourceRun* source, uint8_t count,
-               uint32_t loopLength, uint32_t identity, uint32_t windowTicks, uint32_t spacing) {
+  /// Pins `manifest`, retires the slot's previous table and begins composing. Refused (pin released) when the composer
+  /// cannot begin the source.
+  Status start(Composer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
+               uint32_t windowTicks, uint32_t spacing) {
+    if (status_ == Status::Running) cancel();
     composer_ = &composer;
     table_ = &table;
+    manifests_ = &manifests;
+    runs_ = &runs;
     slot_ = slot;
-    identity_ = identity;
+    manifest_ = manifest;
     window_ = windowTicks;
-    loop_ = loopLength;
     position_ = 0;
     cycle_ = 0;
     windows_ = 0;
-    table.beginSweep(slot, identity, loopLength, spacing);
-    status_ = composer.begin(source, count, loopLength, identity) ? Status::Running : Status::Refused;
+    grains_ = 0;
+    periodic_ = false;
+    manifests.pin(manifest);
+    pinned_ = true;
+    const auto& m = manifests.manifest(manifest);
+    identity_ = m.identity;
+    loop_ = m.loopLengthTicks;
+    SourceRun src[Manifests::kMaxRuns];
+    for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
+    table.beginSweep(slot, identity_, loop_, spacing);
+    status_ = Status::Running;
+    if (!composer.begin(src, m.runCount, loop_, identity_)) {
+      releaseSource();
+      status_ = Status::Refused;
+    }
     return status_;
   }
 
-  Status step(Window& w) {
+  /// One grain.
+  Status step(Window& w, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     if (!table_->current(slot_, identity_)) {
-      composer_->end();
+      releaseSource();
       return status_ = Status::Superseded;
     }
-    composer_->composeNext(w, window_);
+    ++grains_;
+    if (!composer_->windowOpen()) composer_->openWindow(w, window_);
+    if (!composer_->composeRows(w, maxRows)) return status_;
     ++windows_;
     position_ += window_;
     if (position_ >= loop_) {
       position_ = 0;
+      Checkpoint cp;
+      composer_->capture(cp);
       if (cycle_ == 0) {  // end of cycle 0: the position-0 checkpoint carries the steady state
         cycle_ = 1;
-        Checkpoint cp;
-        composer_->capture(cp);
         table_->store(slot_, identity_, cp, State::Usable);
         composer_->nextCycle();
         return status_;
       }
-      return finish();  // a whole steady cycle composed: every checkpoint is a cycle-1 capture
+      // A whole cycle 1 without convergence: periodic iff the cycle ends in the state it began with.
+      return finish(table_->state(slot_, 0) == State::Usable && sameState(cp, table_->entry(slot_, 0)));
     }
     const uint8_t k = table_->indexOf(slot_, position_);
     if (k == Table::kPerSlot) return status_;
@@ -168,54 +199,144 @@ class CheckpointSweep {
       table_->store(slot_, identity_, cp, State::Provisional);
       return status_;
     }
-    if (table_->state(slot_, k) == State::Provisional && sameState(cp, table_->entry(slot_, k))) return finish();
+    if (table_->state(slot_, k) == State::Provisional && sameState(cp, table_->entry(slot_, k))) return finish(true);
     table_->store(slot_, identity_, cp, State::Usable);
     return status_;
   }
 
+  /// Stops the sweep and releases its source; the table keeps what was published (provisional entries stay unusable).
+  void cancel() {
+    if (status_ != Status::Running) return;
+    releaseSource();
+    status_ = Status::Superseded;
+  }
+
   Status status() const { return status_; }
+  bool periodic() const { return periodic_; }
+  bool pinned() const { return pinned_; }
   uint32_t windows() const { return windows_; }
+  uint32_t grains() const { return grains_; }
 
  private:
-  /// Converged: the remaining provisional captures equal their steady counterparts.
-  Status finish() {
-    for (uint8_t k = 0; k < Table::kPerSlot; ++k)
-      if (table_->state(slot_, k) == State::Provisional) table_->setState(slot_, k, State::Usable);
-    composer_->end();
+  /// Promotes the remaining provisional captures only when they are proved equal to their steady counterparts.
+  Status finish(bool periodic) {
+    periodic_ = periodic;
+    if (periodic)
+      for (uint8_t k = 0; k < Table::kPerSlot; ++k)
+        if (table_->state(slot_, k) == State::Provisional) table_->setState(slot_, k, State::Usable);
+    releaseSource();
     return status_ = Status::Done;
+  }
+  void releaseSource() {
+    composer_->end();
+    if (pinned_) manifests_->unpin(manifest_, *runs_);
+    pinned_ = false;
   }
 
   Composer* composer_ = nullptr;
   Table* table_ = nullptr;
+  Manifests* manifests_ = nullptr;
+  Runs* runs_ = nullptr;
   uint8_t slot_ = 0;
-  uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0;
-  Status status_ = Status::Refused;
+  ManifestId manifest_ = kNoManifest;
+  bool pinned_ = false, periodic_ = false;
+  uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0, grains_ = 0;
+  Status status_ = Status::Idle;
 };
 
-/// Mid-loop cold start in steady state at `position` (a window boundary) of playback cycle `cycle` (>= 1): resumes
-/// from the nearest usable checkpoint, else warms up from the loop start, and replays into `scratch` until the next
-/// `composeNext` yields the window at `position`. `replayed` counts the windows composed. False when the composer
-/// cannot begin the source.
-template <typename Composer, typename Table, typename Window>
-bool coldStart(Composer& composer, const Table& table, uint8_t slot, const SourceRun* source, uint8_t count,
-               uint32_t loopLength, uint32_t identity, uint32_t position, uint32_t cycle, uint32_t windowTicks,
-               Window& scratch, uint32_t& replayed) {
-  replayed = 0;
-  uint32_t at = 0;
-  if (const auto* cp = table.nearest(slot, identity, position)) {
-    if (!composer.resume(source, count, loopLength, identity, *cp)) return false;
-    at = cp->position;
-  } else {
-    if (!composer.begin(source, count, loopLength, identity)) return false;
-    while (composer.composeNext(scratch, windowTicks)) ++replayed;  // cycle 0 warm-up
-    composer.nextCycle();
+/// Mid-loop cold start (E5) in steady state at `position` (a window boundary) of playback cycle `cycle` (>= 1). It pins
+/// the manifest, resumes from the nearest usable checkpoint (else warms up a whole cycle from the loop start: the
+/// bounded reconstruction path) and replays, one grain per `step`, until the next `composeNext` yields the window at
+/// `position`. The track keeps playing its previous source meanwhile. On `Done` the composer and the pin pass to the
+/// caller (a compose cursor pins its manifest), who calls `release` when the cursor ends; `cancel` releases at once.
+template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs>
+class ColdStart {
+ public:
+  enum class Status : uint8_t { Idle, Running, Done, Refused, Cancelled };
+
+  Status start(Composer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
+               ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks) {
+    cancel();
+    composer_ = &composer;
+    manifests_ = &manifests;
+    runs_ = &runs;
+    manifest_ = manifest;
+    target_ = position;
+    cycle_ = cycle;
+    window_ = windowTicks;
+    replayed_ = 0;
+    grains_ = 0;
+    manifests.pin(manifest);
+    pinned_ = true;
+    const auto& m = manifests.manifest(manifest);
+    SourceRun src[Manifests::kMaxRuns];
+    for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
+    warmup_ = false;
+    if (const auto* cp = table.nearest(slot, m.identity, position)) {
+      if (!composer.resume(src, m.runCount, m.loopLengthTicks, m.identity, *cp)) return refuse();
+      at_ = cp->position;
+    } else {
+      if (!composer.begin(src, m.runCount, m.loopLengthTicks, m.identity)) return refuse();
+      warmup_ = true;  // cycle 0 from the loop start, then replay to the position
+      at_ = 0;
+    }
+    status_ = Status::Running;
+    if (!warmup_) settle();
+    return status_;
   }
-  composer.rebaseCycle(cycle);
-  for (; at < position; at += windowTicks) {
-    composer.composeNext(scratch, windowTicks);
-    ++replayed;
+
+  /// One grain.
+  Status step(Window& scratch, uint32_t maxRows) {
+    if (status_ != Status::Running) return status_;
+    ++grains_;
+    if (!composer_->windowOpen()) composer_->openWindow(scratch, window_);
+    if (!composer_->composeRows(scratch, maxRows)) return status_;
+    ++replayed_;
+    if (warmup_) {
+      if (composer_->windowOpen() || !composer_->nextCycle()) return status_;  // still in cycle 0
+      warmup_ = false;
+      at_ = 0;
+    } else {
+      at_ += window_;
+    }
+    settle();
+    return status_;
   }
-  return true;
-}
+
+  void cancel() {
+    if (status_ == Status::Running || status_ == Status::Done) release();
+    if (status_ == Status::Running) status_ = Status::Cancelled;
+  }
+  /// Ends the composer's use of the source (the cursor that took it over ends).
+  void release() {
+    if (composer_ != nullptr) composer_->end();
+    if (pinned_) manifests_->unpin(manifest_, *runs_);
+    pinned_ = false;
+  }
+
+  Status status() const { return status_; }
+  bool pinned() const { return pinned_; }
+  uint32_t replayed() const { return replayed_; }
+  uint32_t grains() const { return grains_; }
+
+ private:
+  void settle() {
+    if (warmup_ || at_ < target_) return;
+    composer_->rebaseCycle(cycle_);
+    status_ = Status::Done;
+  }
+  Status refuse() {
+    release();
+    return status_ = Status::Refused;
+  }
+
+  Composer* composer_ = nullptr;
+  Manifests* manifests_ = nullptr;
+  Runs* runs_ = nullptr;
+  ManifestId manifest_ = kNoManifest;
+  bool pinned_ = false, warmup_ = false;
+  uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
+  Status status_ = Status::Idle;
+};
 
 }  // namespace ContentEngine
