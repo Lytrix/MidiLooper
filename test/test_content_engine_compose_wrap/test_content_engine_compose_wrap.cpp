@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <vector>
 
@@ -134,8 +135,11 @@ static std::vector<Player::Emit> play(const RunId* runs, uint8_t count) {
   return out;
 }
 
+static void assertNoPhantomNoteOffs(const std::vector<Player::Emit>& s);
+
 static void assertMatchesReference(const RunId* runs, uint8_t count) {
   const auto got = play(runs, count);
+  assertNoPhantomNoteOffs(got);
   const auto eff = Oracle::effective(oracleNotes(runs, count), kLoop);
   const auto want = SpanModel::expandedStream(SpanModel::timeline(eff, kLoop, kCycles), 0, kLoop * kCycles,
                                               Config::kMaxSoundingPerTrack);
@@ -226,6 +230,152 @@ void test_random_wrap_held_passes_match_reference() {
   }
 }
 
+// ---- Independently specified expectations (hand-written from the clauses, not from the reference model) -----------------
+
+struct X {
+  uint32_t tick;
+  uint8_t cls;  // 0 NoteOff, 1 NoteOn
+  uint32_t id;
+};
+
+/// Every NoteOff closes an instance that was started and is open; one open instance per (noteId, run) at a time.
+static void assertNoPhantomNoteOffs(const std::vector<Player::Emit>& s) {
+  struct Open {
+    uint32_t id;
+    uint16_t runKey;
+  };
+  std::vector<Open> open;
+  for (const auto& e : s) {
+    if (e.cls == 1) {
+      for (const auto& o : open) TEST_ASSERT_FALSE(o.id == e.noteId && o.runKey == e.runKey);  // no second iteration
+      open.push_back({e.noteId, e.runKey});
+    } else if (e.cls == 0) {
+      bool found = false;
+      for (size_t i = 0; i < open.size(); ++i)
+        if (open[i].id == e.noteId && open[i].runKey == e.runKey) {
+          open.erase(open.begin() + static_cast<long>(i));
+          found = true;
+          break;
+        }
+      TEST_ASSERT_TRUE_MESSAGE(found, "NoteOff for an instance that was not started");
+    }
+  }
+}
+
+static void assertStream(const RunId* runs, uint8_t count, uint32_t cycles, const std::vector<X>& want) {
+  SourceRun src[16];
+  for (uint8_t i = 0; i < count; ++i) src[i] = {runs[i], gRuns.run(runs[i]).rowCount};
+  std::vector<Player::Emit> got;
+  Player::Emit buf[64];
+  gC.begin(src, count, kLoop, 1);
+  for (uint32_t c = 0; c < cycles; ++c) {
+    while (gC.composeNext(gWin, kWin)) {
+      uint8_t n = gPlayer.beginWindow(gWin, buf, 64);
+      got.insert(got.end(), buf, buf + n);
+      for (uint32_t t = gWin.cycleBase + gWin.start; t < gWin.cycleBase + gWin.end; ++t) {
+        n = gPlayer.tick(t, buf, 64);
+        got.insert(got.end(), buf, buf + n);
+      }
+    }
+    if (c + 1 < cycles) gC.nextCycle();
+  }
+  assertNoPhantomNoteOffs(got);
+  TEST_ASSERT_EQUAL_UINT32(0, gSched.counters().duplicates);
+  if (got.size() != want.size()) {
+    char line[64];
+    std::snprintf(line, sizeof line, "stream size %u, expected %u", static_cast<unsigned>(got.size()),
+                  static_cast<unsigned>(want.size()));
+    TEST_FAIL_MESSAGE(line);
+  }
+  for (size_t i = 0; i < want.size(); ++i) {
+    if (got[i].tick != want[i].tick || got[i].cls != want[i].cls || got[i].noteId != want[i].id) {
+      char line[120];
+      std::snprintf(line, sizeof line, "row %u: got (%u,%u,id %u) expected (%u,%u,id %u)", static_cast<unsigned>(i),
+                    got[i].tick, got[i].cls, got[i].noteId, want[i].tick, want[i].cls, want[i].id);
+      TEST_FAIL_MESSAGE(line);
+    }
+  }
+}
+
+// OVL-6 boundaries in one cycle. Earlier notes A60/A61/A62 [1000, 2000) (ids 1-3); later notes at 1008/1009/1010
+// (ids 4-6). Remnants (h - 1) - on = 7 / 8 / 9: A60 hidden, A61 ends at 1008, A62 ends at 1009.
+void test_fixture_min_length_boundaries_7_8_9() {
+  RunId r[2];
+  r[0] = recordPass({{1, 60, 1000, 2000}, {1, 61, 1000, 2000}, {1, 62, 1000, 2000}});
+  r[1] = recordPass({{2, 60, 1008, 1100}, {2, 61, 1009, 1100}, {2, 62, 1010, 1100}});
+  assertStream(r, 2, 1,
+               {{1000, 1, 2}, {1000, 1, 3}, {1008, 0, 2}, {1008, 1, 4}, {1009, 0, 3}, {1009, 1, 5}, {1010, 1, 6},
+                {1100, 0, 4}, {1100, 0, 5}, {1100, 0, 6}});
+}
+
+// OVL-6 across the loop end (owner decision: the whole surviving duration, unwrapped). Wrap-held A70/A71/A72 start at
+// L-5 (ids 1-3); later notes at 3/4/5 in the next cycle (ids 4-6). Remnants (L + h - 1) - (L - 5) = 7 / 8 / 9.
+// Cycle 0: no A has started yet at 3..5 (cold start). Cycle 1: A71 ends at L+3, A72 at L+4; A70 never sounds.
+void test_fixture_min_length_across_loop_end() {
+  RunId r[2];
+  r[0] = recordPass({{1, 70, kLoop - 5, kLoop + 200}, {1, 71, kLoop - 5, kLoop + 200}, {1, 72, kLoop - 5, kLoop + 200}});
+  r[1] = recordPass({{2, 70, 3, 50}, {2, 71, 4, 50}, {2, 72, 5, 50}});
+  const uint32_t L = kLoop;
+  assertStream(r, 2, 2,
+               {{3, 1, 4}, {4, 1, 5}, {5, 1, 6}, {50, 0, 4}, {50, 0, 5}, {50, 0, 6}, {L - 5, 1, 2}, {L - 5, 1, 3},
+                {L + 3, 0, 2}, {L + 3, 1, 4}, {L + 4, 0, 3}, {L + 4, 1, 5}, {L + 5, 1, 6}, {L + 50, 0, 4},
+                {L + 50, 0, 5}, {L + 50, 0, 6}, {2 * L - 5, 1, 2}, {2 * L - 5, 1, 3}});
+}
+
+// End-abutment leaves the earlier note unchanged, in a cycle and across the loop end: NoteOff before NoteOn at the tick.
+// Pass 0: A60 [100, 200) id 1, C62 [L-100, L+50) id 2. Pass 1: D62 [50, 120) id 3, B60 [200, 300) id 4.
+void test_fixture_end_abutment_in_cycle_and_across_loop_end() {
+  RunId r[2];
+  r[0] = recordPass({{1, 60, 100, 200}, {1, 62, kLoop - 100, kLoop + 50}});
+  r[1] = recordPass({{2, 62, 50, 120}, {2, 60, 200, 300}});
+  const uint32_t L = kLoop;
+  assertStream(r, 2, 2,
+               {{50, 1, 3}, {100, 1, 1}, {120, 0, 3}, {200, 0, 1}, {200, 1, 4}, {300, 0, 4}, {L - 100, 1, 2},
+                {L + 50, 0, 2}, {L + 50, 1, 3}, {L + 100, 1, 1}, {L + 120, 0, 3}, {L + 200, 0, 1}, {L + 200, 1, 4},
+                {L + 300, 0, 4}, {2 * L - 100, 1, 2}});
+}
+
+// Q-OVL-3: a later note at tick 0 hides the wrap-held earlier note in every cycle (no remnant before the loop end).
+void test_fixture_tick_zero_hides_wrap_held_note() {
+  RunId r[2];
+  r[0] = recordPass({{1, 60, kLoop - 100, kLoop + 50}});
+  r[1] = recordPass({{2, 60, 0, 30}});
+  const uint32_t L = kLoop;
+  assertStream(r, 2, 3, {{0, 1, 2}, {30, 0, 2}, {L, 1, 2}, {L + 30, 0, 2}, {2 * L, 1, 2}, {2 * L + 30, 0, 2}});
+}
+
+// Two iterations of the same (noteId, run): a note one tick shorter than the loop ends at 99 and restarts at 100 each
+// cycle; absolute ticks keep them apart (no duplicate instance, NoteOff before the next NoteOn).
+void test_fixture_successive_iterations_of_one_note() {
+  const RunId r = recordPass({{1, 64, 100, kLoop + 99}});
+  const uint32_t L = kLoop;
+  assertStream(&r, 1, 3, {{100, 1, 1}, {L + 99, 0, 1}, {L + 100, 1, 1}, {2 * L + 99, 0, 1}, {2 * L + 100, 1, 1}});
+}
+
+// Look-ahead work on dense stacked chords: 8 passes each start a 128-note chord (16 channels x 8 pitches) one tick apart.
+// The worst NoteOn reads at most the rows of all passes within its next 9 ticks plus nothing from wrap sections (no
+// tick-0 starts): measured against that bound, not assumed.
+void test_lookahead_work_is_bounded_on_dense_chords() {
+  RunId r[8];
+  for (uint8_t p = 0; p < 8; ++p) {
+    std::vector<NoteSpec> chord;
+    for (uint8_t ch = 1; ch <= 16; ++ch)
+      for (uint8_t k = 0; k < 8; ++k) chord.push_back({ch, static_cast<uint8_t>(40 + k), 1000u + p, 1004u + p});
+    r[p] = recordPass(chord);
+  }
+  SourceRun src[8];
+  for (uint8_t i = 0; i < 8; ++i) src[i] = {r[i], gRuns.run(r[i]).rowCount};
+  gC.begin(src, 8, kLoop, 1);
+  uint32_t rowsInNineTicks = 0;  // every row of every pass lies within 1000..1011: the whole dense block
+  for (uint8_t i = 0; i < 8; ++i) rowsInNineTicks += gRuns.run(r[i]).rowCount;
+  while (gC.composeNext(gWin, kWin)) {}
+  char line[120];
+  std::snprintf(line, sizeof line, "dense chords: max look-ahead rows per NoteOn %u (bound: rows within 9 ticks = %u)",
+                gC.stats().maxLookaheadRowsPerNoteOn, rowsInNineTicks);
+  TEST_MESSAGE(line);
+  TEST_ASSERT_TRUE(gC.stats().maxLookaheadRowsPerNoteOn <= rowsInNineTicks);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_wrap_held_note_over_three_cycles);
@@ -234,5 +384,11 @@ int main(int, char**) {
   RUN_TEST(test_later_wrap_held_note_hides_earlier_notes_in_its_head);
   RUN_TEST(test_min_length_hide_requires_the_note_to_still_sound);
   RUN_TEST(test_random_wrap_held_passes_match_reference);
+  RUN_TEST(test_fixture_min_length_boundaries_7_8_9);
+  RUN_TEST(test_fixture_min_length_across_loop_end);
+  RUN_TEST(test_fixture_end_abutment_in_cycle_and_across_loop_end);
+  RUN_TEST(test_fixture_tick_zero_hides_wrap_held_note);
+  RUN_TEST(test_fixture_successive_iterations_of_one_note);
+  RUN_TEST(test_lookahead_work_is_bounded_on_dense_chords);
   return UNITY_END();
 }
