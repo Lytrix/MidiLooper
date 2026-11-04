@@ -1799,6 +1799,10 @@ struct LoopPlaybackRuntime {
 uint32_t rollingWindowLengthAt(uint32_t start, uint32_t loopLength, bool equalPartition);
 /// The first partition boundary at or after loop phase `phase` (`loopLength` for the loop's end).
 uint32_t rollingBoundaryAtOrAfter(uint32_t phase, uint32_t loopLength, bool equalPartition);
+/// DEC-136.4b: the rolling window a frame positioned at `start` serves (`rollingWindowLengthAt`), and whether it ends on
+/// the grid -- a partition boundary or the loop's end -- so it is a window the committed resolver's own geometry can
+/// adopt and succeed. 0 when it does not (an off-grid default-partition start would cross a boundary).
+uint32_t rollingGridWindowLengthAt(uint32_t start, uint32_t loopLength, bool equalPartition);
 /// The frame's own window length under the partition it was positioned on.
 uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame);
 

@@ -526,3 +526,76 @@ state.
 - F1 has no dedicated injection test yet: it needs a sibling admitted promise during the speculative turn. That is
   noted for 136.4b.
 - After the fixes: REDs 1, 2 and 6 pass, the default lane gate is 21/21, and ITCM is unchanged (392,312 B, padding 904).
+
+### DEC-136.4b geometry: span-shaped root takeover (owner ruling "DEC-136.4b geometry ruling — approve option 1", 2026-11-04)
+
+**Conflict found before any edit.**
+- The committed resolver serves a frame only when the bound view's length equals the frame's span, and the span is
+  derived (`deadlineTick == 0` ? the whole loop : `rollingFrameSpan`, i.e. `rollingWindowLengthAt(start)`).
+- `RollingFrame` has no span field. A one-bar root window is therefore coherent only on a loop's last bar.
+- Approved option 1: the speculative root candidate takes the exact coverage the committed rolling grid expects at its
+  takeover boundary. The 136.4a one-bar requirement is superseded for speculative root-return candidates only.
+
+**The amendment.**
+
+| term | change |
+|---|---|
+| target shape | `recordReturnSpeculativeRootTarget` S3 is now `[B, B + rollingGridWindowLengthAt(B))` on the routed grid (equal partition, as the routed requester positions). `rollingGridWindowLengthAt` is `rollingWindowLengthAt`, but 0 unless the window ends on a partition boundary or the loop's end. So: an on-grid start gives the normal two bars; the terminal bar gives one bar; an equal-partition bar start runs to its own window's end; an off-grid default-partition start (a two-bar window crossing a boundary) has no target, and no speculation happens at that boundary. |
+| owed shape | DEC-136 item 1's one-bar clause also accepts a span-shaped request, but only when `recordReturnSpeculativeRootAdmissible` holds for that exact request. Every other item-1 term (source, revision, generation, manifest identity, bar-aligned start) is unchanged. |
+| parked target and publication | the same shape function. Parking, the leftover-shell guard and the publication rule are otherwise unchanged. |
+| takeover re-key | at the root-return adoption on the clock edge, the frame takes the adopted window's `startPhase`, `deadlineTick` = the boundary's absolute tick (0 only for a whole-loop window, the deadline-free frame), and the routed partition bit. These are fixed-metadata stores, O(1). `epoch`, `generation`, `loopLength` and `projectionStart` were already checked equal by that branch's guard. |
+| boundary survival | the main-loop requester (`serviceRollingPlaybackWindow`) cancelled the frozen frame on the exact boundary tick, before the clock edge could take over, because the served window no longer contains the boundary phase. The takeover adopts only from a Serving frame. On that one tick the frame is now kept when a complete, unpublished ready starts exactly there. If the clock edge does not adopt it, the next tick is past the boundary and the existing cancellation runs. |
+
+**Unchanged.** No `RollingFrame` field, no change to `ServingViewGeometry` or any resolver term, DEC-147 pricing,
+DEC-159, DEC-247/248, DEC-249, the three-view lifecycle and publication. No new builder, buffer or queue. ITCM is
+byte-identical on both images:
+
+| image | ITCM code | padding | headroom over 840 |
+|---|---|---|---|
+| `teensy41-capture-serial` | 392,072 | 1,144 | 304 B |
+| `teensy41-capture-serial-revstore-succprobe` | 392,312 | 904 | 64 B |
+
+**RED-first.** The tests below ran against `ea05fb82`'s `TrackPlaybackWindowBuild.cpp` (the 136.4a resolver and
+adoption), then against the amendment:
+
+| ruling item | test | on 136.4a | amended |
+|---|---|---|---|
+| 1, 7 | RED 1: the root builds beside frozen current and ready, as the grid's window (`rollingGridWindowLengthAt`, more than one bar) | FAIL (768 ticks, one bar) | PASS |
+| 1, 6, 7 | RED 2: parked span-shaped; source (Committed, manifest identity) and coverage unchanged through publication and adoption | FAIL (one bar) | PASS |
+| 2 | RED 5: at the takeover, frame `startPhase` = the window start, `deadlineTick` = the takeover tick, epoch, generation and loop length match, and `rollingFrameSpan(frame)` = the view's length | FAIL (not a serving frame) | PASS |
+| 3 | RED 5: every take note in the adopted window is emitted on a tick where that very window is the serving committed view of a Serving frame, one per bar; exactly one root handoff; no gap; every take note paired exactly once over traversals 1-6 | FAIL | PASS |
+| 3 | on-time root replaces frozen exactly once (bar-2 note plays) | FAIL | PASS |
+| 4 | shape refusals: off-grid default start gives 0, terminal bar gives one bar, equal-partition start runs to its window's end; live, a wrong span, a wrong boundary and a wrong source are refused, and the exact target is admissible and owed | PASS (guard) | PASS |
+| 6 | RED 5: the root serves its whole window from the adopted view, and the Record-return job retires while committed playback serves | FAIL (earlier assertion) | PASS |
+| 4 (resolver) | `ServingViewGeometry` is untouched; the existing resolver geometry tests cover wrong-span serving views | unchanged | unchanged |
+
+- **Witness correction.** The gap witness runs after the lane turn and before the clock edge, so every handoff
+  boundary tick counted as a gap, ordinary committed-to-committed handoffs included (11 ticks, all at window starts). A
+  ready view starting exactly at the playhead now counts as served on that tick. A missed adoption still shows on the
+  next tick.
+- **Gates.** On-time and RED 5 move to the default lane gate.
+- **Continuity after the takeover.** On the probe image (`enableProbeImageSuccessors`), the committed successor after
+  the root window is adopted on time, so RED 5's continuity over traversals 1-6 passes there.
+- **Production dependency, named.** The production image has no C5.3b successor requester. There, the window after the
+  root comes from DEC-147-priced positioning. That is the C5.3b scheduling item, not part of this patch. The local
+  takeover gate (RED 5's takeover assertions) is distinct from that continuity.
+- **Still red, the frozen-priority slice.** The delayed-root test and RED 3/4 fail as before: a larger root that misses
+  its handoff must yield without costing frozen continuation (ruling item 5).
+
+**Geometry slice independent review (one focused pass, `docs/Agents/reviewer.md`), findings and disposition:**
+
+| finding | severity | fix | RED on the unfixed code |
+|---|---|---|---|
+| F1: off-grid fallback. With the frozen authority held, an off-grid boundary returned no target, so the Record-return owner fell back to the ordinary one-bar demand at the playhead's own, already-started bar. | medium | `recordReturnSpeculativeRootTarget` answers "authority held, no window here" with an empty target. The owner then waits (`Idle`) for a later on-grid boundary. Admission requires a non-empty target. | `..._off_grid_boundary_waits_instead_of_one_bar_fallback`: 1 fallback demand before the fix, 0 after. The off-grid state is detected from the views alone, and is reached by holding the root publication until bar 3 (fixture `holdPublicationUntil`). |
+| F2: owed status lost at the handoff. A span-shaped root stopped being owed once the frozen ready was adopted, so a qualification still in flight lost DEC-136's owed classification and item-3 waiver. The one-bar root kept them by its shape. | low-medium | `recordReturnSpeculativeRootOwedAfterHandoff`: the exact grid window from the end of the job's own frozen view now serving stays owed, routed slot only, until the bound job releases. | `..._span_shaped_root_stays_owed_after_the_frozen_handoff`: fails before the fix, passes after. |
+| Boundary survival does not check the ready's origin | low, bounded | none. The kept frame lives one tick at most: at end+1 the existing cancellation runs, and the resolver's Defect-B path still retires a stale Capture frame. | — |
+| Test gaps: no equal-partition loop end to end; the refusal test samples only the first target; the wrong source exercises only the revision term | noted | none in this slice | — |
+
+**Continuity finding for the frozen-priority slice (not caused here).** In the F1 fixture (root current during bar 3,
+then the off-grid wait), the frozen reader stalls after its handoff to bar 0. The slot has 6,912 gap ticks, and the
+first root handoff is at tick 9,217. The stall is the same with the F1 wait disabled and on the pre-review geometry
+code, so it is the existing frozen-continuation arbitration (a committed demand holding `build`/`ready` against the
+frozen reader's next bar). That is ruling item 5's subject, and it gets its own RED in that slice.
+
+**Gates after the review fixes.** Default lane gate: 27 cases, all passing. Both images are byte-identical in ITCM
+(392,072 / 392,312 code; padding 1,144 / 904).

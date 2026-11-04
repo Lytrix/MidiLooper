@@ -596,7 +596,8 @@ struct RecordStopTrace {
 };
 
 PlaybackObservation recordIntoPlayingThenPlay(Track& t, uint32_t traversals, RecordStopTrace& trace,
-                                              const std::function<void(uint32_t)>& perTick = {}) {
+                                              const std::function<void(uint32_t)>& perTick = {},
+                                              uint32_t holdPublicationUntil = 0) {
   prepareSlot(t, 0, false);
   t.forceSetState(TRACK_STOPPED);
   nativePlaybackDeadlineClock = {0, 1};
@@ -613,9 +614,13 @@ PlaybackObservation recordIntoPlayingThenPlay(Track& t, uint32_t traversals, Rec
   trace.stopTick = kLength;
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
   play(t, kLength, (1 + traversals) * kLength, obs, 1, [&](uint32_t tick) {
-    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+    // `holdPublicationUntil`: once the frozen return window is bound, the stop job's root publication waits until that
+    // tick (the frozen reader plays on meanwhile).
+    const bool held = tick < holdPublicationUntil && runtime.hasBoundRecordReturnWindowForPendingJob();
+    if (!held && t.hasSnapshotPublicationBacklogOnAnySlot())
       t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
-    if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) TrackCaptureStopTestAccess::step(t);
+    if (!held && (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)))
+      TrackCaptureStopTestAccess::step(t);
     const auto& frame = runtime.rolling;
     if (trace.staleRetiredAt == 0 && frame.phase == LoopPlaybackRuntime::RollingPhase::Blocked &&
         frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale))
@@ -887,6 +892,12 @@ struct RecordReturnOwnershipWitness {
   uint32_t readyOverwritten = 0;      // the frozen ready's view was rewritten while the root was parked
   bool publishedFromPark = false;
   bool adoptedFromPark = false;
+  // DEC-136.4b: the parked root's coverage and source identity, and whether either changed through publication and
+  // adoption (the same view, the same storage generation, the same bytes' identity).
+  PlaybackCoverageInterval parkedCoverage{};
+  PlaybackViewSourceIdentity parkedSource{};
+  uint32_t parkedIdentityChanged = 0;
+  uint32_t rootBuildCoverageStart = UINT32_MAX, rootBuildCoverageLength = 0;  // RED 1: the root seen beside frozen
   // RED 4: frozen (Capture) builds begun after the root became current, and any that vanished before completing.
   uint8_t frozenBuildView = 0xFF;
   uint64_t frozenBuildStorage = 0;
@@ -915,7 +926,11 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
   const auto* rdy = lc.ready < n ? &set->views[lc.ready] : nullptr;
   const auto* bld = lc.build < n ? &set->views[lc.build] : nullptr;
   const bool served = cur != nullptr && cur->complete && cur->published && cur->coverage.contains(phase);
-  if (!served) ++w.gapTicks;
+  // The witness runs after the lane turn and before the clock edge, which adopts a ready view starting exactly here;
+  // that boundary tick is served. A missed adoption still shows on the next tick.
+  const bool adoptedOnThisEdge = rdy != nullptr && rdy->complete && !rdy->published &&
+      rdy->coverage.startPhase == phase;
+  if (!served && !adoptedOnThisEdge) ++w.gapTicks;
   if (cur != nullptr && cur->published && cur->source.sourceGeneration != generation) ++w.generationMismatch;
   const bool rootCurrent = loop.playbackRevision != 0;
   const bool frozenCur = served && cur->source.origin == PlaybackWindowOrigin::Capture;
@@ -923,7 +938,13 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
       rdy->source.origin == PlaybackWindowOrigin::Capture;
   const bool rootInBuild = bld != nullptr && bld->source.origin == PlaybackWindowOrigin::Committed &&
       bld->coverage.lengthTicks != 0 && (bld->complete || runtime.coverageBuildNeedsService());
-  if (rootCurrent && frozenCur && frozenRdy && rootInBuild) w.rootBesideFrozen = true;
+  if (rootCurrent && frozenCur && frozenRdy && rootInBuild) {
+    if (!w.rootBesideFrozen) {
+      w.rootBuildCoverageStart = bld->coverage.startPhase;
+      w.rootBuildCoverageLength = bld->coverage.lengthTicks;
+    }
+    w.rootBesideFrozen = true;
+  }
   // Speculative preparation is the root building beside the frozen current and ready; with a valid retained view in
   // the third physical view there is none to take.
   if (lc.retained < n && set->views[lc.retained].complete && rootInBuild && frozenCur && frozenRdy)
@@ -942,6 +963,15 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
     w.parkedStorage = bld->storageGeneration;
     w.frozenReadyView = lc.ready;
     w.frozenReadyStorage = rdy->storageGeneration;
+    w.parkedCoverage = bld->coverage;
+    w.parkedSource = bld->source;
+  }
+  if (w.parked && w.parkedView < n && set->views[w.parkedView].storageGeneration == w.parkedStorage) {
+    const auto& v = set->views[w.parkedView];
+    if (!(v.source == w.parkedSource) || v.coverage.startPhase != w.parkedCoverage.startPhase ||
+        v.coverage.lengthTicks != w.parkedCoverage.lengthTicks ||
+        v.coverage.loopLengthTicks != w.parkedCoverage.loopLengthTicks)
+      ++w.parkedIdentityChanged;
   }
   if (w.parked && lc.current == w.frozenReadyView) w.frozenReadyView = 0xFF;  // the frozen handoff took it
   if (w.parked && w.frozenReadyView != 0xFF && lc.ready == w.frozenReadyView && rdy != nullptr &&
@@ -986,6 +1016,11 @@ void test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_a
   });
   RollingSuccessorProbe::gKnobs = {};
   TEST_ASSERT_TRUE_MESSAGE(w.rootBesideFrozen, "the root never prepared in build beside frozen current and ready");
+  // DEC-136.4b: the speculative root is the routed grid's own window at its target -- span-shaped, not one bar.
+  TEST_ASSERT_EQUAL_UINT32(0u, w.rootBuildCoverageStart % kBar);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rollingGridWindowLengthAt(w.rootBuildCoverageStart, kLength, true),
+                                   w.rootBuildCoverageLength, "the speculative root is not the grid's window");
+  TEST_ASSERT_GREATER_THAN_UINT32(kBar, w.rootBuildCoverageLength);
 }
 
 // RED 2: the root completes before the handoff, parks in `build` without overwriting the frozen `ready`, is
@@ -1007,6 +1042,12 @@ void test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free()
   TEST_ASSERT_TRUE_MESSAGE(w.publishedFromPark, "the parked root was not published once ready was free");
   TEST_ASSERT_TRUE_MESSAGE(w.adoptedFromPark, "the root adopted was not the parked view");
   TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+  // DEC-136.4b: parked span-shaped, and its source and coverage identity survive publication and adoption unchanged.
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(rollingGridWindowLengthAt(w.parkedCoverage.startPhase, kLength, true),
+                                   w.parkedCoverage.lengthTicks, "the parked root is not the grid's window");
+  TEST_ASSERT_EQUAL_INT(static_cast<int>(PlaybackWindowOrigin::Committed), static_cast<int>(w.parkedSource.origin));
+  TEST_ASSERT_NOT_EQUAL_UINT32(0u, w.parkedSource.manifestIdentity);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.parkedIdentityChanged, "the parked root's identity changed");
 }
 
 // RED 3 + 4: a deliberately delayed root yields the builder in time for the frozen reader to prepare its next bar,
@@ -1045,16 +1086,213 @@ void test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap() {
   RecordStopTrace trace;
   RecordReturnOwnershipWitness w;
   RootHandoffWitness h;
+  // DEC-136.4b: the coverage of the committed view serving each tick after the takeover, read after the lane turn (a
+  // boundary tick's adoption lands on the clock edge, so the take notes -- at bar phase 12 -- are read mid-bar).
+  std::map<uint32_t, PlaybackCoverageInterval> committedServing;
+  std::map<uint32_t, LoopPlaybackRuntime::RollingFrame> frameAt;  // the frame of each committed-serving tick
+  std::map<uint32_t, bool> jobBound;                              // the Record-return job still bound, per tick
   PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
     observeRecordReturnOwnership(t, tick, w);
-    observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, h);
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set != nullptr && set->lifecycle.current < set->views.size() &&
+        runtime.rolling.phase == LoopPlaybackRuntime::RollingPhase::Serving) {
+      const auto& cur = set->views[set->lifecycle.current];
+      if (cur.complete && cur.published && cur.source.origin == PlaybackWindowOrigin::Committed) {
+        committedServing[tick] = cur.coverage;
+        frameAt[tick] = runtime.rolling;
+      }
+    }
+    jobBound[tick] = runtime.hasBoundRecordReturnWindowForPendingJob();
   });
   RollingSuccessorProbe::gKnobs = {};
   TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+  // The takeover window itself sounds: the take notes of the adopted root window's bars are emitted while that very
+  // window (span-shaped, from the takeover boundary) is the serving committed view of a Serving frame.
+  const uint32_t takeover = h.firstRootTick - 1;  // observed one tick after the clock edge that adopted it
+  TEST_ASSERT_TRUE_MESSAGE(committedServing.count(h.firstRootTick) != 0, "the adopted root was not a serving frame");
+  const PlaybackCoverageInterval root = committedServing[h.firstRootTick];
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(takeover % kLength, root.startPhase, "the root window did not start at takeover");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(kBar, root.lengthTicks, "the adopted root is not span-shaped");
+  uint32_t rootNotes = 0;
+  for (const auto& [tick, e] : obs.sent) {
+    if (!e.isNoteOn() || tick < takeover || tick >= takeover + root.lengthTicks) continue;
+    if (!isTakeNote(tick % kLength, e.data.noteData.note)) continue;
+    const auto it = committedServing.find(tick);
+    TEST_ASSERT_TRUE_MESSAGE(it != committedServing.end() && it->second.startPhase == root.startPhase &&
+                                 it->second.lengthTicks == root.lengthTicks,
+                             "a take note of the takeover window was not emitted from the adopted root");
+    ++rootNotes;
+  }
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(root.lengthTicks / kBar, rootNotes,
+                                   "not every bar of the adopted root window sounded its take note");
+  // DEC-136.4b item 2: the clock edge gave the destination frame the adopted window's geometry -- its start, the
+  // takeover boundary as its absolute deadline, this clock's epoch and the slot's generation -- so the committed
+  // resolver's span (`rollingFrameSpan`) is the adopted view's own length.
+  const LoopPlaybackRuntime::RollingFrame f = frameAt[h.firstRootTick];
+  TEST_ASSERT_EQUAL_UINT32(root.startPhase, f.startPhase);
+  TEST_ASSERT_EQUAL_UINT64(takeover, f.deadlineTick);
+  TEST_ASSERT_EQUAL_UINT32(1u, f.epoch);
+  TEST_ASSERT_EQUAL_UINT32(TrackCaptureStopTestAccess::playbackGenerationOf(t), f.generation);
+  TEST_ASSERT_EQUAL_UINT32(kLength, f.loopLength);
+  TEST_ASSERT_EQUAL_UINT32(root.lengthTicks, rollingFrameSpan(f));
+  // Item 6: the root serves its whole window from the one adopted view, and the Record-return job retires while the
+  // takeover window (or its committed successor) serves -- the root's backing source outlives the job.
+  for (uint32_t tick = h.firstRootTick; tick < takeover + root.lengthTicks; ++tick) {
+    const auto it = committedServing.find(tick);
+    TEST_ASSERT_TRUE_MESSAGE(it != committedServing.end() && it->second.startPhase == root.startPhase,
+                             "the adopted root stopped serving inside its own window");
+  }
+  bool retiredWhileCommitted = false;
+  for (const auto& [tick, bound] : jobBound)
+    retiredWhileCommitted |= tick >= h.firstRootTick && !bound && committedServing.count(tick) != 0;
+  TEST_ASSERT_TRUE_MESSAGE(retiredWhileCommitted, "the Record-return job never retired while the root served");
   TEST_ASSERT_EQUAL_UINT32(0u, h.captureAfterRoot);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.generationMismatch, "a served view carried a foreign source generation");
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "the Record-only stop had an audible gap");
   assertTakeNotesPairedExactlyOnce(obs, 1, 6);
+}
+
+// DEC-136.4b item 4: the speculative root's shape is the grid's own window, so a mid-window start runs to that window's
+// end, the terminal bar is one bar, and an off-grid default-partition start (a two-bar window crossing a boundary) has
+// no window at all. Live, at a tick the speculative target holds, a wrong span, a wrong boundary and a wrong source are
+// each refused, and only the exact target with the root's source is owed.
+void test_c5_3_record_return_speculative_root_refuses_wrong_span_boundary_and_source() {
+  constexpr uint32_t S = 2 * kBar;
+  TEST_ASSERT_EQUAL_UINT32(S, rollingGridWindowLengthAt(0, 4 * kBar, true));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, rollingGridWindowLengthAt(kBar, 4 * kBar, true), "an off-grid start had a window");
+  TEST_ASSERT_EQUAL_UINT32(S, rollingGridWindowLengthAt(2 * kBar, 4 * kBar, true));
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(kBar, rollingGridWindowLengthAt(3 * kBar, 4 * kBar, true), "terminal bar");
+  TEST_ASSERT_EQUAL_UINT32(kBar, rollingGridWindowLengthAt(2 * kBar, 3 * kBar, false));  // a short loop's tail
+  // Five bars on the routed equal partition: three windows of 1,280 ticks; a bar start keeps its window's end.
+  TEST_ASSERT_EQUAL_UINT32(1280u - kBar, rollingGridWindowLengthAt(kBar, 5 * kBar, true));
+  TEST_ASSERT_EQUAL_UINT32(0u, rollingGridWindowLengthAt(5 * kBar, 5 * kBar, true));
+
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  uint32_t checked = 0;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 3, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    PlaybackCoverageInterval target{};
+    if (checked != 0 || !t.recordReturnSpeculativeRootTarget(0, tick % kLength, target)) return;
+    const PlaybackViewPendingRequest* pending = t.pendingViewRequest(0);
+    if (pending == nullptr || !pending->active) return;
+    const PlaybackDeadlineClock clock{tick, 1};
+    PlaybackViewPendingRequest r = *pending;
+    r.coverage = target;
+    TEST_ASSERT_TRUE_MESSAGE(t.recordReturnSpeculativeRootAdmissible(0, r, clock), "the exact target was refused");
+    TEST_ASSERT_TRUE_MESSAGE(t.rootReturnSuccessorIsOwedForSlot(0, r, clock), "the exact root target was not owed");
+    PlaybackViewPendingRequest wrongSpan = r;
+    wrongSpan.coverage.lengthTicks = target.lengthTicks == kBar ? S : kBar;
+    TEST_ASSERT_FALSE(t.recordReturnSpeculativeRootAdmissible(0, wrongSpan, clock));
+    if (wrongSpan.coverage.lengthTicks != kBar)
+      TEST_ASSERT_FALSE_MESSAGE(t.rootReturnSuccessorIsOwedForSlot(0, wrongSpan, clock), "a wrong span was owed");
+    PlaybackViewPendingRequest wrongBoundary = r;
+    wrongBoundary.coverage.startPhase = (target.startPhase + kBar) % kLength;
+    wrongBoundary.coverage.lengthTicks = rollingWindowLengthAt(wrongBoundary.coverage.startPhase, kLength, true);
+    TEST_ASSERT_FALSE(t.recordReturnSpeculativeRootAdmissible(0, wrongBoundary, clock));
+    if (wrongBoundary.coverage.lengthTicks != kBar)
+      TEST_ASSERT_FALSE_MESSAGE(t.rootReturnSuccessorIsOwedForSlot(0, wrongBoundary, clock), "a wrong boundary was owed");
+    PlaybackViewPendingRequest wrongSource = r;
+    wrongSource.source.playbackRevision += 1;
+    TEST_ASSERT_FALSE_MESSAGE(t.rootReturnSuccessorIsOwedForSlot(0, wrongSource, clock), "a wrong source was owed");
+    (void)runtime;
+    ++checked;
+  });
+  (void)obs;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, checked, "the speculative target never held with a pending demand: vacuous");
+}
+
+// DEC-136.4b review F1: with the frozen authority held but no grid window from the boundary after the frozen ready (a
+// 4-bar loop's bar 1 on the default partition), the Record-return owner waits: it never falls back to an ordinary
+// one-bar root demand, and the root is prepared at a later on-grid boundary instead.
+void test_c5_3_record_return_off_grid_boundary_waits_instead_of_one_bar_fallback() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness h;
+  uint32_t offGridHeld = 0, fallbackDemands = 0;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    // The state from the views alone: the root current, frozen (Capture) `current` serving the playhead and frozen
+    // `ready` at its end, and no grid window from the boundary after that ready.
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || t.getLoop(0).playbackRevision == 0) return;
+    const auto& lc = set->lifecycle;
+    const size_t n = set->views.size();
+    if (lc.current >= n || lc.ready >= n) return;
+    const auto& cur = set->views[lc.current];
+    const auto& rdy = set->views[lc.ready];
+    const uint32_t phase = tick % kLength;
+    if (!cur.complete || !cur.published || cur.source.origin != PlaybackWindowOrigin::Capture ||
+        !cur.coverage.contains(phase) || !rdy.complete || rdy.published ||
+        rdy.source.origin != PlaybackWindowOrigin::Capture ||
+        rdy.coverage.startPhase != (cur.coverage.startPhase + cur.coverage.lengthTicks) % kLength)
+      return;
+    const uint32_t after = (rdy.coverage.startPhase + rdy.coverage.lengthTicks) % kLength;
+    if (rollingGridWindowLengthAt(after, kLength, true) != 0) return;
+    ++offGridHeld;
+    // A root demand raised on this very tick, of the ordinary one-bar shape, is the fallback.
+    const PlaybackViewPendingRequest* pending = t.pendingViewRequest(0);
+    if (pending != nullptr && pending->active &&
+        pending->sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        pending->coverage.lengthTicks == kBar && pending->work.admittedTick == tick)
+      ++fallbackDemands;
+  }, /*holdPublicationUntil=*/kLength + 3 * kBar);
+  (void)obs;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, offGridHeld, "the off-grid boundary never held: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, fallbackDemands, "an off-grid boundary fell back to a one-bar root demand");
+  TEST_ASSERT_EQUAL_UINT32(1u, h.rootHandoffs);
+}
+
+// DEC-136.4b review F2: the span-shaped root demand raised beside the frozen ready stays the job's owed root successor
+// after that ready is adopted (while the frozen bar before the root's boundary serves), as the one-bar root did by its
+// shape -- so a qualification still in flight at the frozen handoff keeps DEC-136's owed classification.
+void test_c5_3_record_return_span_shaped_root_stays_owed_after_the_frozen_handoff() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  bool stashed = false;
+  PlaybackViewPendingRequest speculative{};
+  uint32_t afterHandoff = 0, notOwed = 0;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 3, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    const PlaybackDeadlineClock clock{tick, 1};
+    const PlaybackViewPendingRequest* pending = t.pendingViewRequest(0);
+    if (!stashed && pending != nullptr && pending->active &&
+        t.recordReturnSpeculativeRootAdmissible(0, *pending, clock)) {
+      speculative = *pending;
+      stashed = true;
+      return;
+    }
+    if (!stashed) return;
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+    const auto& cur = set->views[set->lifecycle.current];
+    // The frozen bar immediately before the root's boundary now serves; its ready is no longer a frozen view.
+    const bool readyFrozen = set->lifecycle.ready < set->views.size() &&
+        set->views[set->lifecycle.ready].complete &&
+        set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Capture;
+    if (cur.source.origin != PlaybackWindowOrigin::Capture || !cur.published || readyFrozen ||
+        !cur.coverage.contains(tick % kLength) ||
+        (cur.coverage.startPhase + cur.coverage.lengthTicks) % kLength != speculative.coverage.startPhase)
+      return;
+    ++afterHandoff;
+    if (!t.rootReturnSuccessorIsOwedForSlot(0, speculative, clock)) ++notOwed;
+  });
+  (void)obs;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_TRUE_MESSAGE(stashed, "no speculative root demand was raised: vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, afterHandoff, "the frozen handoff before the root never served: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, notOwed, "the span-shaped root stopped being owed at the frozen handoff");
 }
 
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
@@ -1425,16 +1663,20 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
   if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
-  if (getenv("RECORD_RETURN_RED") != nullptr) {
-    RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
+  // DEC-136.4b root takeover geometry (green).
+  RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
+  RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);
+  if (getenv("RECORD_RETURN_RED") != nullptr) {  // DEC-136.4b frozen-priority arbitration (red)
     RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
     RUN_TEST(test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive);
-    RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);
   }
   // DEC-136 item 4, slice 136.4a (green).
   RUN_TEST(test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready);
   RUN_TEST(test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free);
   RUN_TEST(test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on);
+  RUN_TEST(test_c5_3_record_return_speculative_root_refuses_wrong_span_boundary_and_source);
+  RUN_TEST(test_c5_3_record_return_off_grid_boundary_waits_instead_of_one_bar_fallback);
+  RUN_TEST(test_c5_3_record_return_span_shaped_root_stays_owed_after_the_frozen_handoff);
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)

@@ -441,6 +441,9 @@ public:
   bool recordReturnSpeculativeRootTarget(uint8_t slotIndex, uint32_t phase, PlaybackCoverageInterval& target) const;
   bool recordReturnSpeculativeRootAdmissible(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
                                              PlaybackDeadlineClock clock) const;
+  /// DEC-136.4b: after the frozen ready is adopted, the span-shaped root prepared for the next boundary stays owed.
+  bool recordReturnSpeculativeRootOwedAfterHandoff(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
+                                                   PlaybackDeadlineClock clock) const;
   bool rootReturnSuccessorIsOwedForSlot(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
                                         PlaybackDeadlineClock clock) const;
   /// DEC-136 — the envelope's own impossibility, as a pure rule: no legal lead admits this demand's own bounded

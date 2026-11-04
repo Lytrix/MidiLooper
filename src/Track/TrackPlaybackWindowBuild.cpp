@@ -1746,6 +1746,18 @@ FLASHMEM void Track::resolveQualificationPlaybackSourceForTurn(
               const auto& adopted = set->views[frame.boundView];
               frame.boundStorageGeneration = adopted.storageGeneration;
               frame.lastTick = currentTick;
+              // DEC-136.4b: the takeover is a coherent committed serving frame -- the adopted window's own start, and
+              // (unless it is the whole loop, the deadline-free frame) this boundary as its absolute start, on the
+              // routed grid's partition. Fixed metadata only; the geometry was prepared off-clock with the window.
+              frame.startPhase = adopted.coverage.startPhase;
+              frame.deadlineTick = adopted.coverage.startPhase == 0 &&
+                      adopted.coverage.lengthTicks == adopted.coverage.loopLengthTicks
+                  ? 0 : clock.tick;
+#if REVISION_MANIFEST_READER
+              frame.equalPartition = manifestLaneRoutesSlot(slotIndex) ? 1u : 0u;
+#else
+              frame.equalPartition = 0;
+#endif
               sourceOut = adopted.source;
               bridgeOut = nullptr;
               viewOut = &adopted;
@@ -5121,6 +5133,15 @@ static TRACK_COLD_MEM bool recordReturnOwnFrozenView(const RuntimePlaybackView& 
          v.coverage.lengthTicks != 0 && v.coverage.startPhase % Config::TICKS_PER_BAR == 0;
 }
 
+#if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
+/// DEC-136.4b: the speculative root is span-shaped -- the routed rolling grid's own window at `start` (equal partition,
+/// as the routed requester uses) -- so its adopted frame is an ordinary committed rolling frame the resolver accepts.
+/// 0 when no such window ends on the grid from `start`: there is then no speculative target at that boundary.
+static TRACK_COLD_MEM uint32_t recordReturnSpeculativeRootLength(uint32_t start, uint32_t length) {
+  return rollingGridWindowLengthAt(start, length, /*equalPartition=*/true);
+}
+#endif
+
 TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootTarget(uint8_t slotIndex, uint32_t phase,
                                                              PlaybackCoverageInterval& target) const {
 #if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
@@ -5158,9 +5179,11 @@ TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootTarget(uint8_t slotIndex, 
     return false;
   const uint32_t next = (cur.coverage.startPhase + cur.coverage.lengthTicks) % length;
   if (rdy.coverage.startPhase != next) return false;
-  // S3: the root is owed at the boundary after the frozen ready.
+  // S3: the root is owed at the boundary after the frozen ready, span-shaped (DEC-136.4b). With the authority held but
+  // no grid window from that boundary (an off-grid default-partition start), the answer is still true with an empty
+  // target: the root waits for a later boundary rather than falling back to an ordinary one-bar demand.
   const uint32_t after = (rdy.coverage.startPhase + rdy.coverage.lengthTicks) % length;
-  target = {after, std::min<uint32_t>(Config::TICKS_PER_BAR, length - after), length};
+  target = {after, recordReturnSpeculativeRootLength(after, length), length};
   return true;
 #else
   (void)slotIndex;
@@ -5180,9 +5203,49 @@ TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootAdmissible(uint8_t slotInd
   const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
       static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
   PlaybackCoverageInterval target{};
-  return recordReturnSpeculativeRootTarget(slotIndex, phase, target) &&
+  return recordReturnSpeculativeRootTarget(slotIndex, phase, target) && target.lengthTicks != 0 &&
          request.coverage.startPhase == target.startPhase && request.coverage.lengthTicks == target.lengthTicks &&
          request.coverage.loopLengthTicks == target.loopLengthTicks;
+}
+
+TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootOwedAfterHandoff(
+    uint8_t slotIndex, const PlaybackViewPendingRequest& request, PlaybackDeadlineClock clock) const {
+#if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // DEC-136.4b: once the frozen ready is adopted, the span-shaped root it was prepared for is still the job's root
+  // successor -- the grid window from the end of the frozen view now serving -- as the one-bar root was by its shape.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex != activeLoopIndex || !loopsAllocated() ||
+      !manifestLaneRoutesSlot(slotIndex) || clock.epoch == 0) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->hasBoundRecordReturnWindowForPendingJob()) return false;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (set == nullptr || presentation == nullptr || !presentation->retirementActive || !presentation->ownsExtent)
+    return false;
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  if (!qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) return false;
+  const uint32_t length = loopForSlot(slotIndex).loopLengthTicks;
+  const auto& lc = set->lifecycle;
+  if (length == 0 || lc.current >= set->views.size()) return false;
+  const auto& cur = set->views[lc.current];
+  const uint64_t content = presentation->frozenCaptureContentGeneration;
+  // A frozen ready still held is the speculative target's own case (`recordReturnSpeculativeRootTarget`).
+  if (lc.ready < set->views.size() && recordReturnOwnFrozenView(set->views[lc.ready], receipt, content, length))
+    return false;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), length);
+  if (!recordReturnOwnFrozenView(cur, receipt, content, length) || !cur.published || !cur.coverage.contains(phase))
+    return false;
+  const uint32_t next = (cur.coverage.startPhase + cur.coverage.lengthTicks) % length;
+  const uint32_t span = recordReturnSpeculativeRootLength(next, length);
+  return span != 0 && request.coverage.startPhase == next && request.coverage.lengthTicks == span &&
+         request.coverage.loopLengthTicks == length;
+#else
+  (void)slotIndex;
+  (void)request;
+  (void)clock;
+  return false;
+#endif
 }
 
 TRACK_COLD_MEM bool Track::rootReturnSuccessorIsOwedForSlot(
@@ -5239,8 +5302,11 @@ TRACK_COLD_MEM bool Track::rootReturnSuccessorIsOwedForSlot(
   // contained `p`, and its adoption boundary is that interval's next entry, so *timing* is deliberately not
   // judged here -- the existing boundary adoption (`coverage.startPhase == phase`, or containment on the idle
   // edge) still decides when the completed window is useful, and an unadoptable window is refused there.
+  // DEC-136.4b: the speculative root (item 4) is the one span-shaped exception, and only at its own exact target.
   if (request.coverage.startPhase % Config::TICKS_PER_BAR != 0 ||
-      request.coverage.lengthTicks != Config::TICKS_PER_BAR ||
+      (request.coverage.lengthTicks != Config::TICKS_PER_BAR &&
+       !recordReturnSpeculativeRootAdmissible(slotIndex, request, clock) &&
+       !recordReturnSpeculativeRootOwedAfterHandoff(slotIndex, request, clock)) ||
       loop.loopLengthTicks % Config::TICKS_PER_BAR != 0) {
     return false;
   }
@@ -6738,6 +6804,13 @@ TRACK_COLD_MEM Track::RollingOutcome Track::serviceRollingPlaybackWindow(Playbac
         const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
             static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
         if (current.coverage.contains(phase)) return RollingOutcome::Serving;
+        // DEC-136.4b: exactly on the served window's end, a prepared successor starting there is the clock edge's to
+        // adopt (the root takeover adopts only from this Serving frame); cancelling first would strand it.
+        const uint32_t end = (current.coverage.startPhase + current.coverage.lengthTicks) % loop.loopLengthTicks;
+        if (phase == end && set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete &&
+            !set->views[set->lifecycle.ready].published &&
+            set->views[set->lifecycle.ready].coverage.startPhase == phase)
+          return RollingOutcome::Serving;
       }
     }
     cancelRollingPlaybackWindow(activeLoopIndex);
@@ -9078,7 +9151,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       if (!readyHeld && served != nullptr && served->complete && served->published &&
           served->coverage.contains(phase)) {
         target.startPhase = (served->coverage.startPhase + served->coverage.lengthTicks) % recordLoop.loopLengthTicks;
-        target.lengthTicks = std::min<uint32_t>(Config::TICKS_PER_BAR, recordLoop.loopLengthTicks - target.startPhase);
+        target.lengthTicks = recordReturnSpeculativeRootLength(target.startPhase, recordLoop.loopLengthTicks);
         target.loopLengthTicks = recordLoop.loopLengthTicks;
       } else if (!recordReturnSpeculativeRootTarget(slot, phase, target)) {
         target = {};
@@ -9120,8 +9193,8 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         // DEC-136 item 4: with the frozen reader's authority guaranteed, the root is owed speculatively at the
         // boundary after the frozen ready, in the free third view; otherwise the existing obligation stands.
         PlaybackCoverageInterval speculative{};
-        const PlaybackCoverageInterval rootCoverage =
-            recordReturnSpeculativeRootTarget(slot, phase, speculative) ? speculative : coverage;
+        const bool authorityHeld = recordReturnSpeculativeRootTarget(slot, phase, speculative);
+        const PlaybackCoverageInterval rootCoverage = authorityHeld ? speculative : coverage;
         if (qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval, frozen, receipt)) {
           // The Capture successor still owns its edge. Name the complete-root
           // obligation now, while the source is available, but do not consume
@@ -9132,6 +9205,8 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
             dispatch = PlaybackDispatchRefusal::Retry;
       return stepCommittedPlaybackRetry(slot, clock);
           }
+          // DEC-136.4b: the frozen authority holds but no grid window starts at that boundary -- wait for a later one.
+          if (authorityHeld && rootCoverage.lengthTicks == 0) return PlaybackViewTurnResult::Idle;
           const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
           if (pending != nullptr) {
             if (pending->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot)
@@ -9177,7 +9252,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       uint32_t next = served->coverage.startPhase + served->coverage.lengthTicks;
       if (next >= recordLoop.loopLengthTicks) next = 0;
       if (parked.complete && !parked.published && parked.source == source && parked.coverage.startPhase == next &&
-          parked.coverage.lengthTicks == std::min<uint32_t>(Config::TICKS_PER_BAR, recordLoop.loopLengthTicks - next) &&
+          parked.coverage.lengthTicks == recordReturnSpeculativeRootLength(next, recordLoop.loopLengthTicks) &&
           parked.coverage.loopLengthTicks == recordLoop.loopLengthTicks &&
           set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views))
         return PlaybackViewTurnResult::GrainServed;

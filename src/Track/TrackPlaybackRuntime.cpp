@@ -92,6 +92,15 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingBounda
   return windowStart + p.baseTicks + (index < p.longer ? Config::TICKS_PER_CLOCK : 0u);
 }
 
+TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingGridWindowLengthAt(uint32_t start,
+                                                                                            uint32_t loopLength,
+                                                                                            bool equalPartition) {
+  const uint32_t length = rollingWindowLengthAt(start, loopLength, equalPartition);
+  if (length == 0) return 0;
+  const uint32_t end = start + length;
+  return end == loopLength || rollingBoundaryAtOrAfter(end, loopLength, equalPartition) == end ? length : 0;
+}
+
 TRACK_PLAYBACK_RUNTIME_COLD_MEM __attribute__((noinline)) uint32_t rollingFrameSpan(const LoopPlaybackRuntime::RollingFrame& frame) {
   return rollingWindowLengthAt(frame.startPhase, frame.loopLength, frame.equalPartition != 0);
 }
