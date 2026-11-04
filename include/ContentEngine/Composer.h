@@ -30,7 +30,7 @@
 // effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
 // Edit runs (NOTE_EDIT): their HideNote rows hide every row of the named noteId in earlier runs (lineage: a replacement
 // keeps the noteId and lives in the edit run). The hide index is shared per manifest identity (`EditIndexStore`, E3.3):
-// `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (draft): an edit run is not a derived occluder; NOTE_EDIT writes its own
+// `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (ratified): an edit run is not a derived occluder; NOTE_EDIT writes its own
 // overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
 // by an edit still counts as a source occluder (OVL-8).
 // Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 64 entries,
@@ -224,6 +224,10 @@ class Composer {
     return true;
   }
 
+  /// Renumbers the current cycle (window `cycleBase`) without changing the carried state. Valid for steady state,
+  /// which is periodic from cycle 1 on (cold start at any later playback cycle, `coldStart`).
+  void rebaseCycle(uint32_t cycle) { cycle_ = cycle; }
+
   /// Continues into the next loop cycle with every carried state (admitted notes, source counters).
   bool nextCycle() {
     if (windowStart_ < loop_) return false;
@@ -389,7 +393,10 @@ class Composer {
                                        static_cast<uint8_t>(0x80 | ((a.channel - 1) & 0x0F)), a.pitch, 0, 1};
       ++w.terminalCount;
     }
-    admitted_[i] = admitted_[--admittedCount_];
+    // Order-preserving removal: the list stays in admission order, so the carried state (and the carry list) is a
+    // function of the position in a steady cycle, not of how many cycles were composed (checkpoint convergence).
+    for (uint8_t k = i; k + 1 < admittedCount_; ++k) admitted_[k] = admitted_[k + 1];
+    --admittedCount_;
   }
 
   /// A later-pass NoteOn on `pitch` at position `pos` > 0 shortens every admitted earlier-pass note on that pitch to

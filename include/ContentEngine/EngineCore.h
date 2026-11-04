@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include "ContentEngine/CheckpointTable.h"
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
@@ -90,5 +91,9 @@ static_assert(sizeof(ProductionComposer) <= 12288u, "a compose cursor stays with
 static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221184u, "compose cursors fit the 221,184 B budget");
 static_assert(ProductionEditIndex::kSlots >= kComposeCursors, "every cursor can pin a distinct identity: Busy is unreachable");
 static_assert(sizeof(ProductionEditIndex) <= 576u * 1024u + 4096u, "the shared index fits the plan's 576-page reserve");
+
+/// Restart checkpoints (E5): one table per slot, 8 checkpoints at 8-bar spacing (plan § 4.1: 262,144 B).
+using ProductionCheckpoints = CheckpointTable<ProductionComposer::Checkpoint, Config::kSlotCount, 8>;
+static_assert(sizeof(ProductionCheckpoints) <= 262144u, "checkpoint tables fit the plan's PSRAM budget");
 
 }  // namespace ContentEngine
