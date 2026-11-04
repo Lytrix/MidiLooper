@@ -20,7 +20,8 @@
   still owed; an authorized frozen frame that served out expires instead of being labelled `ServingViewSourceStale`.
 - **Host.** Lane gate 33/33; native full 4,008 / 0 failed; ITCM byte-identical on both images (304 B and 64 B headroom).
 - **Device** (succprobe `1149748f…`, `session_20261104_104642`): no post-stop silence (A/B `972e955a`: 62-97 s silent);
-  takeover at 10752; root-window MIDI equals the committed traversal; job released after the takeover.
+  takeover at 10752; job released after the takeover. (The root-window MIDI equalled its committed successors, but
+  both came from the stale manifest of the previous take; corrected in the closeout.)
 - **Open (owner):** R3 root liveness under cost; a ~200-tick frozen-versus-committed content offset (four notes repeat
   at the takeover; also on the A/B image); C5.3b production successors; the default image is not device-qualified here.
 - [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)

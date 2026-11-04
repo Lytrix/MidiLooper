@@ -716,10 +716,10 @@ the C5.3b successor requester is absent. That dependency is named, not addressed
 
 | measure | earlier images (`fc0a5e80` run; the `972e955a` A/B below) | `01e9e9eb` |
 |---|---|---|
-| routed slot silent after the Record stop | about 33-35 s (`none` 600 per 5 s row) | **none**: `none=0` in every row from the stop on. The 9 pulses at 50-55 s precede the stop. |
+| routed slot silent after the Record stop | about 33-35 s (`none` 600 per 5 s row) | **none**: `none=0` in every row from the stop on. The 9 pulses at 50-55 s precede the stop.  **Corrected (closeout):** this run's committed content was the stale manifest of the previous take, already imported at boot, so no import was owed after the stop. With the identity repair (`570095f7`) the new take is imported, and a ~7.7 s silence after the root window remains in the first traversal: the separately tracked 33-bar first-traversal gap (370 of 525 NoteOns on the host). DEC-136.4b removed the 33-35 s outage; it did not make the first traversal gapless. |
 | root takeover | about one traversal later, after the gap | **at the boundary after the frozen ready**: the route turns from frozen (capture content 1538) to the committed root at phase 10752, at 65.943 s |
 | root window | — | serves its whole span: still current at 11520, its second bar. The probe successor is built behind it, and the producer reports `win_serving`. |
-| root-window MIDI | — | 32 note-ons in [10752, 12288), identical in pitch and tick to the same phases one traversal later |
+| root-window MIDI | — | 32 note-ons in [10752, 12288), identical in pitch and tick to the same phases one traversal later. **Corrected (closeout):** both were served from the stale manifest of the previous run's take (the clear/re-record ABA below), so this shows only that the root window agrees with its committed successors, **not** parity with the recorded take. |
 | Record job | — | released at 72.8 s (`Reentry released slot=3`), after the takeover |
 | frozen-priority yield | — | none needed this run: the root was prepared and parked beside the frozen ready (`publish_ready_refused`, `completed_unpublished` at 64.6 s) |
 
@@ -802,13 +802,16 @@ same defect.
 - Not device-checked on the default image.
 
 **Scope.**
-- Pre-existing since the C5.3 routed reader (probe image only). Independent of DEC-136.4b.
+- Pre-existing since the C5.3 routed reader. **Affected images (corrected):** those built with
+  `REVISION_MANIFEST_READER=1` (`teensy41-capture-serial-revstore-reader` and `-succprobe`), and only the routed
+  track (`REVISION_MANIFEST_READER_TRACK`, track 8). Every other track and the default image use the snapshot path,
+  which the host guard shows unaffected; the default image was not device-checked. Independent of DEC-136.4b.
 - The device consequence is wider than the seam: after any clear-and-re-record of the routed slot, its committed
   playback is the previous take.
 - No suppression or offset compensation was added. The repair (the import key must distinguish a cleared-and-re-recorded
   slot) needs its own ruling.
 
-#### R3: permanent root starvation is reachable
+#### R3: root starvation is reachable in a bounded host model
 
 **Fixture** (`test_c5_3_record_return_r3_root_starvation_sweep`, gated `R3_MEASURE`):
 - A dense take (16 or 64 notes per bar, 4 bars) on the Record-into-PLAYING gesture.
@@ -827,8 +830,11 @@ same defect.
 - Once root work needs more than about one frozen bar (768 ticks), it is yielded at every frozen handoff (three per
   traversal on this 4-bar loop; the off-grid boundary has no target).
 - Each restart begins from nothing: the discard drops the qualification and build.
-- The job never retires, and the frozen source is held for the whole run. Playback stays continuous, so silence never
-  reveals it. The Record-return transaction does not converge.
+- Within the 8 traversals measured, the job never retires and the frozen source is held throughout. Playback stays
+  continuous, so silence would not reveal it.
+- **What this proves (corrected):** under *injected* denial, the transaction does not converge within the bounded
+  8-traversal window, and nothing in the mechanism would make it converge later (the restart repeats identically). It
+  does not prove permanent starvation on the device; that needs the loaded-device budget (below).
 
 **Whether it is reached in supported workloads is not yet proven either way.**
 - On the device at 300 BPM with no overdub, root work completes well inside the bar: request to ready at most
@@ -846,3 +852,79 @@ not implemented):**
   point is derived from the frozen window's own price, as DEC-147 prices a window) and no new view or builder.
 - It does not *guarantee* convergence for arbitrarily slow roots. A guarantee needs monotonic progress, meaning root
   work survives a yield. With one builder that is the builder-state retention question, which needs a separate ruling.
+
+### P0: manifest source-incarnation repair (`570095f7`, owner ruling on `eff0bb86`)
+
+**Mechanism reused, not added.**
+- `Loop::canonicalStorageGeneration` is the loop's existing monotonic, runtime-only invalidation of its pass storage
+  ("even when audible revision is unchanged or reset").
+- `resetPassTimeline` advances it, and every clear, record start, slot reset and load runs `resetPassTimeline`.
+- It is now `ImportSourceKey::storageGeneration`. Metadata only, no content fingerprint, no scanning, cold path.
+- Lifecycle identity is sufficient here: the defect is an incarnation collision, not a content question. Two
+  identical-content takes are still different incarnations.
+- It reaches the reader's currency (`ShadowReader::current`, and the lane fixture's reader) and the import job's
+  per-step frozen-key check. A clear therefore invalidates currency, and an import begun on the cleared take is
+  cancelled as `SourceMoved`.
+- The generation also moves on edit-pass append/remove and companion-history exchange. Those are committed-timeline
+  mutations that already move the key or need a re-import. On the device, the clear/re-record sweep showed exactly one
+  import of the new take (`publishes=2`, including boot; `source_moved=0`).
+
+**Host gates (each fails with the incarnation removed).**
+- Lane:
+  - `test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take` (now in the default gate). The import key
+    differs, the manifest identity changes (1 to 2), the window rows are take B's, and every committed NoteOn after
+    the takeover is take B's.
+  - `test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_earlier_take`. Three identical-content
+    cycles each serve under a new identity and only that identity.
+- Differential:
+  - `test_import_key_distinguishes_a_cleared_and_identically_re_recorded_source`: three cycles, a monotonic incarnation,
+    every other field equal.
+  - `test_import_in_flight_across_a_clear_and_identical_re_record_is_cancelled`. Without the repair, the cleared take's
+    import **publishes after the clear**.
+- Snapshot path (the default image): unchanged and still passing.
+- Native full 4,013 cases, 0 failed. ITCM byte-identical (392,072 + 1,144; 392,312 + 904).
+- Host fixture note: a second take restarts the host clock at tick 0. The lane harness now takes a per-take clock epoch
+  (`gPlayEpoch`), and re-arms the probe's deadline-keyed successor records, which otherwise collide with the first
+  take's.
+
+**Device, the exact clear/re-record gesture.**
+- Image: succprobe at `570095f7`, HEX `7cc0678d…5728`, retained in `captures/succprobe-7cc0678d/`.
+- Run: the `lane_cadence` sweep, `captures/session_20261104_114305.log`. Boot clean. It clears the card's previous take
+  and re-records.
+- In the 30 s of committed playback after the takeover: **307 of 307 NoteOns are this take's committed events, 0 are
+  the previous take's**.
+  - Before the repair every run served the previous take (four runs, both images).
+  - The pre-repair run's import counter shows the new take was never imported (`publishes=1`, the boot import only).
+- **Newly exposed, not caused (corrected attribution):**
+  - A ~7.7 s silence after the root window in the first traversal (67.4-75.2 s): the successor after the root misses,
+    is reclaimed as an orphan, and is re-positioned under DEC-147's lead.
+  - The host shows the same first traversal on a correct manifest: 370 of 525 NoteOns, with or without a clear. This
+    is the separately tracked 33-bar first-traversal observation.
+  - The stale manifest, already imported at boot, had masked it on earlier device runs. Attribution is still owed.
+
+**Device, the repeated cycle under load (`intense` mode): pre-existing heap exhaustion, both images.**
+- Gesture: clear, re-record, then a 200-bar dense overdub at 300 BPM with every track playing.
+
+| image | run | first `heap_low` refusal | MIDI gaps during the overdub | device stops responding |
+|---|---|---|---|---|
+| `570095f7` (repair, `7cc0678d`) | `session_20261104_115056` | 91.8 s (32 KB free) | grow to 1.87 s | about 178 s |
+| `01e9e9eb` (pre-repair A/B, `1149748f`) | `session_20261104_115912` | 75.9 s (36 KB free) | the same trajectory (354 ms by 117 s) | about 181 s, 4 KB heap free |
+
+- The owner observed both live: MIDI timing tearing on every channel, the overdub never exiting, then a frozen display
+  and no MIDI.
+- Cause: the internal heap runs out during the long dense overdub (`MEM_DENIED snapshot_reserve heap_low`;
+  `alloc_census heap=4096`) before the gesture's stop press, which is due at about 214 s.
+- It reproduces on the pre-repair image, so it is not caused by the identity repair or DEC-136.4b. The scenario itself
+  names overdub under this load a known heap-pressure defect.
+- Consequence for R3: this gesture cannot be the loaded-device budget measurement while it wedges the board. The R3
+  loaded measurement is still owed, on a bounded loaded leg (for example the sweep's 28 s overdub, which ran clean on
+  2026-11-03).
+- The board is back on `7cc0678d…`, boot verified (`captures/session_20261104_120627.log`).
+
+**R3 status.** Open. The host injected-denial sweep is bounded evidence (8 traversals). Earlier yielding is not
+implemented.
+- In every host level, frozen preparation never fell short: gap 0 and no frozen build killed, even where the root
+  never took over.
+- So an earlier yield would give no additional useful frozen preparation in the measured cases. It would only discard
+  root progress sooner.
+- The loaded-device root work budget is the open measurement.

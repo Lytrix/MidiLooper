@@ -7569,7 +7569,9 @@ root-return preparation beside the frozen reader, with frozen priority.** Ratifi
   no `RollingFrame` field, queue, buffer, timeout or Clock work.
 - **Verification.** Native 4,008 / 0 failed; ITCM byte-identical on both images. Device (succprobe `1149748f…`,
   `session_20261104_104642`): no post-stop silence on the Record-only gesture (pre-slice A/B: 62-97 s silent); the root
-  takes over at the boundary after the frozen ready and its MIDI equals the committed traversal.
+  takes over at the boundary after the frozen ready. (That run's committed content was the previous take's, because of
+  the clear/re-record manifest ABA fixed in `570095f7`; the takeover mechanics are unaffected, content parity was
+  not shown by it.)
 - **Open, not covered by this item.** R3: a root whose work exceeds one frozen bar is yielded at every handoff and
   never takes over, so the Record-return transaction does not converge (host-reachable; owner decision pending). The
   routed manifest's currency collision after a slot clear (closeout evidence). C5.3b production successors. The
