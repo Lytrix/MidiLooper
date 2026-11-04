@@ -23,4 +23,15 @@ void setContext(uint8_t context);
 inline void emitPending(size_t) {}
 inline void setContext(uint8_t) {}
 #endif
+// Memory-pressure investigation (owner ruling 2026-11-04), diagnostic image only (`HEAP_OWNER_ATTRIBUTION`): every live
+// internal-heap block attributed to the site that allocated it, and the top owners by live bytes emitted with the
+// census. A failed internal allocation is named immediately (site, size, tail, largest free chunk).
+#if defined(HEAP_OWNER_ATTRIBUTION) && defined(HEAP_PEAK_TRACE) && defined(SESSION_CAPTURE) && defined(__IMXRT1062__)
+void emitOwners(size_t maxRows);
+/// Failed internal allocations since this boot armed the tables (each one fell to the caller's fallback, if any).
+uint32_t allocFailCount();
+#else
+inline void emitOwners(size_t) {}
+inline uint32_t allocFailCount() { return 0; }
+#endif
 }  // namespace HeapPeakTrace

@@ -3802,7 +3802,7 @@ static_assert(sizeof(LoopPlaybackRuntime) == 7904,
 // lives here rather than in the custody receipt because that receipt's size is contract-pinned by C2.1
 // (120 B) and `Track::placementPins` pins `sizeof(CaptureStopJobs)`. Shells are `extmem_malloc`ed, so
 // this is external-pool bytes (eight shells per allocated Track), not RAM1.
-static_assert(sizeof(Loop) == 2288,
+static_assert(sizeof(Loop) == 2296,
               "I5/C3: LoopPool shell 1,888 B including the private-predecessor source cursor "
               "(external-first, eight shells per allocated Track); 1,784 -> 1,848 in the review's "
               "bound-cost fix: the open-pair table carries each pair's staged index (+64); "
@@ -3815,7 +3815,9 @@ static_assert(sizeof(Loop) == 2288,
               "(`TilePrepCursor` + tile + generation, +56 by the compiler's measurement), which is "
               "per-slot worker state and must survive turns; 1,944 -> 2,288 in tasks 4.7/4.8: the bounded "
               "deferred overlap completions (16 x 20 B = 320) and the closure pad (+4, with alignment), "
-              "both per-slot worker state. Shells are extmem_malloc'ed, so this is external-pool bytes, not RAM1.");
+              "both per-slot worker state; 2,288 -> 2,296 for C3.4 off the Clock (owner rulings 2026-11-04): the wrap-obligation "
+              "queue pointer and the carried-answer flag (the queue itself is heap-owned). Shells are extmem_malloc'ed, "
+              "so this is external-pool bytes, not RAM1.");
 static_assert(sizeof(TrackPlaybackRuntime) == 32,
               "S3.0: TrackPlaybackRuntime is the eight per-slot pointers; no second "
               "per-track authority may hide here");

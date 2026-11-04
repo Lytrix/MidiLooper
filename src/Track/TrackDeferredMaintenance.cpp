@@ -1158,6 +1158,21 @@ TRACK_COLD_MEM void Track::processDeferredIdleMaintenance(
 #if defined(LANE_GAP_MIDI_SPLIT)
   if (isOverdubbing()) LANE_COV_COUNT(GateReached);
 #endif
+  // C3.4 off the Clock (owner rulings 2026-11-04; C4): the same lane answers the oldest wrap obligation, one bounded
+  // step per turn, whether or not the slot is still overdubbing -- a stop never waits for it, and it drains stopped.
+  // The obligation belongs to the slot that wrapped, which need not be the active one after a slot switch. The
+  // Snapshot owner runs it too: an outstanding obligation is what holds its record's publication, so publication
+  // never depends on another owner's turn coming round.
+  if ((deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache ||
+       deferredOwner == MidiServiceDrain::DeferredIdleOwner::Snapshot) &&
+      loopsAllocated()) {
+    for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
+      if (getLoop(slot).hasOutstandingWrapObligation()) {
+        (void)getLoop(slot).serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+        break;
+      }
+    }
+  }
   if (isOverdubbing() && deferredOwner == MidiServiceDrain::DeferredIdleOwner::VisualCache) {
     LANE_COV_COUNT(GatePassed);
     (void)getActiveLoop().serviceOverdubCoverageTurn(CoveragePrerequisite::kGrainEventsPerTurn);

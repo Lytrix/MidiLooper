@@ -1190,9 +1190,10 @@ bool sessionRecordPassSettled(const PendingSnapshotPublishBox& box, PassId passI
 
 }  // namespace
 
-/// True when every live session-record entry (up to the undo cursor) has its pass and companions incorporated in
-/// the box's candidate. Read-only: it evaluates the cursor's pending advance without taking it.
-LOOP_COLD_MEM bool sessionRecordsCaughtUp(const Loop& loop, const PendingSnapshotPublishBox* box) {
+/// Where the session-record producer stands: caught up, owed (producible work), or blocked at a record whose wrap
+/// obligation (C3.4 off the Clock) has not sealed its companions yet -- nothing is producible until it retires.
+enum class SessionRecordProgress : uint8_t { CaughtUp, Owed, BlockedOnObligation };
+LOOP_COLD_MEM SessionRecordProgress sessionRecordProgress(const Loop& loop, const PendingSnapshotPublishBox* box) {
   const size_t records = loop.overdubSessionUndoDepth();
   const size_t published = loop.overdubSessionPublishedRecords();
   const bool boxAhead = box && box->sessionRecord >= published;
@@ -1200,13 +1201,20 @@ LOOP_COLD_MEM bool sessionRecordsCaughtUp(const Loop& loop, const PendingSnapsho
   bool passDone = boxAhead ? box->sessionRecordPassDone : false;
   size_t companionNext = boxAhead ? box->sessionRecordCompanionNext : 0;
   for (; record < records; ++record, passDone = false, companionNext = 0) {
+    if (loop.sessionRecordObligationOutstanding(record)) return SessionRecordProgress::BlockedOnObligation;
     if (!passDone && !(box && sessionRecordPassSettled(*box, loop.overdubSessionPassIdAt(record))) &&
         loop.overdubSessionPassIdAt(record) != kInvalidPassId) {
-      return false;
+      return SessionRecordProgress::Owed;
     }
-    if (companionNext < loop.overdubSessionCompanionIdsAt(record).size()) return false;
+    if (companionNext < loop.overdubSessionCompanionIdsAt(record).size()) return SessionRecordProgress::Owed;
   }
-  return true;
+  return SessionRecordProgress::CaughtUp;
+}
+
+/// True when every live session-record entry (up to the undo cursor) has its pass and companions incorporated in
+/// the box's candidate. Read-only: it evaluates the cursor's pending advance without taking it.
+LOOP_COLD_MEM bool sessionRecordsCaughtUp(const Loop& loop, const PendingSnapshotPublishBox* box) {
+  return sessionRecordProgress(loop, box) == SessionRecordProgress::CaughtUp;
 }
 
 namespace {
@@ -1228,6 +1236,8 @@ LOOP_COLD_MEM bool startNextSessionRecordWork(Loop& loop, PendingSnapshotPublish
   }
   // A small fixed number of record steps per turn: each settled step is O(1) plus one bounded companion scan.
   for (unsigned step = 0; step < 8 && box.sessionRecord < records; ++step) {
+    // C3.4 off the Clock: a record's companions are complete only once its wrap obligation has sealed them.
+    if (loop.sessionRecordObligationOutstanding(box.sessionRecord)) return false;
     const PassId passId = loop.overdubSessionPassIdAt(box.sessionRecord);
     if (!box.sessionRecordPassDone) {
       if (sessionRecordPassSettled(box, passId)) {
@@ -1797,7 +1807,11 @@ LOOP_COLD_MEM bool Loop::hasWrapPublicationOwed() const {
   if (box && box->sessionExitQueued) return false;  // the exit's own inventory owns the records now
   if (box && box->inventoryCompanionsOwed && !box->companionsApplied) return true;
   if (!hasOverdubSession() || overdubSessionUndoDepth() == 0) return false;
-  if (!sessionRecordsCaughtUp(*this, box)) return true;
+  switch (sessionRecordProgress(*this, box)) {
+    case SessionRecordProgress::Owed: return true;
+    case SessionRecordProgress::BlockedOnObligation: return false;  // the discharge lane owns the next step
+    case SessionRecordProgress::CaughtUp: break;
+  }
   return box && box->unpublishedCandidate && box->unpublishedCandidate != publishedSnapshot() &&
          !box->construction && box->queuedPassIds.empty() && !box->passChangeProgress.active;
 }
@@ -2798,6 +2812,9 @@ LOOP_COLD_MEM bool Loop::stepPendingSnapshotPublish(size_t maximumChanges,
   if (maximumChanges == 0) {
     return hasPendingSnapshotPublish();
   }
+  // C3.4 off the Clock: outside a session a record's late companions can still be owed (a synchronous stop or a
+  // close without exit); no root publishes until they are sealed. In session the record gate holds them instead.
+  if (!hasOverdubSession() && hasOutstandingWrapObligation()) return true;
   if (sessionExitPublishClaimState_ == SessionExitPublishClaim::Publishing) {
     // Task 4.20: the reserved obligation crosses into the receipt FIFO exactly once, and only when a
     // free slot exists. It stays `Publishing` otherwise — owned, not lost, and not a second queue —

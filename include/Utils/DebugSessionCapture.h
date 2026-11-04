@@ -238,6 +238,7 @@ SC_MEM_ATTR const char* stopTailTagPrefix();
 /// `test_capture_ring`, the suite that asks the production predicate.
 SC_MEM_ATTR const char* idleTurnTagPrefix();
 SC_MEM_ATTR void emitEnvelopeRowLine(const char* line);
+SC_MEM_ATTR void emitLineDirectOrRing(const char* line);
 SC_MEM_ATTR void ledOut(bool on, uint8_t note, uint8_t vel);
 SC_MEM_ATTR void gesture(uint8_t channel0, uint8_t note, int pressType);
 SC_MEM_ATTR void stateTransition(const char* component, const char* from, const char* to);

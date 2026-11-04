@@ -195,10 +195,13 @@ EditPassIdList Loop::replaceNoteEditPass(uint8_t editPassIndex,
   return replacementIds;
 }
 
-void Loop::disableEditPasses(const EditPassIdList& ids) {
+// Cold (C3.4 off the Clock, 2026-11-04): every caller is an undo, NOTE_EDIT or session-undo edge; the C2 flip hook
+// would otherwise grow ITCM.
+LOOP_COLD_MEM void Loop::disableEditPasses(const EditPassIdList& ids) {
   for (const EditPassId id : ids) {
     for (EditPass& editPass : passes.editPasses) {
       if (editPass.id == id) {
+        if (editPass.state != EditPassState::Disabled) noteWrapCutStateFlip(id, editPass.state == EditPassState::Active);
         editPass.state = EditPassState::Disabled;
       }
     }
@@ -209,10 +212,11 @@ void Loop::disableEditPasses(const EditPassIdList& ids) {
   notifyCommittedContentChanged();
 }
 
-void Loop::enableEditPasses(const EditPassIdList& ids) {
+LOOP_COLD_MEM void Loop::enableEditPasses(const EditPassIdList& ids) {
   for (const EditPassId id : ids) {
     for (EditPass& editPass : passes.editPasses) {
       if (editPass.id == id) {
+        if (editPass.state != EditPassState::Active) noteWrapCutStateFlip(id, false);
         editPass.state = EditPassState::Active;
       }
     }

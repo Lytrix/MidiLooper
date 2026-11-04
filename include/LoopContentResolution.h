@@ -461,12 +461,24 @@ struct LoopContentResolution {
   /// chunk spans inspected in this call (`0` keeps the historical unlimited behavior). `noteIndex`
   /// accelerates the per-pass upsert without changing its identity semantics; pass `nullptr` for the
   /// historical linear path. The out-params carry this call's deterministic work counts.
+  /// C3.4 off the Clock (owner rulings 2026-11-04): an immutable source cut's row membership. `visible` answers for a
+  /// capture pass or an edit pass id (one id space) given its current `active` state. Null keeps today's rule
+  /// (current state Active), so every existing caller is unchanged.
+  struct PassVisibility {
+    bool (*visible)(const void* ctx, uint32_t rowId, bool active) = nullptr;
+    const void* ctx = nullptr;
+    /// Optional 128-bit pitch mask (4 words): only note events and edit rows on these pitches are kept. A cut that
+    /// answers per-pitch overlap decisions needs nothing else, and the whole loop's other pitches would otherwise
+    /// accumulate in the cursor (device: a 171,640 B growth refused at 7.74 MB PSRAM live). Null keeps every pitch.
+    const uint32_t* pitchMask = nullptr;
+  };
   static bool stepTilePreparation(const LoopPasses& passes, uint32_t loopLengthTicks,
                                   uint32_t windowStart, uint32_t windowLength, size_t eventBudget,
                                   TilePrepCursor& cursor,
                                   DisplayNoteUpsertIndex* noteIndex = nullptr,
                                   size_t maxChunks = 0, size_t* chunksInspectedOut = nullptr,
-                                  size_t* eventsAppendedOut = nullptr);
+                                  size_t* eventsAppendedOut = nullptr,
+                                  const PassVisibility* visibility = nullptr);
 
   static void resolveDisplayNotesInWindow(const LoopPasses& passes, uint32_t loopLengthTicks,
                                           uint32_t windowStart, uint32_t windowLength,

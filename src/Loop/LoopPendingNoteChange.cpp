@@ -692,7 +692,10 @@ LOOP_COLD_MEM bool Loop::accumulatePendingNoteChangesForIncomingNote(
     (void)newlySealed;
   }
   const uint32_t spanLength = wrapCrossing ? (loopLen - startTick + endTick) : (endTick - startTick);
-  if (overdubCoverage_.sessionActive && !overdubCoverage_.spanPrepared(startTick, spanLength)) {
+  // C1 (owner 2026-11-04, "owed too, exact"): a pitch an earlier wrap obligation still owes on is owed here too.
+  if (overdubCoverage_.sessionActive && (pitchOwedByOutstandingWrapObligation(pitch) ||
+                                         hasUnansweredOccupancyHold(channel, pitch, startTick) ||
+                                         !overdubCoverage_.spanPrepared(startTick, spanLength))) {
     // The note is accepted now; the overlap consequence is deferred **by name** and discharged when the
     // tile that carries the span has been published. Never compute against partial coverage.
     DeferredOverdubCompletion completion{};
@@ -996,7 +999,8 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
   // deadline semantic: the note-on does not wait, the transform materializes when the scan does.
   // The incoming note's own identity is allocated at note-off and is not an input to the decision,
   // so the retained record is the causal pair it needs: channel, pitch, velocity, hold tick.
-  if (!privateHoldMaterializing_ && privateSource_.phase == kPrivateRows) {
+  // Review N8: a carried answer reads its own cut; it never records an intent into the live private source.
+  if (!answeringCarriedObligation_ && !privateHoldMaterializing_ && privateSource_.phase == kPrivateRows) {
     (void)retainPrivateHoldIntent(channel, pitch, velocity, holdPhaseTick);
   }
   if (!overdubSourceViewEstablished_) {
@@ -1007,9 +1011,13 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
   // the source-view half of the decision is owed -- recording it here is what makes the deadline
   // semantic. Ledger authority is still applied immediately below; the discharge re-runs the same
   // decision against the completed tile and a repeated transform is a same-`NoteId` upsert.
-  if (overdubCoverage_.sessionActive &&
-      !overdubCoverage_.tilePrepared(
-          CoveragePrerequisite::tileIndexForPhase(holdPhaseTick, loopLengthTicks))) {
+  // C1 (owner 2026-11-04, "owed too, exact"): while an earlier wrap obligation owes on this pitch, the live hold's
+  // occupancy is owed as well and answered after it. A carried answer itself reads its cut, never this lane.
+  const bool owedBehindObligation = !answeringCarriedObligation_ && pitchOwedByOutstandingWrapObligation(pitch);
+  if (!answeringCarriedObligation_ && overdubCoverage_.sessionActive &&
+      (owedBehindObligation ||
+       !overdubCoverage_.tilePrepared(
+           CoveragePrerequisite::tileIndexForPhase(holdPhaseTick, loopLengthTicks)))) {
     DeferredOverdubCompletion completion{};
     completion.startTick = holdPhaseTick;
     completion.channel = channel;
@@ -1017,8 +1025,12 @@ LOOP_COLD_MEM void Loop::resolveOccupancyAtNoteOn(
     completion.velocity = velocity;
     completion.noteId = kInvalidNoteId;  // assigned from the capture store at note-off
     completion.occupancyOwed = true;
-    (void)retainDeferredOverdubCompletion(completion);
+    completion.occupancyUnanswered = owedBehindObligation;
+    const bool retained = retainDeferredOverdubCompletion(completion);
     LANE_COV_OBSERVE(overdubCoverageDeferredCount_);
+    // Behind an obligation the live source lacks that obligation's late companions: deciding now could apply a
+    // transform a restrictive compose can never take back. Owed only (a full set keeps today's immediate answer).
+    if (owedBehindObligation && retained) return;
   }
   NoteUtils::DisplayNoteVec selected;
   if (OverlapCandidateLookup::shouldLookupSpans(overlapNoteIds)) {
@@ -1454,14 +1466,6 @@ LOOP_COLD_MEM bool Loop::privateOwnAcceptedNote(NoteId noteId) const {
 
 LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
     bool updateOverdubSourceView) {
-  EditPassIdList sealedIds;
-  size_t companionRowsToSeal = 0;
-  for (const PendingNoteChange& change : pendingNoteChanges_) {
-    if (change.kind == PendingNoteChangeKind::Shorten ||
-        change.kind == PendingNoteChangeKind::Hide) {
-      ++companionRowsToSeal;
-    }
-  }
   // CONTRACTS.md C3.4: this is the second deadline edge. If the private predecessor source is
   // still owed here, the deferred decisions were never materialized -- the seal applies committed
   // content only and reports the denial by name rather than applying a stale, empty or
@@ -1479,6 +1483,29 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
   if (privateSourceOwedForSeal()) {
     privateSourceSealDenied_ = true;
     notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);
+  }
+  return sealPendingRowsToEditPasses(updateOverdubSourceView);
+}
+
+LOOP_COLD_MEM void Loop::materializeWrapPrivateHoldsAtDeadline() {
+  {
+    LANE_WRAP_PHASE(WrapPrivateHolds);
+    materializeDeferredPrivateHoldsAtDeadline();
+  }
+  if (privateSourceOwedForSeal()) {
+    privateSourceSealDenied_ = true;
+    notePrivateSourceDenied(PrivateSourceDeny::OutputUnavailable);
+  }
+}
+
+LOOP_COLD_MEM EditPassIdList Loop::sealPendingRowsToEditPasses(bool updateOverdubSourceView) {
+  EditPassIdList sealedIds;
+  size_t companionRowsToSeal = 0;
+  for (const PendingNoteChange& change : pendingNoteChanges_) {
+    if (change.kind == PendingNoteChangeKind::Shorten ||
+        change.kind == PendingNoteChangeKind::Hide) {
+      ++companionRowsToSeal;
+    }
   }
   if (updateOverdubSourceView && !pendingNoteChanges_.empty()) {
     LANE_WRAP_PHASE(WrapSourceViewApply);
@@ -1548,6 +1575,7 @@ LOOP_COLD_MEM EditPassIdList Loop::sealPendingNoteChangesToEditPasses(
 
 #if defined(LANE_GAP_MIDI_SPLIT)
 #include "ClockManager.h"
+#include "Utils/HeapPeakTrace.h"
 // Overdub NoteOff split (owner ruling 2026-11-03, measurement image only): per entry occupancy of the deferred
 // completion set (0..16, clamped) and per path, count / total / max; plus the 4 worst NoteOffs. RAM2 (NOLOAD): reset at
 // the transport start with the MIDI spans, and every index is clamped, so stale boot bytes cannot address outside it.
@@ -1583,6 +1611,17 @@ DMAMEM WrapBreakdown sWrapCurrent;
 DMAMEM WrapBreakdown sWrapWorst[4];
 DMAMEM uint32_t sWrapStartUs;
 DMAMEM uint8_t sWrapActive;
+#if defined(HEAP_OWNER_ATTRIBUTION)
+// Wrap-stall isolation (owner ruling 2026-11-04): reset at each wrap's begin, so stale boot bytes are never read.
+constexpr uint32_t kWrapStallReportUs = 250000;
+struct WrapCompletionDetail {
+  uint32_t completions, derives, totalUs, resolveUs;
+  uint32_t maxUs, maxResolveUs, maxSpan, maxLookup, maxCandidates, maxEditPasses, maxLayers, maxPending;
+  uint8_t maxDerived;
+  uint32_t allocFailsAtBegin;
+};
+DMAMEM WrapCompletionDetail sWrapDetail;
+#endif
 inline uint8_t setFullIndex() { return sObservedOccupancy >= kDeferredSetFull ? 1 : 0; }
 // Flash strings throughout the dump: a new RAM1 literal snaps DTCM by 4 KiB (RAM1 budget gate).
 FLASHMEM const char* noteOffPathName(uint8_t p) {
@@ -1649,7 +1688,60 @@ FLASHMEM __attribute__((noinline)) void LaneGapSpans::beginWrapBreakdown() {
   sWrapCurrent.tick = clockManager.getCurrentTick();
   sWrapStartUs = micros();
   sWrapActive = 1;
+#if defined(HEAP_OWNER_ATTRIBUTION)
+  sWrapDetail = WrapCompletionDetail{};
+  sWrapDetail.allocFailsAtBegin = HeapPeakTrace::allocFailCount();
+#endif
 }
+
+#if defined(HEAP_OWNER_ATTRIBUTION)
+FLASHMEM __attribute__((noinline)) void LaneGapSpans::noteWrapCompletion(uint32_t totalUs, uint32_t resolveUs,
+                                                                       uint32_t spanLength, uint32_t lookupLength,
+                                                                       uint32_t candidates, bool derived,
+                                                                       uint32_t editPasses, uint32_t layers,
+                                                                       uint32_t pending) {
+  if (sWrapActive != 1) return;
+  WrapCompletionDetail& d = sWrapDetail;
+  ++d.completions;
+  if (derived) ++d.derives;
+  d.totalUs += totalUs;
+  d.resolveUs += resolveUs;
+  if (totalUs < d.maxUs) return;
+  d.maxUs = totalUs;
+  d.maxResolveUs = resolveUs;
+  d.maxSpan = spanLength;
+  d.maxLookup = lookupLength;
+  d.maxCandidates = candidates;
+  d.maxEditPasses = editPasses;
+  d.maxLayers = layers;
+  d.maxPending = pending;
+  d.maxDerived = derived ? 1 : 0;
+}
+
+namespace {
+// One direct row per long wrap: phases and counts in the dump's order, then the completion detail.
+FLASHMEM __attribute__((noinline)) void emitWrapStall(const WrapBreakdown& w) {
+  const WrapCompletionDetail& d = sWrapDetail;
+  Serial.printf_P(PSTR("#CAP,%lu,DIAG,wrap_stall,tick=%lu,total_us=%lu,phases="), (unsigned long)micros(),
+                  (unsigned long)w.tick, (unsigned long)w.totalUs);
+  for (uint8_t p = 0; p < LaneGapSpans::WrapPhaseCount; ++p)
+    Serial.printf_P(PSTR("%s%lu"), p ? PSTR("/") : PSTR(""), (unsigned long)w.phaseUs[p]);
+  Serial.printf_P(PSTR(",counts="));
+  for (uint8_t c = 0; c < LaneGapSpans::WrapCountCount; ++c)
+    Serial.printf_P(PSTR("%s%lu"), c ? PSTR("/") : PSTR(""), (unsigned long)w.count[c]);
+  Serial.printf_P(PSTR(",completions=%lu,derives=%lu,completion_us=%lu,resolve_us=%lu,max_us=%lu,max_resolve_us=%lu,"
+                       "max_derived=%u,max_span=%lu,max_lookup=%lu,max_candidates=%lu,edit_passes=%lu,layers=%lu,"
+                       "pending=%lu,alloc_fails=%lu\r\n"),
+                  (unsigned long)d.completions, (unsigned long)d.derives, (unsigned long)d.totalUs,
+                  (unsigned long)d.resolveUs, (unsigned long)d.maxUs, (unsigned long)d.maxResolveUs,
+                  unsigned(d.maxDerived), (unsigned long)d.maxSpan, (unsigned long)d.maxLookup,
+                  (unsigned long)d.maxCandidates, (unsigned long)d.maxEditPasses, (unsigned long)d.maxLayers,
+                  (unsigned long)d.maxPending,
+                  (unsigned long)(HeapPeakTrace::allocFailCount() - d.allocFailsAtBegin));
+  Serial.flush();
+}
+}  // namespace
+#endif
 
 FLASHMEM __attribute__((noinline)) void LaneGapSpans::endWrapBreakdown() {
   if (sWrapActive != 1) return;
@@ -1658,6 +1750,9 @@ FLASHMEM __attribute__((noinline)) void LaneGapSpans::endWrapBreakdown() {
   uint8_t least = 0;
   for (uint8_t i = 1; i < 4; ++i) if (sWrapWorst[i].totalUs < sWrapWorst[least].totalUs) least = i;
   if (sWrapCurrent.totalUs > sWrapWorst[least].totalUs) sWrapWorst[least] = sWrapCurrent;
+#if defined(HEAP_OWNER_ATTRIBUTION)
+  if (sWrapCurrent.totalUs >= kWrapStallReportUs) emitWrapStall(sWrapCurrent);
+#endif
 }
 
 FLASHMEM __attribute__((noinline)) bool LaneGapSpans::wrapBreakdownActive() { return sWrapActive == 1; }

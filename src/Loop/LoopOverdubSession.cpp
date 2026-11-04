@@ -11,10 +11,13 @@
 #include "Utils/LoopMem.h"
 #include "Utils/NoteUtils.h"
 #include "Utils/LaneGapSpans.h"
+#include "LoopWrapObligation.h"
+#include "Utils/MemoryMonitor.h"
 #if defined(SESSION_CAPTURE)
 #include "Utils/DebugSessionCapture.h"
 #endif
 #include <algorithm>
+#include <atomic>
 
 namespace {
 /// Empty participant set for a completion whose candidates come from the geometric scan. File-local so the
@@ -274,6 +277,14 @@ void Loop::publishPreparedOverdubCoverageTile(uint16_t tile, const NoteUtils::Di
   (void)tile;
 }
 
+LOOP_COLD_MEM bool Loop::hasUnansweredOccupancyHold(uint8_t channel, uint8_t pitch, uint32_t startTick) const {
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+    const DeferredOverdubCompletion& c = deferredOverdubCompletions_[i];
+    if (c.occupancyUnanswered && c.channel == channel && c.pitch == pitch && c.startTick == startTick) return true;
+  }
+  return false;
+}
+
 bool Loop::retainDeferredOverdubCompletion(const DeferredOverdubCompletion& completion) {
   for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
     DeferredOverdubCompletion& existing = deferredOverdubCompletions_[i];
@@ -283,6 +294,7 @@ bool Loop::retainDeferredOverdubCompletion(const DeferredOverdubCompletion& comp
       existing.velocity = completion.velocity;
       existing.occupancyOwed = existing.occupancyOwed || completion.occupancyOwed;
       existing.spanOwed = existing.spanOwed || completion.spanOwed;
+      existing.occupancyUnanswered = existing.occupancyUnanswered || completion.occupancyUnanswered;
       if (existing.noteId == kInvalidNoteId) {
         existing.noteId = completion.noteId;
       }
@@ -347,7 +359,11 @@ uint8_t Loop::dischargeDeferredOverdubCompletions(uint8_t maxDischarge) {  if (!
             : 0;
     const bool spanReady =
         !completion.spanOwed || overdubCoverage_.spanPrepared(completion.startTick, spanLength);
-    if (!occupancyReady || !spanReady) {
+    // C1: a completion on a pitch an earlier wrap obligation still owes on waits for it (answered after it, exact).
+    // B3: a held note whose occupancy C1 left unanswered waits for its NoteOff (answered with its span, never dropped).
+    // "Open" is an occupancy-only hold (no span owed yet: its NoteOff has not arrived); its endTick is 0, not start.
+    const bool openUnanswered = completion.occupancyUnanswered && !completion.spanOwed;
+    if (!occupancyReady || !spanReady || openUnanswered || pitchOwedByOutstandingWrapObligation(completion.pitch)) {
       if (!occupancyReady) LANE_COV_COUNT(BlockedOccupancy);
       if (!spanReady) LANE_COV_COUNT(BlockedSpan);
       ++i;
@@ -435,6 +451,28 @@ bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& compl
   if (loopLengthTicks == 0 || completion.endTick == completion.startTick) {
     return false;
   }
+  // An occupancy-only hold (its NoteOff not yet arrived) has no span: its `endTick` is 0, and reading it as a span
+  // from the hold to 0 would wrap to the loop end and hide every later same-pitch note. Answer the occupancy only.
+  if (!completion.spanOwed) {
+    if (completion.occupancyOwed) {
+      OverlapNoteIdSet participants;
+      for (const NoteUtils::DisplayNote& note : overdubSourceSpanCacheNotes_) {
+        if (note.note != completion.pitch || note.noteId == kInvalidNoteId) continue;
+        if (!OverlapNoteIdObservation::displayNotePresentAtHold(note.startTick, note.endTick, completion.startTick,
+                                                                loopLengthTicks))
+          continue;
+        (void)participants.insert(note.noteId);
+      }
+      resolveOccupancyAtNoteOn(completion.channel, completion.pitch, completion.velocity, participants,
+                               completion.startTick, nullptr);
+    }
+    return true;
+  }
+#if defined(LANE_GAP_MIDI_SPLIT) && defined(HEAP_OWNER_ATTRIBUTION)
+  const uint32_t probeStartUs = micros();
+  uint32_t probeResolveUs = 0;
+  uint32_t probeLookup = 0;
+#endif
   NoteUtils::DisplayNoteVec local;
   // The discharge lane answers from the **committed tile content** (the cache), which is what the worker
   // published for this generation; the view is a display cut and may not have been recut yet on the same
@@ -452,8 +490,15 @@ bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& compl
     CoveragePrerequisite::closureWindowAround(completion.startTick, spanLength,
                                                overdubCoverageClosureTicks_, loopLengthTicks,
                                                lookupStart, lookupLength);
+#if defined(LANE_GAP_MIDI_SPLIT) && defined(HEAP_OWNER_ATTRIBUTION)
+    const uint32_t probeResolveStartUs = micros();
+#endif
     LoopContentResolution::resolveDisplayNotesInWindow(passes, loopLengthTicks, lookupStart,
                                                        lookupLength, local);
+#if defined(LANE_GAP_MIDI_SPLIT) && defined(HEAP_OWNER_ATTRIBUTION)
+    probeResolveUs = micros() - probeResolveStartUs;
+    probeLookup = lookupLength;
+#endif
     candidates = &local;
   }
   OverlapNoteIdSet resolved;
@@ -473,10 +518,22 @@ bool Loop::applyDeferredOverdubCompletion(const DeferredOverdubCompletion& compl
     resolveOccupancyAtNoteOn(completion.channel, completion.pitch, completion.velocity, participants,
                              completion.startTick, &resolved);
   }
-  return applyOverlapConsequenceForCompletedNote(
+  const bool applied = applyOverlapConsequenceForCompletedNote(
       completion.channel, completion.pitch, completion.velocity, completion.startTick,
       completion.endTick, completion.noteId, kNoOverlapIds,
       completion.occupancyOwed ? &resolved : nullptr, false, candidates);
+#if defined(LANE_GAP_MIDI_SPLIT) && defined(HEAP_OWNER_ATTRIBUTION)
+  {
+    uint32_t layers = passes.hasRecordPass() ? 1u : 0u;
+    for (const OverdubPass& pass : passes.overdubPasses)
+      if (pass.state == CapturePassState::Active && !pass.committedChunkIds.empty()) ++layers;
+    LaneGapSpans::noteWrapCompletion(micros() - probeStartUs, probeResolveUs, spanLength, probeLookup,
+                                     static_cast<uint32_t>(candidates->size()), candidates == &local,
+                                     static_cast<uint32_t>(passes.editPasses.size()), layers,
+                                     static_cast<uint32_t>(pendingNoteChanges_.size()));
+  }
+#endif
+  return applied;
 }
 
 uint8_t Loop::markOverdubCoverageNoteOn(uint32_t phaseTick) {
@@ -524,6 +581,7 @@ LOOP_COLD_MEM void Loop::openOverdubSession(uint32_t sessionPlayheadPhaseTick, b
   overdubCoverageClosureTicks_ = 0;
   seedOverdubCoverageClosureFromCommittedContent();
   adoptPrewarmedOverdubCoverage();
+  (void)wrapObligationQueue();  // the wrap's handover must find its slots allocated (never on the Clock)
   currentOverdubSessionIndex_ = nextOverdubSessionIndex_;
   if (nextOverdubSessionIndex_ == 255) {
     nextOverdubSessionIndex_ = 1;
@@ -971,8 +1029,13 @@ LOOP_COLD_MEM Loop::SessionUndoCollection::Phase Loop::stepCollectOverdubSession
 LOOP_COLD_MEM void Loop::dropOverdubSessionRedoTail() {
   if (overdubSessionCursor_ < overdubSessionPassIds_.size()) {
     ++overdubSessionUndoGeneration_;
-    overdubSessionPassIds_.resize(overdubSessionCursor_);
-    overdubSessionCompanionIds_.resize(overdubSessionCursor_);
+    // C3 (owner 2026-11-04): a destroyed record cancels its obligation; an undone one would have kept resolving.
+    cancelWrapObligationsFromRecord(overdubSessionCursor_);
+    // A shrink: `erase` of the tail, not `resize` -- `resize` also instantiates the grow path, an out-of-line template
+    // that lands in ITCM (+248 B measured when this function changed its inlining).
+    overdubSessionPassIds_.erase(overdubSessionPassIds_.begin() + overdubSessionCursor_, overdubSessionPassIds_.end());
+    overdubSessionCompanionIds_.erase(overdubSessionCompanionIds_.begin() + overdubSessionCursor_,
+                                      overdubSessionCompanionIds_.end());
   }
   overdubSessionLiveUndoEvents_.clear();
 }
@@ -1076,4 +1139,352 @@ LOOP_COLD_MEM bool Loop::redoOverdubSession() {
     return true;
   }
   return false;
+}
+
+// ---- C3.4 off the Clock (owner rulings 2026-11-04) --------------------------------------------------------------
+// The overdub wrap no longer answers its owed completions or seals its companions inside the Clock dispatch (device:
+// one wrap held the Clock for 123.46 s answering 518 completions, `captures/session_20261104_140156.log`). The wrap
+// hands the interval over in constant work; the discharge lane answers it against the interval's own source cut.
+// Design and proofs: `docs/Plans/2026-11-04-wrap-deadline-off-clock.md` (revision 2).
+
+
+namespace {
+constexpr uint8_t kCarriedAnswersPerTurn = 4;
+/// External memory a cut preparation must find free before it starts (pitch-filtered cut + growth headroom).
+constexpr uint32_t kWrapCutAdmissionBytes = 256u * 1024u;
+
+void setPitchBit(uint32_t (&mask)[4], uint8_t pitch) { mask[(pitch >> 5) & 3u] |= 1u << (pitch & 31u); }
+bool pitchBit(const uint32_t (&mask)[4], uint8_t pitch) { return (mask[(pitch >> 5) & 3u] >> (pitch & 31u)) & 1u; }
+
+/// cut(P): rows of records before P are visible whatever their current state (every record up to P was active at
+/// P's wrap: a push drops the redo tail); P's and later records' rows are not; a row in no record is visible by its
+/// current state if it predates P's pass, and not at all if it was created after it.
+bool wrapCutVisible(const void* ctx, uint32_t rowId, bool active) {
+  const auto& slot = *static_cast<const Loop::WrapObligationCutView*>(ctx);
+  const auto it = std::lower_bound(slot.membership->begin(), slot.membership->end(),
+                                   std::pair<uint32_t, uint32_t>(rowId, 0));
+  if (it != slot.membership->end() && it->first == rowId) return it->second < slot.record;
+  if (rowId >= slot.passId) return false;
+  // C2: a row that changed state after the wrap reads the state it had then (the first change after the cut).
+  for (const Loop::WrapCutFlip& flip : *slot.flips)
+    if (flip.rowId == rowId && flip.sequence > slot.cutSequence) return flip.previousActive;
+  return active;
+}
+}  // namespace
+
+LOOP_COLD_MEM Loop::WrapObligationQueue& Loop::wrapObligationQueue() {
+  if (!wrapObligations_) wrapObligations_.reset(new WrapObligationQueue());
+  return *wrapObligations_;
+}
+
+#if defined(PIO_UNIT_TEST_NATIVE)
+void (*Loop::wrapObligationTurnProbeForTest)(void*) = nullptr;
+void* Loop::wrapObligationTurnProbeContextForTest = nullptr;
+#endif
+
+LOOP_COLD_MEM Loop::WrapRecordHome Loop::wrapRecordHome(size_t record, PassId passId) {
+  WrapRecordHome home;
+  const auto holds = [&](std::vector<PassId>& ids) { return record < ids.size() && ids[record] == passId; };
+  if (holds(overdubSessionPassIds_)) {
+    home.passIds = &overdubSessionPassIds_;
+    home.companions = &overdubSessionCompanionIds_;
+    home.activeRecords = overdubSessionCursor_;
+    return home;
+  }
+  const auto fromReceipt = [&](SessionExitSnapshotHandoff* receipt) {
+    if (receipt == nullptr || !holds(receipt->passIds)) return false;
+    if (receipt->companionIds.size() <= record) receipt->companionIds.resize(record + 1);
+    home.passIds = &receipt->passIds;
+    home.companions = &receipt->companionIds;
+    home.activeRecords = receipt->companionRowCount;
+    return true;
+  };
+  if (sessionExitReceipts_) {
+    for (size_t i = 0; i < sessionExitReceiptCount_; ++i)
+      if (fromReceipt(&sessionExitReceipts_[(sessionExitReceiptHead_ + i) % kSessionExitReceiptCapacity])) return home;
+  }
+  (void)fromReceipt(reservedSessionExit());
+  return home;
+}
+
+LOOP_COLD_MEM bool Loop::wrapObligationCapacityAvailable() const {
+  // A carried answer swaps the pending set; a wrap in that window would hand over the wrong set, so it defers.
+  if (answeringCarriedObligation_) return false;
+  if (!wrapObligations_) return true;
+  // An obligation of this session's redo tail is cancelled by the very push this wrap makes (C3): not capacity.
+  const WrapObligationQueue& q = *wrapObligations_;
+  uint8_t surviving = 0;
+  for (uint8_t i = 0; i < q.count; ++i) {
+    const WrapObligationQueue::Slot& slot = q.slots[(q.head + i) % WrapObligationQueue::kSlots];
+    const bool thisSession = hasOverdubSession() && slot.sessionIndex == currentOverdubSessionIndex_;
+    if (!(thisSession && slot.record >= overdubSessionCursor_ && slot.record < overdubSessionPassIds_.size()))
+      ++surviving;
+  }
+  return surviving < WrapObligationQueue::kSlots;
+}
+
+LOOP_COLD_MEM bool Loop::handOverWrapObligation(PassId passId, size_t record) {
+  if (!wrapObligationCapacityAvailable()) return false;
+  WrapObligationQueue& q = wrapObligationQueue();  // allocated at session open; this is only a backstop
+  WrapObligationQueue::Slot& slot = q.slots[(q.head + q.count) % WrapObligationQueue::kSlots];
+  slot.phase = WrapObligationQueue::Slot::Phase::Preparing;
+  slot.record = record;
+  slot.sessionIndex = currentOverdubSessionIndex_;
+  slot.passId = passId;
+  slot.loopLengthTicks = loopLengthTicks;
+  slot.setCount = 0;
+  slot.setCursor = 0;
+  slot.overflowCursor = 0;
+  slot.maskReady = false;
+  slot.membershipReady = false;
+  slot.cut = LoopContentResolution::TilePrepCursor{};
+  slot.cutSequence = q.flipSequence;
+  slot.sessionFirstPassId = overdubSessionPassIds_.empty() ? passId : overdubSessionPassIds_.front();
+  // The slot's vector is empty with its capacity kept; the live interval continues in it.
+  pendingNoteChanges_.swap(slot.pending);
+  // Closed completions travel with their interval; a note still held across the wrap (occupancy only, no span owed)
+  // keeps its hold here, because its NoteOff (and so its span) belongs to the next interval.
+  uint8_t keep = 0;
+  for (uint8_t i = 0; i < overdubCoverageDeferredCount_; ++i) {
+    const DeferredOverdubCompletion& completion = deferredOverdubCompletions_[i];
+    if (completion.spanOwed) {  // closed: its NoteOff arrived in this interval
+      slot.set[slot.setCount++] = completion;
+    } else {
+      deferredOverdubCompletions_[keep++] = completion;
+    }
+  }
+  overdubCoverageDeferredCount_ = keep;
+  overdubCompletionOverflowCount_ = 0;  // the owed rows travelled with their set
+  ++q.count;
+  return true;
+}
+
+LOOP_COLD_MEM bool Loop::hasOutstandingWrapObligation() const {
+  return wrapObligations_ && wrapObligations_->count != 0;
+}
+
+LOOP_COLD_MEM bool Loop::wrapObligationOwedByStoppingSession(bool stoppingSessionIsLive) const {
+  if (!wrapObligations_) return false;
+  const WrapObligationQueue& q = *wrapObligations_;
+  for (uint8_t i = 0; i < q.count; ++i) {
+    const WrapObligationQueue::Slot& slot = q.slots[(q.head + i) % WrapObligationQueue::kSlots];
+    const bool live = hasOverdubSession() && slot.sessionIndex == currentOverdubSessionIndex_;
+    if (live == stoppingSessionIsLive) return true;
+  }
+  return false;
+}
+
+LOOP_COLD_MEM bool Loop::sessionRecordObligationOutstanding(size_t record) const {
+  if (!wrapObligations_) return false;
+  const WrapObligationQueue& q = *wrapObligations_;
+  for (uint8_t i = 0; i < q.count; ++i) {
+    const WrapObligationQueue::Slot& slot = q.slots[(q.head + i) % WrapObligationQueue::kSlots];
+    if (slot.record == record && slot.sessionIndex == currentOverdubSessionIndex_) return true;
+  }
+  return false;
+}
+
+LOOP_COLD_MEM bool Loop::pitchOwedByOutstandingWrapObligation(uint8_t pitch) const {
+  if (!wrapObligations_) return false;
+  const WrapObligationQueue& q = *wrapObligations_;
+  for (uint8_t i = 0; i < q.count; ++i) {
+    const WrapObligationQueue::Slot& slot = q.slots[(q.head + i) % WrapObligationQueue::kSlots];
+    if (!slot.maskReady || pitchBit(slot.pitchMask, pitch)) return true;
+  }
+  return false;
+}
+
+LOOP_COLD_MEM void Loop::cancelWrapObligationsFromRecord(size_t firstDestroyedRecord) {
+  if (!wrapObligations_) return;
+  WrapObligationQueue& q = *wrapObligations_;
+  // FIFO by record: the destroyed records are a suffix of the queue (an earlier session's obligations precede it).
+  while (q.count != 0) {
+    WrapObligationQueue::Slot& last = q.slots[(q.head + q.count - 1) % WrapObligationQueue::kSlots];
+    if (last.sessionIndex != currentOverdubSessionIndex_ || last.record < firstDestroyedRecord) break;
+    last.phase = WrapObligationQueue::Slot::Phase::Free;
+    last.pending.clear();
+    last.cutNotes.clear();
+    last.membership.clear();
+    last.cut = LoopContentResolution::TilePrepCursor{};
+    --q.count;
+  }
+}
+
+LOOP_COLD_MEM bool Loop::answerCarriedCompletion(const DeferredOverdubCompletion& completion,
+                                                 const NoteUtils::DisplayNoteVec& cut) {
+  // Only closed completions travel with an interval (the handover keeps open holds live).
+  if (loopLengthTicks == 0 || !completion.spanOwed || completion.endTick == completion.startTick) return false;
+  OverlapNoteIdSet resolved;
+  if (completion.occupancyOwed) {
+    OverlapNoteIdSet participants;
+    for (const NoteUtils::DisplayNote& note : cut) {
+      if (note.note != completion.pitch || note.noteId == kInvalidNoteId) continue;
+      if (!OverlapNoteIdObservation::displayNotePresentAtHold(note.startTick, note.endTick, completion.startTick,
+                                                              loopLengthTicks))
+        continue;
+      (void)participants.insert(note.noteId);
+    }
+    resolveOccupancyAtNoteOn(completion.channel, completion.pitch, completion.velocity, participants,
+                             completion.startTick, &resolved);
+  }
+  return applyOverlapConsequenceForCompletedNote(completion.channel, completion.pitch, completion.velocity,
+                                                 completion.startTick, completion.endTick, completion.noteId,
+                                                 kNoOverlapIds, completion.occupancyOwed ? &resolved : nullptr,
+                                                 false, &cut);
+}
+
+LOOP_COLD_MEM bool Loop::serviceWrapObligationTurn(size_t eventBudget) {
+  if (!wrapObligations_ || wrapObligations_->count == 0) return false;
+  // Review B2: held for the whole turn, every phase and the retirement. A wrap from the PIT ISR in this window sees
+  // no capacity and defers through the owed wrap commit; it never touches a slot the turn is using.
+  struct TurnGuard {
+    volatile bool& active;
+    explicit TurnGuard(volatile bool& flag) : active(flag) {
+      active = true;
+      std::atomic_signal_fence(std::memory_order_seq_cst);
+    }
+    ~TurnGuard() {
+      std::atomic_signal_fence(std::memory_order_seq_cst);
+      active = false;
+    }
+  } turnGuard(answeringCarriedObligation_);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (wrapObligationTurnProbeForTest != nullptr) wrapObligationTurnProbeForTest(wrapObligationTurnProbeContextForTest);
+#endif
+  WrapObligationQueue& q = *wrapObligations_;
+  using Phase = WrapObligationQueue::Slot::Phase;
+  // C1: the pitches each obligation owes or decided on; until computed every pitch counts as owed. Every queued
+  // slot gets its mask (review N1), one per turn, so a second obligation does not defer every live decision.
+  for (uint8_t i = 0; i < q.count; ++i) {
+    WrapObligationQueue::Slot& queued = q.slots[(q.head + i) % WrapObligationQueue::kSlots];
+    if (queued.maskReady) continue;
+    for (auto& word : queued.pitchMask) word = 0;
+    for (uint8_t k = 0; k < queued.setCount; ++k) setPitchBit(queued.pitchMask, queued.set[k].pitch);
+    for (const PendingNoteChange& row : queued.pending)
+      if (row.kind != PendingNoteChangeKind::Add || row.consequenceOwed) setPitchBit(queued.pitchMask, row.pitch);
+    queued.maskReady = true;
+    return true;
+  }
+  WrapObligationQueue::Slot& slot = q.slots[q.head];
+  if (slot.phase == Phase::Preparing) {
+    if (!slot.membershipReady) {
+      slot.membership.clear();
+      const WrapRecordHome home = wrapRecordHome(slot.record, slot.passId);
+      for (size_t r = 0; home.passIds != nullptr && r < home.passIds->size(); ++r) {
+        slot.membership.emplace_back((*home.passIds)[r], static_cast<uint32_t>(r));
+        if (r < home.companions->size())
+          for (const EditPassId id : (*home.companions)[r]) slot.membership.emplace_back(id, static_cast<uint32_t>(r));
+      }
+      std::sort(slot.membership.begin(), slot.membership.end());
+      slot.membershipReady = true;
+      return true;
+    }
+    const WrapObligationCutView view{&slot.membership, static_cast<uint32_t>(slot.record), slot.passId, &q.flips,
+                                     slot.cutSequence};
+    // Admission (device: an unbounded cut growth hit the allocator's abort at 7.74 MB PSRAM live): the cut starts
+    // only with room for it; otherwise the obligation stays owed and is retried -- named, never an abort.
+    if (!slot.cut.started && MemoryMonitor::isExternalMemoryPoolAvailable() &&
+        MemoryMonitor::getExternalMemoryPoolFreeBytes() < kWrapCutAdmissionBytes) {
+      ++q.cutAdmissionDeferrals;
+      return false;
+    }
+    LoopContentResolution::PassVisibility visibility{wrapCutVisible, &view};
+    visibility.pitchMask = slot.pitchMask;
+    if (!LoopContentResolution::stepTilePreparation(passes, slot.loopLengthTicks, 0, slot.loopLengthTicks,
+                                                    eventBudget, slot.cut, nullptr, 0, nullptr, nullptr,
+                                                    &visibility)) {
+      return true;
+    }
+    slot.cutNotes.clear();
+    for (const NoteUtils::DisplayNote& note : slot.cut.notes)
+      if (note.noteId != kInvalidNoteId) slot.cutNotes.push_back(note);
+    mergeOmittedCommittedNoteOnIdentitiesForNotes(slot.cutNotes, slot.cut.rawEvents);
+    slot.cut = LoopContentResolution::TilePrepCursor{};
+    slot.phase = Phase::Answering;
+    return true;
+  }
+  if (slot.phase == Phase::Answering) {
+    // The answer writes the interval's own set: swap it in for this turn only (constant work both ways). The source
+    // view is the cut for the occupancy half; the live interval's view is restored before the turn returns.
+    pendingNoteChanges_.swap(slot.pending);
+    overdubSourceViewNotes_.swap(slot.cutNotes);
+    // The answer is the interval's own: its loop length and an established source, even after the session closed.
+    const uint32_t liveViewLength = overdubSourceViewLoopLengthTicks_;
+    const bool liveViewEstablished = overdubSourceViewEstablished_;
+    overdubSourceViewLoopLengthTicks_ = slot.loopLengthTicks;
+    overdubSourceViewEstablished_ = true;
+    uint8_t answered = 0;
+    while (answered < kCarriedAnswersPerTurn && slot.setCursor < slot.setCount) {
+      (void)answerCarriedCompletion(slot.set[slot.setCursor++], overdubSourceViewNotes_);
+      ++answered;
+    }
+    // Overflow rows: by index -- an answer appends transforms, never another owed row (DEC-247).
+    while (answered < kCarriedAnswersPerTurn && slot.overflowCursor < pendingNoteChanges_.size()) {
+      PendingNoteChange& row = pendingNoteChanges_[slot.overflowCursor++];
+      if (!row.consequenceOwed) continue;
+      row.consequenceOwed = false;
+      (void)answerCarriedCompletion(overflowedCompletion(row), overdubSourceViewNotes_);
+      ++answered;
+    }
+    const bool done = slot.setCursor >= slot.setCount && slot.overflowCursor >= pendingNoteChanges_.size();
+    overdubSourceViewLoopLengthTicks_ = liveViewLength;
+    overdubSourceViewEstablished_ = liveViewEstablished;
+    overdubSourceViewNotes_.swap(slot.cutNotes);
+    pendingNoteChanges_.swap(slot.pending);
+    if (done) slot.phase = Phase::Sealing;
+    return true;
+  }
+  // Sealing: the interval's rows become companion edit passes of **its own** record, in that record's state.
+  pendingNoteChanges_.swap(slot.pending);
+  EditPassIdList ids = sealPendingRowsToEditPasses(false);
+  pendingNoteChanges_.swap(slot.pending);
+  const WrapRecordHome home = wrapRecordHome(slot.record, slot.passId);
+  if (home.companions != nullptr) {
+    if (slot.record >= home.activeRecords && !ids.empty()) {
+      disableEditPasses(ids);  // P is undone: its consequences are present, and move with the record on redo
+      ++playbackRevision;
+      notifyCommittedContentChanged();
+    }
+    EditPassIdList& companions = (*home.companions)[slot.record];
+    companions.insert(companions.end(), ids.begin(), ids.end());
+    // DEC-248: the stamp names the revision the session record reaches; the late companions just moved it.
+    if (home.passIds == &overdubSessionPassIds_ && !ids.empty()) stampWrapPublicationObligation();
+  } else if (!ids.empty()) {
+    // The record already left for the publication inventory (a close without exit): its late companions follow it.
+    if (!pendingSnapshotPublishBox_) pendingSnapshotPublishBox_ = std::make_unique<PendingSnapshotPublishBox>();
+    PendingSnapshotPublishBox& box = *pendingSnapshotPublishBox_;
+    box.companionIds.insert(box.companionIds.end(), ids.begin(), ids.end());
+    box.companionsApplied = false;
+    box.inventoryCompanionsOwed = true;
+  }
+  for (const EditPassId id : ids) sealedCompanionOverlayIds_.push_back(id);
+  markAffectedDisplayCacheRanges(slot.passId, ids);
+  recountOverlapHoldTotalsFromPending();
+  slot.phase = Phase::Free;
+  slot.cutNotes.clear();
+  slot.membership.clear();
+  q.head = static_cast<uint8_t>((q.head + 1) % WrapObligationQueue::kSlots);
+  --q.count;
+  if (q.count == 0) q.flips.clear();  // no cut left to read them
+  return true;
+}
+
+LOOP_COLD_MEM void Loop::noteWrapCutStateFlip(uint32_t rowId, bool wasActive) {
+  if (!wrapObligations_ || wrapObligations_->count == 0) return;
+  WrapObligationQueue& q = *wrapObligations_;
+  // Only rows older than an outstanding obligation's session can change under its cut unseen.
+  bool preSession = false;
+  for (uint8_t i = 0; i < q.count; ++i)
+    if (rowId < q.slots[(q.head + i) % WrapObligationQueue::kSlots].sessionFirstPassId) preSession = true;
+  if (!preSession) return;
+  if (q.flips.size() >= WrapObligationQueue::kFlipJournalCapacity) {
+    ++q.flipOverflows;  // named by count (`wrapCutJournalOverflows`); no new literal (RAM1 .rodata)
+    return;
+  }
+  if (q.flips.capacity() == 0) q.flips.reserve(WrapObligationQueue::kFlipJournalCapacity);
+  q.flips.push_back(WrapCutFlip{rowId, ++q.flipSequence, wasActive});
+}
+
+LOOP_COLD_MEM uint32_t Loop::wrapCutJournalOverflows() const {
+  return wrapObligations_ ? wrapObligations_->flipOverflows : 0;
 }

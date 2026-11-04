@@ -36,6 +36,7 @@
     "teensy41-capture-serial-no-grain": "teensy41-capture-serial",
     "teensy41-capture-serial-revstore-probe": "teensy41-capture-serial",
     "teensy41-capture-serial-revstore-succprobe": "teensy41-capture-serial-revstore-reader",
+    "teensy41-capture-serial-revstore-succprobe-heapowners": "teensy41-capture-serial-revstore-reader",
     "teensy41-capture-serial-revstore-reader": {
       "itcm_bytes": 393216,
       "ram1_variables": 96224,

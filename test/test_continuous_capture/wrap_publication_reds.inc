@@ -66,14 +66,15 @@ Drain drainWithSessionRunning(Track& track, Observe observe, unsigned minTurns =
   Loop& loop = track.getActiveLoop();
   Drain d;
   for (; d.turns < 4096; ++d.turns) {
-    if (d.turns >= minTurns && !loop.hasPendingSnapshotPublish()) break;
+    // A wrap obligation (C3.4 off the Clock) blocks its record's publication until it seals: both are owed work.
+    if (d.turns >= minTurns && !loop.hasPendingSnapshotPublish() && !loop.hasOutstandingWrapObligation()) break;
     const uint32_t before = Loop::snapshotChangeTranslationsForTest();
     TrackCaptureStopTestAccess::snapshotOwnerTurn(track);
     const uint32_t spent = Loop::snapshotChangeTranslationsForTest() - before;
     if (spent > d.maxTranslationsPerTurn) d.maxTranslationsPerTurn = spent;
     observe(loop);
   }
-  d.converged = !loop.hasPendingSnapshotPublish();
+  d.converged = !loop.hasPendingSnapshotPublish() && !loop.hasOutstandingWrapObligation();
   return d;
 }
 Drain drainWithSessionRunning(Track& track) {
@@ -151,7 +152,9 @@ void test_wrap_red_clock_translates_no_snapshot_change() {
   std::printf("wrap RED 1: %s\n", message);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, inClock, message);
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, loop.pendingSnapshotWrapJournalCount(), message);
-  TEST_ASSERT_TRUE_MESSAGE(loop.hasPendingSnapshotPublish(), "the wrap must leave a publication obligation owed");
+  // Since C3.4 left the Clock the record's publication waits on its wrap obligation: either is the owed work.
+  TEST_ASSERT_TRUE_MESSAGE(loop.hasPendingSnapshotPublish() || loop.hasOutstandingWrapObligation(),
+                           "the wrap must leave a publication obligation owed");
 }
 
 /// GUARD 2 -- immutable input. Interval B starts recording before A publishes and mutates what B owns (a note that
@@ -221,7 +224,10 @@ void test_wrap_guard_publication_is_atomic_and_current() {
   TEST_ASSERT_TRUE(d.converged);
   TEST_ASSERT_FALSE_MESSAGE(partial, "a root carried A's notes without A's companion");
   TEST_ASSERT_TRUE(loop.publishedSnapshotIsCurrent());
-  TEST_ASSERT_EQUAL_UINT32(sealedRevision, loop.publishedSnapshotRevision());
+  // The wrap's companions are sealed by its obligation after the Clock (C3.4 off the Clock), which moves the revision
+  // once more: the root must cover that final revision, never the pass-only one.
+  TEST_ASSERT_GREATER_OR_EQUAL_UINT32(sealedRevision, loop.playbackRevision);
+  TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, loop.publishedSnapshotRevision());
 }
 
 /// RED 5 -- two rapid wraps. A and B both wrap before any publication turn. The box holds their obligations, not

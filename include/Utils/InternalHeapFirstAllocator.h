@@ -39,6 +39,23 @@
   inline bool isInExternalMemoryPool(const void*) { return false; }
 #endif
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native allocation-pressure seam (owner ruling 2026-11-04, memory-pressure host RED): models the device arena's
+/// **largest free block**, so a request above it is refused by the internal heap and takes the allocator's own
+/// external fallback (served from the host heap when `externalAvailable`). Records the outcome; nothing else reads it.
+struct NativeInternalHeapPressure {
+  std::size_t largestInternalBlock = static_cast<std::size_t>(-1);
+  bool externalAvailable = true;
+  unsigned internalRefusals = 0;
+  unsigned externalFallbacks = 0;
+  std::size_t largestRefused = 0;
+};
+inline NativeInternalHeapPressure& nativeInternalHeapPressure() {
+  static NativeInternalHeapPressure pressure;
+  return pressure;
+}
+#endif
+
 template <typename T>
 class InternalHeapFirstAllocator {
  public:
@@ -65,6 +82,16 @@ class InternalHeapFirstAllocator {
   T* allocate(std::size_t n) {
     const std::size_t bytes = n * sizeof(T);
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+    NativeInternalHeapPressure& pressure = nativeInternalHeapPressure();
+    if (bytes > pressure.largestInternalBlock) {
+      ++pressure.internalRefusals;
+      if (bytes > pressure.largestRefused) pressure.largestRefused = bytes;
+      if (!pressure.externalAvailable) abort();
+      ++pressure.externalFallbacks;
+      return static_cast<T*>(malloc(bytes));
+    }
+#endif
     // 1. Try fast internal heap first.
     void* ptr = malloc(bytes);
     if (ptr) return static_cast<T*>(ptr);

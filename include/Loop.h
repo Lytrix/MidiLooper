@@ -1069,6 +1069,62 @@ struct Loop {
   void discardPreparedCompanionHistory(uint64_t owner = 0); // Logical discard only; retains storage.
   EditPassIdList sealPendingNoteChangesToEditPasses(
       bool updateOverdubSourceView = true);
+  /// The companion half of the seal, without the C3.4 deadline: persist the pending Shorten/Hide rows as companion
+  /// edit passes, bump the revision once, clear the set. The wrap obligation seals its carried set through this.
+  EditPassIdList sealPendingRowsToEditPasses(bool updateOverdubSourceView);
+  /// The wrap's remaining C3.4 duty on the Clock: the private-predecessor holds (bounded by the hold capacity) and
+  /// their named denial. The touched-coverage completions are handed to the wrap obligation instead.
+  void materializeWrapPrivateHoldsAtDeadline();
+
+  // ---- C3.4 off the Clock (owner rulings 2026-11-04; `docs/Plans/2026-11-04-wrap-deadline-off-clock.md`) --------
+  /// Whether the wrap can hand its interval over now. False while both obligation slots are owned: the wrap then
+  /// defers through DEC-069 (`overdubWrapCommitPending_`) and is retried, nothing is answered on the Clock.
+  /// C2 (owner 2026-11-04): a pre-session row's state change after a wrap, so that wrap's cut still reads the state
+  /// the row had at the wrap. Recorded only while an obligation is outstanding and only for rows older than its
+  /// session (session-record rows are judged by membership, later rows by the watermark).
+  struct WrapCutFlip {
+    uint32_t rowId;
+    uint32_t sequence;
+    bool previousActive;
+  };
+  /// The membership a source cut is evaluated against (read-only view; see `wrapCutVisible`).
+  struct WrapObligationCutView {
+    const std::vector<std::pair<uint32_t, uint32_t>>* membership;
+    uint32_t record;
+    PassId passId;
+    const std::vector<WrapCutFlip>* flips;
+    uint32_t cutSequence;
+  };
+  /// Every committed row state writer calls this before it changes a row (cold; a no-op without an obligation).
+  void noteWrapCutStateFlip(uint32_t rowId, bool wasActive);
+  /// C2 capacity: flips the bounded journal could not hold (each one named; the cut is then inexact for that row).
+  uint32_t wrapCutJournalOverflows() const;
+  bool wrapObligationCapacityAvailable() const;
+  /// The wrap Clock's whole C3.4 duty, constant work: swap the live pending set into a free obligation slot, move the
+  /// closed deferred completions with it, stamp the cut (record `record`, pass `passId`, NoteId horizon). The live
+  /// interval keeps the slot's empty, already-reserved vector. False when no slot is free (caller defers).
+  bool handOverWrapObligation(PassId passId, size_t record);
+  /// The discharge lane's obligation turn (bounded): prepare the oldest obligation's source cut by grains, answer
+  /// its owed completions against that cut, seal its rows into its own record, retire. True when it did work.
+  bool serviceWrapObligationTurn(size_t eventBudget);
+#if defined(PIO_UNIT_TEST_NATIVE)
+  /// Review B2 seam: called inside every lane turn, after the turn's guard is up -- a test fires an interrupt-shaped
+  /// wrap from here to prove it defers instead of touching the slot in use.
+  static void (*wrapObligationTurnProbeForTest)(void* ctx);
+  static void* wrapObligationTurnProbeContextForTest;
+#endif
+  bool hasOutstandingWrapObligation() const;
+  /// Review B1/B4: whether the session a stop job is finishing still owes a wrap obligation. A job that owns the live
+  /// session waits only for that session's slots; a predecessor job only for slots that are not the live session's,
+  /// so a successor's obligations never hold a predecessor's stop.
+  bool wrapObligationOwedByStoppingSession(bool stoppingSessionIsLive) const;
+  /// Record `record` still owns an obligation: the publication producer does not pass it (atomicity).
+  bool sessionRecordObligationOutstanding(size_t record) const;
+  /// C1 (owner: "owed too, exact"): an outstanding obligation owes or decided on `pitch`, so a live decision on that
+  /// pitch is owed too and answered after it. Conservative (every pitch) until the obligation's mask is computed.
+  bool pitchOwedByOutstandingWrapObligation(uint8_t pitch) const;
+  /// A destroyed record (redo-tail drop, session close without exit) cancels its obligation with it (C3).
+  void cancelWrapObligationsFromRecord(size_t firstDestroyedRecord);
   /// Merge pending Add/Shorten/Hide into `overdubSourceViewNotes_`. Wrap commit
   /// uses `appendLastCommittedOverdubPassToSourceView`. Full rebuild is idle /
   /// later, not the wrap clock tick. Does not clear pending.
@@ -1987,7 +2043,12 @@ struct Loop {
     uint8_t velocity = 0;
     bool occupancyOwed = false;
     bool spanOwed = false;
+    /// Review B3: C1 deferred this hold's NoteOn occupancy without the immediate answer. The completion is kept until
+    /// its NoteOff closes the span, so occupancy and span are answered together (never dropped while still open).
+    bool occupancyUnanswered = false;
   };
+  /// Review B3: a held note on this pitch whose occupancy decision is still unanswered (its NoteOff must merge).
+  bool hasUnansweredOccupancyHold(uint8_t channel, uint8_t pitch, uint32_t startTick) const;
   static constexpr uint8_t kDeferredOverdubCompletionCapacity = 16;
   /// Record (or merge into) the bounded deferred completion for a note. False on a full set: the caller
   /// then answers synchronously against a bounded local window rather than dropping the decision.
@@ -2250,6 +2311,27 @@ struct Loop {
   std::unique_ptr<NoteUtils::EventIndex> cachedEventIndex_;
   std::unique_ptr<PublishedSnapshotBox> publishedSnapshotBox_;
   std::unique_ptr<PendingSnapshotPublishBox> pendingSnapshotPublishBox_;
+  /// C3.4 off the Clock: the bounded FIFO of wrap obligations (two slots). Defined in LoopOverdubSession.cpp; the
+  /// type stays incomplete here, so the deleter is defined beside it. Heap-owned (external pool via the shell).
+  struct WrapObligationQueue;
+  struct WrapObligationQueueDeleter {
+    void operator()(WrapObligationQueue* queue) const;
+  };
+  std::unique_ptr<WrapObligationQueue, WrapObligationQueueDeleter> wrapObligations_;
+  WrapObligationQueue& wrapObligationQueue();
+  /// Where session record `record` (whose pass is `passId`) lives now: the live session lists, or the session-exit
+  /// receipt that took them at stop admission. `activeRecords` is that list's undo cursor. Null lists: none holds it.
+  struct WrapRecordHome {
+    std::vector<PassId>* passIds = nullptr;
+    std::vector<EditPassIdList>* companions = nullptr;
+    size_t activeRecords = 0;
+  };
+  WrapRecordHome wrapRecordHome(size_t record, PassId passId);
+  bool answerCarriedCompletion(const DeferredOverdubCompletion& completion, const NoteUtils::DisplayNoteVec& cut);
+  /// Set for the whole of a wrap-obligation lane turn (review B2): the wrap can run in the internal-clock PIT ISR, so
+  /// it must never hand over, cancel or reuse a slot while the main loop is inside a turn -- it defers (DEC-069) and
+  /// is retried. Also tells the occupancy decision it is answering a cut, never the live coverage. Volatile + fenced.
+  volatile bool answeringCarriedObligation_ = false;
   /// Externally allocated ring of session-exit receipts; the type stays
   /// incomplete here, so the deleter is defined beside the box definition.
   struct SessionExitReceiptsDeleter {

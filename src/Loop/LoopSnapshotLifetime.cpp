@@ -4,6 +4,7 @@
 #include "Loop.h"
 
 #include "LoopSnapshotBoxes.h"
+#include "LoopWrapObligation.h"
 #include "Utils/LoopMem.h"
 
 #include <utility>
@@ -19,6 +20,8 @@ LOOP_COLD_MEM Loop::~Loop() {}
 /// Defined beside the destructor: every binary that instantiates ~Loop() must
 /// resolve the receipt-ring deleter, and this is the one TU that always carries
 /// both the destructor and the box definition.
+LOOP_COLD_MEM void Loop::WrapObligationQueueDeleter::operator()(WrapObligationQueue* queue) const { delete queue; }
+
 void Loop::SessionExitReceiptsDeleter::operator()(SessionExitSnapshotHandoff* receipts) const {
   if (!receipts) return;
   // The allocation carries the FIFO ring plus the one reserved obligation record

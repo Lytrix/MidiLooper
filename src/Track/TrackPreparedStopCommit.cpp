@@ -178,6 +178,10 @@ TRACK_COLD_MEM bool TrackPreparedStopCommit::completeDeferredCleanup(
     CapturePreview& preview, bool ownsLiveSession) {
   if (stop.phase != PendingStopPhase::DeferredCleanup || !stop.finalizationComplete() ||
       stop.historyRecycleOwner) return false;
+  // C3.4 off the Clock (owner rulings 2026-11-04): the stop was accepted already; its session-exit receipt is
+  // released (and the session closed) only once *its own* session's wrap obligations have sealed their records'
+  // companions, which the discharge lane keeps doing while stopped. Nothing waits synchronously (review B4: scoped).
+  if (loop.wrapObligationOwedByStoppingSession(ownsLiveSession)) return false;
   // DEC-068: this interval's session-exit receipt was captured at its own stop admission, before
   // any successor could touch the shared session state. The transfer above committed our final
   // pass, so fill its id and release the receipt to the publisher. Building a receipt from the

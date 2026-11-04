@@ -182,7 +182,18 @@ struct TrackCaptureStopTestAccess {
   static bool transferHorizonAdmitted(const Track& track, uint8_t slot) {
     return track.loopForSlot(slot).hasActiveOverdubTransferAdmission();
   }
-  static bool step(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  /// One idle turn of the deferred stop. The job's cleanup waits for outstanding wrap obligations (C3.4 off the Clock,
+  /// owner rulings 2026-11-04), which production answers on the same idle cadence (C4): the lane runs first, as there.
+  /// It returns at once when nothing is owed, so a case without a wrap obligation steps exactly as before.
+  /// The Snapshot owner turn alone, without the discharge lane (review B4).
+  static void snapshotOwnerTurnOnly(Track& track) { track.processSnapshotOwnerTurn(track.getActiveLoop(), 2); }
+  /// The stop job alone, without the discharge lane (review B1: the job must wait for its session's obligations).
+  static bool stepJobOnly(Track& track) { return track.processDeferredOverdubStopGrain(); }
+  static bool step(Track& track) {
+    const bool obligation =
+        track.getActiveLoop().serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    return track.processDeferredOverdubStopGrain() || obligation;
+  }
   /// Latch an accepted interaction without admitting it, for eligibility assertions.
   static void latchAcceptedStop(Track& track, uint8_t slot) {
     track.latchAcceptedStop(PendingStopDestination::Playing, slot, track.captureInterval_);
@@ -320,8 +331,13 @@ struct TrackCaptureStopTestAccess {
   static bool serviceAcceptedInteraction(Track& track) {
     return track.serviceAcceptedInteractionTurn();
   }
-  /// The production Snapshot owner turn, with its own admission gate (wrap-publication REDs).
-  static void snapshotOwnerTurn(Track& track) { track.processSnapshotOwnerTurn(track.getActiveLoop(), 2); }
+  /// The production Snapshot owner turn, with its own admission gate (wrap-publication REDs). Since the C3.4 deadline
+  /// left the Clock (owner rulings 2026-11-04) a wrap's companions are sealed by the discharge lane, which production
+  /// runs on the same idle cadence (`TrackDeferredMaintenance`, C4); an idle turn here runs it first, as there.
+  static void snapshotOwnerTurn(Track& track) {
+    (void)track.getActiveLoop().serviceWrapObligationTurn(CoveragePrerequisite::kGrainEventsPerTurn);
+    track.processSnapshotOwnerTurn(track.getActiveLoop(), 2);
+  }
   static void selectSlot(Track& track, uint8_t slot) { track.activeLoopIndex = slot; }
   static void advanceInterval(Track& track) { ++track.captureInterval_; }
   static uint64_t interval(const Track& track) { return track.captureInterval_; }
@@ -5671,6 +5687,7 @@ void test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it(
                             "no latch is set where this image has no boundary to clear it");
 }
 #include "wrap_publication_reds.inc"
+#include "wrap_deadline_reds.inc"
 
 int main() {
   UNITY_BEGIN();
@@ -5823,5 +5840,6 @@ int main() {
   RUN_TEST(test_lag_breach_is_reported_but_not_latched_where_no_boundary_can_clear_it);
   // Wrap-publication ownership cases (DEC-248).
   registerWrapPublicationReds();
+  registerWrapDeadlineReds();  // C3.4 off the Clock (owner rulings 2026-11-04); GREEN since the obligation slice
   return UNITY_END();
 }

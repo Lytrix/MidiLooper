@@ -87,4 +87,13 @@ bool Loop::applyOverlapConsequenceForCompletedNote(
   (void)candidates;
   return false;
 }
+
+/// C3.4 off the Clock: a wrap obligation is sealed by the pending-change owner. A suite without that owner never
+/// opens an overdub session, so it never holds an obligation and these fail closed.
+EditPassIdList Loop::sealPendingRowsToEditPasses(bool updateOverdubSourceView) {
+  (void)updateOverdubSourceView;
+  return {};
+}
+
+void Loop::recountOverlapHoldTotalsFromPending() {}
 #endif

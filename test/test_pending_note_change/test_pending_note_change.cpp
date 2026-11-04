@@ -46,6 +46,8 @@
 #include "../../src/Utils/CommittedPlaybackLedgerCatchUp.cpp"
 
 #include <algorithm>
+#include <chrono>
+#include <cstdio>
 #include <initializer_list>
 #include <map>
 #include <utility>
@@ -481,6 +483,187 @@ void test_full_deferred_set_overflow_is_answered_at_the_seal_deadline_like_the_r
   assertSameTransform(expected, loop.pendingNoteChanges());
   TEST_ASSERT_EQUAL(1, countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Add));
 }
+
+// Memory-pressure host RED (owner ruling 2026-11-04). The device wedged inside an overdub wrap on track 8 slot 4 (33
+// bars) for 46.2 s and 131.3 s, after four failed 24,576-byte internal allocations at the `PendingNoteChange` growth
+// site with the largest free block at 7,576 bytes. These fixtures drive the production wrap seal
+// (`sealPendingNoteChangesToEditPasses`, which runs the C3.4 deadline) over the stalled slot's shape: dense committed
+// content, a full deferred set and N completions owed beyond it, with the arena's largest block and its tail modelled.
+namespace {
+constexpr uint32_t kStallLoop = Config::TICKS_PER_BAR * 33;
+constexpr std::size_t kDeviceLargestInternalBlock = 7576;
+constexpr std::size_t kDeviceFailedRequestBytes = 24576;
+
+struct StallFixture {
+  Loop loop;
+};
+
+void buildStallFixture(StallFixture& f, unsigned notesPerBar, unsigned owed, unsigned editRows) {
+  LoopEventStore::resetPoolForTests();
+  LoopEventStore::initPool();
+  Loop& loop = f.loop;
+  loop.loopLengthTicks = kStallLoop;
+  LoopEventStore store;
+  NoteId id = 1;
+  const uint32_t step = Config::TICKS_PER_BAR / notesPerBar;
+  for (uint32_t bar = 0; bar < 33; ++bar)
+    for (unsigned k = 0; k < notesPerBar; ++k) {
+      const uint32_t on = bar * Config::TICKS_PER_BAR + k * step;
+      const uint8_t pitch = static_cast<uint8_t>(48 + (k % 24));
+      TEST_ASSERT_TRUE(storeAppendNoteOn(store, on, 1, pitch, 100, id++));
+      TEST_ASSERT_TRUE(store.append(MidiEvent::NoteOff(on + step * 3, 1, pitch, 0)));
+    }
+  loop.seedRecordPassFromStore(store);
+  loop.nextNoteId_ = id + 1;
+  for (unsigned r = 0; r < editRows; ++r) {
+    EditPass row{};
+    row.targetNoteId = static_cast<NoteId>(1 + (r * 7) % (id - 1));
+    row.actionType = EditActionType::Update;
+    row.startTick = 0;
+    row.endTick = 1;
+    (void)loop.saveNoteEditPass(1, row, EditPassType::Note, true, true);
+  }
+  loop.beginCapture(CapturePhase::Overdub, kStallLoop - 80);
+  fillDeferredCompletionSet(loop);
+  for (unsigned n = 0; n < owed; ++n) {
+    const uint32_t on = (n * 97u) % (kStallLoop - 400);
+    TEST_ASSERT_TRUE(loop.accumulatePendingNoteChangesForIncomingNote(1, static_cast<uint8_t>(48 + n % 24), 90, on,
+                                                                      on + 200, static_cast<NoteId>(100000 + n),
+                                                                      overlapIds({})));
+  }
+}
+
+void armDevicePressure(bool tailExhausted) {
+  NativeInternalHeapPressure& pressure = nativeInternalHeapPressure();
+  pressure = NativeInternalHeapPressure{};
+  pressure.largestInternalBlock = kDeviceLargestInternalBlock;
+  if (tailExhausted) MemoryMonitor::setNativeTestFreeHeap(0);
+}
+
+void clearDevicePressure() {
+  nativeInternalHeapPressure() = NativeInternalHeapPressure{};
+  MemoryMonitor::resetNativeTestFreeHeap();
+}
+
+struct SealResult {
+  uint32_t derives = 0;
+  size_t companionsOwed = 0;
+  size_t companionsSealed = 0;
+};
+
+SealResult sealAtWrap(Loop& loop) {
+  SealResult r;
+  const uint32_t before = LoopContentResolution::resolveDisplayNotesInWindowCountForTest();
+  // The seal answers the deadline first, so the companions it then persists include the deadline's own transforms.
+  const EditPassIdList ids = loop.sealPendingNoteChangesToEditPasses();
+  r.derives = LoopContentResolution::resolveDisplayNotesInWindowCountForTest() - before;
+  r.companionsSealed = ids.size();
+  return r;
+}
+
+size_t countCompanionsOwedAfterDeadline(Loop& loop) {
+  loop.materializeDeferredOverdubCompletionsAtDeadlineForTest();
+  return static_cast<size_t>(countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Shorten) +
+                             countKind(loop.pendingNoteChanges(), PendingNoteChangeKind::Hide));
+}
+}  // namespace
+
+/// Characterization (green): the device's failed request is **served externally**, not failed, retried or aborted,
+/// and committed content is untouched. Allocation success or failure does not change the deadline's work -- the same
+/// derives with and without pressure -- so the stall's cost is the algorithm's, not the allocator's.
+void test_memory_pressure_pending_growth_beyond_largest_block_is_served_externally() {
+  StallFixture plain;
+  buildStallFixture(plain, 16, 500, 0);
+  const SealResult unpressured = sealAtWrap(plain.loop);
+
+  StallFixture f;
+  armDevicePressure(false);
+  buildStallFixture(f, 16, 500, 0);
+  const SealResult pressured = sealAtWrap(f.loop);
+  const NativeInternalHeapPressure observed = nativeInternalHeapPressure();
+  clearDevicePressure();
+
+  TEST_ASSERT_GREATER_OR_EQUAL_MESSAGE(kDeviceFailedRequestBytes, observed.largestRefused,
+                                       "the fixture reaches the device's refused request size");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0, observed.externalFallbacks, "the refusal takes the external fallback");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(observed.internalRefusals, observed.externalFallbacks,
+                                   "every internal refusal is served externally (no retry, no abort)");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(unpressured.derives, pressured.derives,
+                                   "allocation pressure does not change the deadline's work");
+  TEST_ASSERT_EQUAL_UINT32(unpressured.companionsSealed, pressured.companionsSealed);
+  // Content: the pressured seal leaves exactly what the unpressured one does (companions legitimately hide events).
+  SessionMidiEventVec expected;
+  SessionMidiEventVec after;
+  plain.loop.copyEffectiveCommittedEventsInRange(expected, 0, kStallLoop, true);
+  f.loop.copyEffectiveCommittedEventsInRange(after, 0, kStallLoop, true);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(expected.size(), after.size(), "recorded content is preserved under pressure");
+  for (size_t i = 0; i < expected.size() && i < after.size(); ++i) {
+    TEST_ASSERT_EQUAL_UINT32(expected[i].tick, after[i].tick);
+    TEST_ASSERT_EQUAL_UINT32(expected[i].noteId, after[i].noteId);
+  }
+}
+
+#if defined(MEMORY_PRESSURE_RED)
+/// RED: the wrap's synchronous resolve work grows with the completions owed beyond the full set (one windowed
+/// derive each), so a dense interval turns the Clock-path wrap into owed x content work -- with allocations succeeding.
+/// Bounded forward progress means the wrap's synchronous derives do not depend on how many completions are owed.
+void test_memory_pressure_seal_deadline_work_does_not_scale_with_owed_completions() {
+  StallFixture small;
+  armDevicePressure(false);
+  buildStallFixture(small, 16, 50, 0);
+  const SealResult few = sealAtWrap(small.loop);
+  StallFixture large;
+  buildStallFixture(large, 16, 500, 0);
+  const SealResult many = sealAtWrap(large.loop);
+  clearDevicePressure();
+  char message[160];
+  snprintf(message, sizeof(message), "wrap derives: %u with 50 owed, %u with 500 owed", few.derives, many.derives);
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(few.derives, many.derives, message);
+}
+
+/// RED: with the arena **tail** exhausted (the device's `free=0`, while the free list still holds blocks and the
+/// allocator can fall back externally) the heap reserve refuses every companion and the seal clears the pending rows:
+/// the interval's Shorten/Hide decisions are lost with only a log line. A decision that cannot be persisted must stay
+/// represented or be refused by name -- never dropped.
+void test_memory_pressure_seal_never_drops_companions_when_the_tail_is_exhausted() {
+  StallFixture reference;
+  buildStallFixture(reference, 16, 50, 0);
+  const size_t owed = countCompanionsOwedAfterDeadline(reference.loop);
+  TEST_ASSERT_GREATER_THAN_MESSAGE(0, owed, "precondition: the interval owes companions");
+
+  StallFixture f;
+  armDevicePressure(true);
+  buildStallFixture(f, 16, 50, 0);
+  const SealResult sealed = sealAtWrap(f.loop);
+  clearDevicePressure();
+  char message[160];
+  snprintf(message, sizeof(message), "companions owed %u, sealed %u, still represented %u", unsigned(owed),
+           unsigned(sealed.companionsSealed), unsigned(f.loop.pendingNoteChanges().size()));
+  TEST_ASSERT_TRUE_MESSAGE(sealed.companionsSealed == owed || f.loop.pendingNoteChanges().size() >= owed, message);
+}
+#endif
+
+#if defined(WRAP_STALL_MEASURE)
+void test_wrap_stall_deadline_measure() {
+  const unsigned densities[] = {4, 16, 64};
+  const unsigned oweds[] = {50, 200, 500};
+  const unsigned edits[] = {0, 400};
+  for (unsigned d : densities)
+    for (unsigned o : oweds)
+      for (unsigned e : edits) {
+        StallFixture f;
+        buildStallFixture(f, d, o, e);
+        const uint32_t before = LoopContentResolution::resolveDisplayNotesInWindowCountForTest();
+        const auto t0 = std::chrono::steady_clock::now();
+        f.loop.materializeDeferredOverdubCompletionsAtDeadlineForTest();
+        const auto t1 = std::chrono::steady_clock::now();
+        printf("WRAP_STALL_MEASURE notes_per_bar=%u owed=%u edit_rows=%u derives=%u us=%lld pending_after=%zu\n", d,
+               o, e, LoopContentResolution::resolveDisplayNotesInWindowCountForTest() - before,
+               static_cast<long long>(std::chrono::duration_cast<std::chrono::microseconds>(t1 - t0).count()),
+               f.loop.pendingNoteChanges().size());
+      }
+}
+#endif
 
 // Consume attribution: occupy id present, but no source-view note exists at lookup
 // time. Only the long-loop JIT branch can reach that candidate.
@@ -5563,6 +5746,15 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_full_deferred_set_noteoff_derives_nothing_and_stays_owed);
   RUN_TEST(test_full_deferred_set_overflow_is_answered_by_the_worker_like_the_retained_path);
   RUN_TEST(test_full_deferred_set_overflow_is_answered_at_the_seal_deadline_like_the_retained_path);
+  RUN_TEST(test_memory_pressure_pending_growth_beyond_largest_block_is_served_externally);
+#if defined(MEMORY_PRESSURE_RED)
+  // Deliberate REDs until the containment slice lands (owner ruling 2026-11-04).
+  RUN_TEST(test_memory_pressure_seal_deadline_work_does_not_scale_with_owed_completions);
+  RUN_TEST(test_memory_pressure_seal_never_drops_companions_when_the_tail_is_exhausted);
+#endif
+#if defined(WRAP_STALL_MEASURE)
+  RUN_TEST(test_wrap_stall_deadline_measure);
+#endif
   RUN_TEST(test_consume_attribution_counts_scan_only_for_id_absent_candidate);
   RUN_TEST(test_consume_id_resolution_norow_repaired_by_hold_fill);
   RUN_TEST(test_pending_shorten_long_source_on_overlap);

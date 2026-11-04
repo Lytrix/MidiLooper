@@ -14,6 +14,13 @@ uint32_t g_overdubWrapSealPendingUs = 0;
 uint32_t g_overdubWrapBeginCaptureUs = 0;
 #endif
 
+namespace {
+/// Cold: the wrap's obligation admission (the hot wrap check keeps one call).
+TRACK_COLD_MEM __attribute__((noinline)) bool overdubWrapObligationAdmitted(const Loop& loop) {
+  return loop.wrapObligationCapacityAvailable();
+}
+}  // namespace
+
 bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.loopLengthTicks == 0) {
@@ -24,6 +31,11 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   }
   loop.armOverdubWrapAfterLeavingStart(currentPhase);
   if (loop.shouldCommitOverdubWrap(prevPhase, currentPhase)) {
+    // C3.4 off the Clock: both obligation slots owned -> the wrap defers through the same DEC-069 owed commit.
+    if (!overdubWrapObligationAdmitted(loop)) {
+      overdubWrapCommitPending_ = true;
+      return false;
+    }
     // Interval admission no longer blocks another slot's wrap. The slot's actual
     // canonical worker still excludes a committed-revision mutation underneath its
     // prefix: independent frozen staging does not duplicate canonical scratch.
@@ -42,7 +54,7 @@ bool Track::maybeCommitOverdubWrap(uint32_t prevPhase, uint32_t currentPhase) {
   // applies the committed pass to playback and to the interval's source view exactly as it does
   // for an immediate wrap.
   if (overdubWrapCommitPending_ && !hasPendingStopForInterval(captureInterval_) &&
-      !hasCaptureStopWorkerForSlot(activeLoopIndex)) {
+      !hasCaptureStopWorkerForSlot(activeLoopIndex) && overdubWrapObligationAdmitted(loop)) {
     return commitOverdubWrap();
   }
   return false;
@@ -52,6 +64,12 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   LANE_MSG_SPAN(OverdubWrapCommit);
   Loop& loop = getActiveLoop();
   if (!loop.hasOverdubSession() || loop.capture.phase != CapturePhase::Overdub) {
+    return false;
+  }
+  // C3.4 off the Clock: the commit point admits the handover itself, so no caller can commit an interval it cannot
+  // hand over. Both slots owned -> the DEC-069 owed commit, retried on a later playback turn; nothing is answered here.
+  if (!overdubWrapObligationAdmitted(loop)) {
+    overdubWrapCommitPending_ = true;
     return false;
   }
   // Consumed on every path: the interval's rows have left the producer whether the pass
@@ -94,36 +112,26 @@ TRACK_COLD_MEM bool Track::commitOverdubWrap() {
   const bool wrapped = result == CommitResult::Committed;
   if (wrapped) {
     const PassId passId = loop.lastCommittedPassId();
-    {
-      LANE_WRAP_PHASE(WrapJournalRecount);
-      // No snapshot journal on the Clock (owner ruling 2026-11-03; ExecutionBounds row 22): the session record
-      // pushed below is this interval's publication obligation, produced later by the Snapshot owner.
-      loop.recountOverlapHoldTotalsFromPending();
-      loop.emitOverlapHoldTotals();
-    }
-#if defined(LANE_GAP_MIDI_SPLIT)
-    for (const PendingNoteChange& change : loop.pendingNoteChanges()) {
-      if (change.kind == PendingNoteChangeKind::Add) LANE_WRAP_COUNT(WrapSealedAdd, 1);
-      else if (change.kind == PendingNoteChangeKind::Shorten) LANE_WRAP_COUNT(WrapSealedShorten, 1);
-      else LANE_WRAP_COUNT(WrapSealedHide, 1);
-    }
-#endif
 #if defined(SESSION_CAPTURE)
     const uint32_t wrapSealPendingStartUs = micros();
 #endif
-    EditPassIdList companionIds;
     {
+      // C3.4 off the Clock (owner rulings 2026-11-04): only the private-predecessor holds are answered here. The
+      // interval's pending set and its owed completions are handed over in constant work below; the discharge
+      // lane answers them against the interval's own source cut and seals them into this record.
       LANE_WRAP_PHASE(WrapSeal);
-      companionIds = loop.sealPendingNoteChangesToEditPasses();
+      loop.materializeWrapPrivateHoldsAtDeadline();
     }
 #if defined(SESSION_CAPTURE)
     g_overdubWrapSealPendingUs = micros() - wrapSealPendingStartUs;
 #endif
     LANE_WRAP_PHASE(WrapSessionBookkeeping);
-    loop.pushOverdubSessionPass(passId, companionIds);
-    loop.recordLastOverdubSeal(passId, companionIds, priorPlaybackRevision);
+    loop.pushOverdubSessionPass(passId, EditPassIdList{});
+    // Capacity was admitted before the commit (`maybeCommitOverdubWrap`), on this same thread.
+    (void)loop.handOverWrapObligation(passId, loop.overdubSessionUndoDepth() - 1);
+    loop.recordLastOverdubSeal(passId, EditPassIdList{}, priorPlaybackRevision);
     loop.stampWrapPublicationObligation();
-    loop.markAffectedDisplayCacheRanges(passId, companionIds);
+    loop.markAffectedDisplayCacheRanges(passId, EditPassIdList{});
   }
 #if defined(SESSION_CAPTURE)
   const uint32_t wrapBeginCaptureStartUs = micros();

@@ -350,6 +350,8 @@ TRACK_COLD_MEM bool setEditPassState(Loop& loop, const EditPassIdList& ids, Edit
                 continue;
             }
             if (editPass.state != state) {
+                // C2: an obligation's source cut must keep reading the state this row had at its wrap.
+                loop.noteWrapCutStateFlip(id, editPass.state == EditPassState::Active);
                 editPass.state = state;
                 touched = true;
             }

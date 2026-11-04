@@ -3193,6 +3193,16 @@ TRACK_COLD_MEM bool Track::processDeferredOverdubStopGrain() {
   }
   Loop& loop = *job.owner;
   LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(job.slot);
+  // C3.4 off the Clock (review B1): from companion history on, the job reads its session's companion ids (the undo
+  // entry, the receipt, the transfer). Those are complete only once the session's wrap obligations have sealed their
+  // late companions, so these phases wait for them; the stop itself was accepted already and the lane drains them.
+  if (job.mode == CapturePhase::Overdub && stop.phase >= PendingStopPhase::CompanionHistory &&
+      stop.phase <= PendingStopPhase::DeferredCleanup) {
+    const bool jobOwnsLiveSession = (job.interval == captureInterval_ ||
+        (job.interval + 1 == captureInterval_ && !isOverdubbing() && !isRecording())) &&
+        job.slot == activeLoopIndex;
+    if (loop.wrapObligationOwedByStoppingSession(jobOwnsLiveSession)) return false;
+  }
   // DEC-233 decision 2: the descriptor/cut is owned already; the canonical worker binds only when its
   // output is ready. An ordinary turn tops up an **empty, unowned** output first, so the interval is
   // not parked behind a reservation nothing renews -- and a populated store or another owner is never

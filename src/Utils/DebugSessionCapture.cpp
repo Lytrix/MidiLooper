@@ -1684,6 +1684,18 @@ SC_MEM_ATTR void emitEnvelopeRowLine(const char* line) {
   emitCapLineOrSerial(line);
 }
 
+// The decisive-row delivery rule for an already formatted line: written straight to USB when it has room, otherwise
+// enqueued (so a row raised while playing is delayed rather than held until a stop that may never come).
+SC_MEM_ATTR void emitLineDirectOrRing(const char* line) {
+  if (line == nullptr) return;
+  const size_t n = strnlen(line, kMaxCaptureTextBytes - 1);
+  if (serialWriteRoom(n)) {
+    Serial.printf("%s", line);
+    return;
+  }
+  emitCapLineOrSerial(line);
+}
+
 SC_MEM_ATTR void droidFeedbackQueue(uint16_t depth, uint32_t oldestAgeUs,
                                     uint32_t overflowCount) {
 #if SESSION_CAPTURE_DROID_QUEUE

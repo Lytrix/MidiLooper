@@ -118,6 +118,13 @@ void endWrapBreakdown();
 bool wrapBreakdownActive();
 void addWrapPhase(uint8_t phase, uint32_t us);
 void addWrapCount(uint8_t count, uint32_t n);
+#if defined(HEAP_OWNER_ATTRIBUTION)
+/// Wrap-stall isolation (owner ruling 2026-11-04, diagnostic image only): every deadline completion answered inside a
+/// wrap, the longest one with its entry state, and the wrap's failed internal allocations. A wrap longer than
+/// `kWrapStallReportUs` is emitted directly at its end (one row, never per event).
+void noteWrapCompletion(uint32_t totalUs, uint32_t resolveUs, uint32_t spanLength, uint32_t lookupLength,
+                        uint32_t candidates, bool derived, uint32_t editPasses, uint32_t layers, uint32_t pending);
+#endif
 struct WrapPhaseScope {
   uint8_t phase;
   uint32_t startUs;

@@ -207,7 +207,8 @@ uint16_t Loop::reclaimUnreferencedDisabledCapturePasses(const SlotPassReferences
   return reclaimed;
 }
 
-bool Loop::setCapturePassState(PassId id, CapturePassState state) {
+// Cold: undo/redo and session-undo edges only (and the C2 flip hook would otherwise grow ITCM).
+LOOP_COLD_MEM bool Loop::setCapturePassState(PassId id, CapturePassState state) {
   // Disabling a pass removes its rows from the committed representation, so the sealed capture
   // handoff can never be proven covered again (`sealedCapturePreviewIsCovered` reads the committed
   // cache) and `releaseSealedCapturePreviewIfCovered` would keep it forever. That is the same
@@ -219,6 +220,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     if (passes.recordPass.state == state) {
       return true;
     }
+    noteWrapCutStateFlip(id, passes.recordPass.state == CapturePassState::Active);
     passes.recordPass.state = state;
     LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
@@ -237,6 +239,7 @@ bool Loop::setCapturePassState(PassId id, CapturePassState state) {
     if (pass.state == state) {
       return true;
     }
+    noteWrapCutStateFlip(id, pass.state == CapturePassState::Active);
     pass.state = state;
     LoopContentResolution::setPreparedCapturePassState(id, state);
     ++playbackRevision;
