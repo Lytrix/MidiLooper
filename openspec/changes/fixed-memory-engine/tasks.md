@@ -24,7 +24,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] B.1 Span-window reference model (START + TERMINAL entries, terminal set T = 256), exact-stream equality with
       expanded rows, tight bound `startRows + T`, comparison against the three row-based options (`test_engine_window_bound`).
 - [x] B.2a Effective-polyphony analysis: same-pitch exclusivity lemma tested; T not guaranteed (384 constructed).
-- [ ] B.2 Owner acceptance of OUT-POLY (T = 256 output limit) and of the cold-start note.
+- [x] B.2 OUT-POLY ratified: T = 16 (`Config::kMaxSoundingPerTrack`); bound 2,832 ≤ 3,072; RAM2 recalculated.
 - [x] B.3 `TerminalScheduler` (fixed T): live / composed closure, duplicate suppression, late terminals, transition reconcile, live occupy count; 10 tests.
 - [ ] B.4 Window carry list in the engine composer (E3).
 

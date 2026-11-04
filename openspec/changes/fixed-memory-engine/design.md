@@ -11,7 +11,7 @@ whole-plan revisions (owner, 2026-11-04).
 |---|---|---|---|
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
-| CE-B1 | Span windows (START + TERMINAL / carry entries) with a fixed terminal set of T per track. `entries(W) ≤ startRows(W) + T` holds **only while T bounds the sounding instances the track actually sends**. Effective polyphony is not bounded by T (see the effective-polyphony section below), so the bound rests on output policy **OUT-POLY**. | **Direction approved; not discharged.** Bound and stream equality hold on the reference model; live/composed closure is implemented in `TerminalScheduler`; OUT-POLY needs owner acceptance | `test_engine_window_bound` (8), `test_content_engine_terminals` (10) |
+| CE-B1 | Span windows (START + carry / TERMINAL entries) with a fixed terminal set of **T = 16** sounding output instances per track (OUT-POLY, owner-ratified end-state constant). `entries(W) ≤ startRows(W) + 16 = 2,816 + 16 = 2,832 ≤ 3,072` (`static_assert` in `EngineConfig.h`; tight in `test_span_window_bound_is_tight`). The 3,072-entry buffer is kept pending E3 qualification. | **Bound settled with OUT-POLY**; the E3 composer and its carry list are not built yet | `test_engine_window_bound` (8), `test_content_engine_terminals` (12) |
 | CE-C1 | Physical output: per-port admission and overload policy. | Open | — |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
@@ -64,7 +64,7 @@ The arrays are fixed-width integers, so the layout is the same on the Teensy. Th
 | (1) effective-count admission | admits 12 of 20 passes; **refuses 1,024 notes** a user played | holds 3,072 | changes accepted-input behavior by stacking depth |
 | (2) bound stacked passes per window | same 12-pass limit | holds 3,072 | same refusal, coarser |
 | (3) split buffers | needs 5,632 rows per window | holds | **+983,040 B PSRAM** (24 windows) |
-| **Span windows + terminal set** | **2,560 entries, 0 refused** | **startRows + T ≤ 3,072, tight** | 0 extra memory; terminal set 256 × 12 B per track (RAM2, +24,576 B) |
+| **Span windows + terminal set** | storage never refused; ≤ 2,832 entries; output beyond 16 sounding suppressed by OUT-POLY | **startRows + 16 ≤ 3,072, tight at 2,832** | 0 extra PSRAM; terminal set 16 × 12 B per track |
 
 Properties shown on the reference model, compared with the expanded-row stream:
 - **Exact stream:** DEC-244 order at every tick (NoteOffs fired from the terminal set first, then START entries in pass
@@ -104,18 +104,27 @@ Consequences that need the owner's acknowledgement:
 Conclusion: no admission rule on *input* can guarantee ≤ T at every future tick, because a later pass's notes on
 other pitches add to sounding content recorded earlier. The bound therefore needs a narrowly specified output policy.
 
-## OUT-POLY — output-overload policy (proposed, needs owner acceptance)
+## OUT-POLY — output polyphony (owner decision 2026-11-04, ratified end-state constant)
 
-- **Scope:** only when more than T = 256 notes would sound at once on one track. That needs ≥ 3 passes each holding
-  ≥ 128 simultaneous notes on different pitches (or the multi-segment case).
-- **Rule:** the composer and the consumer send NoteOns in DEC-244 order. A NoteOn that would be instance T + 1 is
-  **not sent**. It is counted per window (`refused`) and per scheduler (`refusedFull`), and reported with slot and tick.
-- **Never:** a NoteOff dropped for a note that was sent; stored content changed; display changed (the piano roll draws
-  stored content, not output).
-- **Next cycle:** the same deterministic choice, because composition is deterministic.
-- **Legacy difference:** legacy sends notes beyond its 128-entry ledger, which overflows only its bookkeeping. Under
-  OUT-POLY, sending stops at 256.
+- **T = 16** simultaneously sounding MIDI output note instances per track (`Config::kMaxSoundingPerTrack`). It is not
+  configurable, and it will not be raised for hypothetical polyphony.
+- It limits **sounding output only**: never source recording, immutable storage, undo history or piano-roll rendering.
+- When 16 instances already sound, the next output NoteOn is **suppressed deterministically in DEC-244 order**
+  (composer and consumer apply the same rule), counted (`refused` per window, `refusedFull` per track).
+- No NoteOff is ever sent for an unsounded instance. Every emitted NoteOn keeps closure ownership until its NoteOff is
+  sent: composed end, live NoteOff, transition closure, or occupy.
+- Physical-port backpressure delays NoteOffs, which stay owned and are counted late. It never drops them
+  (`test_port_backpressure_delays_noteoffs_and_drops_none`). The port bandwidth policy for NoteOns is CE-C1.
 
+## RAM2 recalculation (OUT-POLY T = 16)
+
+| Item | Revision 3 / earlier | Now |
+|---|---|---|
+| Terminal sets | 256 × 12 B × 8 = 24,576 B (comparison table, never in the § 4.2 total) — **removed** | `TerminalScheduler<16>` measured **352 B per track**: 192 B instances (16 × 12) + 128 B per-pitch occupancy counts + counters → **2,816 B** for 8 tracks; instances alone 1,536 B, as the owner computed |
+| RunTable | 69,632 B | 35,912 B (measured, 64-B descriptors) |
+| ManifestTable | 42,624 B | 43,208 B (measured) |
+| **RAM2 statics after cutover** | 225,581 B | **195,261 B** (225,581 − 33,720 + 584 + 2,816) |
+| Heap left for libraries | 298,707 B | **329,027 B** |
 ## Live / composed closure ownership (`TerminalScheduler`, tested)
 
 | Case | Rule | Test |

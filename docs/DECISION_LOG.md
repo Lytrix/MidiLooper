@@ -14701,3 +14701,15 @@ These stay in force on `dev` and the legacy branches until the cutover lands.
 - `test_engine_semantic_oracle` (E0): 12 / 12 draft fixtures pass on the independent reference model.
 - **CE-B1 counter-example:** 2,560 source rows in one window give 4,992 effective rows, more than the 3,072-row buffer.
 - Heap gate `scripts/check_content_engine_no_heap.py`: OK.
+
+### Amendment 1 — OUT-POLY T = 16 (owner decision, 2026-11-04)
+
+- At most **16** simultaneously sounding MIDI output note instances per track. This is the ratified end-state
+  constant: not configurable, not to be raised for hypothetical scenarios.
+- It applies only to output, never to recording, storage, undo history or the piano roll.
+- The 17th concurrent output NoteOn is suppressed deterministically in DEC-244 order. No NoteOff is sent for an
+  unsounded instance, and every emitted NoteOn keeps closure ownership.
+- CE-B1 window bound: 2,816 START entries + 16 carried = 2,832 ≤ 3,072, kept pending E3 qualification.
+- Terminal sets: 8 × 16 × 12 B = 1,536 B of instances; 2,816 B per 8 tracks with occupancy counts (measured).
+- Evidence: `test_engine_window_bound` 8/8 (tight bound, stream equality, source polyphony 384 > 16 suppressed by
+  name); `test_content_engine_terminals` 12/12 (crossing windows, transitions, live NoteOffs, port backpressure).
