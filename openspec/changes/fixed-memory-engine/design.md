@@ -202,5 +202,59 @@ measured against a "75 %" cap). It is replaced. Its regression scenario is kept 
 - RPN/NRPN beyond 64 overflow messages are counted as dropped (`parameterDropped`);
 - the USB message time is an estimate until measured on the device.
 
-**Memory:** `OutputPort<>` is a fixed 29,560 B per port, 88,680 B for three ports. It is placed in PSRAM (it comes out
-of the non-content allowance) unless the device timing gate needs RAM2.
+## CE-C1 memory ownership correction (owner, 2026-11-04)
+
+**Previous `OutputPort<>`, measured on ARM: 29,560 B per port.**
+
+| Part | Bytes | Share |
+|---|---|---|
+| Continuous controller matrix: pending 8,256 + last-sent 8,256 + dirty FIFO 8,256 (16 ch × 258 lanes, dense) | 24,768 | 83.8 % |
+| Sounding notes (128 × 16 B) | 2,048 | 6.9 % |
+| Essential-state overflow (pending 544 + status 272 + order 544) | 1,360 | 4.6 % |
+| Ordered TX queue (64 × 12 B) | 768 | 2.6 % |
+| RPN/NRPN overflow (64 × 8 B) | 512 | 1.7 % |
+| Counters + scalars | 104 | 0.4 % |
+
+Three ports therefore came to 88,680 B, mostly three copies of a full controller matrix and three copies of
+128 sounding notes.
+
+**Designs compared (ARM bytes, 8 tracks / 16 tracks):**
+
+| Design | 128 voices | 256 voices | Complexity | Worst case per operation |
+|---|---|---|---|---|
+| A. three dense ports (previous) | 88,680 | 94,824 | low | continuous O(1) direct index; NoteOff scan 128 |
+| B. per-port sparse lanes, per-port sounding table (ports × tracks × 16) | 20,496 | 26,640 | low | lane scan ≤ 256; NoteOff scan 128 |
+| C. one global pool for notes, essential transactions and lanes, tagged by destination | ≈ 20,000 (est.) | ≈ 22,000 | high: per-entry destination state, shared ordering for essential state, cross-port eviction | similar scans, plus per-port filtering of a shared ring |
+| **D. chosen: shared logical notes (tracks × 16, 2-bit state per port) + per-port sparse lanes + per-port dense essential overflow** | **16,400** | **18,448** | moderate | lane scan ≤ 256; NoteOff scan over shared notes (128 / 256); note find ≤ 128 / 256 |
+
+**D, per part:**
+
+| Part | Bytes |
+|---|---|
+| Shared notes (128 × 16 B; 256 voices: 4,096) | 2,048 |
+| Per port (× 3), total | 4,784 |
+| — ordered TX queue | 768 |
+| — essential overflow (pending + order; status derived from the slot) | 1,088 |
+| — RPN/NRPN overflow (64 × 4 B) | 256 |
+| — 256 automation lanes (8 B each) + dirty FIFO (u16) | 2,560 |
+| — counters | 80 |
+| — scalars | 32 |
+
+**Why D over C:**
+- Automation lane state is inherently per destination: last-sent and pending values differ per port. A shared lane pool
+  would save only the 2-byte lane key and would need headroom, so it costs more bytes and more management.
+- Essential-state overflow must never drop, so it is sized densely per destination. Dense (1,088 B per port) is
+  smaller than a guaranteed shared pool (816 entries × 8 B).
+- The logical note identity is the one thing worth sharing, and sharing it meets "tracks × 16, not
+  ports × tracks × 16".
+
+**Broadcast:** one key routed to several ports is one logical note with a 2-bit state per port (queued / playing /
+off pending). Each port sends, cancels and terminates it independently (`test_broadcast_note_shares_identity_with_per_port_states`).
+
+**Automation lanes:**
+- Only lanes in use take entries; a clean lane is evicted for a new one.
+- Only when all 256 lanes of a port have pending values is a new lane's value suppressed (counted
+  `automationLanesFull`). This is an automation-only workload limit: ≤ 256 lanes with values waiting at once per port.
+
+**Unchanged:** semantics and numbers. The CE-C1 tests and the saturation regression give identical results.
+
