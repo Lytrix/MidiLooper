@@ -1,0 +1,82 @@
+//  Copyright (c)  2025 Lytrix (Eelke Jager)
+//  Licensed under the PolyForm Noncommercial 1.0.0
+//
+// The content engine's storage core at production capacity (fixed-memory-engine milestone E1): page pool, global run
+// and manifest tables and the row-reservation ledger, plus the conservation check and the region census.
+//
+// Placement: the pool is one fixed object for EXTMEM and the tables are fixed objects for RAM2 (DMAMEM); neither region
+// is zeroed at reset, so `Core::init()` must run once before any use. Instances are defined by the integration
+// milestone; this header only fixes types, sizes and checks.
+
+#pragma once
+
+#include <cstddef>
+#include <cstdint>
+
+#include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/ManifestTable.h"
+#include "ContentEngine/PagePool.h"
+#include "ContentEngine/RowReservations.h"
+#include "ContentEngine/RunTable.h"
+
+namespace ContentEngine {
+
+/// Pages, runs and manifests agree: the free stack holds exactly the free pages; every held page is tagged with the
+/// run that lists it and each run's held count equals its tag count; no page is tagged by a free descriptor; every
+/// live run carries at least the references live manifests give it. O(pages + runs × manifests); tests only.
+template <typename Pool, typename Runs, typename Manifests>
+bool checkConservation(const Pool& pool, const Runs& runs, const Manifests& manifests) {
+  if (!pool.checkFreeStack()) return false;
+  uint32_t tagged[Runs::kRunCount] = {};
+  uint32_t other = 0;
+  for (PageId p = 0; p < Pool::kPageCount; ++p) {
+    const PageOwner o = pool.ownerOf(p);
+    if (o == kOwnerFree) continue;
+    if (o < Runs::kRunCount)
+      ++tagged[o];
+    else
+      ++other;
+  }
+  uint32_t held = 0;
+  for (RunId id = 0; id < Runs::kRunCount; ++id) {
+    const auto& r = runs.run(id);
+    if (r.state == RunState::Free) {
+      if (tagged[id] != 0) return false;
+      continue;
+    }
+    if (tagged[id] != runs.heldPages(id)) return false;
+    held += tagged[id];
+    if (r.state != RunState::Reclaiming && r.refs < manifests.referencesTo(id)) return false;
+  }
+  return pool.freeCount() + held + other == Pool::kPageCount;
+}
+
+/// Production capacities (plan revision 3 § 4, § 5).
+using ProductionPool = PagePool<Config::kPageCount, Config::kRowsPerPage>;
+using ProductionRuns = RunTable<Config::kRunCount, ProductionPool>;
+using ProductionManifests = ManifestTable<Config::kManifestCount, Config::kRunsPerManifest>;
+using ProductionReservations = RowReservations<ProductionPool, ProductionRuns>;
+
+/// Region sizes the census reports and the budget checks pin.
+struct RegionBytes {
+  size_t poolPages;
+  size_t poolMetadata;
+  size_t runTable;
+  size_t manifestTable;
+  size_t reservations;
+};
+
+constexpr RegionBytes productionRegions() {
+  return {ProductionPool::storageBytes(), ProductionPool::metadataBytes(), ProductionRuns::tableBytes(),
+          ProductionManifests::tableBytes(), sizeof(ProductionReservations)};
+}
+
+// Budget pins (plan revision 3 § 4.1 / § 4.2). A change here is a budget change and must update the plan clause.
+static_assert(ProductionPool::storageBytes() == 4194304u, "page pool data is 4,096 x 1 KiB");
+static_assert(ProductionPool::metadataBytes() <= 16386u, "free stack + owner tags");
+static_assert(sizeof(ProductionRuns::Run) <= 128u, "RAM2 budget assumes <= 128 B per run descriptor");
+static_assert(sizeof(ProductionManifests::Manifest) <= 148u, "RAM2 budget assumes <= 148 B per manifest");
+static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
+              "one run may hold the whole content quota through its directory pages");
+
+}  // namespace ContentEngine
