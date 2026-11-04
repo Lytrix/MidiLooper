@@ -12,7 +12,7 @@ whole-plan revisions (owner, 2026-11-04).
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
 | CE-B1 | Span windows (START + carry / TERMINAL entries) with a fixed terminal set of **T = 16** sounding output instances per track (OUT-POLY, owner-ratified end-state constant). `entries(W) ≤ startRows(W) + 16 = 2,816 + 16 = 2,832 ≤ 3,072` (`static_assert` in `EngineConfig.h`; tight in `test_span_window_bound_is_tight`). The 3,072-entry buffer is kept pending E3 qualification. | **Bound settled with OUT-POLY**; the E3 composer and its carry list are not built yet | `test_engine_window_bound` (8), `test_content_engine_terminals` (12) |
-| CE-C1 | Physical output: one bounded FIFO per port (`OutputPort<C>`) with **protected NoteOff capacity**. A NoteOn is admitted only if `queued + reserved + 2 ≤ C` and then reserves its NoteOff slot; a NoteOff is queued only against that reservation (never refused, never sent for an unadmitted note); other messages need one unreserved slot or are suppressed by name; strict FIFO (a NoteOff never overtakes its NoteOn); residence ≤ C × message time, measured. | **Settled (host)** for one port per track; the CC-vs-NoteOn share under saturation is an owner question | `test_content_engine_output` (3) |
+| CE-C1 | Physical output: one bounded FIFO per port (`OutputPort<C>`) with **protected NoteOff capacity**. A NoteOn is admitted only if `queued + reserved + 2 ≤ C` and then reserves its NoteOff slot; a NoteOff is queued only against that reservation (never refused, never sent for an unadmitted note); other messages need one unreserved slot or are suppressed by name; strict FIFO (a NoteOff never overtakes its NoteOn); residence ≤ C × message time, measured. **NoteOn guarantee (owner ruling 2026-11-04):** non-note messages may hold at most `OtherShare` = C/4 queued slots, so note traffic keeps ≥ 75 % of the queue under saturation. | **Settled (host)** for one port per track | `test_content_engine_output` (3) |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
 | CE-E0 | **Sounding-instance identity is (noteId, run)**, not noteId alone, and not a window-level stamp. An edit run's replacement row keeps the hidden note's id, so across a revision switch an old instance and the replacement share the id. `runKey` = run descriptor (10 bits) + pass order (6 bits) keeps the instance at 12 B. | **Settled (host)** | `test_instance_identity_includes_run` |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
@@ -171,9 +171,17 @@ Fixed scratch: 128 × 64 source counters, 16 admitted, one cursor per run. Zero 
   instance is cut early at the switch, never left hanging.
 - The composer never consults port admission.
 
-## CE-C1 finding for the owner
+## CE-C1 — NoteOn guarantee (owner ruling 2026-11-04: "Guarantee NoteOns")
 
-Under sustained DIN saturation (5× offered load, 10 s), a NoteOn needs two free slots and a CC one. CCs therefore win
-most of the queue: 8,813 CCs went out against 830 NoteOns, and the 830 NoteOffs all went out. Whether CCs should have
-a share limit, or NoteOns a guaranteed share, is a policy choice. The current port is neutral FIFO with only NoteOff
-protection.
+Before the ruling, plain FIFO let CCs take the queue under DIN saturation: 8,813 CCs went out against 830 NoteOns.
+
+Now non-note messages are capped at `OtherShare` = C/4 = 16 of 64 queued slots and are suppressed by name beyond
+that. Same 10 s saturation:
+
+| | Before | After |
+|---|---|---|
+| NoteOns sent | 830 | 3,759 |
+| NoteOffs sent | 830 | 3,759 (none for a suppressed note) |
+| CCs sent | 8,813 | 2,955 |
+| Note share of throughput | — | 72 % (guaranteed share 75 %) |
+| Longest queue wait | — | 57.5 ms (bound 61.4 ms) |

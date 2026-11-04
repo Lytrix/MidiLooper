@@ -59,7 +59,8 @@ revision 3 is the baseline; no whole-plan revisions.
 ## CE-C1 — output
 
 - [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).
-- [ ] C.2 Owner: CC vs NoteOn share under saturation; multi-port routing per track.
+- [x] C.2 NoteOn guarantee: non-note share capped at C/4 (owner ruling).
+- [ ] C.3 Multi-port routing per track.
 
 ## Blocked (by ruling)
 

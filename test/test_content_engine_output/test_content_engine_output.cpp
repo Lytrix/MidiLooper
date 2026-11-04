@@ -121,6 +121,10 @@ void test_sustained_din_saturation_protects_noteoffs() {
     }
   }
   TEST_ASSERT_EQUAL_UINT32(noteOnsSent, noteOffsSent);  // every transmitted note was closed
+  // Owner ruling 2026-11-04 (guarantee NoteOns): non-note messages hold at most their share of the queue, so note
+  // traffic (NoteOn + NoteOff) gets at least the rest of the port's throughput under saturation.
+  TEST_ASSERT_TRUE(gPort.counters().maxOtherQueued <= Port::kOtherShare);
+  TEST_ASSERT_TRUE(noteOnsSent + noteOffsSent >= 2u * otherSent);
   TEST_ASSERT_TRUE(suppressedOn > 0);
   TEST_ASSERT_TRUE(suppressedOther > 0);
   TEST_ASSERT_TRUE(gPort.counters().maxResidenceMicros <= 64u * kDinMessageMicros);
