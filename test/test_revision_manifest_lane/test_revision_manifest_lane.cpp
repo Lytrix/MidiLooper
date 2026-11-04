@@ -16,6 +16,7 @@
 extern "C" void setUp() {
   gWithholdLaneTurn = {};
   gWithholdRollingService = {};
+  gPlayEpoch = 1;
   sharedCaptureFinalizationSuiteSetUp();
   uninstallReader();
 }
@@ -1548,7 +1549,7 @@ ContentProvenance recordContentProvenance(Track& t, uint32_t bars, uint32_t firs
   const uint32_t length = bars * kBar;
   if (prepare) prepareSlot(t, 0, false);
   t.forceSetState(TRACK_STOPPED);
-  nativePlaybackDeadlineClock = {0, 1};
+  nativePlaybackDeadlineClock = {0, gPlayEpoch};
   clockManager.assignCurrentTickSilently(0);
   start(t, 0, false, 0, 60);
   PlaybackObservation obs;
@@ -1560,7 +1561,7 @@ ContentProvenance recordContentProvenance(Track& t, uint32_t bars, uint32_t firs
     if (in == stepTicks / 2) t.noteOff(1, pitch, 0, tick);
   });
   clockManager.assignCurrentTickSilently(length);
-  nativePlaybackDeadlineClock = {length, 1};
+  nativePlaybackDeadlineClock = {length, gPlayEpoch};
   t.stopRecording(length);
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
   std::map<uint32_t, int> originAt;
@@ -1682,21 +1683,21 @@ void test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take() {
   const uint32_t identityA = CommittedManifestLane::gServable.identity;
   const RevisionStore::ImportSourceKey keyA = RevisionStore::importSourceKeyOf(t.getLoop(0));
   TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, identityA, "take A was never servable: vacuous");
-  t.forceSetState(TRACK_STOPPED);
+  t.forceSetState(TRACK_STOPPED);  // the device: transport stopped, the slot cleared, Record armed, Start
   t.clear();
+  gPlayEpoch = 2;
+  RollingSuccessorProbe::gCounters = {};  // the host restarts at tick 0: the probe keys records by absolute deadline
   const ContentProvenance b = recordContentProvenance(t, 4, 192, 3, /*prepare=*/false);
   RollingSuccessorProbe::gKnobs = {};
   const RevisionStore::ImportSourceKey keyB = RevisionStore::importSourceKeyOf(t.getLoop(0));
-  printf("PARITY key A loop=%u prev=%u cpr=%u inv=%08x | B loop=%u prev=%u cpr=%u inv=%08x | equal=%d\n",
-         unsigned(keyA.loopId), keyA.playbackRevision, keyA.committedPassRevision, keyA.inventory, unsigned(keyB.loopId),
-         keyB.playbackRevision, keyB.committedPassRevision, keyB.inventory, int(keyA == keyB));
+  TEST_ASSERT_TRUE_MESSAGE(keyA != keyB, "the re-recorded take kept the cleared take's import key");
   TEST_ASSERT_FALSE_MESSAGE(a.committed == b.committed, "the two takes are identical: vacuous");
   // The manifest window of the servable revision is take B's content.
   const auto window = manifestWindowNoteOns(2304, 768, 4 * kBar);
   std::set<std::pair<uint32_t, uint8_t>> expected;
   for (const auto& on : b.committed) if (on.first >= 2304 && on.first < 3072) expected.insert(on);
-  printf("PARITY clear: identity A=%u B=%u window=%zu expected=%zu\n", identityA,
-         CommittedManifestLane::gServable.identity, window.size(), expected.size());
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(identityA, CommittedManifestLane::gServable.identity,
+                                       "the re-recorded take is served under the cleared take's manifest identity");
   TEST_ASSERT_TRUE_MESSAGE(window == expected, "the manifest window serves the cleared take, not the new one");
   // Every committed-origin NoteOn after the takeover is one of take B's events.
   uint32_t committedOns = 0, foreign = 0;
@@ -1717,6 +1718,7 @@ void test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_
   const ContentProvenance a = recordContentProvenance(t, 4, 0, 2);
   t.forceSetState(TRACK_STOPPED);
   t.clear();
+  gPlayEpoch = 2;
   const ContentProvenance b = recordContentProvenance(t, 4, 192, 3, /*prepare=*/false);
   TEST_ASSERT_FALSE_MESSAGE(a.committed == b.committed, "the two takes are identical: vacuous");
   uint32_t ons = 0, foreign = 0;
@@ -1785,6 +1787,52 @@ void test_c5_3_record_return_r3_root_starvation_sweep() {
              longestRootRun);
       (void)p;
     }
+}
+
+// DEC-136.4b closeout guard: repeated clear/re-record cycles with identical size and content (the emitted MIDI cannot
+// tell such takes apart, so the source identity must). Each cycle's committed playback is served under a new manifest
+// identity, every committed view serving after the takeover carries that identity and no earlier one, and every
+// emitted committed NoteOn is the current take's.
+void test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_earlier_take() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  std::vector<uint32_t> identities;
+  for (int cycle = 0; cycle < 3; ++cycle) {
+    if (cycle != 0) {
+      t.forceSetState(TRACK_STOPPED);
+      t.clear();
+      gPlayEpoch = static_cast<uint32_t>(cycle + 1);
+      RollingSuccessorProbe::gCounters = {};  // the host restarts at tick 0: probe records are keyed by deadline
+    }
+    std::set<uint32_t> servedIdentities;
+    const ContentProvenance p = recordContentProvenance(t, 4, 192, 3, /*prepare=*/cycle == 0, [&](uint32_t tick) {
+      if (tick < 2 * 4 * kBar) return;  // from the second traversal after the stop
+      const auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+      const auto* set = rt.viewSetIfPrewarmed();
+      if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+      const auto& cur = set->views[set->lifecycle.current];
+      if (cur.complete && cur.published && cur.source.origin == PlaybackWindowOrigin::Committed)
+        servedIdentities.insert(cur.source.manifestIdentity);
+    });
+    const uint32_t identity = CommittedManifestLane::gServable.identity;
+    TEST_ASSERT_NOT_EQUAL_UINT32(0u, identity);
+    for (const uint32_t earlier : identities)
+      TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(earlier, identity, "a re-recorded take resurrected an earlier manifest");
+    identities.push_back(identity);
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, servedIdentities.size(), "views of more than one manifest served one take");
+    TEST_ASSERT_EQUAL_UINT32_MESSAGE(identity, *servedIdentities.begin(), "a view of an earlier manifest served");
+    uint32_t ons = 0, foreign = 0;
+    for (const auto& [pass, rows] : p.perTraversal)
+      for (const auto& r : rows)
+        if (pass >= 2) {
+          ++ons;
+          if (!p.committed.count({std::get<1>(r), std::get<2>(r)})) ++foreign;
+        }
+    TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ons, "nothing played after the takeover: vacuous");
+    TEST_ASSERT_EQUAL_UINT32(0u, foreign);
+  }
+  RollingSuccessorProbe::gKnobs = {};
 }
 
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
@@ -2157,7 +2205,8 @@ int main(int, char**) {
   if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
   if (getenv("CONTENT_PARITY_REPORT") != nullptr) RUN_TEST(test_c5_3_content_parity_provenance_report);
   if (getenv("R3_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_r3_root_starvation_sweep);
-  if (getenv("CONTENT_PARITY_RED") != nullptr) RUN_TEST(test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take);
+  RUN_TEST(test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take);  // DEC-136.4b closeout P0 (green)
+  RUN_TEST(test_c5_3_content_parity_repeated_identical_re_records_never_resurrect_an_earlier_take);
   RUN_TEST(test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_take);
   // DEC-136.4b root takeover geometry (green).
   RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);

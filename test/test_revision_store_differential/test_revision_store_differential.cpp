@@ -1237,6 +1237,61 @@ void test_import_source_moving_mid_build_cancels_the_candidate() {
   TEST_ASSERT_EQUAL_UINT8(0, gImport.stagedRunCount());
 }
 
+// DEC-136.4b closeout (the clear/re-record ABA): the user's clear (`resetPassTimeline`) followed by a re-record of the
+// same size and the same content restarts both revisions and reproduces the inventory. Only the source's incarnation
+// tells the takes apart, so it must be part of the key.
+void rerecordImportSourceAfterClear(Loop& loop) {
+  loop.resetPassTimeline();
+  std::vector<Op> rec;
+  for (uint8_t n = 0; n < 40; ++n) {
+    rec.push_back({static_cast<uint32_t>(n) * 96u, 0x90, 1, static_cast<uint8_t>(40 + n), 100});
+    rec.push_back({static_cast<uint32_t>(n) * 96u + 48u, 0x80, 1, static_cast<uint8_t>(40 + n), 0});
+  }
+  commitWithChanges(loop, true, rec, {});
+  commitWithChanges(loop, false, {{100, 0x90, 2, 70, 90}, {300, 0x80, 2, 70, 0}}, {});
+}
+
+void test_import_key_distinguishes_a_cleared_and_identically_re_recorded_source() {
+  Loop loop;
+  buildImportSource(loop);
+  const ImportSourceKey before = importSourceKeyOf(loop);
+  for (int cycle = 0; cycle < 3; ++cycle) {  // repeated cycles never resurrect an earlier key
+    const ImportSourceKey previous = importSourceKeyOf(loop);
+    rerecordImportSourceAfterClear(loop);
+    const ImportSourceKey now = importSourceKeyOf(loop);
+    // The ABA itself: every lifecycle-blind field repeats ...
+    TEST_ASSERT_EQUAL_UINT32(previous.playbackRevision, now.playbackRevision);
+    TEST_ASSERT_EQUAL_UINT32(previous.committedPassRevision, now.committedPassRevision);
+    TEST_ASSERT_EQUAL_UINT32(previous.inventory, now.inventory);
+    // ... and the incarnation alone distinguishes the takes, monotonically.
+    TEST_ASSERT_TRUE_MESSAGE(now != previous, "a cleared and re-recorded source kept the cleared take's key");
+    TEST_ASSERT_TRUE_MESSAGE(now != before, "a later cycle resurrected the first take's key");
+    TEST_ASSERT_TRUE(now.storageGeneration > previous.storageGeneration);
+  }
+}
+
+// An import begun on the cleared take never publishes against the re-recorded one: the candidate is cancelled by name
+// (`SourceMoved`), its pages are returned and the published manifest is untouched.
+void test_import_in_flight_across_a_clear_and_identical_re_record_is_cancelled() {
+  Loop loop;
+  buildImportSource(loop);
+  gImport.reset();
+  TEST_ASSERT_EQUAL(ImportResult::Ok, importLoop(loop, gImport));
+  const ManifestId published = gImport.current();
+  const uint32_t pagesPublished = gImport.ownedPageCount();
+  commitWithChanges(loop, false, {{500, 0x90, 3, 72, 90}, {700, 0x80, 3, 72, 0}}, {});  // a new revision to import
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.begin(loop, gImport));
+  TEST_ASSERT_EQUAL(ImportStep::Pending, gJob.step(16));
+  rerecordImportSourceAfterClear(loop);
+  commitWithChanges(loop, false, {{500, 0x90, 3, 72, 90}, {700, 0x80, 3, 72, 0}}, {});  // identical shape again
+  ImportStep step = ImportStep::Pending;
+  for (uint32_t i = 0; i < 10000 && step == ImportStep::Pending; ++i) step = gJob.step(16);
+  TEST_ASSERT_EQUAL_MESSAGE(ImportStep::Refused, step, "an import of the cleared take published after the clear");
+  TEST_ASSERT_EQUAL(ImportResult::SourceMoved, gJob.result());
+  TEST_ASSERT_EQUAL_UINT16(published, gImport.current());
+  TEST_ASSERT_EQUAL_UINT32(pagesPublished, gImport.ownedPageCount());
+}
+
 // Device crash 2026-11-01 (null read in stepCaptures during overdubs): production may rebuild its pass vectors with the
 // same content, so the source key does not move but the storage does. The job keeps ids, never pointers, across steps:
 // a rebuilt vector mid-import gives exactly the content of a fresh import.
@@ -1451,6 +1506,8 @@ int main(int /*argc*/, char** /*argv*/) {
   RUN_TEST(test_collapse_matrix_edit_and_edit_replacements_measured);
   RUN_TEST(test_import_candidate_is_invisible_until_published);
   RUN_TEST(test_import_source_moving_mid_build_cancels_the_candidate);
+  RUN_TEST(test_import_key_distinguishes_a_cleared_and_identically_re_recorded_source);
+  RUN_TEST(test_import_in_flight_across_a_clear_and_identical_re_record_is_cancelled);
   RUN_TEST(test_import_survives_pass_storage_rebuilt_with_the_same_content);
   RUN_TEST(test_restored_slot_imports_from_its_persisted_passes);
   RUN_TEST(test_slot_before_restore_is_a_named_refusal);

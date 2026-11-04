@@ -138,6 +138,8 @@ void uninstallReader() {
 /// Test-only arbitration: while it answers true for a tick, the chosen holder's turn serves no one (the device lane's
 /// withheld grant, applied by the fixture's own predicate instead of a fixed rate).
 std::function<bool(uint32_t)> gWithholdLaneTurn;
+/// Test-only: the clock epoch `play` stamps (a transport Stop/Start begins a new one on the device).
+inline uint32_t gPlayEpoch = 1;
 /// Test-only: while it answers true, the main-loop rolling requester (`serviceRollingPlaybackWindow`) gets no turn -- the
 /// device's main loop running behind the clock edge.
 std::function<bool(uint32_t)> gWithholdRollingService;
@@ -252,7 +254,7 @@ void play(Track& t, uint32_t from, uint32_t to, PlaybackObservation& obs, uint32
   RollingOwnerLane lane;
   auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
   for (uint32_t tick = from; tick < to; ++tick) {
-    nativePlaybackDeadlineClock = {tick, 1};
+    nativePlaybackDeadlineClock = {tick, gPlayEpoch};
     clockManager.assignCurrentTickSilently(tick);
     if (ownerEvery != 0 && tick % ownerEvery == 0 && CommittedManifestLane::gReader == &reader())
       reader().serviceOwner(t.getLoop(0));

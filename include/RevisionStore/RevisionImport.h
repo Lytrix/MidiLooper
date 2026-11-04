@@ -67,9 +67,14 @@ struct ImportSourceKey {
   uint32_t playbackRevision = 0;
   uint32_t committedPassRevision = 0;
   uint32_t inventory = 0;  // FNV-1a over every pass's (id, state, chunk count) and every edit pass's (id, state)
+  /// The source's incarnation: `Loop::canonicalStorageGeneration`, the loop's monotonic, runtime-only invalidation of
+  /// its pass storage. A clear (`resetPassTimeline`) advances it, so a re-recorded slot whose revisions restart and whose
+  /// inventory repeats is never mistaken for the cleared take (the clear/re-record ABA, DEC-136.4b closeout).
+  uint64_t storageGeneration = 0;
   bool operator==(const ImportSourceKey& o) const {
     return loopId == o.loopId && playbackRevision == o.playbackRevision &&
-           committedPassRevision == o.committedPassRevision && inventory == o.inventory;
+           committedPassRevision == o.committedPassRevision && inventory == o.inventory &&
+           storageGeneration == o.storageGeneration;
   }
   bool operator!=(const ImportSourceKey& o) const { return !(*this == o); }
 };
@@ -98,6 +103,7 @@ inline ImportSourceKey importSourceKeyOf(const Loop& loop) {
   key.loopId = loop.loopId;
   key.playbackRevision = loop.playbackRevision;
   key.committedPassRevision = loop.committedPassRevision();
+  key.storageGeneration = loop.canonicalStorageGeneration;
   uint32_t h = 2166136261u;
   const LoopPasses& passes = loop.passes;
   if (passes.hasRecordPass()) {
