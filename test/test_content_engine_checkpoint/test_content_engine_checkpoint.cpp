@@ -41,6 +41,7 @@ using Window = SpanWindow<3072>;
 
 static Pool gPool;
 static Runs gRuns;
+static EditIndexStore<Pool, Runs> gIndex;
 static TestComposer gRef, gRes;
 static Window gWin;
 
@@ -119,8 +120,9 @@ static bool same(const Snapshot& a, const Snapshot& b) {
 void setUp() {
   gPool.init();
   gRuns.init();
-  gRef.init(gPool, gRuns);
-  gRes.init(gPool, gRuns);
+  gIndex.init(gPool, gRuns);
+  gRef.init(gPool, gRuns, &gIndex);
+  gRes.init(gPool, gRuns, &gIndex);
 }
 void tearDown() {}
 

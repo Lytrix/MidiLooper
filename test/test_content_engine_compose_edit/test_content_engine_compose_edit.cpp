@@ -41,6 +41,7 @@ using Player = WindowPlayer<Config::kMaxSoundingPerTrack>;
 
 static Pool gPool;
 static Runs gRuns;
+static EditIndexStore<Pool, Runs> gIndex;
 static TestComposer gC;
 static SpanWindow<3072> gWin;
 static TerminalScheduler<Config::kMaxSoundingPerTrack> gSched;
@@ -63,7 +64,8 @@ struct X {
 void setUp() {
   gPool.init();
   gRuns.init();
-  gC.init(gPool, gRuns);
+  gIndex.init(gPool, gRuns);
+  gC.init(gPool, gRuns, &gIndex);
   gSched.init();
   gPlayer.init(gSched);
 }
@@ -198,13 +200,46 @@ void test_manifest_without_edit_run_plays_original() {
   expectStream(r, 1, 1, {{100, 1, 1}, {200, 0, 1}});
 }
 
-// The hide table is fixed: a source with more hides than it holds is refused by name at begin.
+// The shared index slot has a fixed capacity: a source with more hides than a slot holds is refused by name at begin.
 void test_hide_capacity_refused_at_begin() {
-  static Composer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, /*MaxHides*/ 4> small;
-  small.init(gPool, gRuns);
+  using SmallIndex = EditIndexStore<Pool, Runs, /*slots*/ 2, /*capacity*/ 4>;
+  static SmallIndex index;
+  static Composer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, SmallIndex> small;
+  index.init(gPool, gRuns);
+  small.init(gPool, gRuns, &index);
   const RunId r = makeRun(RunKind::kEdit, {1, 2, 3, 4, 5}, {});
   const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
   TEST_ASSERT_FALSE(small.begin(src, 1, kLoop, 1));
+  TEST_ASSERT_EQUAL(IndexResult::CapacityExceeded, small.indexResult());
+}
+
+// Without a shared index a source with edit runs cannot be composed (named), rather than ignoring its hides.
+void test_edit_source_without_index_is_refused() {
+  static TestComposer bare;
+  bare.init(gPool, gRuns);
+  const RunId r = makeRun(RunKind::kEdit, {1}, {});
+  const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
+  TEST_ASSERT_FALSE(bare.begin(src, 1, kLoop, 1));
+}
+
+// EDIT-1 regression (owner ratification): two successive edits of the same noteId and an unrelated earlier note on the
+// same pitch. Pass 0: A id 1 [100, 200), U id 2 [800, 900), both pitch 60. Edit 1 hides 1 and places it at
+// [850, 950) (overlapping U). Edit 2 hides 1 again and places it at [300, 400).
+// With both edits: only edit 2's replacement and U sound; U is neither hidden nor shortened (no derived occlusion from
+// edits, no hide by id); edit 1's replacement is hidden once, edit 2's replacement is not hidden by edit 1's hide.
+void test_edit1_two_successive_edits_and_unrelated_same_pitch_note() {
+  RunId r[3];
+  r[0] = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 200}, {2, 1, 60, 800, 900}});
+  r[1] = makeRun(RunKind::kEdit, {1}, {{1, 1, 60, 850, 950}});
+  r[2] = makeRun(RunKind::kEdit, {1}, {{1, 1, 60, 300, 400}});
+  expectStream(r, 3, 2,
+               {{300, 1, 1}, {400, 0, 1}, {800, 1, 2}, {900, 0, 2}, {kLoop + 300, 1, 1}, {kLoop + 400, 0, 1},
+                {kLoop + 800, 1, 2}, {kLoop + 900, 0, 2}});
+  // With edit 1 only (undo of edit 2): its replacement overlaps U and both sound in full.
+  setUp();
+  r[0] = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 200}, {2, 1, 60, 800, 900}});
+  r[1] = makeRun(RunKind::kEdit, {1}, {{1, 1, 60, 850, 950}});
+  expectStream(r, 2, 1, {{800, 1, 2}, {850, 1, 1}, {900, 0, 2}, {950, 0, 1}});
 }
 
 int main(int, char**) {
@@ -217,5 +252,7 @@ int main(int, char**) {
   RUN_TEST(test_edit_hidden_later_note_still_occludes_earlier_pass);
   RUN_TEST(test_manifest_without_edit_run_plays_original);
   RUN_TEST(test_hide_capacity_refused_at_begin);
+  RUN_TEST(test_edit_source_without_index_is_refused);
+  RUN_TEST(test_edit1_two_successive_edits_and_unrelated_same_pitch_note);
   return UNITY_END();
 }
