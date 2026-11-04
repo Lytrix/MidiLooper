@@ -1866,8 +1866,12 @@ void test_c5_3_long_take_first_traversal_plays_every_committed_note() {
     if (cur.coverage.startPhase != rootCov.startPhase || cur.coverage.lengthTicks != rootCov.lengthTicks) return;
     ++rootServingTicks;  // the adopted root window is serving
     if (rt.rolling.successorState != 0) ++successorDemandedInRoot;
+    // A tail demand is the one-bar committed window of the bar containing the playhead (review R2: any bar of it).
     const auto& pd = rt.pendingViewRequest_;
-    if (pd.active && pd.coverage.startPhase == rootCov.startPhase && pd.coverage.lengthTicks == kBar) ++tailDemands;
+    const uint32_t bar = ((tick % kLen33) / kBar) * kBar;
+    if (pd.active && pd.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot &&
+        pd.coverage.startPhase == bar && pd.coverage.lengthTicks == kBar)
+      ++tailDemands;
   });
   RollingSuccessorProbe::gKnobs = {};
   TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(MidiSendCapture::kCapacity, MidiSendCapture::count(),

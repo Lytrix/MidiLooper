@@ -9486,8 +9486,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
     // DEC-136 tail (owner ruling on 9f555003): once the committed root has taken over, the job's root-return
     // obligation is discharged. The containing-interval demand below would only occupy `pending`/`ready` (and the
-    // clear just after it would drop the rolling successor's own demand); the job's retirement runs on its own.
-    if (windowed && recordReturnRootTakeoverDischarged(slot, phase)) return PlaybackViewTurnResult::Idle;
+    // clear just after it would drop the rolling successor's own demand).
+    // Only the containing-interval demand (and the clear) is skipped: work already pending or in flight -- the rolling
+    // successor's own demand among it -- keeps its retry turn while the job is still bound (review R1).
+    if (windowed && recordReturnRootTakeoverDischarged(slot, phase)) {
+      if (runtime->coverageBuildNeedsService() || runtime->ownsCoverageSource() || runtime->retainedGatherActive() ||
+          (runtime->pagedActive && runtime->frozenViewRequest.active) || pendingViewRequest(slot) != nullptr) {
+        dispatch = PlaybackDispatchRefusal::Retry;
+        return stepCommittedPlaybackRetry(slot, clock);
+      }
+      return PlaybackViewTurnResult::Idle;
+    }
     const PlaybackViewPendingRequest* pending = pendingViewRequest(slot);
     if (pending != nullptr && pending->active &&
         (!(pending->source == source) || pending->coverage.startPhase != coverage.startPhase ||
