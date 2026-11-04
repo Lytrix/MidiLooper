@@ -474,3 +474,40 @@ checkpoints will make this warm-up cheaper; it is bounded by one cycle of compos
 - hide capacity refusal.
 
 Mutations caught: ignoring hides fails 6 tests; letting edit runs occlude fails the EDIT-1 test.
+
+## E3 slice 5 — restart checkpoints (as built)
+
+**Capture:** `Composer::capture(Checkpoint&)` stores the carry state at a window boundary:
+- up to 64 nonzero (pitch, pass) source counters;
+- up to 16 admitted notes;
+- stamps for identity, loop length, position and cycle.
+
+The run cursors are not stored.
+
+**Resume:** `Composer::resume(source, …, Checkpoint)` checks the stamps, runs `begin` (hide table, edit flags, tick-0
+table), restores the counters and admitted notes, and recomputes the three cursors per run by binary search on tick.
+A mid-loop start (undo, redo, slot switch, revision-adoption warm-up) therefore replays at most from the nearest
+earlier checkpoint instead of the loop start.
+
+**Refusal:** a checkpoint whose sounding source set exceeds 64 entries is refused by name; the caller uses an earlier
+one, or the loop start.
+
+**Tests:** `test_content_engine_checkpoint` (4):
+- 30 random multi-pass sources (held-across-the-end notes, held-loop notes, edit hides), with a checkpoint at every
+  window boundary over 3 cycles. Every resumed composition gives byte-identical windows and carry lists from that
+  point on, with zero heap.
+- An over-capacity refusal.
+- A source mismatch refused.
+- A resume landing directly on its window with the carried note.
+
+Mutations caught: counters not restored, admitted notes not restored, wrap cursor reset.
+
+**Sizes (ARM):**
+- A checkpoint is 404 B. At 8 checkpoints per slot (every 8 bars for 64 bars) that is 3,232 B per slot and 206,848 B
+  for 64 slots, against 262,144 B budgeted.
+- **Budget finding:** a composer is 43,184 B because each one holds a 4,096-entry hide table (32 KB). The plan's edit
+  index is one per manifest in the shared index page reserve, not one per compose cursor. The hide table moves there
+  when the workers own the index (E5); without it a composer is about 11 KB, matching the 12 KB per cursor budgeted.
+
+**Not yet built:** the owner of the per-slot checkpoint table (which sweep captures, and when a checkpoint is retired
+after a source change). That belongs to the worker/scheduler milestone (E5).

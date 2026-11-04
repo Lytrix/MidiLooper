@@ -58,7 +58,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E3.2c Q-LEN-1 re-strike once per loop (owner decision): writer flag, composer re-strike, player TERMINAL ordering fix; hand-specified tests.
 - [x] E3.2e Q-OVL-4 ratified as OVL-9; owner's cases, adoption, unwrapped-endpoint and look-ahead fixtures.
 - [x] E3.2d Edit hides: fixed hide table, lineage, EDIT-1 (draft) (`test_content_engine_compose_edit` 8, mutation-checked).
-- [ ] E3.2f Restart checkpoints / mid-loop cold start.
+- [x] E3.2f Restart checkpoints: capture/resume, byte-identical resumed windows (`test_content_engine_checkpoint` 4, mutation-checked).
+- [ ] E3.3 Hide table moves to the shared per-manifest edit index (budget: 43 KB composer → ~11 KB); checkpoint table owner (E5).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output
