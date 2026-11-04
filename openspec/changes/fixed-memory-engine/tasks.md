@@ -53,7 +53,8 @@ revision 3 is the baseline; no whole-plan revisions.
   - Scenarios: 384 source notes / 16 sent across windows with cross-window shortening; live held note closed live
     then its recorded end next cycle; revision switch.
   - Mutation: disabling shortening fails 2 cases.
-- [ ] E3.2 Wrap-held notes, owed-commit multi-cycle runs, edit hides (index), checkpoints / cold start.
+- [x] E3.2a Wrap-held notes over multiple cycles (`test_content_engine_compose_wrap` 6, mutation-checked); look-ahead defect fixed.
+- [ ] E3.2b Owed-commit multi-cycle runs, edit hides (index), checkpoints / mid-loop cold start.
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output

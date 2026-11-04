@@ -280,3 +280,38 @@ off pending). Each port sends, cancels and terminates it independently (`test_br
 | `test_noteon_not_started_by_its_end_is_cancelled_exactly_at_deadline` | a start equal to the end expires; end + 1 starts; nothing owed for the expired note; an off-by-one mutation fails this test |
 | `test_noteoff_during_noteon_transmission_is_kept` | NoteOff during the NoteOn's transmission is kept and sent after it |
 | `test_expiry_is_per_destination` | expires on DIN, plays and ends on USB |
+
+## E3 slice 2 — notes held across the loop end (as built)
+
+**Row timeline:**
+- A held note's NoteOff goes into the closing run at `loop + position`, so each run's rows stay tick-monotonic.
+- The composer reads every run as two streams: the main stream (ticks < loop) and the wrap stream (ticks ≥ loop,
+  played at `tick − loop` in the next cycle).
+- `nextCycle()` continues with all carried state.
+- Windows carry `cycleBase`, and the player works in timeline ticks.
+
+**Cold start:** `begin` counts wrap-held source notes as sounding at tick 0, so occlusion at the loop start is exact
+from the first cycle. It admits none of them: they were never sent, so their ends are ignored (DEC-148).
+
+**Rules added or corrected:**
+- **Q-OVL-3 (ratified):** a later pass starting on the pitch at tick 0 hides a wrap-held earlier note entirely. This
+  is decided at its NoteOn, by checking the run's wrap section for its NoteOff (bounded by the notes held at the wrap).
+- **Defect fixed (found while writing these tests):** the OVL-2 / OVL-6 look-ahead hid an earlier note whenever a
+  later pass started on its pitch within 8 ticks, even if it had already ended. Hiding now requires the earlier note
+  to still sound at that later start (its NoteOff after it), including across the loop end.
+- **Reference model:** OVL-6 is now wrap-aware. A wrap-held remnant's length runs across the loop end; the clause does
+  not exclude wrap-held notes. Recorded so the owner can confirm this is the intended reading.
+
+**Evidence:** `test_content_engine_compose_wrap` (6) compares 3 cycles from a cold start against the reference:
+- wrap-held note;
+- head shorten;
+- tick-0 hide;
+- a later wrap-held note hiding earlier notes in its head;
+- min-length only while sounding (in-cycle and across the wrap);
+- 40 random multi-pass trials.
+
+Four targeted mutations each fail their test: no cold pre-pass, no tick-0 hide, hide regardless of sounding, and the
+wrap stream ignored.
+
+**Still not in the composer:** owed-commit runs spanning more than one cycle; edit hides; checkpoints for mid-loop
+starts.
