@@ -12,7 +12,7 @@ whole-plan revisions (owner, 2026-11-04).
 | CE-A1 | Writer reservations track **outstanding unwritten obligations**, not a standing 160-row block: a NoteOn reserves its own NoteOff from free capacity before it is written; a NoteOff consumes its reservation; capacity is replenished only by being free. Reservation is converted to **pages per run** (data pages + directory pages to append the run's outstanding rows to its current page); the pool invariant is `free pages ≥ Σ_runs pagesNeeded(run, outstanding rows)` plus the fixed reserves. | **Settled (host)** | `test_content_engine_core`: long sequential take, 128 open, closing runs, Stop, exhaustion, random fuzz |
 | CE-A2 | New input is refused only at the first row of a new note or message; an outstanding NoteOff can never fail. | **Settled (host)** | same |
 | CE-B1 | Span windows (START + carry / TERMINAL entries) with a fixed terminal set of **T = 16** sounding output instances per track (OUT-POLY, owner-ratified end-state constant). `entries(W) ≤ startRows(W) + 16 = 2,816 + 16 = 2,832 ≤ 3,072` (`static_assert` in `EngineConfig.h`; tight in `test_span_window_bound_is_tight`). The 3,072-entry buffer is kept pending E3 qualification. | **Bound settled with OUT-POLY**; the E3 composer and its carry list are not built yet | `test_engine_window_bound` (8), `test_content_engine_terminals` (12) |
-| CE-C1 | Physical output: one bounded FIFO per port (`OutputPort<C>`) with **protected NoteOff capacity**. A NoteOn is admitted only if `queued + reserved + 2 ≤ C` and then reserves its NoteOff slot; a NoteOff is queued only against that reservation (never refused, never sent for an unadmitted note); other messages need one unreserved slot or are suppressed by name; strict FIFO (a NoteOff never overtakes its NoteOn); residence ≤ C × message time, measured. **NoteOn guarantee (owner ruling 2026-11-04):** non-note messages may hold at most `OtherShare` = C/4 queued slots, so note traffic keeps ≥ 75 % of the queue under saturation. | **Settled (host)** for one port per track | `test_content_engine_output` (3) |
+| CE-C1 | Physical output port, one per destination (DIN, USB device, USB host; independent policies, fixed memory). NoteOffs need **no FIFO slot**: they are owed by the port's sounding table (≤ 8 tracks × 16 = 128) and sent with priority once due, never before their own NoteOn; a NoteOff whose NoteOn is still queued cancels both. Essential state (Bank Select, Program Change, sustain-family, channel mode) and RPN/NRPN go through the **ordered** queue with notes and are never dropped by the automation policy (state coalesces only where no NoteOn of its channel depends on the earlier value; overflow waits in a per-(channel, state) table, NoteOns held back meanwhile). Continuous automation **coalesces** per channel/controller to its latest value, unchanged values are not re-sent. Transmit scheduling: due NoteOffs → ordered queue, with continuous guaranteed 1 slot in 4 while both are pending (shares of actual transmissions). Lateness measured per class. | **Partly settled (host).** Bandwidth policy beyond this is not final: the 16/64 occupancy cap of `e85fe039` is replaced, not adopted | `test_content_engine_output` (8) |
 | CE-D1 | Scheduling: measured grain costs; input-drain responsiveness separate from window deadlines. | Open (needs device measurements) | — |
 | CE-E0 | **Sounding-instance identity is (noteId, run)**, not noteId alone, and not a window-level stamp. An edit run's replacement row keeps the hidden note's id, so across a revision switch an old instance and the replacement share the id. `runKey` = run descriptor (10 bits) + pass order (6 bits) keeps the instance at 12 B. | **Settled (host)** | `test_instance_identity_includes_run` |
 | CE-E1 | Display tiles hold **identity stamps only, no pins**. Tile content is self-contained. Only an in-progress sweep cursor pins its manifest, and it is counted as one of the 18 compose cursors. ManifestTable worst case: 64 + 99 + 32 + 24 + 24 + 18 + 3 = **264 ≤ 288**. | **Settled (design)** | — |
@@ -171,17 +171,36 @@ Fixed scratch: 128 × 64 source counters, 16 admitted, one cursor per run. Zero 
   instance is cut early at the switch, never left hanging.
 - The composer never consults port admission.
 
-## CE-C1 — NoteOn guarantee (owner ruling 2026-11-04: "Guarantee NoteOns")
+## CE-C1 — output port (owner review of e85fe039, 2026-11-04)
 
-Before the ruling, plain FIFO let CCs take the queue under DIN saturation: 8,813 CCs went out against 830 NoteOns.
+The 16/64 non-note occupancy cap of `e85fe039` was an admission constraint, not a transmitted-bandwidth share (72 %
+measured against a "75 %" cap). It is replaced. Its regression scenario is kept as
+`test_sustained_din_saturation_regression`.
 
-Now non-note messages are capped at `OtherShare` = C/4 = 16 of 64 queued slots and are suppressed by name beyond
-that. Same 10 s saturation:
-
-| | Before | After |
+| Owner requirement | Implementation | Test |
 |---|---|---|
-| NoteOns sent | 830 | 3,759 |
-| NoteOffs sent | 830 | 3,759 (none for a suppressed note) |
-| CCs sent | 8,813 | 2,955 |
-| Note share of throughput | — | 72 % (guaranteed share 75 %) |
-| Longest queue wait | — | 57.5 ms (bound 61.4 ms) |
+| Essential state not suppressed by the automation quota | ordered queue + per-(channel, state) overflow table; coalesce only without a dependent NoteOn between | `test_sustain_release_survives_saturation`, `test_bank_program_noteon_order_under_saturation` |
+| Coalesce continuous CC; dedupe; final value reached | per (channel, controller / bend / pressure / poly AT) latest-pending table + dirty FIFO | `test_saturated_cc_sweep_reaches_final_value` |
+| Priority-aware, causal scheduling | due NoteOffs → ordered (state before dependent NoteOns, FIFO) → continuous 1-in-4 share | `test_bank_program_noteon_order_under_saturation`, regression |
+| Distinguish occupancy, dequeue share, transmission | shares counted on transmissions (`sent[class]`) | regression |
+| NoteOn and NoteOff lateness separately | `maxNoteOnLateMicros`, `maxNoteOffLateMicros`, sums | regression |
+| 8 × 16 held notes on one DIN port without consuming the FIFO | sounding table; the ordered queue is empty while 128 notes are held | `test_128_held_notes_share_one_port_without_holding_fifo` |
+| Note burst behind full automation | 32 NoteOns out in ≤ 44 slots although ~1.3 s of automation is pending | `test_note_burst_behind_full_automation` |
+| Independent ports | one object per port with its own message time | `test_ports_are_independent` |
+
+**Same 10 s DIN saturation (3 notes/tick, 2 CC/tick):**
+
+| | `e85fe039` | Now |
+|---|---|---|
+| NoteOns sent (each with one NoteOff) | 3,759 | 4,323 |
+| Continuous automation | 2,955 sent | 1,442 sent (14.3 % of transmissions); 17,758 values coalesced |
+| Notes cancelled unsent (NoteOff due before the NoteOn could start) | — | 3,357 |
+| Longest wait | 57.5 ms (queue) | NoteOn 19.5 ms (mean 12.4 ms); NoteOff 9.3 ms (mean 2.9 ms) |
+
+**Still not final:**
+- the 1-in-4 continuous share and the ordered note space (48 of 64) are declared values;
+- RPN/NRPN beyond 64 overflow messages are counted as dropped (`parameterDropped`);
+- the USB message time is an estimate until measured on the device.
+
+**Memory:** `OutputPort<>` is a fixed 29,560 B per port, 88,680 B for three ports. It is placed in PSRAM (it comes out
+of the non-content allowance) unless the device timing gate needs RAM2.

@@ -54,12 +54,14 @@ revision 3 is the baseline; no whole-plan revisions.
     then its recorded end next cycle; revision switch.
   - Mutation: disabling shortening fails 2 cases.
 - [ ] E3.2 Wrap-held notes, owed-commit multi-cycle runs, edit hides (index), checkpoints / cold start.
-- [ ] E3.3 Composer NoteOff matching by (noteId, run): add a same-id-across-runs case (mutation not yet caught).
+- [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output
 
 - [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).
-- [x] C.2 NoteOn guarantee: non-note share capped at C/4 (owner ruling).
+- [x] C.2 (superseded) occupancy cap C/4 from e85fe039 — replaced by C.4.
+- [x] C.4 Port rework: sounding-table NoteOffs, ordered essential/parameter queue, continuous coalescing, priority scheduler, per-class lateness (`test_content_engine_output` 8).
+- [ ] C.5 Device-measured USB message time; final continuous share and note space; RPN overflow policy.
 - [ ] C.3 Multi-port routing per track.
 
 ## Blocked (by ruling)
