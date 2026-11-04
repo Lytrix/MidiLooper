@@ -34,7 +34,7 @@ Persistent record of **accepted architectural and implementation decisions**. No
 | [DEC-139](#dec-139--the-matched-one-bar-recordpublished-retirement-is-sound-in-isolation-the-device-stall-needs-state-this-shape-does-not-carry) | 2026-10-17 | The matched one-bar `RecordPublished` retirement is sound in isolation: the device stall needs state this shape does not carry | Accepted as a diagnostic exclusion — reproducer green and red-proved; no firmware change, device cause still unknown |
 | [DEC-138](#dec-138--the-non-truncating-stop-terminal-is-the-preserved-reader-and-the-recipe-covers-each-stop-class-from-its-own-leg) | 2026-10-17 | The non-truncating Stop terminal is the preserved reader (the equality form was unsatisfiable on hardware), and the recipe's coverage is leg-attributed with a matched leg | Accepted — host tooling implemented, red-proved and sweep-baselined; the matched leg's device run is owed |
 | [DEC-137](#dec-137--the-held-leg-stop-oracle-is-dec-136-aware-the-frozen-serving-phase-the-root-return-and-the-release-edge) | 2026-10-17 | The held-leg Stop oracle is DEC-136 aware: the frozen serving phase, the root return, the release edge, and the stranding signature kept as its discriminator | Accepted — host tooling implemented, red-proved and sweep-baselined; device evidence unchanged |
-| [DEC-136](#dec-136--private-committed-root-preparation-before-capture-ready-adoption) | 2026-10-16 | Private committed-root preparation before Capture-ready adoption: a position-free route for the one demand the ordinary envelope can never admit | Accepted implementation decision; native gate open, device gate open |
+| [DEC-136](#dec-136--private-committed-root-preparation-before-capture-ready-adoption) | 2026-10-16 | Private committed-root preparation before Capture-ready adoption: a position-free route for the one demand the ordinary envelope can never admit | Accepted implementation decision; item 4 (speculative root beside the frozen reader, frozen priority) accepted and device-qualified on the probe image 2026-11-04; R3 open |
 | [DEC-117](#dec-117--the-s75a-continuity-envelope-declared-limits-the-three-level-input-criterion-and-the-declared-active-set) | 2026-10-11 | S7.5a continuity envelope: signed limits, the p99-per-five-second-window input criterion, and the declared active set | Accepted — owner-signed criterion; no qualifying run, S7.5a unchecked |
 | [DEC-116](#dec-116--one-rolling-playback-path-per-sounding-slot) | 2026-10-07 | One rolling playback path per sounding slot; source-specific inputs, one window owner/reader | Accepted design target — supersedes DEC-108 item 2 / D6 representation split; implementation and device gates open |
 | [DEC-096](#dec-096--slot-gestures-during-pending-overdub-finalization-select-instead-of-undo-or-clear) | 2026-09-30 | During pending overdub finalization, a slot gesture selects/queues a populated target or arms an empty one; it never clears or undoes | Accepted; host/native/build verified; device attempts SETUP_INCOMPLETE; S4f.22 open |
@@ -7540,6 +7540,41 @@ row** (the same take) and stays audible, while a copy left at the older token ho
 identity refuses it, and the sealed extent still serves the same take. The classification therefore never
 names a foreign take; no production change follows. Red-proved by removing the append-time
 `advanceCaptureContentGeneration()` in `LoopCapture.cpp`, restored byte-identically.
+
+**Item 4 (2026-11-04, owner rulings "DEC-136 item 4", "DEC-136.4b geometry" and "DEC-136.4b closeout"): speculative
+root-return preparation beside the frozen reader, with frozen priority.** Ratified contract, routed slot only:
+
+- **Admission.** While the bound Record-return job's own frozen views hold `current` (serving the playhead) and
+  `ready` (the next boundary) under their full qualified frozen identity, and the third view is free (distinct from
+  every role, unpublished, no complete retained view), the committed root is owed at the boundary after the frozen
+  ready. It is admitted through the existing `PrivateRootReturnPreparation` path: no DEC-147 lead test, no admitted
+  deadline, sibling promises still checked. A refused attempt restores its request exactly.
+- **Geometry.** The target is the rolling grid's own window at that boundary (`rollingGridWindowLengthAt`): normally
+  two bars, the terminal bar alone, and no target where a default-partition window would cross the grid. An off-grid
+  boundary waits; it never falls back to a one-bar demand. This supersedes item 1's one-bar shape for speculative
+  candidates only. The span-shaped root stays owed after the frozen ready is adopted.
+- **Parking and publication.** The root parks complete and unpublished in `build` without overwriting the frozen ready,
+  is published once `ready` frees and only for the frozen reader's next unconsumed boundary, and is never re-requested
+  while parked.
+- **Takeover.** At that boundary the clock edge adopts it and re-keys the frame in O(1) (the adopted start, the
+  boundary's absolute deadline, the routed partition bit), so the committed resolver accepts it unchanged. The
+  main-loop requester does not cancel the frozen frame on the exact boundary tick a prepared ready starts on.
+- **Frozen priority.** With no retained role holding a view, the frozen reader's next bar outranks incomplete root
+  work: work that holds the builder (a qualification, a build, its frozen request) yields, and its demand is retired by
+  name (`frozen_priority_yield`), never coalesced. A pending demand alone does not yield. The holder selector offers the
+  owed frozen bar first. A frozen build that is still the frozen reader's next window is never retired as
+  `SourceSuperseded`. A deadline-free frame bound to a view the active job authorizes expires when served out rather
+  than being labelled `ServingViewSourceStale`.
+- **Unchanged.** DEC-147 pricing, DEC-159, DEC-247/248, DEC-249, the three views, the single builder and publication;
+  no `RollingFrame` field, queue, buffer, timeout or Clock work.
+- **Verification.** Native 4,008 / 0 failed; ITCM byte-identical on both images. Device (succprobe `1149748f…`,
+  `session_20261104_104642`): no post-stop silence on the Record-only gesture (pre-slice A/B: 62-97 s silent); the root
+  takes over at the boundary after the frozen ready and its MIDI equals the committed traversal.
+- **Open, not covered by this item.** R3: a root whose work exceeds one frozen bar is yielded at every handoff and
+  never takes over, so the Record-return transaction does not converge (host-reachable; owner decision pending). The
+  routed manifest's currency collision after a slot clear (closeout evidence). C5.3b production successors. The
+  default image is not device-qualified for this item.
+- Commits `ea05fb82`, `bfd9d94f`, `b0d63d25`, `01e9e9eb`. [Evidence](../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
 
 ### Related OpenSpec and migration
 `windowed-playback-generation` (3.15b–c — root-current handoff); [I5 — falsification and the proven

@@ -8,6 +8,8 @@
 // Only this suite's own cases are registered; the included suite's cases are dead-stripped from the run.
 #include "manifest_lane_harness.h"
 #include <map>
+#include <set>
+#include <tuple>
 #include "RollingSuccessorProbe.h"
 #include <cstdlib>
 
@@ -1531,6 +1533,260 @@ void test_c5_3_record_return_a_re_raised_pending_demand_never_starves_the_frozen
   }
 }
 
+/// DEC-136.4b closeout, content parity (read-only provenance). The Record-into-PLAYING gesture with the device take's
+/// geometry: `bars` bars, a 16th-note stream from tick `first` (pitch 36 + step mod 36, 24-tick gates), stopped at the
+/// loop end, then `traversals` traversals of playback. Every emitted NoteOn is keyed by its own stored identity
+/// (event tick, pitch) and by the origin of the view serving it; the committed passes are the reference.
+struct ContentProvenance {
+  std::set<std::pair<uint32_t, uint8_t>> committed;                    // committed passes' NoteOns
+  std::map<uint32_t, std::vector<std::tuple<uint32_t, uint32_t, uint8_t, int>>> perTraversal;  // phase, evtTick, pitch, origin
+};
+
+ContentProvenance recordContentProvenance(Track& t, uint32_t bars, uint32_t first, uint32_t traversals,
+                                          bool prepare = true, const std::function<void(uint32_t)>& perTick = {},
+                                          uint32_t stepTicks = 48) {
+  const uint32_t length = bars * kBar;
+  if (prepare) prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  start(t, 0, false, 0, 60);
+  PlaybackObservation obs;
+  play(t, 1, length, obs, 1, [&](uint32_t tick) {
+    if (tick < first) return;
+    const uint32_t k = (tick - first) / stepTicks, in = (tick - first) % stepTicks;
+    const uint8_t pitch = static_cast<uint8_t>(36 + k % 36);
+    if (in == 0) t.noteOn(1, pitch, 98, tick);
+    if (in == stepTicks / 2) t.noteOff(1, pitch, 0, tick);
+  });
+  clockManager.assignCurrentTickSilently(length);
+  nativePlaybackDeadlineClock = {length, 1};
+  t.stopRecording(length);
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  std::map<uint32_t, int> originAt;
+  const size_t sentBefore = obs.sent.size();
+  play(t, length, (1 + traversals) * length, obs, 1, [&](uint32_t tick) {
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) TrackCaptureStopTestAccess::step(t);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set != nullptr && set->lifecycle.current < set->views.size() && set->views[set->lifecycle.current].published)
+      originAt[tick] = static_cast<int>(set->views[set->lifecycle.current].source.origin);
+    if (perTick) perTick(tick);
+  });
+  ContentProvenance out;
+  MidiEventVec merged;
+  t.getLoop(0).mergeActiveCapturePasses(merged);
+  for (const auto& e : merged)
+    if (e.isNoteOn()) out.committed.insert({e.tick, e.data.noteData.note});
+  for (size_t i = sentBefore; i < obs.sent.size(); ++i) {
+    const auto& [tick, e] = obs.sent[i];
+    if (!e.isNoteOn() || tick < length) continue;
+    const auto it = originAt.find(tick);
+    out.perTraversal[tick / length].emplace_back(tick % length, e.tick, e.data.noteData.note,
+                                                 it == originAt.end() ? -1 : it->second);
+  }
+  return out;
+}
+
+void test_c5_3_content_parity_provenance_report() {
+  const uint32_t shapes[][2] = {{4, 0}, {4, 192}, {33, 0}, {33, 192}};
+  for (const auto& shape : shapes) {
+    tearDown();  // each shape on a fresh suite state: a fresh reader, store and track
+    setUp();
+    installReader();
+    enableProbeImageSuccessors();
+    Track& t = trackManager.getTrack(0);
+    const ContentProvenance p = recordContentProvenance(t, shape[0], shape[1], 3);
+    printf("PARITY bars=%u first=%u committed=%zu", shape[0], shape[1], p.committed.size());
+    for (const auto& [pass, rows] : p.perTraversal) {
+      uint32_t mismatched = 0, capture = 0, committedOrigin = 0;
+      const std::tuple<uint32_t, uint32_t, uint8_t, int>* firstBad = nullptr;
+      for (const auto& r : rows) {
+        const int origin = std::get<3>(r);
+        if (origin == static_cast<int>(PlaybackWindowOrigin::Capture)) ++capture;
+        if (origin == static_cast<int>(PlaybackWindowOrigin::Committed)) ++committedOrigin;
+        if (!p.committed.count({std::get<1>(r), std::get<2>(r)})) { ++mismatched; if (!firstBad) firstBad = &r; }
+      }
+      printf(" | pass %u: %zu ons (capture %u, committed %u), %u not in committed", pass, rows.size(), capture,
+             committedOrigin, mismatched);
+      if (firstBad)
+        printf(" first: phase=%u evt=%u pitch=%u origin=%d", std::get<0>(*firstBad), std::get<1>(*firstBad),
+               std::get<2>(*firstBad), std::get<3>(*firstBad));
+    }
+    printf("\n");
+    { // The manifest window read directly: [2304, 3072) of the servable revision, row by row.
+      using namespace CommittedManifestLane;
+      CommittedManifestLane::State refusal = CommittedManifestLane::State::Ready;
+      const uint32_t from = 2304, len = 768;
+      CommittedWindowRowSource* src = gReader != nullptr && gWindowOwner == nullptr
+          ? gReader->beginWindow(gServable.identity, gServable.revision, from, len, shape[0] * kBar, refusal) : nullptr;
+      printf("PARITY manifest[%u+%u] servable=%u:", from, len, gServable.identity);
+      uint32_t rows = 0, bad = 0;
+      if (src != nullptr) {
+        for (unsigned guard = 0; guard < 100000; ++guard) {
+          LoopSnapshotEvent ev{};
+          const auto r = src->step(ev);
+          if (r == CommittedWindowRowSource::ReadResult::Complete || r == CommittedWindowRowSource::ReadResult::Inactive) break;
+          if (r != CommittedWindowRowSource::ReadResult::Event || !ev.value.isNoteOn()) continue;
+          ++rows;
+          const bool ok = p.committed.count({ev.value.tick, ev.value.data.noteData.note}) != 0;
+          if (!ok) ++bad;
+          if (rows <= 6) printf(" %u/%u%s", ev.value.tick, ev.value.data.noteData.note, ok ? "" : "!");
+        }
+        gReader->endWindow();
+      }
+      printf(" | rows=%u bad=%u\n", rows, bad);
+    }
+    if (shape[0] == 4 && shape[1] == 192) {
+      printf("PARITY committed near 2304:");
+      for (const auto& [k, n] : p.committed) if (k >= 2200 && k < 2500) printf(" %u/%u", k, n);
+      printf("\nPARITY committed first:");
+      int c = 0; for (const auto& [k, n] : p.committed) { if (c++ > 5) break; printf(" %u/%u", k, n); }
+      printf("\nPARITY pass1 near 2304:");
+      for (const auto& r : p.perTraversal.at(1))
+        if (std::get<0>(r) >= 2200 && std::get<0>(r) < 2500) printf(" ph%u:%u/%u o%d", std::get<0>(r), std::get<1>(r), std::get<2>(r), std::get<3>(r));
+      printf("\n");
+    }
+  }
+  RollingSuccessorProbe::gKnobs = {};
+}
+
+/// The manifest window [from, from+len) of the reader's servable revision, as (tick, pitch) NoteOns.
+std::set<std::pair<uint32_t, uint8_t>> manifestWindowNoteOns(uint32_t from, uint32_t len, uint32_t loopLength) {
+  using namespace CommittedManifestLane;
+  std::set<std::pair<uint32_t, uint8_t>> rows;
+  State refusal = State::Ready;
+  CommittedWindowRowSource* src = gReader != nullptr && gWindowOwner == nullptr
+      ? gReader->beginWindow(gServable.identity, gServable.revision, from, len, loopLength, refusal) : nullptr;
+  if (src == nullptr) return rows;
+  for (unsigned guard = 0; guard < 100000; ++guard) {
+    LoopSnapshotEvent ev{};
+    const auto r = src->step(ev);
+    if (r == CommittedWindowRowSource::ReadResult::Complete || r == CommittedWindowRowSource::ReadResult::Inactive) break;
+    if (r == CommittedWindowRowSource::ReadResult::Event && ev.value.isNoteOn())
+      rows.insert({ev.value.tick, ev.value.data.noteData.note});
+  }
+  gReader->endWindow();
+  return rows;
+}
+
+// DEC-136.4b closeout, content parity (device: each run's committed playback is the previous run's take). A take on
+// the routed slot, then the user's clear while stopped, then a second take with different content into the same slot:
+// the committed playback and the manifest window must be the second take's, never the cleared one's.
+void test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  const ContentProvenance a = recordContentProvenance(t, 4, 0, 2);
+  const uint32_t identityA = CommittedManifestLane::gServable.identity;
+  const RevisionStore::ImportSourceKey keyA = RevisionStore::importSourceKeyOf(t.getLoop(0));
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, identityA, "take A was never servable: vacuous");
+  t.forceSetState(TRACK_STOPPED);
+  t.clear();
+  const ContentProvenance b = recordContentProvenance(t, 4, 192, 3, /*prepare=*/false);
+  RollingSuccessorProbe::gKnobs = {};
+  const RevisionStore::ImportSourceKey keyB = RevisionStore::importSourceKeyOf(t.getLoop(0));
+  printf("PARITY key A loop=%u prev=%u cpr=%u inv=%08x | B loop=%u prev=%u cpr=%u inv=%08x | equal=%d\n",
+         unsigned(keyA.loopId), keyA.playbackRevision, keyA.committedPassRevision, keyA.inventory, unsigned(keyB.loopId),
+         keyB.playbackRevision, keyB.committedPassRevision, keyB.inventory, int(keyA == keyB));
+  TEST_ASSERT_FALSE_MESSAGE(a.committed == b.committed, "the two takes are identical: vacuous");
+  // The manifest window of the servable revision is take B's content.
+  const auto window = manifestWindowNoteOns(2304, 768, 4 * kBar);
+  std::set<std::pair<uint32_t, uint8_t>> expected;
+  for (const auto& on : b.committed) if (on.first >= 2304 && on.first < 3072) expected.insert(on);
+  printf("PARITY clear: identity A=%u B=%u window=%zu expected=%zu\n", identityA,
+         CommittedManifestLane::gServable.identity, window.size(), expected.size());
+  TEST_ASSERT_TRUE_MESSAGE(window == expected, "the manifest window serves the cleared take, not the new one");
+  // Every committed-origin NoteOn after the takeover is one of take B's events.
+  uint32_t committedOns = 0, foreign = 0;
+  for (const auto& [pass, rows] : b.perTraversal)
+    for (const auto& r : rows)
+      if (pass >= 2) {
+        ++committedOns;
+        if (!b.committed.count({std::get<1>(r), std::get<2>(r)})) ++foreign;
+      }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, committedOns, "nothing played after the takeover: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "committed playback emitted the cleared take's events");
+}
+
+// The same gesture on the snapshot path (no manifest reader installed: the default image's committed lane). Its
+// currency is the published snapshot's own identity, which the clear replaces, so the second take plays.
+void test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_take() {
+  Track& t = trackManager.getTrack(0);
+  const ContentProvenance a = recordContentProvenance(t, 4, 0, 2);
+  t.forceSetState(TRACK_STOPPED);
+  t.clear();
+  const ContentProvenance b = recordContentProvenance(t, 4, 192, 3, /*prepare=*/false);
+  TEST_ASSERT_FALSE_MESSAGE(a.committed == b.committed, "the two takes are identical: vacuous");
+  uint32_t ons = 0, foreign = 0;
+  for (const auto& [pass, rows] : b.perTraversal)
+    for (const auto& r : rows)
+      if (pass >= 2) {
+        ++ons;
+        if (!b.committed.count({std::get<1>(r), std::get<2>(r)})) ++foreign;
+      }
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, ons, "nothing played: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, foreign, "the snapshot path played the cleared take's events");
+}
+
+// DEC-136.4b R3 (owner: measure, do not fix). The root needs more work than one speculative interval: after every
+// lane turn that serves root work (the coverage source owned), `deny` turns serve nobody -- the device's grant denial,
+// applied to the root only; frozen builds never own the coverage source and keep every turn. Per denial level: whether
+// the root ever takes over, how often its work restarts (yields), the turns it was served, the job's retirement and the
+// frozen source's retention, and the frozen reader's continuity.
+void test_c5_3_record_return_r3_root_starvation_sweep() {
+  const uint32_t denials[] = {0, 4, 16, 32, 64, 128, 256};
+  const uint32_t steps[] = {48, 12};  // 16 and 64 notes per bar
+  for (const uint32_t step : steps)
+    for (const uint32_t deny : denials) {
+      tearDown();
+      setUp();
+      installReader();
+      enableProbeImageSuccessors();
+      Track& t = trackManager.getTrack(0);
+      RootHandoffWitness h;
+      RecordReturnOwnershipWitness w;
+      uint32_t withholdLeft = 0, rootTurns = 0, yields = 0, boundTicks = 0, rangeHeldTicks = 0, ticks = 0;
+      bool rootBefore = false;
+      uint32_t rootRun = 0, longestRootRun = 0;
+      gWithholdLaneTurn = [&](uint32_t) {
+        auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+        if (!(rt.ownsCoverageSource() || rt.coverageBuildNeedsService()) || t.getLoop(0).playbackRevision == 0)
+          return false;
+        if (withholdLeft != 0) { --withholdLeft; return true; }
+        withholdLeft = deny;
+        ++rootTurns;
+        return false;
+      };
+      constexpr uint32_t kTraversals = 8;
+      const ContentProvenance p = recordContentProvenance(t, 4, 0, kTraversals, true, [&](uint32_t tick) {
+        auto& rt = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+        observeRootHandoff(rt, tick, h);
+        observeRecordReturnOwnership(t, tick, w);
+        const bool rootWork = rt.ownsCoverageSource() || rt.coverageBuildNeedsService();
+        if (rootBefore && !rootWork && t.recordReturnFrozenContinuationOwed(0, tick % kLength)) ++yields;
+        rootRun = rootWork ? rootRun + 1 : 0;
+        longestRootRun = std::max(longestRootRun, rootRun);
+        rootBefore = rootWork;
+        ++ticks;
+        if (rt.hasBoundRecordReturnWindowForPendingJob()) ++boundTicks;
+        const auto* set = rt.viewSetIfPrewarmed();
+        if (set != nullptr && set->lifecycle.current < set->views.size() &&
+            set->views[set->lifecycle.current].published &&
+            set->views[set->lifecycle.current].source.origin == PlaybackWindowOrigin::Capture)
+          ++rangeHeldTicks;  // the frozen (Capture) source still serving
+      }, step);
+      gWithholdLaneTurn = {};
+      RollingSuccessorProbe::gKnobs = {};
+      printf("R3 notes/bar=%u deny=%u takeover=%u firstRootTick=%u yields=%u rootTurns=%u jobBound=%u/%u "
+             "frozenServing=%u gap=%u frozenKilled=%u longestRootWork=%u\n", kBar / step, deny, h.rootHandoffs,
+             h.firstRootTick, yields, rootTurns, boundTicks, ticks, rangeHeldTicks, w.gapTicks, w.frozenBuildsKilled,
+             longestRootRun);
+      (void)p;
+    }
+}
+
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
 // unaffected. The third view is made a complete retained window the moment the root becomes current.
 void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on() {
@@ -1899,6 +2155,10 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
   if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
+  if (getenv("CONTENT_PARITY_REPORT") != nullptr) RUN_TEST(test_c5_3_content_parity_provenance_report);
+  if (getenv("R3_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_r3_root_starvation_sweep);
+  if (getenv("CONTENT_PARITY_RED") != nullptr) RUN_TEST(test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take);
+  RUN_TEST(test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_take);
   // DEC-136.4b root takeover geometry (green).
   RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
   RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);

@@ -748,3 +748,101 @@ the C5.3b successor requester is absent. That dependency is named, not addressed
 - Attribution needs its own investigation: the record-stop projection or alignment of the committed take, versus the
   frozen reader's `RecordCoverage` projection, versus the stimulus's own timing.
 - It bears on content parity at the frozen-to-committed handoff (DEC-159 territory).
+
+### DEC-136.4b closeout: content-provenance verdict and R3 reachability (owner ruling "DEC-136.4b closeout")
+
+#### Content parity: the first divergent representation is the routed manifest's currency, not a transformation
+
+**Device, event identity.** An emitted `MO` row's tick is the event's own stored tick. Every representation of the
+same take can therefore be compared by (tick, pitch). Device run `104642` (take recorded from 28.33 s, stopped at
+54.43 s, 33 bars):
+
+| representation | at phase ~9984 | equals |
+|---|---|---|
+| committed passes (`SEVT`, `mergeActiveCapturePasses`) | 9984 / 60 | — |
+| record dump (`REVT`) and display (`DNTE`) | 9984 / 60 | the committed passes |
+| frozen Capture playback (65.14 s) | 9984 / 60 | the committed passes |
+| committed manifest playback (91.5 s and later) | 9992 / 56 | **the previous run's take**: run `103529`'s committed passes are 9992 / 56 |
+
+The same holds for every run. Each run's committed (manifest) playback is the take of the run before it:
+- `103529` plays `102248`'s take;
+- `104642` plays `103529`'s;
+- `105623` (the pre-slice A/B image) plays `104642`'s.
+
+The "192-200-tick offset" is the difference between two independent takes of the same 16th-note stream (stream timing
+against tick 0). The four "repeated" notes are where the two takes overlap at the takeover seam.
+
+**Host RED** (`test_c5_3_content_parity_a_cleared_slot_never_serves_the_previous_take`, gated `CONTENT_PARITY_RED`):
+- Gesture: take A on the routed slot, then `track.clear()` while stopped, then take B with different content.
+- Result: the reader's servable identity stays 1, and the manifest window `[2304, 3072)` holds take A's rows. FAILS as
+  intended.
+- Cause: the two takes' import keys are identical, `ImportSourceKey{loop=0, playbackRevision=1,
+  committedPassRevision=1, inventory=5edc3195}`.
+  - The clear resets both revisions to 1, and the loop id survives.
+  - The inventory hashes only pass id, state and chunk count, so a same-sized take reproduces it.
+  - `ShadowReader::current` therefore reports the cleared take's manifest as current, and the new take is never
+    imported.
+- This is the first wrong representation. Everything upstream (raw capture, frozen source, committed passes) is
+  correct.
+
+**Not a geometry or offset transformation.** The read-only provenance report (`CONTENT_PARITY_REPORT`), on fresh state
+per shape:
+- shapes: 4 or 33 bars; the take's first note at tick 0 or 192;
+- every emitted NoteOn of every traversal is a committed-pass event;
+- the manifest window rows equal the committed passes.
+
+An earlier run of that report without per-shape `tearDown` reproduced the same stale-manifest signature. That is the
+same defect.
+
+**Default image.**
+- The default image does not share the defect: its committed lane is the snapshot path (`REVISION_MANIFEST_READER=0`),
+  whose currency is the published snapshot's own identity.
+- The same clear-and-re-record gesture on that path plays the new take
+  (`test_c5_3_content_parity_a_cleared_slot_on_the_snapshot_path_plays_the_new_take`, default gate, passes).
+- Not device-checked on the default image.
+
+**Scope.**
+- Pre-existing since the C5.3 routed reader (probe image only). Independent of DEC-136.4b.
+- The device consequence is wider than the seam: after any clear-and-re-record of the routed slot, its committed
+  playback is the previous take.
+- No suppression or offset compensation was added. The repair (the import key must distinguish a cleared-and-re-recorded
+  slot) needs its own ruling.
+
+#### R3: permanent root starvation is reachable
+
+**Fixture** (`test_c5_3_record_return_r3_root_starvation_sweep`, gated `R3_MEASURE`):
+- A dense take (16 or 64 notes per bar, 4 bars) on the Record-into-PLAYING gesture.
+- After every lane turn that serves root work (qualification or build), `deny` turns serve nobody. Frozen builds are
+  not denied.
+- 8 traversals per level.
+
+| notes/bar | deny | root takeover | yields | job bound | frozen serving | gap | longest root work |
+|---|---|---|---|---|---|---|---|
+| 16 | 0, 4, 16, 32, 64 | at tick 5377 | 1 | 9 % of the run | 9 % | 0 | 426-650 ticks |
+| 16 | 128, 256 | **never** | 24 | **100 %** | **100 %** | 0 | 771-774 ticks |
+| 64 | 0-128 | at tick 5377 | 0 | 9 % | 9 % | 0 | 5-645 ticks |
+| 64 | 256 | **never** | 23 | **100 %** | **100 %** | 0 | 772 ticks |
+
+**Verdict.**
+- Once root work needs more than about one frozen bar (768 ticks), it is yielded at every frozen handoff (three per
+  traversal on this 4-bar loop; the off-grid boundary has no target).
+- Each restart begins from nothing: the discard drops the qualification and build.
+- The job never retires, and the frozen source is held for the whole run. Playback stays continuous, so silence never
+  reveals it. The Record-return transaction does not converge.
+
+**Whether it is reached in supported workloads is not yet proven either way.**
+- On the device at 300 BPM with no overdub, root work completes well inside the bar: request to ready at most
+  304-320 ticks; parked at 64.6 s for a 65.94 s boundary.
+- The C5.3b turn-cadence measurements show the lane far slower under Overdub load: 128 turns took up to 2,304 ticks.
+  So a successor overdub during the frozen reader, or heavier sets, could cross the one-bar limit.
+- A device measurement of root work ticks under Overdub load is the open evidence.
+
+**Smallest progress-preserving or earlier-preparation option compatible with three views and one builder (proposal,
+not implemented):**
+- Yield at the frozen reader's *latest safe start*, not at the handoff. The frozen bar's cost is bounded: G_f = 3
+  grants, and device frozen bars complete with 624-704 ticks spare. So root work may keep the builder after the frozen
+  handoff until the boundary's lead equals the frozen bar's priced envelope, and only then yield.
+- This roughly doubles the root's interval (about two bars minus the frozen envelope). It needs no timeout (the yield
+  point is derived from the frozen window's own price, as DEC-147 prices a window) and no new view or builder.
+- It does not *guarantee* convergence for arbitrarily slow roots. A guarantee needs monotonic progress, meaning root
+  work survives a yield. With one builder that is the builder-state retention question, which needs a separate ruling.

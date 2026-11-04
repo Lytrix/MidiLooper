@@ -1,3 +1,16 @@
+**2026-11-04 — DEC-136.4b closeout: content-provenance verdict and R3 reachability (no production change).**
+- **Content parity.** The first divergent representation is the routed manifest's currency: after a slot clear and a
+  new take, `ImportSourceKey` is identical (`loop=0, prev=1, cpr=1, inventory` equal), so the reader serves the cleared
+  take's manifest and never imports the new one. Raw capture, frozen source, committed passes and display are correct.
+  On the device every run's committed playback is the previous run's take (also on the pre-slice A/B image). Host RED
+  gated `CONTENT_PARITY_RED`; the snapshot path (default image) is unaffected (default-gate guard).
+- **R3.** Reachable on the host: with root work over about one frozen bar, 23-24 yields, no takeover in 8 traversals,
+  job bound and frozen source held for the whole run. Device workloads without overdub finish in ~300 ticks; under
+  Overdub-load lane cadence it is unproven. Proposal: yield at the frozen bar's latest safe start (priced), not at the
+  handoff; a convergence guarantee needs root progress to survive a yield (separate ruling).
+- DEC-136 item 4 entry added to the decision log. Native full 4,009 / 0 failed.
+- [Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-04 — DEC-136.4b: Record-return root takeover is gapless on the device.**
 - **Geometry (`bfd9d94f`).** The speculative root is the rolling grid's own window (`rollingGridWindowLengthAt`: two
   bars normally, the terminal bar alone, an off-grid default-partition start has none). The clock edge re-keys the

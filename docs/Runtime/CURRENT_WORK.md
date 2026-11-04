@@ -1,5 +1,13 @@
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
+**2026-11-04 — DEC-136.4b closeout: content provenance and R3.** The "192-200-tick offset" is not a transformation:
+after a clear-and-re-record of the routed slot, the manifest reader keeps serving the previous take, because the two
+takes' `ImportSourceKey`s collide (revisions reset to 1, loop id kept, inventory = pass id/state/chunk count). Host RED
+gated `CONTENT_PARITY_RED`; the snapshot path (default image) plays the new take. R3 is host-reachable: root work
+longer than one frozen bar is yielded at every handoff and never takes over (job bound and frozen source held 100 %).
+Both await owner rulings; no production change. DEC-136 item 4 is in the decision log.
+[Evidence](../../openspec/changes/revision-manifest-prototype/evidence/2026-11-03-audibility-and-publication-liveness.md)
+
 **2026-11-04 — DEC-136.4b landed and device-qualified (`bfd9d94f` geometry, `b0d63d25` frozen priority,
 `01e9e9eb` device-driven fix).** On the Record-only gesture (succprobe `1149748f…`) the routed slot has no post-stop
 silence (previously 33-35 s, still so on the `972e955a` A/B). The root takes over at the boundary after the frozen
