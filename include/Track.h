@@ -441,6 +441,15 @@ public:
   bool recordReturnSpeculativeRootTarget(uint8_t slotIndex, uint32_t phase, PlaybackCoverageInterval& target) const;
   bool recordReturnSpeculativeRootAdmissible(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
                                              PlaybackDeadlineClock clock) const;
+  /// DEC-136.4b: the holder selector's Record-return priority offer -- the frozen reader's owed next bar, else the
+  /// speculative root while its target holds. True when it answered for `slot` (the offer is in `holder`).
+  bool offerRecordReturnPriorityHolder(uint8_t slot, uint32_t phase, MidiServiceDrain::PlaybackHolder& holder) const;
+  /// DEC-136.4b: `view` is the active Record-return job's own qualified frozen (Capture) window -- the job is bound and
+  /// retiring, and the view carries its full frozen identity.
+  bool recordReturnJobAuthorizesFrozenView(uint8_t slotIndex, const RuntimePlaybackView& view) const;
+  /// DEC-136.4b frozen priority: on the routed slot the job's own frozen view serves the playhead, `ready` is free and no
+  /// root for the next boundary is parked complete -- so that boundary is the frozen reader's to prepare, now.
+  bool recordReturnFrozenContinuationOwed(uint8_t slotIndex, uint32_t phase) const;
   /// DEC-136.4b: after the frozen ready is adopted, the span-shaped root prepared for the next boundary stays owed.
   bool recordReturnSpeculativeRootOwedAfterHandoff(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
                                                    PlaybackDeadlineClock clock) const;
@@ -714,6 +723,8 @@ public:
     /// **DEC-202** -- a completion that arrived outside its own window was retired instead of held: the promise could
     /// not be judged at this boundary, so its role was released for the next demand rather than locked forever.
     CompletionUnjudgeable,
+    /// DEC-136.4b: incomplete speculative root work yielded the builder to the frozen Record-return reader's next bar.
+    FrozenPriorityYield,
   };
   /// The builder's state before a release site runs, packed for one row: bit0 active, bits1-3 `nextGrain()`,
   /// bit4 coverage-owned, bit5 the build role is the completed destination, bit6 live-capture borrow,

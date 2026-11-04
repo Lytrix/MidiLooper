@@ -5030,10 +5030,17 @@ TRACK_COLD_MEM uint16_t Track::playbackViewOutstandingGrains(uint8_t excludingSl
   return total > UINT16_MAX ? UINT16_MAX : static_cast<uint16_t>(total);
 }
 
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native seam (DEC-136.4b F1): a fixture makes the sibling-promise term refuse, as an admitted sibling would.
+inline bool gNativeSiblingPromiseRefusesForTest = false;
+#endif
 TRACK_COLD_MEM bool Track::playbackViewAdmissionKeepsAdmittedDeadlines(
     const CoverageServiceContract& contract, uint32_t currentPhase, uint32_t loopLengthTicks,
     uint16_t candidateGrains, PlaybackDeadlineClock clock) const {
   if (clock.epoch == 0 || loopLengthTicks == 0 || currentPhase >= loopLengthTicks) return false;
+#if defined(PIO_UNIT_TEST_NATIVE)
+  if (gNativeSiblingPromiseRefusesForTest) return false;
+#endif
   for (uint8_t slot = 0; slot < Config::MAX_LOOPS_PER_TRACK; ++slot) {
     const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
     const PlaybackViewAdmittedWork* work = runtime != nullptr ? runtime->activeViewBuildWork() : nullptr;
@@ -5206,6 +5213,102 @@ TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootAdmissible(uint8_t slotInd
   return recordReturnSpeculativeRootTarget(slotIndex, phase, target) && target.lengthTicks != 0 &&
          request.coverage.startPhase == target.startPhase && request.coverage.lengthTicks == target.lengthTicks &&
          request.coverage.loopLengthTicks == target.loopLengthTicks;
+}
+
+TRACK_COLD_MEM bool Track::offerRecordReturnPriorityHolder(uint8_t slot, uint32_t phase,
+                                                           MidiServiceDrain::PlaybackHolder& holder) const {
+  // Frozen priority: the frozen reader's next boundary is owed to it, with that boundary's lead. A frozen bar built
+  // after the root became current carries the root's revision and generation, so the holder selector's root-served
+  // terms would otherwise read it as the root and offer no grain.
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slot);
+  const RuntimePlaybackViewSet* set = runtime != nullptr ? runtime->viewSetIfPrewarmed() : nullptr;
+  if (set == nullptr) return false;
+  const uint32_t length = loopForSlot(slot).loopLengthTicks;
+  if (recordReturnFrozenContinuationOwed(slot, phase)) {
+    const RuntimePlaybackView& served = set->views[set->lifecycle.current];
+    const uint32_t end = served.coverage.startPhase + served.coverage.lengthTicks;
+    holder.eligible = true;
+    holder.canProgress = true;
+    holder.hasDeadline = true;
+    holder.handoffLeadTicks = end > phase ? end - phase : 0;
+    return true;
+  }
+  // Likewise the speculative root, while its target holds and it is not already parked complete; the lead is its own
+  // takeover boundary's. An off-grid wait offers nothing.
+  PlaybackCoverageInterval target{};
+  if (!recordReturnSpeculativeRootTarget(slot, phase, target)) return false;
+  const RuntimePlaybackView& third = set->views[set->lifecycle.build];
+  const bool parked = third.complete && !third.published && third.source.origin == PlaybackWindowOrigin::Committed &&
+      third.coverage.startPhase == target.startPhase;
+  holder.eligible = target.lengthTicks != 0 && !parked;
+  holder.canProgress = holder.eligible;
+  holder.hasDeadline = holder.eligible;
+  holder.handoffLeadTicks = holder.eligible
+      ? (target.startPhase > phase ? target.startPhase - phase : length - phase + target.startPhase)
+      : 0;
+  return true;
+}
+
+TRACK_COLD_MEM bool Track::recordReturnJobAuthorizesFrozenView(uint8_t slotIndex, const RuntimePlaybackView& view) const {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
+  // Routed active slot only, like every DEC-136.4b term; elsewhere the existing Defect-B retirement stands.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex != activeLoopIndex || !loopsAllocated() ||
+      !manifestLaneRoutesSlot(slotIndex)) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->hasBoundRecordReturnWindowForPendingJob()) return false;
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (presentation == nullptr || !presentation->retirementActive || !presentation->ownsExtent) return false;
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  return qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt) &&
+         recordReturnOwnFrozenView(view, receipt, presentation->frozenCaptureContentGeneration,
+                                   loopForSlot(slotIndex).loopLengthTicks);
+#else
+  (void)slotIndex;
+  (void)view;
+  return false;
+#endif
+}
+
+TRACK_COLD_MEM bool Track::recordReturnFrozenContinuationOwed(uint8_t slotIndex, uint32_t phase) const {
+#if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex != activeLoopIndex || !loopsAllocated() ||
+      !manifestLaneRoutesSlot(slotIndex)) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->hasBoundRecordReturnWindowForPendingJob()) return false;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (set == nullptr || presentation == nullptr || !presentation->retirementActive || !presentation->ownsExtent)
+    return false;
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  if (!qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) return false;
+  const uint32_t length = loopForSlot(slotIndex).loopLengthTicks;
+  const auto& lc = set->lifecycle;
+  const size_t n = set->views.size();
+  // Priority needs the speculative route to exist: with a retained role holding the third view only two views rotate,
+  // the root can never be prepared beside the frozen reader, and yielding it would keep it from ever taking over. That
+  // case keeps the existing ordering (the root takes `ready` when it frees).
+  if (length == 0 || lc.current >= n || lc.retained < n) return false;
+  const auto& cur = set->views[lc.current];
+  if (!recordReturnOwnFrozenView(cur, receipt, presentation->frozenCaptureContentGeneration, length) ||
+      !cur.published || !cur.coverage.contains(phase))
+    return false;
+  if (lc.ready < n && set->views[lc.ready].complete) return false;  // the next boundary already has its window
+  // A root completed for exactly that boundary (parked in `build`) is published there instead.
+  const uint32_t next = (cur.coverage.startPhase + cur.coverage.lengthTicks) % length;
+  if (lc.build < n) {
+    const auto& b = set->views[lc.build];
+    if (b.complete && !b.published && b.source.origin == PlaybackWindowOrigin::Committed &&
+        b.coverage.startPhase == next && b.coverage.loopLengthTicks == length)
+      return false;
+  }
+  return true;
+#else
+  (void)slotIndex;
+  (void)phase;
+  return false;
+#endif
 }
 
 TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootOwedAfterHandoff(
@@ -7348,6 +7451,21 @@ FLASHMEM Track::RollingResolution Track::resolveRollingPlaybackWindow(
     if (set->lifecycle.current >= set->views.size() || set->lifecycle.current != frame.boundView)
       return rejectRollingFrame(*runtime, loop, RouteReject::ServingViewNotBound);
     const auto& current = set->views[set->lifecycle.current];
+    // DEC-136.4b: a deadline-free frame bound to the active Record-return job's own frozen window is not a stale
+    // committed source. Once that window no longer covers the playhead it has served out, exactly as an expired frame:
+    // the next window is adopted from Idle at its own boundary (the frozen route's, or the root's), and the root's
+    // demand is untouched.
+    if (frame.deadlineTick == 0 && current.source.origin == PlaybackWindowOrigin::Capture && current.complete &&
+        current.published && current.storageGeneration == frame.boundStorageGeneration &&
+        !current.coverage.contains(phase) && recordReturnJobAuthorizesFrozenView(slot, current)) {
+      frame.phase = LoopPlaybackRuntime::RollingPhase::Idle;
+#if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
+      frame.successorState = 0;
+#endif
+      loop.nextEventIndex = 0;
+      PlaybackTickContext::noteTurnReject(RouteReject::ServingExpired);
+      return {RollingOutcome::Expired, nullptr};
+    }
     if (!current.complete || !current.published || current.storageGeneration != frame.boundStorageGeneration ||
         current.source.sourceGeneration != frame.generation || current.source.origin != PlaybackWindowOrigin::Committed ||
         current.coverage.startPhase != frame.startPhase || current.coverage.lengthTicks != span ||
@@ -7693,6 +7811,7 @@ TRACK_COLD_MEM const char* coverageBuildDropReasonName(Track::CoverageBuildDropR
     case Track::CoverageBuildDropReason::PublishedAsCurrent: return "published_as_current";
     case Track::CoverageBuildDropReason::PublishReadyRefused: return "publish_ready_refused";
     case Track::CoverageBuildDropReason::PublishCurrentRefused: return "publish_current_refused";
+    case Track::CoverageBuildDropReason::FrozenPriorityYield: return "frozen_priority_yield";
     case Track::CoverageBuildDropReason::None: break;
   }
   return "none";
@@ -8390,6 +8509,8 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
         }
         const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
             currentPhase, projectionCycleStartTick, recordLoop.loopLengthTicks);
+        // DEC-136.4b: the frozen reader's owed next bar, or the speculative root, is offered by its own rule.
+        if (offerRecordReturnPriorityHolder(slot, phase, holders[slot])) continue;
         const uint32_t barStart = (phase / Config::TICKS_PER_BAR) * Config::TICKS_PER_BAR;
         const bool windowed = recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks);
         uint32_t targetStart = rootCurrent ? (windowed ? barStart : 0)
@@ -8409,9 +8530,15 @@ TRACK_COLD_MEM void Track::fillPlaybackHolders(uint32_t currentPhase,
         };
         const RuntimePlaybackView* current = set != nullptr && set->lifecycle.current < set->views.size()
             ? &set->views[set->lifecycle.current] : nullptr;
+        // DEC-136.4b: on the routed slot a frozen (Capture) view is never the root's served window, though a frozen bar
+        // built after the root became current carries the root's revision and generation.
         const bool currentRebindable = rootCurrent && !windowed && current != nullptr &&
             current->complete && current->source.playbackRevision == source.playbackRevision &&
-            current->source.sourceGeneration == source.sourceGeneration && current->coverage.contains(phase);
+            current->source.sourceGeneration == source.sourceGeneration && current->coverage.contains(phase)
+#if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
+            && !(manifestLaneRoutesSlot(slot) && current->source.origin == PlaybackWindowOrigin::Capture)
+#endif
+            ;
         const bool rootServed = rootCurrent &&
             (matches(set != nullptr ? set->lifecycle.current : RuntimePlaybackViewLifecycle::kNoView, true) ||
              currentRebindable);
@@ -9102,8 +9229,29 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
   }
 #endif
   const CaptureStopPresentation* recordJob = captureStopPresentationForSlot(slot);
+  // DEC-136.4b frozen priority: when the frozen reader's next boundary has no window, it is the frozen reader's to
+  // prepare. Root work (on this routed slot the only coverage-source owner) yields the single builder -- its release is
+  // free -- and its demand is retired by name rather than left to be silently replaced; it is re-raised at the next
+  // boundary the speculative rule admits.
+  const bool frozenContinuationOwed = recordReturnFrozenContinuationOwed(
+      slot, recordJob != nullptr && loopForSlot(slot).loopLengthTicks != 0
+                ? IntervalProjection::tickPhaseInProjectionCycle(currentPhase, projectionCycleStartTick,
+                                                                 loopForSlot(slot).loopLengthTicks)
+                : 0u);
+  if (frozenContinuationOwed && (!runtime->viewBuild.active() || runtime->viewBuild.coverageOwned()) &&
+      (runtime->ownsCoverageSource() || runtime->coverageBuildNeedsService() || runtime->frozenViewRequest.active ||
+       (runtime->pendingViewRequest_.active &&
+        runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot))) {
+    const uint32_t dropBefore = probeCoverageBuildDrop(slot);
+    runtime->discardCoverageBuild();  // coalesces the frozen root demand into `pending`, retired just below
+    if (runtime->pendingViewRequest_.active &&
+        runtime->pendingViewRequest_.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedSnapshot)
+      runtime->clearViewPendingRequest();
+    traceCoverageBuildDrop(slot, CoverageBuildDropReason::FrozenPriorityYield, dropBefore);
+    return PlaybackViewTurnResult::GrainDenied;
+  }
   // Presentation ownership, not the interaction ring, carries the Record reader obligation.
-  if (recordJob != nullptr && recordJob->retirementActive &&
+  if (!frozenContinuationOwed && recordJob != nullptr && recordJob->retirementActive &&
       recordJob->slot == slot && recordJob->ownsExtent && recordJob->owner != nullptr &&
       C5_COMMITTED_CURRENT(slot, *recordJob->owner) && runtime->hasServableDeferredRecordView() &&
       isAudiblePlaybackActive() && runtime->hasBoundRecordReturnWindowForPendingJob() &&
@@ -9175,6 +9323,26 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
     }
     if (runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
         !(set->views[set->lifecycle.build].source == source)) {
+#if PLAYBACK_WINDOW_ROLLING_ENABLED
+      // DEC-136.4b: the Record-return job's own frozen build is not superseded by the root becoming current; the frozen
+      // reader still owns its playback until the root takes over, so that build finishes where it is.
+      RuntimePlaybackViewSource frozenOwn{};
+      PlaybackViewSourceIdentity frozenReceipt{};
+      const RuntimePlaybackView& building = set->views[set->lifecycle.build];
+      // Only while that build is still owed: the next window of the frozen view serving the playhead. A frozen build
+      // whose boundary has passed is no longer the frozen reader's, and is discarded as before.
+      const bool frozenBuildStillOwed = served != nullptr && served->complete && served->published &&
+          served->coverage.contains(phase) &&
+          building.coverage.startPhase ==
+              (served->coverage.startPhase + served->coverage.lengthTicks) % recordLoop.loopLengthTicks;
+      if (frozenBuildStillOwed && runtime->frozenWindowBuildActive() &&
+          building.source.origin == PlaybackWindowOrigin::Capture && building.source.snapshotIdentity == nullptr &&
+          qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval, frozenOwn, frozenReceipt) &&
+          building.source.sourceGeneration == frozenReceipt.sourceGeneration &&
+          building.source.captureContentGeneration == frozenReceipt.captureContentGeneration &&
+          building.source.captureContentGeneration == recordJob->frozenCaptureContentGeneration)
+        return PlaybackViewTurnResult::Idle;
+#endif
       const uint32_t dropBefore = probeCoverageBuildDrop(slot);
       runtime->discardCoverageBuild();
       traceCoverageBuildDrop(slot, CoverageBuildDropReason::SourceSuperseded, dropBefore);
@@ -9287,6 +9455,18 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
         set->views[set->lifecycle.ready].coverage.startPhase == coverage.startPhase &&
         set->views[set->lifecycle.ready].coverage.lengthTicks == coverage.lengthTicks;
     if (currentRootReady) return PlaybackViewTurnResult::Idle;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
+    // DEC-136.4b: the published speculative root -- the root's window for the boundary after the frozen bar now
+    // serving -- already discharges the obligation; an ordinary one-bar demand beside it is wasted work.
+    if (windowed && manifestLaneRoutesSlot(slot) && served != nullptr && served->complete && served->published &&
+        served->coverage.contains(phase) && set->lifecycle.ready < set->views.size()) {
+      const RuntimePlaybackView& readyRoot = set->views[set->lifecycle.ready];
+      if (readyRoot.complete && !readyRoot.published && readyRoot.source == source &&
+          readyRoot.coverage.startPhase ==
+              (served->coverage.startPhase + served->coverage.lengthTicks) % recordLoop.loopLengthTicks)
+        return PlaybackViewTurnResult::Idle;
+    }
+#endif
     const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(
         slot, coverage, phase, clock);
     return requested == PlaybackViewRequestResult::DeferredSourceQualification
@@ -9306,7 +9486,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       recordJob != nullptr && hasRecordReaderOwnerForSlot(slot) &&
       recordJob->slot == slot && recordJob->ownsExtent && recordJob->owner != nullptr &&
       (!C5_COMMITTED_CURRENT(slot, *recordJob->owner) ||
-       !runtime->hasServableDeferredRecordView()) &&
+       !runtime->hasServableDeferredRecordView() || frozenContinuationOwed) &&
       runtime->hasBoundRecordReturnWindowForPendingJob() && !runtime->viewBuild.coverageOwned()) {
     const Loop& recordLoop = loopForSlot(slot);
     if (recordLoop.loopLengthTicks == 0) return PlaybackViewTurnResult::GrainDenied;
@@ -9343,7 +9523,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
                      : playheadWindowStart;
     if (nextBar >= recordLoop.loopLengthTicks) nextBar = 0;
     PlaybackViewSourceIdentity source = C5_COMMITTED_SOURCE(slot, recordLoop);
-    if (C5_COMMITTED_CURRENT(slot, *recordJob->owner)) {
+    // DEC-136.4b frozen priority: an owed frozen continuation prepares the frozen reader's next bar from its own
+    // frozen source, even though the root is current.
+    if (C5_COMMITTED_CURRENT(slot, *recordJob->owner) && !frozenContinuationOwed) {
       const bool rootWindowed = PLAYBACK_WINDOW_ROLLING_ENABLED ||
           recordLoop.shouldAvoidFullVisualRebuild(recordLoop.loopLengthTicks);
       const PlaybackCoverageInterval rootCoverage{
@@ -9370,7 +9552,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
     }
 #if PLAYBACK_WINDOW_ROLLING_ENABLED
-    if (!C5_COMMITTED_CURRENT(slot, *recordJob->owner) &&
+    if ((!C5_COMMITTED_CURRENT(slot, *recordJob->owner) || frozenContinuationOwed) &&
         recordJob->frozenCaptureContentGeneration != 0) {
       RuntimePlaybackViewSource frozen{};
       if (!qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval, frozen, source))

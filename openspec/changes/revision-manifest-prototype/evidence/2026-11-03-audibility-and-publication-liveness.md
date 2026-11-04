@@ -599,3 +599,66 @@ frozen reader's next bar). That is ruling item 5's subject, and it gets its own 
 
 **Gates after the review fixes.** Default lane gate: 27 cases, all passing. Both images are byte-identical in ITCM
 (392,072 / 392,312 code; padding 1,144 / 904).
+
+### DEC-136.4b frozen-priority arbitration (owner ruling, after the geometry slice `bfd9d94f`)
+
+**What the delayed-root RED showed (host, routed slot, root qualification withheld while a frozen ready is held).**
+1. At the frozen handoff the incomplete speculative root's work was dropped. The Record-return owner then raised the
+   *ordinary* one-bar root demand for the bar already playing. It built into `ready`, so the frozen reader never
+   prepared its next bar, and playback was silent until that root was adopted a traversal later.
+2. Once the root is current, the Record-return branch takes every turn. The frozen-continuation branch ran only while
+   the root was *not* current, so nothing prepared the frozen reader's next bar.
+3. The holder selector's root-current term `currentRebindable` read a frozen bar built after root publication as
+   root-served: such a bar carries the root's revision and generation. The slot then offered no grain, so neither the
+   frozen reader's next bar nor the speculative root (nor the parked root's publication) got a turn.
+4. With the frozen reader starved for a bar, the committed resolver judged the frame bound to the job's own frozen
+   view as `ServingViewSourceStale`. The producer's Defect-B path then retired it and could clear the root's demand.
+
+**The rule (routed slot only; three views, one builder, no new state).**
+
+| term | change |
+|---|---|
+| frozen continuation owed | `recordReturnFrozenContinuationOwed`: the job (bound, retiring, owning its extent, qualified frozen identity) has its own frozen view serving the playhead, `ready` is free, no root for that view's end is parked complete in `build`, and **no retained role holds a view**. With a retained third view only two views rotate, so the root can never be prepared beside the frozen reader, and priority would keep it from ever taking over. That case keeps the pre-slice ordering (found by `test_5_1_routed_dense_take_presentation_yields_to_the_manifest_lane`, whose incomplete retained role is not released while the job owns the slot). |
+| yield | while it is owed, root work (on this slot the only coverage-source owner, plus a pending committed demand) is discarded. The routed release is free. The demand is retired by name (`frozen_priority_yield`, a new report-only `CoverageBuildDropReason`), not left to be coalesced. The Record-return branch steps aside. The frozen-continuation branch prepares the next frozen bar from the frozen receipt, even with the root current. |
+| SourceSuperseded | the Record-return branch never discards an active frozen build that carries the job's full frozen identity. |
+| holder offer | `offerRecordReturnPriorityHolder`: an owed frozen continuation (lead to the served frozen view's end), else the speculative root while its target holds (lead to its own boundary; nothing for an off-grid wait or a root already parked). Also, on the routed slot `currentRebindable` no longer accepts a Capture-origin view. |
+| wasted demand | with the published root in `ready` for the served frozen view's end, the Record-return tail raises no ordinary one-bar demand beside it. |
+| `ServingViewSourceStale` | a deadline-free frame bound to a view the **active** job authorizes (`recordReturnJobAuthorizesFrozenView`: bound and retiring, full frozen identity), once that view no longer covers the playhead, is expired to Idle (`ServingExpired`), as a served-out frame is. The frozen route adopts its next window from Idle, and the root's demand is untouched. Any other Capture or committed frame keeps every existing term. |
+| F5 | a pending speculative demand is retired by name at each yield, so it is never coalesced into a later target's record (`retainViewPendingRequest` keeps the older position). Admission re-checks the exact current target, so no waiver authority outlives the target. |
+| F1 | native seam `gNativeSiblingPromiseRefusesForTest` inside `playbackViewAdmissionKeepsAdmittedDeadlines`, the real sibling-promise term. Native builds only. |
+
+**Tests.**
+
+| test | before (pre-slice `bfd9d94f`, or the line removed) | after |
+|---|---|---|
+| delayed root never blocks frozen continuation (was `RECORD_RETURN_RED`) | FAIL | PASS, default gate |
+| RED 3/4: delayed root yields; at least 2 frozen builds after the root, none killed, no gap, one handoff, notes paired | FAIL | PASS, default gate |
+| F5: no pending speculative demand outlives its target or carries another boundary's deadline; no frozen build killed; no gap | FAIL on the gap (6,143 ticks); the stale and deadline terms already held (guard) | PASS |
+| F1: under a sibling's refusal the root is never admitted, and every refused attempt leaves the request at its DEC-147 position and own reason (no zero-deadline private form); later exactly one takeover, no gap | FAIL with the restore removed (157 damaged attempts) | PASS |
+| authorized frozen frame never labelled stale or blocked (frozen reader starved for a bar via `gWithholdLaneTurn` and the new harness hook `gWithholdRollingService`, the device's main loop running behind the clock edge) | FAIL with the resolver term removed (1 blocked) | PASS |
+
+Default lane gate: 32/32 (after the review below). Native full: 4,007 cases, 0 failed.
+
+**Budgets.**
+- First build: the selector code grew `fillPlaybackHolders`, and its `matches` lambda (116 B) was outlined into ITCM.
+  The probe image then had padding 776, below the floor (an ITCM symbol diff against `bfd9d94f` named exactly that
+  one symbol).
+- Fix: the offer moved into the cold member `offerRecordReturnPriorityHolder`.
+- Both images are byte-identical in ITCM again: default 392,072 + 1,144 (304 B headroom); succprobe 392,312 + 904
+  (64 B).
+
+**Post-takeover continuity.** On the probe image the committed successor after the root window is adopted on time
+in every test above. On the production image the window after the root comes from DEC-147-priced positioning, because
+the C5.3b successor requester is absent. That dependency is named, not addressed here.
+
+**Arbitration slice independent review (one focused pass), findings and disposition:**
+
+| finding | severity | disposition |
+|---|---|---|
+| R1: the SourceSuperseded `Idle` guard could strand a frozen build whose boundary passed, holding the single builder until the S4f.19 stall escape | high | fixed: `Idle` only while the build is still the next window of the frozen view serving the playhead; otherwise it is discarded as before. RED `..._a_frozen_build_past_its_boundary_never_holds_the_builder`: the builder was held for 2,272 ticks with the old guard; after the fix, less than 8. |
+| R2: the resolver expiry was not limited to the routed slot | medium | fixed: `recordReturnJobAuthorizesFrozenView` answers only on the routed active slot. Elsewhere the Defect-B retirement stands. |
+| R5: the yield's discard was not scoped to root work by construction | low | fixed: the yield requires the active build, if any, to be coverage-owned (root work). |
+| R6: the F5 test asserted neither a yield nor the takeover | test | fixed: it now requires at least one observed yield and exactly one root handoff. |
+| R3: root liveness depends on cost. A speculative root that cannot complete within the frozen bar it is prepared in (one bar, minus the frozen build) is yielded at each frozen handoff and re-raised one bar later, so a root costlier than that never takes over. Its dropped work carries no DEC-147 promise (speculative admission records none), so no miss is counted. | open, owner decision | Not patched: a bound would need a timeout or fallback, which the ruling excludes. On the device a frozen bar completes with 624-704 ticks spare and G_f = 3 grants. The two-bar root's actual grant time is what device qualification measures. Under the retained-role exclusion above, the pre-slice ordering still guarantees an eventual takeover. |
+| R4: once the frozen reader is late (a starved bar), the frozen branch is skipped and the next windows come from the root path. | noted | This is pre-slice behavior. The resolver comment was corrected: the next window is adopted from Idle at its own boundary, the frozen route's or the root's. |
+| `recordReturnSpeculativeRootOwedAfterHandoff` protects no production work while the yield applies | noted | It still classifies the span-shaped root in the retained-role case and keeps item 1 consistent with the speculative shape. |

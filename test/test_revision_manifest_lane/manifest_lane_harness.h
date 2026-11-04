@@ -138,6 +138,9 @@ void uninstallReader() {
 /// Test-only arbitration: while it answers true for a tick, the chosen holder's turn serves no one (the device lane's
 /// withheld grant, applied by the fixture's own predicate instead of a fixed rate).
 std::function<bool(uint32_t)> gWithholdLaneTurn;
+/// Test-only: while it answers true, the main-loop rolling requester (`serviceRollingPlaybackWindow`) gets no turn -- the
+/// device's main loop running behind the clock edge.
+std::function<bool(uint32_t)> gWithholdRollingService;
 
 // The production deferred-owner offer/select/step shape (`main.cpp`'s window lane), as the rolling Record fixtures use.
 struct RollingOwnerLane {
@@ -147,7 +150,7 @@ struct RollingOwnerLane {
     MidiServiceDrain::PlaybackHolder offers[Config::NUM_TRACKS] = {};
     for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i) {
       Track& track = trackManager.getTrack(i);
-      (void)track.serviceRollingPlaybackWindow(clock);
+      if (!(gWithholdRollingService && gWithholdRollingService(tick))) (void)track.serviceRollingPlaybackWindow(clock);
       track.serviceAdmittedDeadlineMisses(clock);
     }
     for (uint8_t i = 0; i < Config::NUM_TRACKS; ++i)

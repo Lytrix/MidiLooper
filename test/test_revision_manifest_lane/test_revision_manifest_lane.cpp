@@ -13,6 +13,7 @@
 
 extern "C" void setUp() {
   gWithholdLaneTurn = {};
+  gWithholdRollingService = {};
   sharedCaptureFinalizationSuiteSetUp();
   uninstallReader();
 }
@@ -1295,6 +1296,203 @@ void test_c5_3_record_return_span_shaped_root_stays_owed_after_the_frozen_handof
   TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, notOwed, "the span-shaped root stopped being owed at the frozen handoff");
 }
 
+// DEC-136.4b F5: a pending speculative root demand is never silently replaced and never outlives its own target. While
+// the root is delayed across several frozen handoffs: every pending span-shaped root demand is the speculative target of
+// that moment (or the owed-after-handoff root it became) with its own boundary's deadline -- never a stale target
+// carrying another position -- and it never holds the frozen reader's next bar (frozen builds complete every bar).
+void test_c5_3_record_return_pending_speculative_root_is_never_stale_or_blocking() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RecordReturnOwnershipWitness w;
+  RootHandoffWitness h;
+  uint32_t withheld = 0, speculativePending = 0, stale = 0, wrongDeadline = 0, yields = 0;
+  bool rootWorkBefore = false;
+  delayRootQualificationUntil(t, kLength + 3 * kBar, withheld);
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 4, trace, [&](uint32_t tick) {
+    observeRecordReturnOwnership(t, tick, w);
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    // A yield: root work (qualifying or building) was present and is gone while the frozen reader's next bar is owed.
+    const bool rootWork = runtime.ownsCoverageSource();
+    if (rootWorkBefore && !rootWork && t.recordReturnFrozenContinuationOwed(0, tick % kLength)) ++yields;
+    rootWorkBefore = rootWork;
+    if (!runtime.hasBoundRecordReturnWindowForPendingJob()) return;
+    const PlaybackViewPendingRequest* pending = t.pendingViewRequest(0);
+    if (pending == nullptr || !pending->active ||
+        pending->sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot ||
+        pending->coverage.lengthTicks == kBar)
+      return;
+    ++speculativePending;
+    const PlaybackDeadlineClock clock{tick, 1};
+    if (!t.recordReturnSpeculativeRootAdmissible(0, *pending, clock) &&
+        !t.rootReturnSuccessorIsOwedForSlot(0, *pending, clock))
+      ++stale;
+    const uint32_t phase = tick % kLength;
+    const uint32_t lead = (pending->coverage.startPhase + kLength - phase) % kLength;
+    if (pending->clockEpoch != 0 && pending->deadlineTick != tick + (lead == 0 ? kLength : lead)) ++wrongDeadline;
+  });
+  (void)obs;
+  gWithholdLaneTurn = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, withheld, "no root qualification was delayed: vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, speculativePending, "no speculative root demand was pending: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, stale, "a pending speculative root outlived its own target");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, wrongDeadline, "a pending speculative root carried another boundary's deadline");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, yields, "the delayed root never yielded to the frozen reader: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once after yielding");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.frozenBuildsKilled, "a Record-return frozen build was killed");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "the Record-only stop had an audible gap");
+}
+
+// DEC-136.4b F1 injection: at the turn the speculative root would be admitted, an admitted sibling's promise refuses
+// it. The request is restored exactly -- its DEC-147 position (deadline, epoch, the work's stamps) and its reason -- so
+// the ordinary admission check that follows judges a real lead (no zero-deadline wrap) instead of skipping DEC-147; and
+// once the sibling's promise is gone the root is still prepared and takes over exactly once.
+void test_c5_3_record_return_speculative_refusal_by_a_sibling_restores_the_request() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness h;
+  RecordReturnOwnershipWitness w;
+  uint32_t refusingFrom = 0, attempts = 0, admittedWhileRefused = 0, damaged = 0;
+  constexpr uint32_t kRefusalTicks = 160;  // well inside the bar the speculative root is prepared in
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    observeRecordReturnOwnership(t, tick, w);
+    const PlaybackViewPendingRequest* pending = t.pendingViewRequest(0);
+    if (refusingFrom == 0 && pending != nullptr && pending->active &&
+        t.recordReturnSpeculativeRootAdmissible(0, *pending, PlaybackDeadlineClock{tick, 1})) {
+      refusingFrom = tick;
+      gNativeSiblingPromiseRefusesForTest = true;
+    }
+    if (refusingFrom == 0) return;
+    if (tick >= refusingFrom + kRefusalTicks) { gNativeSiblingPromiseRefusesForTest = false; return; }
+    // While the sibling refuses: no build is admitted, and the request under admission keeps its DEC-147 position and
+    // its own reason after every refused attempt (never the zero-deadline private-root form).
+    if (runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Building) ++admittedWhileRefused;
+    const auto& r = runtime.frozenViewRequest.active ? runtime.frozenViewRequest : runtime.pendingViewRequest_;
+    if (!r.active || r.sourceKind != PlaybackViewPendingRequest::SourceKind::CommittedSnapshot) return;
+    ++attempts;
+    if (r.deadlineTick == 0 || r.clockEpoch == 0 || r.work.deadlineTick == 0 || r.deadlineTick <= tick ||
+        r.reason == PlaybackViewPendingReason::PrivateRootReturnPreparation)
+      ++damaged;
+  });
+  (void)obs;
+  gNativeSiblingPromiseRefusesForTest = false;
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, refusingFrom, "the speculative root was never admissible: vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, attempts, "no admission attempt ran under the refusal: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, admittedWhileRefused, "the root was admitted over a sibling's promise");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, damaged, "a refused speculative attempt did not restore its request");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once after the refusal");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "the Record-only stop had an audible gap");
+}
+
+// DEC-136.4b ServingViewSourceStale: the frozen reader is starved for a bar (every lane turn withheld from a frozen bar
+// boundary after the root is current), so its bar ends with no next window. The committed resolver may refuse the
+// frame bound to the job's own frozen view, but never as `ServingViewSourceStale` (that names a stale committed source
+// and makes the producer discard the root's demand) while the active Record-return job authorizes that view.
+void test_c5_3_record_return_authorized_frozen_frame_is_never_labelled_stale() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness h;
+  uint32_t withheld = 0, starveFrom = 0, staleWhileAuthorized = 0, authorizedBlocks = 0, authorizedUncovered = 0;
+  delayRootQualificationUntil(t, kLength + 3 * kBar, withheld);
+  const auto delayed = gWithholdLaneTurn;
+  const auto starving = [&](uint32_t tick) { return starveFrom != 0 && tick >= starveFrom && tick < starveFrom + kBar; };
+  gWithholdLaneTurn = [&, delayed](uint32_t tick) { return starving(tick) || delayed(tick); };
+  gWithholdRollingService = starving;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 4, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+    // The frozen reader's next bar is owed to it right now: from here it gets no turn for a bar.
+    if (starveFrom == 0 && t.recordReturnFrozenContinuationOwed(0, tick % kLength)) starveFrom = tick + 1;
+    const auto& cur = set->views[set->lifecycle.current];
+    const bool authorized = runtime.hasBoundRecordReturnWindowForPendingJob() && cur.complete && cur.published &&
+        cur.source.origin == PlaybackWindowOrigin::Capture;
+    const auto& frame = runtime.rolling;
+    if (!authorized) return;
+    if (!cur.coverage.contains(tick % kLength)) ++authorizedUncovered;  // the starved frozen bar has served out
+    if (frame.phase != LoopPlaybackRuntime::RollingPhase::Blocked) return;
+    ++authorizedBlocks;
+    if (frame.blockedBy == static_cast<uint8_t>(PlaybackTickContext::RouteReject::ServingViewSourceStale))
+      ++staleWhileAuthorized;
+  });
+  (void)obs;
+  gWithholdLaneTurn = {};
+  gWithholdRollingService = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, starveFrom, "the frozen reader was never starved: vacuous");
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, authorizedUncovered, "the starved frozen bar never served out: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, authorizedBlocks, "a job-authorized frozen frame was blocked");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, staleWhileAuthorized,
+                                   "a job-authorized frozen frame was labelled ServingViewSourceStale");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once after the starvation");
+}
+
+// DEC-136.4b review F1: a frozen build interrupted across its own boundary (every lane turn and the main-loop requester
+// withheld from mid-build until past that boundary) is not the frozen reader's any more: it must not hold the single
+// builder. Afterwards the root still takes over exactly once and nothing plays twice.
+void test_c5_3_record_return_a_frozen_build_past_its_boundary_never_holds_the_builder() {
+  installReader();
+  enableProbeImageSuccessors();
+  Track& t = trackManager.getTrack(0);
+  RecordStopTrace trace;
+  RootHandoffWitness h;
+  uint32_t withheld = 0, starveFrom = 0, starveUntil = 0, heldAfter = 0, longestHold = 0, run = 0;
+  delayRootQualificationUntil(t, kLength + 3 * kBar, withheld);
+  const auto delayed = gWithholdLaneTurn;
+  const auto starving = [&](uint32_t tick) { return starveFrom != 0 && tick >= starveFrom && tick < starveUntil; };
+  gWithholdLaneTurn = [&, delayed](uint32_t tick) { return starving(tick) || delayed(tick); };
+  gWithholdRollingService = starving;
+  PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
+    auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    observeRootHandoff(runtime, tick, h);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    if (set == nullptr || set->lifecycle.current >= set->views.size()) return;
+    // A frozen build in flight while the root is current: starve from here until a bar past its own boundary.
+    if (starveFrom == 0 && t.getLoop(0).playbackRevision != 0 && runtime.frozenWindowBuildActive() &&
+        set->lifecycle.build < set->views.size()) {
+      const uint32_t start = set->views[set->lifecycle.build].coverage.startPhase;
+      const uint32_t phase = tick % kLength;
+      starveFrom = tick + 1;
+      starveUntil = tick + ((start + kLength - phase) % kLength) + 32;  // just past the build's own boundary
+    }
+    if (starveUntil == 0 || tick < starveUntil) return;
+    // After the starvation: a stale frozen build left active holds the builder.
+    if (runtime.frozenWindowBuildActive() && set->lifecycle.build < set->views.size()) {
+      const auto& cur = set->views[set->lifecycle.current];
+      const uint32_t end = (cur.coverage.startPhase + cur.coverage.lengthTicks) % kLength;
+      if (set->views[set->lifecycle.build].coverage.startPhase != end || !cur.coverage.contains(tick % kLength)) {
+        ++heldAfter;
+        longestHold = std::max(longestHold, ++run);
+        return;
+      }
+    }
+    run = 0;
+  });
+  gWithholdLaneTurn = {};
+  gWithholdRollingService = {};
+  RollingSuccessorProbe::gKnobs = {};
+  TEST_ASSERT_NOT_EQUAL_UINT32_MESSAGE(0u, starveFrom, "no frozen build was interrupted: vacuous");
+  TEST_ASSERT_LESS_THAN_UINT32_MESSAGE(8u, longestHold, "a frozen build past its boundary held the builder");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, h.rootHandoffs, "the root did not take over exactly once");
+  for (uint32_t pass = 1; pass < 6; ++pass) {
+    std::map<std::pair<uint32_t, uint8_t>, unsigned> seen;
+    for (const auto& on : noteOnsInTraversal(obs, pass)) ++seen[on];
+    for (const auto& [key, count] : seen) TEST_ASSERT_EQUAL_UINT32_MESSAGE(1u, count, "a NoteOn was emitted twice");
+  }
+  (void)heldAfter;
+}
+
 // RED 6: a legitimately retained third view refuses speculative root preparation, and frozen playback continues
 // unaffected. The third view is made a complete retained window the moment the root becomes current.
 void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on() {
@@ -1666,10 +1864,9 @@ int main(int, char**) {
   // DEC-136.4b root takeover geometry (green).
   RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
   RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);
-  if (getenv("RECORD_RETURN_RED") != nullptr) {  // DEC-136.4b frozen-priority arbitration (red)
-    RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
-    RUN_TEST(test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive);
-  }
+  // DEC-136.4b frozen-priority arbitration (green).
+  RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
+  RUN_TEST(test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive);
   // DEC-136 item 4, slice 136.4a (green).
   RUN_TEST(test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready);
   RUN_TEST(test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free);
@@ -1677,6 +1874,10 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_record_return_speculative_root_refuses_wrong_span_boundary_and_source);
   RUN_TEST(test_c5_3_record_return_off_grid_boundary_waits_instead_of_one_bar_fallback);
   RUN_TEST(test_c5_3_record_return_span_shaped_root_stays_owed_after_the_frozen_handoff);
+  RUN_TEST(test_c5_3_record_return_pending_speculative_root_is_never_stale_or_blocking);
+  RUN_TEST(test_c5_3_record_return_speculative_refusal_by_a_sibling_restores_the_request);
+  RUN_TEST(test_c5_3_record_return_authorized_frozen_frame_is_never_labelled_stale);
+  RUN_TEST(test_c5_3_record_return_a_frozen_build_past_its_boundary_never_holds_the_builder);
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)
