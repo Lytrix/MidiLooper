@@ -242,9 +242,9 @@ void test_sustained_din_saturation_regression() {
   TEST_ASSERT_TRUE(cont * 100u <= total * 27u);
   char line[240];
   std::snprintf(line, sizeof line,
-                "DIN saturation: sent on=%u off=%u continuous=%u of %u (%.1f%%); coalesced=%u; cancelled-unsent=%u; "
+                "DIN saturation: sent on=%u off=%u continuous=%u of %u (%.1f%%); coalesced=%u; expired-before-transmit=%u; "
                 "NoteOn late max=%u us mean=%u us; NoteOff late max=%u us mean=%u us",
-                on, off, cont, total, 100.0 * cont / total, gPort.counters().coalesced, gPort.counters().cancelledUnsent,
+                on, off, cont, total, 100.0 * cont / total, gPort.counters().coalesced, gPort.counters().expiredBeforeTransmit,
                 gPort.counters().maxNoteOnLateMicros,
                 on ? static_cast<unsigned>(gPort.counters().sumNoteOnLateMicros / on) : 0u,
                 gPort.counters().maxNoteOffLateMicros,
@@ -311,6 +311,67 @@ void test_automation_lanes_are_sparse_and_bounded() {
   TEST_ASSERT_EQUAL(PortResult::Queued, gPort.control(3000, 0xBF, 90, 5));  // evicts the clean lane
 }
 
+// Expired-note cancellation (owner decision 2026-11-04). A NoteOn whose scheduled end is reached before it can start is
+// never transmitted, exactly at the deadline included; the instance is released on that port only and counted apart
+// from capacity refusal.
+void test_noteon_not_started_by_its_end_is_cancelled_exactly_at_deadline() {
+  gPort.noteOn(0, 0x90, 40, 100, 1);  // occupies DIN for 0..960
+  // X ends exactly when the UART is free again: start (960) == end (960) -> cancelled.
+  TEST_ASSERT_EQUAL(PortResult::Queued, gPort.noteOn(0, 0x90, 60, 100, 2, /*endMicros*/ 960));
+  // Y ends one microsecond later: it may start at 960... but X is ahead of it; X is skipped, Y starts at 960 < 961.
+  TEST_ASSERT_EQUAL(PortResult::Queued, gPort.noteOn(0, 0x90, 61, 100, 3, /*endMicros*/ 961));
+  Port::Sent buf[8];
+  uint8_t n = gPort.transmit(0, buf, 8);
+  n = static_cast<uint8_t>(n + gPort.transmit(960, buf + n, 8));
+  TEST_ASSERT_EQUAL(2, n);
+  TEST_ASSERT_EQUAL_UINT32(1, buf[0].key);
+  TEST_ASSERT_EQUAL_UINT32(3, buf[1].key);
+  TEST_ASSERT_EQUAL_UINT32(960, buf[1].micros);
+  TEST_ASSERT_EQUAL_UINT32(1, gPort.counters().expiredBeforeTransmit);
+  TEST_ASSERT_EQUAL_UINT32(0, gPort.counters().suppressedNoteOn);
+  TEST_ASSERT_EQUAL(PortResult::NotAdmitted, gPort.noteOff(2000, 2));  // released: nothing owed for X
+  TEST_ASSERT_TRUE(gHub.check());
+}
+
+// A NoteOff that arrives while its NoteOn is already being transmitted keeps the NoteOff obligation.
+void test_noteoff_during_noteon_transmission_is_kept() {
+  gPort.noteOn(0, 0x90, 60, 100, 5, 5000);
+  Port::Sent buf[8];
+  TEST_ASSERT_EQUAL(1, gPort.transmit(0, buf, 8));           // NoteOn on the wire 0..960
+  TEST_ASSERT_EQUAL(PortResult::Queued, gPort.noteOff(100, 5));  // mid-transmission
+  TEST_ASSERT_EQUAL(0, gPort.transmit(500, buf, 8));          // UART still busy
+  TEST_ASSERT_EQUAL(1, gPort.transmit(960, buf, 8));
+  TEST_ASSERT_EQUAL(OutClass::NoteOff, buf[0].cls);
+  TEST_ASSERT_EQUAL_UINT32(960, buf[0].micros);
+  TEST_ASSERT_EQUAL_UINT32(0, gPort.counters().expiredBeforeTransmit);
+}
+
+// Per destination: the same note expires on saturated DIN and plays normally on USB.
+void test_expiry_is_per_destination() {
+  for (uint32_t i = 0; i < 20; ++i) gPort.noteOn(0, 0x90, static_cast<uint8_t>(i), 100, 100 + i);
+  gPort.noteOn(0, 0x90, 60, 100, 7, 3000);
+  gUsb.noteOn(0, 0x90, 60, 100, 7, 3000);
+  Port::Sent buf[64];
+  for (uint32_t t = 0; t <= 30000; t += 125) {
+    const uint8_t n = gUsb.transmit(t, buf, 64);
+    for (uint8_t i = 0; i < n; ++i) gSent.push_back(buf[i]);
+    gPort.transmit(t, buf, 64);
+    if (t == 3000) {
+      gPort.noteOff(t, 7);
+      gUsb.noteOff(t, 7);
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, gPort.counters().expiredBeforeTransmit);
+  TEST_ASSERT_EQUAL_UINT32(0, gUsb.counters().expiredBeforeTransmit);
+  uint32_t usbOn = 0, usbOff = 0;
+  for (const auto& s : gSent) {
+    usbOn += s.cls == OutClass::NoteOn ? 1u : 0u;
+    usbOff += s.cls == OutClass::NoteOff ? 1u : 0u;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, usbOn);
+  TEST_ASSERT_EQUAL_UINT32(1, usbOff);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_noteoff_before_its_noteon_is_sent_cancels_both);
@@ -324,5 +385,8 @@ int main(int, char**) {
   RUN_TEST(test_broadcast_note_shares_identity_with_per_port_states);
   RUN_TEST(test_logical_note_capacity_is_shared_across_ports);
   RUN_TEST(test_automation_lanes_are_sparse_and_bounded);
+  RUN_TEST(test_noteon_not_started_by_its_end_is_cancelled_exactly_at_deadline);
+  RUN_TEST(test_noteoff_during_noteon_transmission_is_kept);
+  RUN_TEST(test_expiry_is_per_destination);
   return UNITY_END();
 }

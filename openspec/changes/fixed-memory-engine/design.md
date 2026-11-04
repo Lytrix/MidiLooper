@@ -258,3 +258,25 @@ off pending). Each port sends, cancels and terminates it independently (`test_br
 
 **Unchanged:** semantics and numbers. The CE-C1 tests and the saturation regression give identical results.
 
+
+## CE-C1 — expired-note cancellation (owner decision 2026-11-04, final)
+
+- A NoteOn that has not begun physical transmission when its scheduled end is reached is never transmitted on that
+  destination. This covers two cases:
+  - its NoteOff arrives while the NoteOn is still queued;
+  - the transmitter reaches it at or after `endMicros` (start ≥ end, so the exact deadline counts as expired).
+- The instance's port state and queue entry are released. The logical note is freed once no port holds it.
+- Once a NoteOn has started on the wire, its NoteOff obligation is kept, even if the NoteOff arrives mid-transmission.
+- Per destination: the same note can expire on saturated DIN and play normally on USB.
+- Counted as `expiredBeforeTransmit`, apart from:
+  - `suppressedNoteOn` (queue or note-table refusal at admission);
+  - polyphony suppression (`TerminalScheduler::refusedFull`, OUT-POLY);
+  - lateness (`maxNoteOnLateMicros` / `maxNoteOffLateMicros`).
+- Recorded events and composer output are untouched.
+- The 3,357 expirations in the 5× DIN saturation fixture are accepted overload behaviour, not lost recorded MIDI.
+
+| Test | Shows |
+|---|---|
+| `test_noteon_not_started_by_its_end_is_cancelled_exactly_at_deadline` | a start equal to the end expires; end + 1 starts; nothing owed for the expired note; an off-by-one mutation fails this test |
+| `test_noteoff_during_noteon_transmission_is_kept` | NoteOff during the NoteOn's transmission is kept and sent after it |
+| `test_expiry_is_per_destination` | expires on DIN, plays and ends on USB |

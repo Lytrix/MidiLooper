@@ -62,6 +62,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] C.2 (superseded) occupancy cap C/4 from e85fe039 — replaced by C.4.
 - [x] C.4 Port rework: sounding-table NoteOffs, ordered essential/parameter queue, continuous coalescing, priority scheduler, per-class lateness (`test_content_engine_output` 8).
 - [x] C.6 Output memory ownership: shared logical notes + per-port sparse lanes (`OutputHub`), 88,680 → 16,400 B; fan-out, shared capacity and lane tests (`test_content_engine_output` 11).
+- [x] C.7 Expired-note cancellation (owner decision): scheduled end, per destination, `expiredBeforeTransmit` (`test_content_engine_output` 14).
 - [ ] C.5 Device-measured USB message time; final continuous share and note space; RPN overflow policy.
 - [ ] C.3 Multi-port routing per track.
 

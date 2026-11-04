@@ -15,7 +15,12 @@
 //   * NoteOn: admitted only if a logical note entry exists or can be taken and the port's ordered queue has note space;
 //     otherwise suppressed by name for that port (the stored event is unchanged).
 //   * NoteOff: needs no queue entry; owed by the port's note state, sent with priority once due and never before its own
-//     NoteOn; a NoteOff whose NoteOn is still queued on that port cancels both there.
+//     NoteOn.
+//   * Expired-note cancellation (owner decision 2026-11-04): a NoteOn that has not begun transmission when its scheduled
+//     end is reached is never transmitted on that port: either its NoteOff arrives while it is still queued, or the
+//     transmitter reaches it at or after its `endMicros`. The instance and its pending state are released there and
+//     counted as `expiredBeforeTransmit` (apart from capacity refusal, polyphony suppression and lateness). Once a NoteOn
+//     has started on the wire its NoteOff obligation is kept. Per destination; recorded events are untouched.
 //   * Essential state (Bank Select, Program Change, CC64-69, CC120-127): ordered with notes, never dropped; coalesces only
 //     without a dependent NoteOn between; overflow waits per channel/state and holds back new NoteOns.
 //   * Parameter (CC6/38/96-101): ordered, never coalesced; 64-message overflow; beyond it counted as dropped.
@@ -32,6 +37,7 @@ namespace ContentEngine {
 
 constexpr uint32_t kDinMessageMicros = 960;  // 3 bytes x 10 bits at 31,250 baud
 constexpr uint32_t kUsbMessageMicros = 125;  // declared estimate for USB full-speed MIDI; measured on the device (E0.7)
+constexpr uint32_t kNoEndMicros = 0xFFFFFFFFu;  // NoteOn without a known scheduled end (live input, open composed end)
 
 enum class PortResult : uint8_t { Queued, Coalesced, Deduplicated, Suppressed, CancelledUnsent, NotAdmitted };
 enum class OutClass : uint8_t { NoteOff, NoteOn, Essential, Parameter, Continuous };
@@ -52,8 +58,8 @@ class OutputHub {
     OutClass cls;
   };
   struct Counters {
-    uint32_t suppressedNoteOn;
-    uint32_t cancelledUnsent;
+    uint32_t suppressedNoteOn;       // queue-capacity / note-table refusal at admission
+    uint32_t expiredBeforeTransmit;  // NoteOn whose end came before it could start (never sent, NoteOff not owed)
     uint32_t coalesced;
     uint32_t deduplicated;
     uint32_t stateOverflowCoalesced;
@@ -72,8 +78,9 @@ class OutputHub {
     Port() = default;
     Port(OutputHub* hub, uint8_t p) : hub_(hub), p_(p) {}
     bool canAdmitNoteOn() const { return hub_->canAdmitNoteOn(p_); }
-    PortResult noteOn(uint32_t now, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key) {
-      return hub_->noteOn(now, p_, status, pitch, vel, key);
+    PortResult noteOn(uint32_t now, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key,
+                      uint32_t endMicros = kNoEndMicros) {
+      return hub_->noteOn(now, p_, status, pitch, vel, key, endMicros);
     }
     PortResult noteOff(uint32_t now, uint32_t key) { return hub_->noteOff(now, p_, key); }
     PortResult control(uint32_t now, uint8_t status, uint8_t d1, uint8_t d2) {
@@ -105,7 +112,8 @@ class OutputHub {
 
   /// Admits a NoteOn on port `p`. The logical note (by key) is shared: routing the same key to another port attaches
   /// that port to the same entry.
-  PortResult noteOn(uint32_t now, uint8_t p, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key) {
+  PortResult noteOn(uint32_t now, uint8_t p, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key,
+                    uint32_t endMicros = kNoEndMicros) {
     PortData& d = ports_[p];
     int n = find(key);
     if (n >= 0 && stateOf(notes_[n], p) != State::None) return PortResult::Queued;  // already on this port
@@ -114,7 +122,7 @@ class OutputHub {
       return PortResult::Suppressed;
     }
     Note& note = notes_[n];
-    if (note.portStates == 0) note = Note{key, now, 0, status, pitch, 0};
+    if (note.portStates == 0) note = Note{key, endMicros, 0, status, pitch, 0};
     setState(note, p, State::QueuedOn);
     push(d, Item{Kind::NoteOn, status, pitch, vel, static_cast<uint16_t>(n), now});
     ++d.noteOnsQueued;
@@ -134,7 +142,7 @@ class OutputHub {
         }
         --d.noteOnsQueued;
         setState(note, p, State::None);
-        ++d.counters.cancelledUnsent;
+        ++d.counters.expiredBeforeTransmit;
         return PortResult::CancelledUnsent;
       case State::Playing:
         setState(note, p, State::OffPending);
@@ -195,7 +203,7 @@ class OutputHub {
 
   struct Note {  // 16 B, shared by every port the note is routed to
     uint32_t key = 0;
-    uint32_t onMicros = 0;
+    uint32_t endMicros = kNoEndMicros;  // scheduled end: a NoteOn not started by then is never sent
     uint32_t dueMicros = 0;
     uint8_t status = 0, pitch = 0;
     uint8_t portStates = 0;  // 2 bits per port
@@ -416,10 +424,23 @@ class OutputHub {
       setState(n, p, State::None);  // the entry frees itself when no port holds it
       return sendAt(d, start, s, false);
     }
-    const bool ordered = orderedReady(d);
+    bool ordered = orderedReady(d);
     const bool cont = d.dirtyCount > 0;
     if (cont && (!ordered || d.sinceContinuous >= 3)) return sendContinuous(d, s);
-    if (!ordered) return false;
+    // Expire queued NoteOns at the head whose scheduled end has been reached by the time they could start.
+    while (ordered && d.ring[d.head].kind == Kind::NoteOn) {
+      const Item& h = d.ring[d.head];
+      const uint32_t start = d.txFreeAt > h.queuedMicros ? d.txFreeAt : h.queuedMicros;
+      Note& n = notes_[h.note];
+      if (n.endMicros == kNoEndMicros || start < n.endMicros) break;
+      setState(n, p, State::None);
+      --d.noteOnsQueued;
+      ++d.counters.expiredBeforeTransmit;
+      d.head = static_cast<uint16_t>((d.head + 1) % Ordered);
+      --d.count;
+      ordered = orderedReady(d);
+    }
+    if (!ordered) return cont ? sendContinuous(d, s) : false;
     Item& it = d.ring[d.head];
     const uint32_t start = d.txFreeAt > it.queuedMicros ? d.txFreeAt : it.queuedMicros;
     if (it.kind == Kind::NoteOn) {
