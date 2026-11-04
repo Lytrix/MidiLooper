@@ -34,7 +34,7 @@ void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
 
-using Pool = PagePool<256, 64>;
+using Pool = PagePool<1024, 64>;  // 576 pages are the edit-index partition
 using Runs = RunTable<32, Pool>;
 using TestComposer = Composer<Pool, Runs>;
 using Player = WindowPlayer<Config::kMaxSoundingPerTrack>;
@@ -64,7 +64,7 @@ struct X {
 void setUp() {
   gPool.init();
   gRuns.init();
-  gIndex.init(gPool, gRuns);
+  TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
   gC.init(gPool, gRuns, &gIndex);
   gSched.init();
   gPlayer.init(gSched);

@@ -5,13 +5,17 @@
 // hide index of one manifest identity and is pinned by the composers composing that identity. Residency is bounded by
 // S (never one index per historical manifest); a manifest without edit runs needs no slot; only unpinned slots are
 // evicted (least recently used); exhaustion and capacity are named outcomes; an evicted identity rebuilds identically.
+// E5.3: the entries live in the pool's edit-index partition (taken once at init, owner-tagged, never borrowed), and a
+// worker builds an index in grains (`reserve` + `buildStep`) with the same result as the synchronous build.
 
 #include <unity.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <initializer_list>
 #include <new>
+#include <vector>
 
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/EditIndexStore.h"
@@ -68,7 +72,7 @@ static RunId noteRun() {
 void setUp() {
   gPool.init();
   gRuns.init();
-  gStore.init(gPool, gRuns);
+  TEST_ASSERT_TRUE(gStore.init(gPool, gRuns));
 }
 void tearDown() {}
 
@@ -164,6 +168,138 @@ void test_evicted_identity_rebuilds_identically() {
   gStore.release(l);
 }
 
+// Placement: init takes exactly the partition from the pool, tagged kOwnerIndex; content can exhaust the pool without
+// ever receiving an index page, and the index still answers afterwards. A pool too small for the partition is refused
+// by name (every identity with edit runs is then Busy).
+void test_partition_taken_from_pool_and_never_borrowed() {
+  TEST_ASSERT_EQUAL_UINT32(Store::kPages, gPool.countOwnedBy(kOwnerIndex));
+  TEST_ASSERT_EQUAL_UINT32(256 - Store::kPages, gPool.freeCount());
+  const RunId n = noteRun();
+  const RunId e = editRun({4, 2, 9});
+  const SourceRun src[] = {{n, 2}, {e, 3}};
+  IndexLease l;
+  TEST_ASSERT_EQUAL(IndexResult::Ready, gStore.acquire(3, src, 2, l));
+  while (gPool.acquire(0) != kNoPage) {
+  }
+  TEST_ASSERT_EQUAL_UINT32(Store::kPages, gPool.countOwnedBy(kOwnerIndex));
+  for (uint8_t s = 0; s < Store::kSlots; ++s)
+    for (uint16_t k = 0; k < Store::kPagesPerSlot; ++k) TEST_ASSERT_EQUAL_UINT16(kOwnerIndex, gPool.ownerOf(gStore.page(s, k)));
+  TEST_ASSERT_TRUE(gStore.hidden(l, 9, 0));
+  TEST_ASSERT_FALSE(gStore.hidden(l, 5, 0));
+
+  static Pool tiny;  // 256 pages, all taken: no room for a partition
+  tiny.init();
+  while (tiny.acquire(0) != kNoPage) {
+  }
+  static Store unplaced;
+  TEST_ASSERT_FALSE(unplaced.init(tiny, gRuns));
+  TEST_ASSERT_EQUAL(IndexResult::Busy, unplaced.acquire(3, src, 2, l));
+}
+
+// Incremental build equals the synchronous one for random multi-edit sources and random grain sizes.
+void test_incremental_build_equals_synchronous_random() {
+  uint32_t seed = 0xB111D;
+  auto rnd = [&seed]() {
+    seed ^= seed << 13;
+    seed ^= seed >> 17;
+    seed ^= seed << 5;
+    return seed;
+  };
+  using Big = EditIndexStore<Pool, Runs, 2, 64>;
+  static Big big;
+  for (uint32_t trial = 0; trial < 200; ++trial) {
+    gPool.init();
+    gRuns.init();
+    TEST_ASSERT_TRUE(big.init(gPool, gRuns));
+    SourceRun src[4];
+    const uint8_t count = static_cast<uint8_t>(1 + rnd() % 4);
+    for (uint8_t r = 0; r < count; ++r) {
+      if (rnd() % 3 == 0) {
+        const RunId n = noteRun();
+        src[r] = {n, 2};
+        continue;
+      }
+      const RunId e = gRuns.allocate(0, RunKind::kEdit);
+      for (uint32_t k = 0, h = rnd() % 16; k < h; ++k) gRuns.append(e, row(0, 1 + rnd() % 24, kHideNoteStatus), gPool);
+      gRuns.append(e, row(5, 7, 0x90), gPool);
+      gRuns.seal(e);
+      src[r] = {e, gRuns.run(e).rowCount};
+    }
+    IndexLease a, b;
+    const IndexResult ra = big.acquire(1, src, count, a);
+    const IndexResult rb = big.reserve(2, src, count, b);
+    if (ra == IndexResult::NotNeeded) {
+      TEST_ASSERT_EQUAL(IndexResult::NotNeeded, rb);
+      continue;
+    }
+    TEST_ASSERT_EQUAL(IndexResult::Ready, ra);
+    TEST_ASSERT_EQUAL(IndexResult::Building, rb);
+    IndexResult st;
+    while ((st = big.buildStep(b, src, count, 1 + rnd() % 9)) == IndexResult::Building) {
+    }
+    TEST_ASSERT_EQUAL(IndexResult::Ready, st);
+    for (uint32_t id = 0; id < 26; ++id)
+      for (uint8_t o = 0; o < 4; ++o) TEST_ASSERT_EQUAL(big.hidden(a, id, o), big.hidden(b, id, o));
+  }
+}
+
+// While a job builds an identity, another reserve or acquire of it is named Building (no lease, nothing pinned); a
+// build abandoned before Ready frees its slot; capacity found while gathering empties the slot.
+void test_building_identity_is_named_and_abandoned_build_frees_slot() {
+  const RunId e = editRun({1, 2, 3, 4, 5, 6});
+  const SourceRun src[] = {{e, 6}};
+  IndexLease job, other;
+  TEST_ASSERT_EQUAL(IndexResult::Building, gStore.reserve(8, src, 1, job));
+  TEST_ASSERT_NOT_EQUAL(IndexLease::kNoSlot, job.slot);
+  TEST_ASSERT_EQUAL(IndexResult::Building, gStore.buildStep(job, src, 1, 2));
+  TEST_ASSERT_EQUAL(IndexResult::Building, gStore.acquire(8, src, 1, other));
+  TEST_ASSERT_EQUAL_UINT8(IndexLease::kNoSlot, other.slot);
+  TEST_ASSERT_EQUAL_UINT16(1, gStore.pins(job.slot));
+  TEST_ASSERT_FALSE(gStore.holds(8));
+  gStore.release(job);  // abandoned
+  TEST_ASSERT_EQUAL_UINT8(0, gStore.slotsInUse());
+  TEST_ASSERT_EQUAL(IndexResult::Ready, gStore.acquire(8, src, 1, other));  // builds afresh
+
+  const RunId big = editRun({1, 2, 3, 4, 5, 6, 7, 8, 9});
+  const SourceRun srcBig[] = {{big, 9}};
+  IndexLease l;
+  TEST_ASSERT_EQUAL(IndexResult::Building, gStore.reserve(9, srcBig, 1, l));
+  IndexResult st;
+  while ((st = gStore.buildStep(l, srcBig, 1, 3)) == IndexResult::Building) {
+  }
+  TEST_ASSERT_EQUAL(IndexResult::CapacityExceeded, st);
+  gStore.release(l);
+  TEST_ASSERT_EQUAL_UINT8(1, gStore.slotsInUse());  // only identity 8
+}
+
+// Grain bound at production capacity: 4,096 hides build in <= 60 grains of 256 units (gather 16, heapify 8, sort 16,
+// collapse 16, phase changes); each grain is bounded by 256 units of O(log H) work.
+void test_full_capacity_build_grain_count() {
+  using BigPool = PagePool<640, 64>;
+  using BigRuns = RunTable<4, BigPool>;
+  static BigPool pool;
+  static BigRuns runs;
+  static EditIndexStore<BigPool, BigRuns, 1, 4096> store;
+  pool.init();
+  runs.init();
+  TEST_ASSERT_TRUE(store.init(pool, runs));
+  const RunId e = runs.allocate(0, RunKind::kEdit);
+  uint32_t x = 12345;
+  for (uint32_t k = 0; k < 4096; ++k) {
+    x = x * 1103515245u + 12345u;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, runs.append(e, row(0, (x >> 8) % 100000, kHideNoteStatus), pool));
+  }
+  runs.seal(e);
+  const SourceRun src[] = {{e, 4096}};
+  IndexLease l;
+  TEST_ASSERT_EQUAL(IndexResult::Building, store.reserve(1, src, 1, l));
+  uint32_t grains = 1;
+  while (store.buildStep(l, src, 1, 256) == IndexResult::Building) ++grains;
+  printf("E5.3 index build, 4096 hides: %u grains of 256 units\n", static_cast<unsigned>(grains));
+  TEST_ASSERT_TRUE(grains <= 60);
+  TEST_ASSERT_EQUAL_UINT32(0, store.syncBuilds());
+}
+
 // The composer no longer carries a hide table: the production composer stays inside the 12 KiB-per-cursor budget
 // (18 cursors <= 221,184 B).
 void test_production_composer_within_budget() {
@@ -179,6 +315,10 @@ int main(int, char**) {
   RUN_TEST(test_least_recently_used_unpinned_slot_is_evicted);
   RUN_TEST(test_capacity_is_named_and_takes_no_slot);
   RUN_TEST(test_evicted_identity_rebuilds_identically);
+  RUN_TEST(test_partition_taken_from_pool_and_never_borrowed);
+  RUN_TEST(test_incremental_build_equals_synchronous_random);
+  RUN_TEST(test_building_identity_is_named_and_abandoned_build_frees_slot);
+  RUN_TEST(test_full_capacity_build_grain_count);
   RUN_TEST(test_production_composer_within_budget);
   return UNITY_END();
 }

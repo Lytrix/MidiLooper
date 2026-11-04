@@ -20,7 +20,10 @@
 #pragma once
 
 #include <cstdint>
+#include <type_traits>
+#include <utility>
 
+#include "ContentEngine/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
 #include "ContentEngine/SourceRun.h"
 
@@ -114,6 +117,74 @@ bool sameState(const Checkpoint& a, const Checkpoint& b) {
   return true;
 }
 
+/// A worker job's hold on its source manifest (E5): the manifest pin, the run list with sealed row limits, and the
+/// edit-index build in grains before any composition (a composer's `begin` then finds the index Ready and never builds
+/// inside a grain). `close` releases everything the job holds; the composer releases its own index lease in `end`.
+template <typename Composer, typename Manifests, typename Runs>
+class SourceLease {
+ public:
+  using Store = typename std::remove_pointer<decltype(std::declval<Composer&>().indexStore())>::type;
+
+  void open(Manifests& manifests, Runs& runs, Composer& composer, ManifestId manifest) {
+    close();
+    manifests_ = &manifests;
+    runs_ = &runs;
+    store_ = composer.indexStore();
+    manifest_ = manifest;
+    manifests.pin(manifest);
+    pinned_ = true;
+    const auto& m = manifests.manifest(manifest);
+    identity_ = m.identity;
+    loop_ = m.loopLengthTicks;
+    count_ = m.runCount;
+    for (uint8_t i = 0; i < count_; ++i) src_[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
+    index_ = store_ == nullptr ? IndexResult::NotNeeded : IndexResult::Busy;  // not reserved yet
+  }
+
+  /// One index grain (<= `maxWork` units). Ready / NotNeeded: compose; Building / Busy: call again next grain;
+  /// CapacityExceeded: the source cannot be composed.
+  IndexResult prepare(uint32_t maxWork) {
+    if (index_ == IndexResult::Busy || (index_ == IndexResult::Building && lease_.slot == IndexLease::kNoSlot)) {
+      index_ = store_->reserve(identity_, src_, count_, lease_);
+      if (index_ != IndexResult::Building || lease_.slot == IndexLease::kNoSlot) return index_;
+    }
+    if (index_ == IndexResult::Building) {
+      index_ = store_->buildStep(lease_, src_, count_, maxWork);
+      if (index_ == IndexResult::CapacityExceeded) store_->release(lease_);
+    }
+    return index_;
+  }
+  bool prepared() const { return index_ == IndexResult::Ready || index_ == IndexResult::NotNeeded; }
+  /// Drops the job's own index pin once the composer has taken its own.
+  void dropIndexLease() {
+    if (store_ != nullptr) store_->release(lease_);
+  }
+
+  void close() {
+    dropIndexLease();
+    if (pinned_) manifests_->unpin(manifest_, *runs_);
+    pinned_ = false;
+  }
+
+  bool pinned() const { return pinned_; }
+  const SourceRun* source() const { return src_; }
+  uint8_t count() const { return count_; }
+  uint32_t identity() const { return identity_; }
+  uint32_t loopLength() const { return loop_; }
+
+ private:
+  Manifests* manifests_ = nullptr;
+  Runs* runs_ = nullptr;
+  Store* store_ = nullptr;
+  ManifestId manifest_ = kNoManifest;
+  bool pinned_ = false;
+  uint32_t identity_ = 0, loop_ = 0;
+  uint8_t count_ = 0;
+  IndexResult index_ = IndexResult::NotNeeded;
+  IndexLease lease_;
+  SourceRun src_[Manifests::kMaxRuns];
+};
+
 /// The sweep worker's checkpoint job for one manifest (E5). It pins the manifest while it reads it and releases the pin
 /// when it ends (done, superseded, refused or cancelled), so replacement and reclamation never free pages under it.
 /// `step` is one grain: at most `maxRows` source rows of the current window. A checkpoint is published only at a window
@@ -130,43 +201,34 @@ template <typename Composer, typename Table, typename Window, typename Manifests
 class CheckpointSweep {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Superseded, Refused };
+  static constexpr uint32_t kIndexGrain = 256;  // index units per grain (plan § 7.1)
   using Checkpoint = typename Composer::Checkpoint;
   using State = typename Table::EntryState;
 
-  /// Pins `manifest`, retires the slot's previous table and begins composing. Refused (pin released) when the composer
-  /// cannot begin the source.
+  /// Pins `manifest` and retires the slot's previous table. The first grains build the manifest's edit index (if it
+  /// has edit runs and it is not resident); composition begins once it is Ready. Refused (source released) when the
+  /// index does not fit.
   Status start(Composer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
                uint32_t windowTicks, uint32_t spacing) {
     if (status_ == Status::Running) cancel();
     composer_ = &composer;
     table_ = &table;
-    manifests_ = &manifests;
-    runs_ = &runs;
     slot_ = slot;
-    manifest_ = manifest;
     window_ = windowTicks;
     position_ = 0;
     cycle_ = 0;
     windows_ = 0;
     grains_ = 0;
     periodic_ = false;
-    manifests.pin(manifest);
-    pinned_ = true;
-    const auto& m = manifests.manifest(manifest);
-    identity_ = m.identity;
-    loop_ = m.loopLengthTicks;
-    SourceRun src[Manifests::kMaxRuns];
-    for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
+    composing_ = false;
+    source_.open(manifests, runs, composer, manifest);
+    identity_ = source_.identity();
+    loop_ = source_.loopLength();
     table.beginSweep(slot, identity_, loop_, spacing);
-    status_ = Status::Running;
-    if (!composer.begin(src, m.runCount, loop_, identity_)) {
-      releaseSource();
-      status_ = Status::Refused;
-    }
-    return status_;
+    return status_ = Status::Running;
   }
 
-  /// One grain.
+  /// One grain: `maxRows` source rows of composition, or `kIndexGrain` index units while the index builds.
   Status step(Window& w, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     if (!table_->current(slot_, identity_)) {
@@ -174,6 +236,21 @@ class CheckpointSweep {
       return status_ = Status::Superseded;
     }
     ++grains_;
+    if (!composing_) {
+      const IndexResult r = source_.prepare(kIndexGrain);
+      if (r == IndexResult::CapacityExceeded) {
+        releaseSource();
+        return status_ = Status::Refused;
+      }
+      if (!source_.prepared()) return status_;
+      if (!composer_->begin(source_.source(), source_.count(), loop_, identity_)) {
+        releaseSource();
+        return status_ = Status::Refused;
+      }
+      source_.dropIndexLease();
+      composing_ = true;
+      return status_;
+    }
     if (!composer_->windowOpen()) composer_->openWindow(w, window_);
     if (!composer_->composeRows(w, maxRows)) return status_;
     ++windows_;
@@ -213,7 +290,7 @@ class CheckpointSweep {
 
   Status status() const { return status_; }
   bool periodic() const { return periodic_; }
-  bool pinned() const { return pinned_; }
+  bool pinned() const { return source_.pinned(); }
   uint32_t windows() const { return windows_; }
   uint32_t grains() const { return grains_; }
 
@@ -229,17 +306,14 @@ class CheckpointSweep {
   }
   void releaseSource() {
     composer_->end();
-    if (pinned_) manifests_->unpin(manifest_, *runs_);
-    pinned_ = false;
+    source_.close();
   }
 
   Composer* composer_ = nullptr;
   Table* table_ = nullptr;
-  Manifests* manifests_ = nullptr;
-  Runs* runs_ = nullptr;
+  SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
-  ManifestId manifest_ = kNoManifest;
-  bool pinned_ = false, periodic_ = false;
+  bool composing_ = false, periodic_ = false;
   uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0, grains_ = 0;
   Status status_ = Status::Idle;
 };
@@ -253,42 +327,34 @@ template <typename Composer, typename Table, typename Window, typename Manifests
 class ColdStart {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Refused, Cancelled };
+  static constexpr uint32_t kIndexGrain = 256;
 
   Status start(Composer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
                ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks) {
     cancel();
     composer_ = &composer;
-    manifests_ = &manifests;
-    runs_ = &runs;
-    manifest_ = manifest;
+    table_ = &table;
+    slot_ = slot;
     target_ = position;
     cycle_ = cycle;
     window_ = windowTicks;
     replayed_ = 0;
     grains_ = 0;
-    manifests.pin(manifest);
-    pinned_ = true;
-    const auto& m = manifests.manifest(manifest);
-    SourceRun src[Manifests::kMaxRuns];
-    for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
     warmup_ = false;
-    if (const auto* cp = table.nearest(slot, m.identity, position)) {
-      if (!composer.resume(src, m.runCount, m.loopLengthTicks, m.identity, *cp)) return refuse();
-      at_ = cp->position;
-    } else {
-      if (!composer.begin(src, m.runCount, m.loopLengthTicks, m.identity)) return refuse();
-      warmup_ = true;  // cycle 0 from the loop start, then replay to the position
-      at_ = 0;
-    }
-    status_ = Status::Running;
-    if (!warmup_) settle();
-    return status_;
+    composing_ = false;
+    source_.open(manifests, runs, composer, manifest);
+    return status_ = Status::Running;
   }
 
-  /// One grain.
+  /// One grain: `maxRows` source rows of replay, or `kIndexGrain` index units while the index builds.
   Status step(Window& scratch, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     ++grains_;
+    if (!composing_) {
+      if (source_.prepare(kIndexGrain) == IndexResult::CapacityExceeded) return refuse();
+      if (source_.prepared()) begin();
+      return status_;
+    }
     if (!composer_->windowOpen()) composer_->openWindow(scratch, window_);
     if (!composer_->composeRows(scratch, maxRows)) return status_;
     ++replayed_;
@@ -310,16 +376,35 @@ class ColdStart {
   /// Ends the composer's use of the source (the cursor that took it over ends).
   void release() {
     if (composer_ != nullptr) composer_->end();
-    if (pinned_) manifests_->unpin(manifest_, *runs_);
-    pinned_ = false;
+    source_.close();
   }
 
   Status status() const { return status_; }
-  bool pinned() const { return pinned_; }
+  bool pinned() const { return source_.pinned(); }
   uint32_t replayed() const { return replayed_; }
   uint32_t grains() const { return grains_; }
 
  private:
+  /// Index Ready: resume from the nearest usable checkpoint, else warm up from the loop start.
+  void begin() {
+    if (const auto* cp = table_->nearest(slot_, source_.identity(), target_)) {
+      if (!composer_->resume(source_.source(), source_.count(), source_.loopLength(), source_.identity(), *cp)) {
+        refuse();
+        return;
+      }
+      at_ = cp->position;
+    } else {
+      if (!composer_->begin(source_.source(), source_.count(), source_.loopLength(), source_.identity())) {
+        refuse();
+        return;
+      }
+      warmup_ = true;  // cycle 0 from the loop start, then replay to the position
+      at_ = 0;
+    }
+    source_.dropIndexLease();
+    composing_ = true;
+    settle();
+  }
   void settle() {
     if (warmup_ || at_ < target_) return;
     composer_->rebaseCycle(cycle_);
@@ -331,10 +416,10 @@ class ColdStart {
   }
 
   Composer* composer_ = nullptr;
-  Manifests* manifests_ = nullptr;
-  Runs* runs_ = nullptr;
-  ManifestId manifest_ = kNoManifest;
-  bool pinned_ = false, warmup_ = false;
+  const Table* table_ = nullptr;
+  SourceLease<Composer, Manifests, Runs> source_;
+  uint8_t slot_ = 0;
+  bool warmup_ = false, composing_ = false;
   uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
   Status status_ = Status::Idle;
 };

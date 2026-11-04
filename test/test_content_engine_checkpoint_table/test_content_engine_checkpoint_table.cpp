@@ -494,6 +494,59 @@ void test_saturated_composition_is_flagged_aperiodic() {
   }
 }
 
+// The jobs build a non-resident edit index in grains before composing: no composer `begin` builds synchronously, and
+// the result equals a table swept after a synchronous build.
+void test_jobs_build_the_edit_index_in_grains() {
+  std::vector<N> base;
+  std::vector<uint32_t> hides;
+  for (uint32_t k = 0; k < 600; ++k) base.push_back({k + 1, 1, static_cast<uint8_t>(30 + k % 60), 10 + 20 * k, 15 + 20 * k});
+  for (uint32_t k = 0; k < 600; k += 2) hides.push_back(k + 1);
+  const RunId a = makeRun(RunKind::kRecord, {}, base);
+  const RunId e = makeRun(RunKind::kEdit, hides, {{3, 1, 31, 50, 400}});
+  const SourceRun src[] = {{a, gRuns.run(a).rowCount}, {e, gRuns.run(e).rowCount}};
+  const ManifestId m = makeManifest(src, 2);
+  TEST_ASSERT_FALSE(gIndex.holds(identityOf(m)));
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
+  uint32_t indexGrains = 0;
+  while (!gSweepComposer.windowOpen() && gSweep.windows() == 0) {
+    gSweep.step(gWin, kGrainRows);
+    ++indexGrains;
+  }
+  TEST_ASSERT_TRUE(indexGrains > 2);  // 300 hides: gather, heapify, sort and collapse take several grains
+  while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
+  TEST_ASSERT_EQUAL_UINT32(0, gIndex.syncBuilds());
+  TestComposer::Checkpoint swept[4];
+  for (uint8_t k = 0; k < 4; ++k) swept[k] = gTable.entry(0, k);
+
+  Cold::Status st = gColdJob.start(gCold, gTable, gManifests, gRuns, 0, m, 5 * kWin, 2, kWin);
+  while (st == Cold::Status::Running) st = gColdJob.step(gScratch, kGrainRows);
+  TEST_ASSERT_EQUAL(Cold::Status::Done, st);
+  TEST_ASSERT_EQUAL_UINT32(0, gIndex.syncBuilds());
+  gColdJob.release();
+
+  reference(src, 2, identityOf(m));  // a composer `begin` on a resident index: no build
+  TEST_ASSERT_EQUAL_UINT32(0, gIndex.syncBuilds());
+
+  setUp();  // the same source with a synchronously built index sweeps to the same checkpoints
+  const RunId a2 = makeRun(RunKind::kRecord, {}, base);
+  const RunId e2 = makeRun(RunKind::kEdit, hides, {{3, 1, 31, 50, 400}});
+  const SourceRun src2[] = {{a2, gRuns.run(a2).rowCount}, {e2, gRuns.run(e2).rowCount}};
+  const ManifestId m2 = makeManifest(src2, 2);
+  TestComposer::Checkpoint warm;
+  TEST_ASSERT_TRUE(gRef.begin(src2, 2, kLoop, identityOf(m2)));  // synchronous build
+  TEST_ASSERT_EQUAL_UINT32(1, gIndex.syncBuilds());
+  gRef.end();
+  runSweep(m2);
+  for (uint8_t k = 0; k < 4; ++k) {
+    warm = gTable.entry(0, k);
+    warm.identity = swept[k].identity;
+    TEST_ASSERT_TRUE(sameState(warm, swept[k]));
+  }
+  checkColdStart(m2, reference(src2, 2, identityOf(m2)), 1, 3);
+}
+
 // Lookup: nearest usable at or before the position, stamped identity only, other slots independent; an overflowed
 // checkpoint is stored unusable and skipped.
 void test_table_lookup_and_unusable_entries() {
@@ -534,6 +587,7 @@ int main(int, char**) {
   RUN_TEST(test_replacement_between_grains_publishes_nothing);
   RUN_TEST(test_pin_keeps_source_alive_until_the_sweep_ends);
   RUN_TEST(test_saturated_composition_is_flagged_aperiodic);
+  RUN_TEST(test_jobs_build_the_edit_index_in_grains);
   RUN_TEST(test_table_lookup_and_unusable_entries);
   RUN_TEST(test_production_table_within_budget);
   return UNITY_END();

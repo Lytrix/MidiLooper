@@ -182,6 +182,7 @@ class Composer {
     lease_ = IndexLease{};
   }
   IndexResult indexResult() const { return indexResult_; }
+  IndexStore* indexStore() const { return index_; }
 
   static constexpr uint8_t kCheckpointActive = 64;
 

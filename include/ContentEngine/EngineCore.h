@@ -90,7 +90,12 @@ constexpr uint8_t kComposeCursors = 18;
 static_assert(sizeof(ProductionComposer) <= 12288u, "a compose cursor stays within its 12 KiB budget");
 static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221184u, "compose cursors fit the 221,184 B budget");
 static_assert(ProductionEditIndex::kSlots >= kComposeCursors, "every cursor can pin a distinct identity: Busy is unreachable");
-static_assert(sizeof(ProductionEditIndex) <= 576u * 1024u + 4096u, "the shared index fits the plan's 576-page reserve");
+static_assert(ProductionEditIndex::kPages == Config::kIndexReservePages,
+              "the shared index is exactly the pool's edit-index partition (E5.3)");
+static_assert(sizeof(ProductionEditIndex) <= 4096u, "the store object holds headers and page lists only");
+/// Init order (E5.3): pool, then the edit-index store (takes its partition, tagged kOwnerIndex), then the reservation
+/// ledger with only the compaction partition as fixed reserve: the index pages are already off the free stack.
+constexpr uint32_t kLedgerFixedReservePages = Config::kCompactionReservePages;
 
 /// Restart checkpoints (E5): one table per slot, 8 checkpoints at 8-bar spacing (plan § 4.1: 262,144 B).
 using ProductionCheckpoints = CheckpointTable<ProductionComposer::Checkpoint, Config::kSlotCount, 8>;
