@@ -24,4 +24,12 @@ struct PassEvent {
 };
 static_assert(sizeof(PassEvent) == 16, "PassEvent is a fixed 16-byte row");
 
+/// `origin` flag bits (bits 0..5 stay the compaction ordinal).
+/// An engine-generated closure row (Stop / FinalInterval).
+constexpr uint8_t kOriginGeneratedClosure = 0x80u;
+/// A NoteOff whose note was held for at least one loop length (Q-LEN-1). Loop replay re-strikes such a note once per
+/// loop, ending each iteration one tick before the next, and never sends this NoteOff against a newer iteration. The
+/// row's tick, status and data stay as recorded.
+constexpr uint8_t kOriginHeldLoop = 0x40u;
+
 }  // namespace ContentEngine

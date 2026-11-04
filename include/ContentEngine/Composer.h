@@ -22,8 +22,14 @@
 // streams: the main stream (ticks < loop) and the wrap stream (ticks >= loop, played at `tick - loop` in the next cycle).
 // A cold `begin` counts the wrap-held source notes as sounding at tick 0 (so occlusion at the loop start is exact) but
 // admits none of them (DEC-148: never sounded); `nextCycle` continues with everything carried.
-// Not in this slice (named): owed-commit runs spanning more than one cycle; edit hides; checkpoints for mid-loop starts.
-// Scratch is fixed: 128 x 64 source counters, T admitted notes, two cursors per run.
+//
+// Q-LEN-1 (owner decision 2026-11-04, re-strike once per loop): a note held for at least one loop length (its NoteOff
+// flagged `kOriginHeldLoop` by the writer) is replayed with effective end min(recorded end, start + loop - 1): its NoteOn
+// repeats every loop and each iteration ends one tick before its successor. The flagged NoteOff is never sent against a
+// newer iteration. Its source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the
+// effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
+// Not in this slice (named): edit hides; checkpoints for mid-loop starts.
+// Scratch is fixed: 128 x 64 source counters, T admitted notes, three cursors per run.
 
 #pragma once
 
@@ -141,7 +147,7 @@ class Composer {
   };
   struct Stream {
     uint8_t run;
-    uint8_t band;  // 0 main (< loop), 1 wrap (< 2 x loop), 2 held beyond a second wrap (Q-LEN-1 interim)
+    uint8_t band;  // 0 main (< loop), 1 wrap (< 2 x loop), 2 beyond a second wrap (always a held-loop NoteOff)
   };
 
   const PassEvent& row(uint8_t r, uint32_t i) const { return runs_->rowAt(src_[r].run, i, *pool_); }
@@ -165,8 +171,8 @@ class Composer {
   }
 
   /// Position of a stream's next row in the current cycle, or false when it has none before `limit`.
-  /// Band 2 (Q-LEN-1 interim): a NoteOff of a note held across more than one wrap plays in the cycle after the note's
-  /// start, at min(tick - 2 x loop, loop - 1); its own next iteration's restart ends it at the latest.
+  /// Band 2 rows are NoteOffs of notes held past a second wrap: always flagged held-loop, so they only need an ordered
+  /// position (clamped into the cycle); `process` gives them no effect.
   bool head(uint8_t r, uint8_t band, uint32_t limit, uint32_t& pos, const PassEvent*& e) const {
     const uint32_t i = band == 0 ? cursor_[r] : band == 1 ? wrapCursor_[r] : band2Cursor_[r];
     const uint32_t end = band == 0 ? wrapStart_[r] : band == 1 ? band2Start_[r] : src_[r].rowLimit;
@@ -228,7 +234,8 @@ class Composer {
   /// where only a wrap-held note still sounds; h = 0 there is Q-OVL-3, handled by `wrapHeldHiddenAtZero`.
   bool laterPassStartsWhileSounding(uint8_t r, uint32_t noteId, uint8_t pitch, uint32_t on) const {
     const uint32_t to = on + kHideLookahead;
-    const uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
+    uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
+    if (off > on + loop_ - 1) off = on + loop_ - 1;  // Q-LEN-1 effective end
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j) {
       for (uint32_t i = cursor_[j]; i < wrapStart_[j]; ++i) {
         ++lookaheadRows_;
@@ -307,6 +314,7 @@ class Composer {
     const uint16_t runKey = makeRunKey(src_[r].run, r);
     const uint8_t c = cls(e);
     if (c == 0) {
+      if (e.origin & kOriginHeldLoop) return;  // Q-LEN-1: the re-strike ends it; its count drops at the sweep end
       if (active_[e.data1 & 0x7F][r] > 0) --active_[e.data1 & 0x7F][r];
       for (uint8_t i = 0; i < admittedCount_; ++i)
         if (admitted_[i].noteId == e.noteId && admitted_[i].runKey == runKey) {
@@ -323,9 +331,9 @@ class Composer {
       return;
     }
     const uint8_t pitch = e.data1 & 0x7F;
-    for (uint8_t i = 0; i < admittedCount_; ++i)  // a note cannot outlast its own next iteration (Q-LEN-1 interim)
+    for (uint8_t i = 0; i < admittedCount_; ++i)  // Q-LEN-1: the previous iteration ends one tick before this one
       if (admitted_[i].noteId == e.noteId && admitted_[i].runKey == runKey) {
-        endAdmitted(w, i, pos == 0 ? 0 : pos - 1);
+        endAdmitted(w, i, pos == 0 ? 0 : pos - 1);  // at a window's first tick `endLookahead` already ended it
         break;
       }
     lookaheadRows_ = 0;
@@ -345,15 +353,32 @@ class Composer {
     ++w.startCount;
   }
 
-  /// NoteOns exactly at the next window's first tick shorten admitted notes to this window's last tick (OVL-1).
+  /// NoteOns exactly at the next window's first tick (the next cycle's tick 0 at the loop end) end admitted notes in
+  /// this window: a later pass shortens earlier-pass notes on its pitch (OVL-1; not at tick 0, Q-OVL-3), and a note's
+  /// own next iteration ends its previous one (Q-LEN-1). At the loop end the held-loop source counts drop once.
   template <uint16_t Cap>
   void endLookahead(SpanWindow<Cap>& w, uint32_t b) {
-    if (b >= loop_) return;
-    for (uint8_t j = 0; j < count_; ++j)
-      for (uint32_t i = cursor_[j]; i < wrapStart_[j]; ++i) {
+    const bool loopEnd = b >= loop_;
+    const uint32_t at = loopEnd ? 0 : b;
+    for (uint8_t j = 0; j < count_; ++j) {
+      const uint16_t runKey = makeRunKey(src_[j].run, j);
+      for (uint32_t i = loopEnd ? 0 : cursor_[j]; i < wrapStart_[j]; ++i) {
         const PassEvent& e = row(j, i);
-        if (e.tick != b) break;
-        if (cls(e) == 1) shorten(w, j, e.data1 & 0x7F, b);
+        if (e.tick != at) break;
+        if (cls(e) != 1) continue;
+        for (uint8_t k = 0; k < admittedCount_; ++k)
+          if (admitted_[k].noteId == e.noteId && admitted_[k].runKey == runKey) {
+            endAdmitted(w, k, b - 1);
+            break;
+          }
+        if (!loopEnd) shorten(w, j, e.data1 & 0x7F, b);
+      }
+    }
+    if (!loopEnd) return;
+    for (uint8_t j = 0; j < count_; ++j)
+      for (uint32_t i = wrapStart_[j]; i < src_[j].rowLimit; ++i) {
+        const PassEvent& e = row(j, i);
+        if (cls(e) == 0 && (e.origin & kOriginHeldLoop) && active_[e.data1 & 0x7F][j] > 0) --active_[e.data1 & 0x7F][j];
       }
   }
 

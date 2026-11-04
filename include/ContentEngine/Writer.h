@@ -28,9 +28,6 @@
 
 namespace ContentEngine {
 
-/// `origin` bit marking an engine-generated closure row (Stop / FinalInterval). Bits 0..6 stay the compaction ordinal.
-constexpr uint8_t kOriginGeneratedClosure = 0x80u;
-
 /// Engine-wide NoteId allocator: monotonic, never reused within a boot (persistence restores the high-water mark).
 struct NoteIdSource {
   uint32_t next;
@@ -74,6 +71,8 @@ class Writer {
     sealedHead_ = sealedCount_ = 0;
     sealedOverflow_ = 0;
     seq_ = 0;
+    loopLength_ = 0;
+    activeBase_ = 0;
     slot_ = 0xFF;
     kind_ = 0;
     for (auto& o : open_) o = Open{};
@@ -81,10 +80,15 @@ class Writer {
     openOrder_ = 0;
   }
 
-  WriterResult begin(uint8_t slot, uint8_t kind) {
+  /// `loopLength` (0 when not yet known, e.g. a Record take) marks NoteOffs of notes held a full loop (Q-LEN-1).
+  /// Each run stores ticks relative to its own start (`startTick`, then each wrap tick), so a run's main rows are loop
+  /// positions and a held note's NoteOff lands at `loop + position` in its originating run.
+  WriterResult begin(uint8_t slot, uint8_t kind, uint32_t loopLength = 0, uint32_t startTick = 0) {
     if (state_ == State::Writing) return WriterResult::NotWriting;
     const RunId run = runs_->allocate(slot, kind);
     if (run == kNoRun) return WriterResult::DeniedRun;
+    loopLength_ = loopLength;
+    activeBase_ = startTick;
     active_ = run;
     slot_ = slot;
     kind_ = kind;
@@ -98,12 +102,13 @@ class Writer {
     if (state_ != State::Writing) return WriterResult::NotWriting;
     if (openCount_ >= kMaxOpen) return WriterResult::DeniedOpenNotes;
     const uint32_t id = ids_->peek();
-    const Admission a = res_->accept(active_, row(tick, id, statusOf(0x90, channel), pitch, velocity, 0), 1);
+    const Admission a =
+        res_->accept(active_, row(tick - activeBase_, id, statusOf(0x90, channel), pitch, velocity, 0), 1);
     if (a != Admission::Ok) return WriterResult::DeniedCapacity;
     ids_->advance();
     for (auto& o : open_)
       if (!o.used) {
-        o = Open{id, ++openOrder_, active_, channel, pitch, true};
+        o = Open{id, ++openOrder_, tick, activeBase_, active_, channel, pitch, true};
         break;
       }
     ++openCount_;
@@ -116,14 +121,14 @@ class Writer {
     for (auto& o : open_)
       if (o.used && o.channel == channel && o.pitch == pitch && (match == nullptr || o.order > match->order)) match = &o;
     if (match == nullptr) return WriterResult::Unmatched;
-    closeOpen(*match, row(tick, match->noteId, statusOf(0x80, channel), pitch, velocity, 0));
+    closeOpen(*match, row(tick - match->base, match->noteId, statusOf(0x80, channel), pitch, velocity, heldFlag(*match, tick)));
     return WriterResult::Ok;
   }
 
   /// CC, pitch bend, program change, aftertouch: one row, nothing owed.
   WriterResult channelEvent(uint32_t tick, uint8_t status, uint8_t data1, uint8_t data2) {
     if (state_ != State::Writing) return WriterResult::NotWriting;
-    return res_->accept(active_, row(tick, 0, status, data1, data2, 0), 0) == Admission::Ok
+    return res_->accept(active_, row(tick - activeBase_, 0, status, data1, data2, 0), 0) == Admission::Ok
                ? WriterResult::Ok
                : WriterResult::DeniedCapacity;
   }
@@ -146,6 +151,7 @@ class Writer {
       sealAndQueue(active_);
     }
     active_ = next;
+    activeBase_ = wrapTick;
     return WriterResult::Ok;
   }
 
@@ -176,6 +182,8 @@ class Writer {
   struct Open {
     uint32_t noteId = 0;
     uint32_t order = 0;
+    uint32_t onTick = 0;  // caller timeline
+    uint32_t base = 0;    // its run's start tick (rows store tick - base)
     RunId run = kNoRun;
     uint8_t channel = 0;
     uint8_t pitch = 0;
@@ -212,9 +220,15 @@ class Writer {
     }
   }
 
+  uint8_t heldFlag(const Open& o, uint32_t offTick) const {
+    return loopLength_ != 0 && offTick - o.onTick >= loopLength_ ? kOriginHeldLoop : 0;
+  }
+
   void stopAt(uint32_t tick) {
     for (auto& o : open_)
-      if (o.used) closeOpen(o, row(tick, o.noteId, statusOf(0x80, o.channel), o.pitch, 0, kOriginGeneratedClosure));
+      if (o.used)
+        closeOpen(o, row(tick - o.base, o.noteId, statusOf(0x80, o.channel), o.pitch, 0,
+                         static_cast<uint8_t>(kOriginGeneratedClosure | heldFlag(o, tick))));
     for (uint8_t i = 0; i < closingCount_; ++i) sealAndQueue(closing_[i]);  // already empty after closures
     closingCount_ = 0;
     sealAndQueue(active_);
@@ -249,6 +263,8 @@ class Writer {
   uint8_t sealedHead_, sealedCount_;
   uint32_t sealedOverflow_;
   uint32_t seq_;
+  uint32_t loopLength_;
+  uint32_t activeBase_;
   uint8_t slot_, kind_;
   Open open_[kMaxOpen];
   uint16_t openCount_;
