@@ -410,3 +410,119 @@ Lifecycle, using existing transitions only:
   timeout or Clock work.
 
 The `ServingViewSourceStale` correction (explicit Record-return authorization) follows once these REDs are green.
+
+### DEC-136 item 4: frozen-continuation envelope and slice 136.4a (owner ruling, conditional approval)
+
+**Frozen-continuation envelope.**
+
+Grants per frozen (Capture) bar, measured on host with `FROZEN_ENVELOPE_MEASURE`
+(`test_c5_3_record_return_frozen_continuation_envelope`). This is the same gesture as the device run, with one lane
+turn per tick.
+
+| take | grants per frozen bar |
+|---|---|
+| 4 bars, 1 note/bar | 1 |
+| 4 bars, 16ths | 3 (2 fill + 1 order) |
+| 32 bars, 16ths (the device's dense shape) | 3 (2 fill + 1 order) |
+
+The frozen builder reads `entryQuantum = 32` rows per fill grain.
+
+Device: in all three captures (`session_20261104_002601`, `_004411`, `_005353`; 13-15 frozen bars each) every frozen
+bar completed with **624-704 ticks of its 768-tick bar left**, i.e. 64-144 ticks after its start.
+
+**Is starting frozen B+2 after the B -> B+1 handoff safe?**
+- **Under the declared service envelope: no.** G_f x (H+1) x advance = 3 x 8 x 64 = **1,536 ticks**, more than the
+  768 available.
+  - The declared envelope cannot certify the *baseline* frozen cadence either: the frozen reader has always started
+    its next bar after each handoff.
+  - Without a 64-tick turn guarantee there is no tick-domain proof at all.
+- **What can be proven is relative:** speculative preparation adds **zero grants** to the frozen path. Two conditions
+  make that true:
+  1. **No frozen-path grant before the handoff.** The root may hold the builder only while the frozen reader's next
+     bar (B+1) already sits complete in `ready` (S2). The frozen reader then has no work it could be denied.
+  2. **A free yield at the handoff turn.** The root releases the builder on the handoff turn at no cost:
+     `retireCoverageSource` -> `releaseManifestCoverage()` on the routed slot, with no retirement grains.
+     A snapshot-backed root goes through `Retiring` (release grains), so it could delay the frozen build. Speculation is
+     therefore limited to the **manifest-routed slot**, which is the only slot where the gap exists: the unrouted
+     default has the merged fallback.
+- **Latest safe yield:** the frozen B -> B+1 handoff turn, provided the yield is free there. With that, frozen B+2
+  starts at exactly the point it does today.
+- An earlier yield buys nothing: the existing frozen progression can only prepare B+2 once `ready` frees at the
+  handoff.
+- Any absolute guarantee for the frozen cadence (declared or measured) is a separate, pre-existing question. It does
+  not change with this slice.
+
+**`gWithholdLaneTurn`, corrected.** The delayed-root predicate (`delayRootQualificationUntil`) now withholds a turn
+only while it could advance the root: the root owns the coverage source while the frozen next bar holds `ready`. Turns
+stay open in every other case:
+- the owner turn at the frozen handoff, where the root must yield;
+- every frozen-continuation build (a frozen build never owns the coverage source).
+
+The earlier predicate withheld every turn while a qualification counted, so it could not establish frozen-reader
+liveness.
+
+**Slice 136.4a** (REDs 1, 2 and 6 green; production code in `TrackPlaybackWindowBuild.cpp` and
+`TrackPlaybackRuntime.cpp`):
+1. `Track::recordReturnSpeculativeRootTarget` (cold) is S1-S4 with full identity, routed slot only.
+   - It checks: presentation `retirementActive` and `ownsExtent`; the qualified frozen identity; `current` and `ready`
+     both the job's own frozen views (`recordReturnOwnFrozenView`: Capture origin, no snapshot, source generation, the
+     capture content generation of both the receipt and the job, a bar-aligned interval); the playhead in `current`,
+     or exactly at `ready`'s start on the boundary tick; `ready` at the next boundary; a free, unpublished `build`;
+     and no complete retained view.
+   - The target is the bar after the frozen ready.
+2. `recordReturnSpeculativeRootAdmissible`: the request's coverage equals that target.
+3. The Record-return branch's Capture-ready sub-block names the root at the speculative target when S1-S4 hold.
+   Otherwise it keeps the existing obligation. A parked root discharges it: no re-request.
+4. `playbackBuildGateRefusal`: the speculative candidate is the one qualified root exempt from `CaptureReadyWait`.
+5. `stepCommittedPlaybackRetry`: it is admitted through the existing DEC-136 path (`PrivateRootReturnPreparation`,
+   deadline and epoch 0, no DEC-147 lead test, sibling promises still checked), with
+   `beginQualifiedCoverageBuild(..., besideFrozenReady = true)`.
+   - That parameter lets the build begin beside an unpublished Capture `ready` in a distinct, unretained view, and
+     never over `ready`.
+6. Parking: the branch's leftover-shell reset spares a complete, unpublished current-source root for the speculative
+   target (or, once `ready` is free, for the next unconsumed boundary).
+7. Publication: once `ready` is free, that parked root is published with `publishCompletedBuildAsReadySuccessor`, and
+   only for the bar after the one the playhead is served in. The existing root-return adoption takes it at that
+   boundary.
+
+Normal DEC-147 pricing is untouched. There is no new view, worker, queue, buffer, timeout or Clock work, and no new
+state.
+
+**Budget.**
+- A first form put the identity check in a lambda, which landed in ITCM (+128 B; the RAM1 gate refused it).
+- As a flash-placed static function, ITCM is unchanged: 392,312 B code, padding 904, 64 B over the floor. The default
+  image is also unchanged (304 B).
+
+**Results.**
+- Host: REDs 1, 2 and 6 pass and are promoted to the default gate. In RED 2 the root parks in v2 at 3282, is published
+  at the 3841 handoff, and is adopted at 4609 (boundary B+2) from the same view and storage generation, exactly once.
+- RED 6 is non-vacuous (frozen authority held beside the retained view). Its refusal is structural: with frozen
+  current, frozen ready and a retained view there is no `build` role at all. The S4 retained clause is defensive.
+- Native full: 3,996 cases, 0 failed. Default lane gate: 21/21.
+- REDs 3-5 stay gated for 136.4b.
+- The earlier `RECORD_STOP_LIVENESS_RED` (a late ready holding the role) now passes.
+
+**Open for 136.4b, found here.**
+- After the root handoff the routed slot is still silent: RED 5 shows 3,081 gap ticks, and there are no notes after
+  4609.
+- The root-return adoption on the clock edge rebinds `frame.boundView`, but keeps the frozen frame's geometry
+  (`startPhase` of the frozen bar, `deadlineTick = 0`, i.e. a whole-loop span).
+- Once the Record job releases, the committed resolver rejects the adopted one-bar root window as `ServingViewGeometry`,
+  which is silent on the routed slot.
+- This is pre-existing: the baseline traversal-later adoption has the same rejection, and it explains baseline
+  traversals 2-3 being silent.
+- This is a clock-path (ITCM) site, and the 64 B headroom bounds the fix.
+
+**136.4a independent review (one focused pass, `docs/Agents/reviewer.md`), findings and disposition:**
+
+| finding | severity | fix |
+|---|---|---|
+| F1: a refused speculative attempt left the frozen request with deadline 0 and `PrivateRootReturnPreparation`, so a later ordinary admission would wrap the `uint64_t` lead and skip DEC-147 | high | fixed: a refused speculative attempt restores the request exactly (`refuseSpeculation`); the long-standing waived path is unchanged |
+| F2: the gate and admission derived the phase from the live clock, not the turn's sample | medium | fixed: phase from the turn's `clock`; active slot only |
+| F3: park-preservation and publication also ran on the unrouted slot | medium/low | fixed: both gated on `REVISION_MANIFEST_READER` and `manifestLaneRoutesSlot`; publication now requires `parkedSpeculativeRoot` |
+| F4: the overlay candidate was not excluded | low | fixed |
+| F5: an unqualified pending speculative request is replaced after the handoff | low, fail-closed | tracked for 136.4b |
+
+- F1 has no dedicated injection test yet: it needs a sibling admitted promise during the speculative turn. That is
+  noted for 136.4b.
+- After the fixes: REDs 1, 2 and 6 pass, the default lane gate is 21/21, and ITCM is unchanged (392,312 B, padding 904).

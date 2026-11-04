@@ -1091,7 +1091,10 @@ struct LoopPlaybackRuntime {
 #endif
   bool beginCoverageQualification(const LoopSnapshot& snapshot, bool keepCaptureReady = false);
   bool stepCoverageQualification(size_t quantum);
-  bool beginQualifiedCoverageBuild(const CoverageServiceContract& contract, PlaybackDeadlineClock clock);
+  /// `besideFrozenReady`: DEC-136 item 4's speculative root-return admission into the free third view while a frozen
+  /// Capture `ready` still owns its boundary (the caller has proven the Record-return terms).
+  bool beginQualifiedCoverageBuild(const CoverageServiceContract& contract, PlaybackDeadlineClock clock,
+                                   bool besideFrozenReady = false);
   void retireCoverageSource();
   bool stepCoverageSourceRetirement(size_t quantum);
   bool coverageRoleAvailable(bool keepCaptureReady = false) const;

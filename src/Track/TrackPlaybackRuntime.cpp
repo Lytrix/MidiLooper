@@ -2498,7 +2498,7 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::stepCoverageQualificat
 }
 
 TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverageBuild(
-    const CoverageServiceContract& contract, PlaybackDeadlineClock clock) {
+    const CoverageServiceContract& contract, PlaybackDeadlineClock clock, bool besideFrozenReady) {
   const bool launch = frozenViewRequest.sourceKind == PlaybackViewPendingRequest::SourceKind::CommittedLaunch;
   const auto& frame = rolling;
   const bool cold = frame.phase == RollingPhase::Requested && frame.epoch == 0 &&
@@ -2546,8 +2546,17 @@ TRACK_PLAYBACK_RUNTIME_COLD_MEM bool LoopPlaybackRuntime::beginQualifiedCoverage
   // Qualification may run privately beside a Capture ready, but admission
   // cannot discharge that request until the single successor role is free.
   // Slice 2 (owner ruling 2026-11-04): the one exception is the frame's own depth-2 build into a distinct free view.
+  // DEC-136 item 4: a speculative root-return build may begin beside a frozen Capture `ready` (never over it): the
+  // ready view is unpublished Capture content and the build view is a distinct, unretained third view.
+  const bool speculativeBesideFrozen = besideFrozenReady && privateRootReturn && set &&
+      set->lifecycle.ready < set->views.size() && set->lifecycle.build < set->views.size() &&
+      !set->views[set->lifecycle.ready].published &&
+      set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Capture &&
+      set->lifecycle.build != set->lifecycle.ready && set->lifecycle.build != set->lifecycle.current &&
+      set->lifecycle.build != set->lifecycle.retained;
   if (!set || set->lifecycle.build >= set->views.size() ||
-      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete && !depth2Admissible) ||
+      (set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete && !depth2Admissible &&
+       !speculativeBesideFrozen) ||
 #if REVISION_MANIFEST_READER
       coverageSourceReadUnits() != coverageSourceUnits) return false;
 #else

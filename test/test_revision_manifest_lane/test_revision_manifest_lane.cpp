@@ -766,6 +766,24 @@ void test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice() {
   }
 }
 
+/// The deliberately delayed root, selectively: until `releaseTick`, a lane turn is withheld only while it could
+/// advance the **root** -- the root owns the coverage source (qualifying or building) while the frozen reader's next
+/// bar holds `ready`. Every other turn is served: the owner turn at the frozen handoff (where the root must yield),
+/// and every frozen-continuation build (which never owns the coverage source).
+void delayRootQualificationUntil(Track& t, uint32_t releaseTick, uint32_t& withheld) {
+  gWithholdLaneTurn = [&t, releaseTick, &withheld](uint32_t tick) {
+    if (tick >= releaseTick || tick < kLength) return false;
+    const auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+    const auto* set = runtime.viewSetIfPrewarmed();
+    const bool frozenReadyHeld = set != nullptr && set->lifecycle.ready < set->views.size() &&
+        set->views[set->lifecycle.ready].complete && !set->views[set->lifecycle.ready].published &&
+        set->views[set->lifecycle.ready].source.origin == PlaybackWindowOrigin::Capture;
+    const bool rootProgress = runtime.ownsCoverageSource() && frozenReadyHeld;
+    if (rootProgress) ++withheld;
+    return rootProgress;
+  };
+}
+
 /// The Record-return handoff witness: every change of the served view's origin, and the take's notes paired.
 struct RootHandoffWitness {
   uint32_t rootHandoffs = 0;        // `current` went from a Capture (frozen Record-return) view to a Committed one
@@ -841,13 +859,7 @@ void test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation() {
   RootHandoffWitness w;
   const uint32_t releaseTick = kLength + 3 * kBar;
   uint32_t withheld = 0;
-  gWithholdLaneTurn = [&](uint32_t tick) {
-    if (tick >= releaseTick || tick < kLength) return false;
-    const auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
-    const bool rootCounting = runtime.coveragePreparation == LoopPlaybackRuntime::CoveragePreparation::Counting;
-    if (rootCounting) ++withheld;
-    return rootCounting;
-  };
+  delayRootQualificationUntil(t, releaseTick, withheld);
   PlaybackObservation obs = recordIntoPlayingThenPlay(t, 5, trace, [&](uint32_t tick) {
     observeRootHandoff(TrackCaptureStopTestAccess::runtimeFor(t, 0), tick, w);
   });
@@ -884,6 +896,10 @@ struct RecordReturnOwnershipWitness {
   uint32_t frozenBuildsKilled = 0;
   // RED 6: a root build observed while a valid retained view holds the third physical view.
   uint32_t rootBuiltWhileRetained = 0;
+  uint8_t retainedView = 0xFF;
+  uint64_t retainedStorage = 0;
+  uint32_t retainedDisturbed = 0;
+  uint32_t frozenAuthorityWhileRetained = 0;  // ticks the speculative conditions held beside the retained view
 };
 
 void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnershipWitness& w) {
@@ -908,7 +924,16 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
   const bool rootInBuild = bld != nullptr && bld->source.origin == PlaybackWindowOrigin::Committed &&
       bld->coverage.lengthTicks != 0 && (bld->complete || runtime.coverageBuildNeedsService());
   if (rootCurrent && frozenCur && frozenRdy && rootInBuild) w.rootBesideFrozen = true;
-  if (lc.retained < n && set->views[lc.retained].complete && rootInBuild) ++w.rootBuiltWhileRetained;
+  // Speculative preparation is the root building beside the frozen current and ready; with a valid retained view in
+  // the third physical view there is none to take.
+  if (lc.retained < n && set->views[lc.retained].complete && rootInBuild && frozenCur && frozenRdy)
+    ++w.rootBuiltWhileRetained;
+  if (lc.retained < n && set->views[lc.retained].complete && rootCurrent && frozenCur && frozenRdy)
+    ++w.frozenAuthorityWhileRetained;
+  if (lc.retained < n && set->views[lc.retained].complete) {
+    if (w.retainedView == 0xFF) { w.retainedView = lc.retained; w.retainedStorage = set->views[lc.retained].storageGeneration; }
+    if (lc.retained != w.retainedView || set->views[lc.retained].storageGeneration != w.retainedStorage) ++w.retainedDisturbed;
+  }
   // RED 2
   if (!w.parked && frozenRdy && bld != nullptr && bld->complete && !bld->published &&
       bld->source.origin == PlaybackWindowOrigin::Committed) {
@@ -918,9 +943,10 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
     w.frozenReadyView = lc.ready;
     w.frozenReadyStorage = rdy->storageGeneration;
   }
-  if (w.parked && !w.publishedFromPark && lc.ready == w.frozenReadyView && rdy != nullptr &&
-      rdy->storageGeneration != w.frozenReadyStorage && lc.ready != w.parkedView)
-    ++w.readyOverwritten;
+  if (w.parked && lc.current == w.frozenReadyView) w.frozenReadyView = 0xFF;  // the frozen handoff took it
+  if (w.parked && w.frozenReadyView != 0xFF && lc.ready == w.frozenReadyView && rdy != nullptr &&
+      rdy->storageGeneration != w.frozenReadyStorage)
+    ++w.readyOverwritten;  // rewritten while it still owned the ready role
   if (w.parked && lc.ready == w.parkedView && rdy != nullptr && rdy->storageGeneration == w.parkedStorage)
     w.publishedFromPark = true;
   if (w.parked && lc.current == w.parkedView && cur != nullptr && cur->storageGeneration == w.parkedStorage)
@@ -946,16 +972,6 @@ void observeRecordReturnOwnership(Track& t, uint32_t tick, RecordReturnOwnership
   }
 }
 
-/// Withhold the root's qualification turns (the deliberately delayed root) until `releaseTick`.
-void delayRootQualificationUntil(Track& t, uint32_t releaseTick, uint32_t& withheld) {
-  gWithholdLaneTurn = [&t, releaseTick, &withheld](uint32_t tick) {
-    if (tick >= releaseTick || tick < kLength) return false;
-    const bool counting = TrackCaptureStopTestAccess::runtimeFor(t, 0).coveragePreparation ==
-        LoopPlaybackRuntime::CoveragePreparation::Counting;
-    if (counting) ++withheld;
-    return counting;
-  };
-}
 
 // RED 1: the committed root-return candidate prepares in the third physical view while the frozen reader owns both
 // `current` (serving the playhead) and `ready` (its next bar).
@@ -1076,9 +1092,87 @@ void test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_pl
   });
   RollingSuccessorProbe::gKnobs = {};
   TEST_ASSERT_TRUE_MESSAGE(retainedInstalled, "the retained third view was never installed: vacuous");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.rootBuiltWhileRetained, "the root prepared over a retained third view");
-  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.gapTicks, "frozen playback was affected by the refused root");
-  assertEveryTakeNotePlayed(obs, 1, 3);
+  TEST_ASSERT_GREATER_THAN_UINT32_MESSAGE(0u, w.frozenAuthorityWhileRetained,
+                                          "frozen current+ready never held beside the retained view: vacuous");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.rootBuiltWhileRetained,
+                                   "the root prepared speculatively over a retained third view");
+  TEST_ASSERT_EQUAL_UINT32_MESSAGE(0u, w.retainedDisturbed, "the retained third view was disturbed");
+  // Frozen playback is unaffected by the refusal: the frozen bar already prepared when the root became current plays.
+  // (Continuity beyond it is the frozen-priority slice's -- RED 5.)
+  bool bar1 = false;
+  for (const auto& [ph, pitch] : noteOnsInTraversal(obs, 1)) bar1 |= isTakeNote(ph, pitch) && ph / kBar == 1;
+  TEST_ASSERT_TRUE_MESSAGE(bar1, "the frozen bar prepared before the refusal did not play");
+}
+
+/// Frozen-continuation envelope measurement (DEC-136 item 4 ruling): the Record-into-PLAYING gesture with `bars` bars
+/// of `notesPerBar` evenly spaced notes; per frozen (Capture) window built after the stop, the grants it took -- one
+/// lane turn per tick on this single-track fixture -- split into fill and order grains.
+struct FrozenEnvelope {
+  uint32_t windows = 0, maxGrants = 0, maxFill = 0, maxOrder = 0, minGrants = UINT32_MAX;
+};
+
+FrozenEnvelope measureFrozenContinuation(Track& t, uint32_t bars, uint32_t notesPerBar, uint32_t traversals) {
+  const uint32_t length = bars * kBar;
+  prepareSlot(t, 0, false);
+  t.forceSetState(TRACK_STOPPED);
+  nativePlaybackDeadlineClock = {0, 1};
+  clockManager.assignCurrentTickSilently(0);
+  start(t, 0, false, 0, 60);
+  const uint32_t step = kBar / notesPerBar;
+  PlaybackObservation obs;
+  play(t, 1, length, obs, 1, [&](uint32_t tick) {
+    if (tick < 100) return;
+    const uint32_t inStep = tick % step;
+    const uint8_t pitch = static_cast<uint8_t>(61 + (tick / step) % 24);
+    if (inStep == 3) t.noteOn(1, pitch, 100, tick);
+    if (inStep == 3 + std::max<uint32_t>(6, step / 2)) t.noteOff(1, pitch, 0, tick);
+  });
+  clockManager.assignCurrentTickSilently(length);
+  nativePlaybackDeadlineClock = {length, 1};
+  t.stopRecording(length);
+  FrozenEnvelope env;
+  uint32_t grants = 0, fill = 0, order = 0;
+  bool building = false;
+  auto& runtime = TrackCaptureStopTestAccess::runtimeFor(t, 0);
+  play(t, length, (1 + traversals) * length, obs, 1, [&](uint32_t) {
+    if (t.hasSnapshotPublicationBacklogOnAnySlot())
+      t.processDeferredIdleMaintenance(0, false, MidiServiceDrain::DeferredIdleOwner::Snapshot, 1);
+    if (t.hasStopInFlight() || TrackCaptureStopTestAccess::recordWorkPending(t)) TrackCaptureStopTestAccess::step(t);
+    const bool active = runtime.frozenWindowBuildActive();
+    if (active) {
+      ++grants;
+      const auto g = runtime.frozenWindowBuildGrain();
+      if (g == RuntimePlaybackViewBuildGrain::Fill) ++fill;
+      if (g == RuntimePlaybackViewBuildGrain::Order) ++order;
+      building = true;
+    } else if (building) {
+      building = false;
+      ++env.windows;
+      env.maxGrants = std::max(env.maxGrants, grants);
+      env.minGrants = std::min(env.minGrants, grants);
+      env.maxFill = std::max(env.maxFill, fill);
+      env.maxOrder = std::max(env.maxOrder, order);
+      grants = fill = order = 0;
+    }
+  });
+  return env;
+}
+
+void test_c5_3_record_return_frozen_continuation_envelope() {
+  installReader();
+  enableProbeImageSuccessors();
+  const uint32_t shapes[][2] = {{4, 1}, {4, 16}, {32, 16}};
+  for (const auto& shape : shapes) {
+    setUp();
+    installReader();
+    enableProbeImageSuccessors();
+    Track& t = trackManager.getTrack(0);
+    const FrozenEnvelope env = measureFrozenContinuation(t, shape[0], shape[1], 1);
+    printf("FROZEN_ENVELOPE bars=%u notesPerBar=%u windows=%u grants=%u..%u fill<=%u order<=%u\n", shape[0], shape[1],
+           env.windows, env.minGrants == UINT32_MAX ? 0u : env.minGrants, env.maxGrants, env.maxFill, env.maxOrder);
+    RollingSuccessorProbe::gKnobs = {};
+    tearDown();
+  }
 }
 
 // Two-span requester, essential RED (owner ruling 2026-11-03; controlled eligibility: the probe image's successor
@@ -1330,15 +1424,17 @@ int main(int, char**) {
   RUN_TEST(test_c5_3_two_span_mid_build_successor_survives_the_handoff);
   RUN_TEST(test_c5_3_two_span_revision_change_never_preserves_a_stale_obligation);
   RUN_TEST(test_c5_3_record_stop_a_timely_ready_is_adopted_and_nothing_plays_twice);
+  if (getenv("FROZEN_ENVELOPE_MEASURE") != nullptr) RUN_TEST(test_c5_3_record_return_frozen_continuation_envelope);
   if (getenv("RECORD_RETURN_RED") != nullptr) {
     RUN_TEST(test_c5_3_record_return_on_time_root_replaces_frozen_exactly_once);
     RUN_TEST(test_c5_3_record_return_delayed_root_never_blocks_frozen_continuation);
-    RUN_TEST(test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready);
-    RUN_TEST(test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free);
     RUN_TEST(test_c5_3_record_return_red3_red4_delayed_root_yields_and_frozen_builds_survive);
     RUN_TEST(test_c5_3_record_return_red5_handoff_exactly_once_and_no_gap);
-    RUN_TEST(test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on);
   }
+  // DEC-136 item 4, slice 136.4a (green).
+  RUN_TEST(test_c5_3_record_return_red1_root_prepares_in_build_beside_frozen_current_and_ready);
+  RUN_TEST(test_c5_3_record_return_red2_root_parks_then_publishes_once_ready_is_free);
+  RUN_TEST(test_c5_3_record_return_red6_retained_third_view_refuses_root_and_frozen_plays_on);
   if (getenv("RECORD_STOP_LIVENESS_RED") != nullptr)
     RUN_TEST(test_c5_3_record_stop_a_late_ready_never_holds_the_role_for_a_traversal);
   if (getenv("COMPLETION_PLACEMENT_RED") != nullptr)

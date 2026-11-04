@@ -435,6 +435,12 @@ public:
   /// complete non-raw Capture window built from that job's token must be served or owed, and the requested
   /// coverage must contain the playhead. It is a *classification* only — the route's waiver additionally requires
   /// `ordinaryAdmissionCannotServeDemand`, and no other demand may take the position-free path.
+  /// DEC-136 item 4 (owner ruling 2026-11-04): the speculative root-return target, when the frozen reader's playback
+  /// authority is guaranteed -- its qualified frozen view serves the playhead from `current` and its next window waits
+  /// in `ready` -- and the third physical view is free (no legitimately retained view). Routed slot only.
+  bool recordReturnSpeculativeRootTarget(uint8_t slotIndex, uint32_t phase, PlaybackCoverageInterval& target) const;
+  bool recordReturnSpeculativeRootAdmissible(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
+                                             PlaybackDeadlineClock clock) const;
   bool rootReturnSuccessorIsOwedForSlot(uint8_t slotIndex, const PlaybackViewPendingRequest& request,
                                         PlaybackDeadlineClock clock) const;
   /// DEC-136 — the envelope's own impossibility, as a pure rule: no legal lead admits this demand's own bounded

@@ -5108,6 +5108,83 @@ TRACK_COLD_MEM bool frozenRecordReturnWindowIsServedOrOwed(const RuntimePlayback
 }
 }  // namespace
 
+/// DEC-136 item 4: `v` is the bound Record job's own frozen window -- the qualified frozen identity in full (Capture
+/// origin, no snapshot, source generation, capture content generation of both the receipt and the job) over a
+/// bar-aligned interval of this loop. A plain function, not a lambda: a lambda in a flash function lands in ITCM.
+static TRACK_COLD_MEM bool recordReturnOwnFrozenView(const RuntimePlaybackView& v,
+                                                     const PlaybackViewSourceIdentity& receipt, uint64_t content,
+                                                     uint32_t length) {
+  return v.complete && v.source.origin == PlaybackWindowOrigin::Capture && v.source.snapshotIdentity == nullptr &&
+         v.source.sourceGeneration == receipt.sourceGeneration &&
+         v.source.captureContentGeneration == receipt.captureContentGeneration &&
+         v.source.captureContentGeneration == content && v.coverage.loopLengthTicks == length &&
+         v.coverage.lengthTicks != 0 && v.coverage.startPhase % Config::TICKS_PER_BAR == 0;
+}
+
+TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootTarget(uint8_t slotIndex, uint32_t phase,
+                                                             PlaybackCoverageInterval& target) const {
+#if REVISION_MANIFEST_READER && PLAYBACK_WINDOW_ROLLING_ENABLED
+  // Routed slot only: there the root's yield is free (`releaseManifestCoverage`, no retirement grains), so speculation
+  // can never cost the frozen reader a grant.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex != activeLoopIndex || !loopsAllocated() ||
+      !manifestLaneRoutesSlot(slotIndex)) return false;
+  const LoopPlaybackRuntime* runtime = playbackRuntime.slotIfAllocated(slotIndex);
+  if (runtime == nullptr || !runtime->hasBoundRecordReturnWindowForPendingJob()) return false;
+  const RuntimePlaybackViewSet* set = runtime->viewSetIfPrewarmed();
+  const CaptureStopPresentation* presentation = captureStopPresentationForSlot(slotIndex);
+  if (set == nullptr || presentation == nullptr || !presentation->retirementActive || !presentation->ownsExtent)
+    return false;
+  RuntimePlaybackViewSource frozen{};
+  PlaybackViewSourceIdentity receipt{};
+  if (!qualifiedFrozenRecordCaptureSourceForSlot(slotIndex, presentation->interval, frozen, receipt)) return false;
+  const Loop& loop = loopForSlot(slotIndex);
+  const uint32_t length = loop.loopLengthTicks;
+  const auto& lc = set->lifecycle;
+  const size_t n = set->views.size();
+  if (length == 0 || length % Config::TICKS_PER_BAR != 0 || lc.current >= n || lc.ready >= n || lc.build >= n) return false;
+  // S4: the third view is free -- distinct from every role, unpublished, and no legitimately retained view holds it.
+  if (lc.build == lc.current || lc.build == lc.ready || lc.build == lc.retained || set->views[lc.build].published ||
+      (lc.retained < n && set->views[lc.retained].complete))
+    return false;
+  // S2: the frozen reader's playback authority -- the job's own qualified frozen views (full identity), `current`
+  // serving the playhead and `ready` holding the next boundary.
+  const auto& cur = set->views[lc.current];
+  const auto& rdy = set->views[lc.ready];
+  const uint64_t content = presentation->frozenCaptureContentGeneration;
+  // The playhead is in `current`, or exactly at `ready`'s start (the clock edge adopts it on this boundary).
+  if (!recordReturnOwnFrozenView(cur, receipt, content, length) || !cur.published ||
+      !recordReturnOwnFrozenView(rdy, receipt, content, length) || rdy.published ||
+      !(cur.coverage.contains(phase) || rdy.coverage.startPhase == phase))
+    return false;
+  const uint32_t next = (cur.coverage.startPhase + cur.coverage.lengthTicks) % length;
+  if (rdy.coverage.startPhase != next) return false;
+  // S3: the root is owed at the boundary after the frozen ready.
+  const uint32_t after = (rdy.coverage.startPhase + rdy.coverage.lengthTicks) % length;
+  target = {after, std::min<uint32_t>(Config::TICKS_PER_BAR, length - after), length};
+  return true;
+#else
+  (void)slotIndex;
+  (void)phase;
+  (void)target;
+  return false;
+#endif
+}
+
+TRACK_COLD_MEM bool Track::recordReturnSpeculativeRootAdmissible(uint8_t slotIndex,
+                                                                 const PlaybackViewPendingRequest& request,
+                                                                 PlaybackDeadlineClock clock) const {
+  // The active slot only (its projection origin is the Track's), at the phase of this turn's own clock sample.
+  if (slotIndex >= Config::MAX_LOOPS_PER_TRACK || slotIndex != activeLoopIndex || !loopsAllocated()) return false;
+  const Loop& loop = loopForSlot(slotIndex);
+  if (loop.loopLengthTicks == 0 || clock.epoch == 0) return false;
+  const uint32_t phase = IntervalProjection::tickPhaseInProjectionCycle(
+      static_cast<uint32_t>(clock.tick), getProjectionCycleStartTick(), loop.loopLengthTicks);
+  PlaybackCoverageInterval target{};
+  return recordReturnSpeculativeRootTarget(slotIndex, phase, target) &&
+         request.coverage.startPhase == target.startPhase && request.coverage.lengthTicks == target.lengthTicks &&
+         request.coverage.loopLengthTicks == target.loopLengthTicks;
+}
+
 TRACK_COLD_MEM bool Track::rootReturnSuccessorIsOwedForSlot(
     uint8_t slotIndex, const PlaybackViewPendingRequest& request, PlaybackDeadlineClock clock) const {
 #if !PLAYBACK_WINDOW_ROLLING_ENABLED
@@ -7654,7 +7731,11 @@ TRACK_COLD_MEM PlaybackBuildRefusal Track::playbackBuildGateRefusal(uint8_t slot
   const auto* runtime = playbackRuntime.slotIfAllocated(slotIndex);
   if (!runtime) return PlaybackBuildRefusal::NoRuntime;
   if (runtime->coverageSource.retiring()) return PlaybackBuildRefusal::SourceRetiring;
-  if (rootQualificationWaitsForCaptureReady(slotIndex, *runtime, clock)) return PlaybackBuildRefusal::CaptureReadyWait;
+  // DEC-136 item 4: the speculative root-return candidate is the one qualified root that does not wait for the frozen
+  // ready -- it is admitted into the free third view beside it.
+  if (rootQualificationWaitsForCaptureReady(slotIndex, *runtime, clock) &&
+      !recordReturnSpeculativeRootAdmissible(slotIndex, runtime->frozenViewRequest, clock))
+    return PlaybackBuildRefusal::CaptureReadyWait;
   // A frozen reservation always gets a turn, including cancellation/invalidity.
   if (runtime->ownsCoverageSource()) return PlaybackBuildRefusal::None;
   // Task 3.7a (I2): a retained-source gather in flight is this lane's own work; the frozen demand carries the promise.
@@ -7894,22 +7975,33 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepCommittedPlaybackRetry(
   // reader keeps serving (declared by `ordinaryAdmissionCannotServeDemand`'s own arithmetic, never by a loop
   // length), a sibling's promise still refuses it below, and any other obstruction merely defers it.
   const bool privateRootWaived = privateRootOwed && ordinaryAdmissionCannotServeDemand(contract, loop.loopLengthTicks);
-  if (privateRootWaived) {
+  // DEC-136 item 4: the speculative root-return candidate -- not a DEC-147 deadline promise, so the lead is not judged
+  // and no admitted deadline is recorded; a sibling's admitted promise still refuses it below.
+  const bool speculativeRoot = !privateRootWaived && privateRootOwed &&
+      recordReturnSpeculativeRootAdmissible(slotIndex, request, clock);
+  if (privateRootWaived || speculativeRoot) {
+    // A speculative attempt is transient (its terms end at the frozen handoff), so a refusal below must leave the
+    // request exactly as it was -- its deadline and reason still carry the ordinary DEC-147 position.
+    const PlaybackViewPendingRequest beforeSpeculation = request;
+    const auto refuseSpeculation = [&]() {
+      if (speculativeRoot) request = beforeSpeculation;
+      return PlaybackViewTurnResult::GrainDenied;
+    };
     request.reason = PlaybackViewPendingReason::PrivateRootReturnPreparation;
     request.deadlineTick = 0;
     request.clockEpoch = 0;
     request.work.deadlineTick = 0;
     request.work.clockEpoch = 0;
     if ((launch || cold) && playbackViewOutstandingGrains(slotIndex) != 0)
-      return PlaybackViewTurnResult::GrainDenied;
+      return refuseSpeculation();
     if (!playbackViewAdmissionKeepsAdmittedDeadlines(contract, request.requestedPhase, request.loopLengthTicks,
         contract.requiredGrains(), clock)) {
-      return PlaybackViewTurnResult::GrainDenied;
+      return refuseSpeculation();
     }
     const uint32_t admitBefore = probeCoverageBuildDrop(slotIndex);
-    const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock);
+    const bool admitted = runtime->beginQualifiedCoverageBuild(contract, clock, speculativeRoot);
     traceCoverageBuildDrop(slotIndex, CoverageBuildDropReason::BuildAdmitted, admitBefore);
-    return admitted ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
+    return admitted ? PlaybackViewTurnResult::GrainServed : refuseSpeculation();
   }
   constexpr uint32_t spanTicks = 2 * Config::TICKS_PER_BAR;
 #if PLAYBACK_ROLLING_SUCCESSOR_PROBE && PLAYBACK_WINDOW_ROLLING_ENABLED
@@ -8974,7 +9066,30 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           served->source.snapshotIdentity == source.snapshotIdentity))) {
       return PlaybackViewTurnResult::Idle; // A complete same-revision copy bridges the root identity swap.
     }
-    if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
+    // DEC-136 item 4: a speculative root parked complete in the third view -- the current source, for the boundary
+    // after the frozen ready, or (once `ready` is free) for the next unconsumed one -- is not leftover metadata.
+    bool parkedSpeculativeRoot = false;
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
+    if (windowed && manifestLaneRoutesSlot(slot) && set->lifecycle.build < set->views.size() &&
+        runtime->overdubOverlayCandidate() != &set->views[set->lifecycle.build]) {
+      const RuntimePlaybackView& parked = set->views[set->lifecycle.build];
+      PlaybackCoverageInterval target{};
+      const bool readyHeld = set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete;
+      if (!readyHeld && served != nullptr && served->complete && served->published &&
+          served->coverage.contains(phase)) {
+        target.startPhase = (served->coverage.startPhase + served->coverage.lengthTicks) % recordLoop.loopLengthTicks;
+        target.lengthTicks = std::min<uint32_t>(Config::TICKS_PER_BAR, recordLoop.loopLengthTicks - target.startPhase);
+        target.loopLengthTicks = recordLoop.loopLengthTicks;
+      } else if (!recordReturnSpeculativeRootTarget(slot, phase, target)) {
+        target = {};
+      }
+      parkedSpeculativeRoot = target.lengthTicks != 0 && parked.complete && !parked.published &&
+          parked.source == source && parked.coverage.startPhase == target.startPhase &&
+          parked.coverage.lengthTicks == target.lengthTicks &&
+          parked.coverage.loopLengthTicks == target.loopLengthTicks;
+    }
+#endif
+    if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() && !parkedSpeculativeRoot &&
         set->lifecycle.build != set->lifecycle.current && set->lifecycle.build != set->lifecycle.ready &&
         set->lifecycle.build != set->lifecycle.retained &&
         // 3.15e/2b-ii-b: a retained overlay candidate is complete and unpublished by design; it is not a leftover
@@ -9002,10 +9117,17 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           ready.coverage.loopLengthTicks == recordLoop.loopLengthTicks) {
         RuntimePlaybackViewSource frozen{};
         PlaybackViewSourceIdentity receipt{};
+        // DEC-136 item 4: with the frozen reader's authority guaranteed, the root is owed speculatively at the
+        // boundary after the frozen ready, in the free third view; otherwise the existing obligation stands.
+        PlaybackCoverageInterval speculative{};
+        const PlaybackCoverageInterval rootCoverage =
+            recordReturnSpeculativeRootTarget(slot, phase, speculative) ? speculative : coverage;
         if (qualifiedFrozenRecordCaptureSourceForSlot(slot, recordJob->interval, frozen, receipt)) {
           // The Capture successor still owns its edge. Name the complete-root
           // obligation now, while the source is available, but do not consume
           // the occupied ready role or admit an unproven build on this turn.
+          // DEC-136 item 4: an already parked speculative root discharges the obligation; it is never re-requested.
+          if (parkedSpeculativeRoot) return PlaybackViewTurnResult::Idle;
           if (runtime->ownsCoverageSource()) {
             dispatch = PlaybackDispatchRefusal::Retry;
       return stepCommittedPlaybackRetry(slot, clock);
@@ -9017,9 +9139,9 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
             if (!pending->positionInvalidated && clock.epoch != 0 &&
                 pending->clockEpoch == clock.epoch && clock.tick >= pending->work.admittedTick &&
                 clock.tick < pending->deadlineTick && pending->source == source &&
-                pending->coverage.startPhase == coverage.startPhase &&
-                pending->coverage.lengthTicks == coverage.lengthTicks &&
-                pending->coverage.loopLengthTicks == coverage.loopLengthTicks) {
+                pending->coverage.startPhase == rootCoverage.startPhase &&
+                pending->coverage.lengthTicks == rootCoverage.lengthTicks &&
+                pending->coverage.loopLengthTicks == rootCoverage.loopLengthTicks) {
               if (!runtime->coverageRoleAvailable(true)) return PlaybackViewTurnResult::Idle;
 #if REVISION_MANIFEST_READER
               if (manifestLaneRoutesSlot(slot))
@@ -9035,7 +9157,7 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
           }
           if (clock.epoch == 0) return PlaybackViewTurnResult::GrainDenied;
           const PlaybackViewRequestResult requested = requestCommittedPlaybackWindow(
-              slot, coverage, phase, clock);
+              slot, rootCoverage, phase, clock);
           return requested == PlaybackViewRequestResult::DeferredSourceQualification
               ? PlaybackViewTurnResult::GrainServed : PlaybackViewTurnResult::GrainDenied;
         }
@@ -9044,6 +9166,23 @@ TRACK_COLD_MEM Track::PlaybackViewTurnResult Track::stepPlaybackViewMaintenance(
       if (!(ready.source == source) && !set->lifecycle.retireSupersededReady(set->views))
         return PlaybackViewTurnResult::GrainDenied;
     }
+#if PLAYBACK_WINDOW_ROLLING_ENABLED && REVISION_MANIFEST_READER
+    // DEC-136 item 4: a speculative root parked complete in the third view is published once `ready` is free, and only
+    // for the frozen reader's next unconsumed boundary -- the bar after the one the playhead is served in.
+    if (windowed && parkedSpeculativeRoot && !runtime->viewBuild.active() &&
+        !(set->lifecycle.ready < set->views.size() && set->views[set->lifecycle.ready].complete) &&
+        set->lifecycle.build < set->views.size() && served != nullptr && served->complete && served->published &&
+        served->coverage.contains(phase)) {
+      const RuntimePlaybackView& parked = set->views[set->lifecycle.build];
+      uint32_t next = served->coverage.startPhase + served->coverage.lengthTicks;
+      if (next >= recordLoop.loopLengthTicks) next = 0;
+      if (parked.complete && !parked.published && parked.source == source && parked.coverage.startPhase == next &&
+          parked.coverage.lengthTicks == std::min<uint32_t>(Config::TICKS_PER_BAR, recordLoop.loopLengthTicks - next) &&
+          parked.coverage.loopLengthTicks == recordLoop.loopLengthTicks &&
+          set->lifecycle.publishCompletedBuildAsReadySuccessor(set->views))
+        return PlaybackViewTurnResult::GrainServed;
+    }
+#endif
     // A completed but unpublished shell left in the build role is not a reader
     // and must return to the existing builder before current-root handoff work.
     if (!runtime->viewBuild.active() && set->lifecycle.build < set->views.size() &&
