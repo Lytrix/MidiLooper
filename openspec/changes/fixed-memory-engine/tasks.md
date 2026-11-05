@@ -72,7 +72,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E5.8 Device: re-measure grains with OUT-2 and the mask; confirm or re-open the gate. Done 2026-11-05: worst grain 800 µs (clustered compose), g = 810 µs; resume split into two grains (was 1.1 ms); gate met. Image `59c8a6f8…`.
 - [x] E5.9 Plan bounds: g = 810 µs and 44–100-grain windows into plan § 7 (owner). Done 2026-11-05: § 7.1–7.5 restated on measured figures (window 47 / 100 grains, index 58, cold start 190 / 3,009, sweep background). Owner: at most one track overdubs at a time, so clustered C2 = 42.7 % (within 50 %); clustered C1 needs B_max ≤ 136 ms.
 - [x] E5.10a W: one writer at a time (owner 2026-11-05). `Config` derives rows, descriptors, manifests and pages from `kWriterCount = 1`; plan § 2, § 4, § 5 budgets restated (RAM2 −13.4 KB budget, PSRAM −43 KB).
-- [ ] E5.10b Track admission refuses a second concurrent Record / overdub by name (with the writer integration).
+- [x] E5.10b Track admission refuses a second concurrent Record / overdub by name: `SlotTransport` returns `Busy` (E9.1).
 - [x] E5.11 Reclaim worker: release-order queue in `RunTable`, unit-bounded `reclaim`, `ReclaimJob` background job of 64 units per grain (`test_content_engine_reclaim` 5, mutation-checked; device grain 29 µs).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
@@ -109,6 +109,18 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E8.2a V1 import into the engine (owner: exact current only): `ResolvedImport` writes a slot's resolved notes and events as one take and the slot's only state; refusals by name with full release (`test_content_engine_v1_import` 3, mutation-checked 12/12).
 - [ ] E8.2b Card-side V1 reader feeding `ResolvedImport` from a V1 slot as the old firmware resolves it; V1 files read-only, never overwritten (with E9).
 - [ ] E8.3 SD sink / source, save schedule and the owner's save-approval gate (with E9).
+
+## E9 — integration and deletion (plan § 10.2; first bootable image)
+
+- [x] E9.1 `SlotTransport`: Record / overdub / Stop / Undo / Redo on a Clock timeline → writer, manifests, history, playback tracks. One writer (`Busy`); wrap publishes `current + wrapped run` as a session step, a closing run included (owner 2026-11-05: publish at the wrap), completed in place under a new identity when it seals; Stop folds the session; empty wraps and empty takes leave no state; a full run list ends the take at a wrap (named); live occupancy released at Stop (`test_content_engine_slot_transport` 6, mutation-checked 15/15).
+- [ ] E9.1b Record-stop and wrap handoff without a gap: window 0 of the next cycle composed before the Stop / wrap tick from the open prefix (plan § 8.3); today it plays from the first boundary its window is ready for (window 1).
+- [ ] E9.2 Device placement (E1.7): production instances in EXTMEM / DMAMEM, one `init()` at boot, census rows, RAM1 / RAM2 gates; worker service loop (scheduler, playback jobs, reclaim, checkpoint and tile sweeps).
+- [ ] E9.3 Clock path: `ClockManager` tick → `SlotTransport::tick` per track → `OutputHub` → DIN / USB ports.
+- [ ] E9.4 Gestures and input: `MidiHandler` ingress and `TrackManager` / `Track` transport, slot switching and clear → `SlotTransport`.
+- [ ] E9.5 NOTE_EDIT: `EditManager` / `NoteEditFocus` → `EditWriter`; focus / selection restore per E: step.
+- [ ] E9.6 Display: `DisplayManager` draws from `TileStore` (banded drawing), `DisplayJobs` wired.
+- [ ] E9.7 Persistence: `StorageManager` sink / source for `SaveJob` / `LoadJob`, the V1 reader (E8.2b), the save schedule and approval gate (E8.3).
+- [ ] E9.8 Delete the legacy owners (§ 12.1) and their tests; first bootable image; D1 build gates.
 
 ## CE-C1 — output
 

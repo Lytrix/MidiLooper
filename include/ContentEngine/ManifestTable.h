@@ -98,6 +98,8 @@ class ManifestTable {
 
   const Manifest& manifest(ManifestId id) const { return table_[id]; }
   uint16_t freeCount() const { return freeCount_; }
+  /// The identity the next created manifest gets: every manifest with a lower identity already exists or existed.
+  uint32_t nextIdentity() const { return nextIdentity_; }
 
   /// References a run receives from live manifests. Must equal the run's refs minus any writer reference.
   uint32_t referencesTo(RunId run) const {

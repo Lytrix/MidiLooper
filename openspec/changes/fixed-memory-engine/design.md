@@ -1305,3 +1305,44 @@ publish.
 
 Not yet (E8.2b, with E9): the card-side V1 reader that feeds `ResolvedImport` from a V1 slot as the old firmware
 resolves it (the legacy loader's snapshot of what plays).
+
+## E9.1 — slot transport (owner decision 2026-11-05: publish at the wrap; as built)
+
+`include/ContentEngine/SlotTransport.h` turns the writing gestures and Undo / Redo into engine state on a Clock
+timeline. Each track keeps an origin (its slot's loop position 0); the writer works in Clock ticks from its run's
+base, the playback track in ticks since the origin.
+- **One writer (E5.10b):** a Record or overdub while one is writing is refused `Busy`. Record on a slot with content
+  is `DeniedSlot`; overdub on an empty slot is `Empty`.
+- **Record:** Stop sets the loop length (stop − start), publishes `{R0}` as the slot's first state and selects it on
+  the recording track (origin = Record start). An empty take leaves the slot empty and holds nothing.
+- **Overdub (DEC-038 session):** begins at the cycle the gesture lies in. Each non-empty wrap publishes the slot's
+  current runs + the wrapped run as a session step and selects it; an empty wrap publishes nothing.
+- **Owner decision 2026-11-05 — publish at the wrap:** a wrapped run that is still closing (a note held across the loop
+  end) is published with what it holds, so the cycle's other notes play from the next cycle, as the current firmware
+  does. When its last NoteOff arrives and it seals, every state of the slot created before that (manifest identity
+  below the watermark taken before the writer call) is replaced **in place** by a completion: a new manifest, new
+  identity, same runs — no step, no redo dropped (`History::replaceState`). A manifest's content therefore never
+  changes under its identity, which checkpoints and tiles key on. This replaces the design's earlier "a revision
+  publishes when its runs have sealed" (E3 slice 3) for overdub wraps.
+- **Stop:** closures from the writer, the active run published as a step, the session folded into one (E4.2). Notes
+  still held release their live occupancy (E6.2f).
+- **Run list full:** a wrap that would leave no room for the following run ends the take at that wrap (`takesEndedFull`),
+  keeping every accepted note; compaction is later work.
+- **Undo / Redo:** History moves; every track playing the slot selects the new current, or stops (NoteOffs returned)
+  at the empty slot.
+- The writer's reference on a run is dropped when it seals and the manifests that need it hold it.
+
+Tests (`test_content_engine_slot_transport`, 6; ample worker time, a 4-bar loop of two windows): the recorded take
+plays exactly from cycle 2 (cycle 1 from window 1, below); an overdub with a note held across the wrap publishes at
+the wrap (its window-1 note heard the next cycle), completes in place at the release (new identity, all runs sealed,
+one session step, adopted by the track), and plays A + B exactly with the held note across the loop end; Undo, Redo
+and Undo to empty follow on the track (no NoteOn after, every NoteOn closed); a note held through Stop plays in later
+cycles; refusals and empty takes / wraps; a full run list ends the take with every accepted note kept; no heap.
+Mutations caught (15): waiting for the seal, no completion, completion watermark, completion not selected, writer
+reference kept, live occupancy kept at Stop, Busy, DeniedSlot, empty wrap, no fold, Undo not selected, empty slot not
+stopped, run-list room, cycle base, empty take.
+
+**Measured gap, next slice (E9.1b):** the new state is selected at the Stop / wrap tick, so its first window cannot be
+ready for that boundary and is adopted at the next one (window 1). After Record Stop window 0 of cycle 1 is silent;
+after an overdub wrap, window 0 plays the previous state (the cycle's new notes are heard from window 1). Plan § 8.3 composes window 0 during recording from the
+open prefix so it is ready at Stop; E9.1b does that for Record Stop and overdub wraps.

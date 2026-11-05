@@ -43,6 +43,7 @@ template <typename Manifests, typename Runs, uint8_t Slots = Config::kSlotCount,
 class History {
  public:
   static constexpr uint8_t kNone = 0xFF;
+  static constexpr uint8_t kDepth = Depth;
   static_assert(Depth < kNone, "entry indices fit uint8_t");
   static_assert(Depth > Slots + 2 || Slots == 0,
                 "a full table always holds an evictable state (currents <= slots, protected session starts <= 2)");
@@ -162,6 +163,20 @@ class History {
     manifests_->release(entries_[s.current].manifest, *runs_);
     entries_[s.current].manifest = manifest;
     return true;
+  }
+
+  /// A take's completion (E9.1): the slot's state holding `old` holds `fresh` instead, in place (no step, no redo
+  /// dropped). History takes the caller's reference to `fresh` and releases `old`. False (nothing changes) when no state
+  /// of the slot holds `old`. O(slot states).
+  bool replaceState(uint8_t slot, ManifestId old, ManifestId fresh) {
+    if (slot >= Slots || fresh == kNoManifest) return false;
+    for (uint8_t e = slots_[slot].oldest; e != kNone; e = entries_[e].newer) {
+      if (entries_[e].manifest != old) continue;
+      manifests_->release(old, *runs_);
+      entries_[e].manifest = fresh;
+      return true;
+    }
+    return false;
   }
 
   /// Makes `manifest` the slot's new current state. History takes over the caller's reference.

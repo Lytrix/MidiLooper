@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E9.1 slot transport (owner: publish at the wrap).**
+- Record / overdub / Stop / Undo / Redo now drive the writer, manifests, history and playback tracks end to end on a
+  Clock timeline; one writer at a time (`Busy`). A wrap with a note held across the loop end publishes at once and is
+  completed in place when the note is released. Known gap for E9.1b: after Record Stop the first window is silent,
+  and after a wrap the cycle's new notes are heard from window 1.
+
 **2026-11-05 — Fixed-memory engine: E8.2a V1 import, exact current content only (owner decision).**
 - A V1 slot's resolved notes and events become one take and the slot's only history state; the take composes back
   exactly (wrap note, zero length, same-pitch overlaps). History reconstruction from V1 (E4.4, DEC-088) is closed as
