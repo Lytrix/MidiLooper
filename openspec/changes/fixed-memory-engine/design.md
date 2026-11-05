@@ -956,3 +956,33 @@ above g. Acceptance did O(selection) work on PSRAM arrays and the sort was one g
 Device (image `cfb730eb…`, 512 notes moved, the action built in RAM): apply 532 µs, E: undo 453 µs, rebuild grain 158 µs
 worst (24 grains at 128 units). Compose seek 692 µs and `begin` 429 µs again: the earlier rise was the 54 KB the first
 image placed in PSRAM. Every measured grain is within g = 810 µs (worst: clustered compose 790–800 µs).
+
+## E6.1 — playback windows per track (plan § 9.1, as built)
+
+`ContentEngine::PlaybackTrack` (`include/ContentEngine/PlaybackTrack.h`) owns one track's three window buffers
+(playing, next, transition) and two compose cursors (steady and transition; 16 of the 18 cursors for 8 tracks).
+- **Grid:** windows start where the loop position is a multiple of W (the last one ends at the loop end); a boundary
+  is such a timeline tick. Buffers are stamped with source identity and timeline start; `Complete` is immutable.
+- **Select:** a source change at tick `now` (undo, redo, commit, edit publish, slot switch) targets the next boundary.
+  The transition composer is positioned there by `ColdStart` (checkpoint or warm-up, E5) and composes that window;
+  the track keeps playing the old source. Selecting the playing source again cancels the transition.
+- **Succession** at a boundary: the complete window of the wanted source starting there; else the old source's next
+  window (a late switch, counted); else nothing (an underrun, counted; sounding notes still end on time via the
+  terminal scheduler). On a switch the transition cursor becomes the steady one and the old cursor's pin is released.
+  The player reconciles carried notes at the identity change (B.3).
+- **Catch-up:** a composer that missed its boundary moves its target to the next boundary and composes, then
+  discards, windows that start before it; composing a window takes less than a window's time, so it catches up.
+  (Without the target a late composer would chase one window behind forever — found while writing the tests.)
+- **Work** is grains (`work(maxRows)`): the steady window first, then the transition (replay, then its window). The
+  scheduler runs them as hard jobs with the boundary as deadline; `tick` composes nothing and reads no page.
+
+Tests (`test_content_engine_playback_track`, 6): every emitted stream is compared with a reference that plays the
+same schedule from two uninterrupted compositions through its own player and terminal scheduler — switch on time;
+late switch (the old source plays the missed window, the switch lands one boundary later); underrun at start; steady
+underrun with recovery one boundary later; a selection undone before its boundary; no heap. Mutations caught: never
+taking the transition, the player not given the window, transition or steady target not moved, no discard before the
+target, target forgotten after a cold start, steady keeping its stale window. Two branches the mutations showed to
+be unreachable (freeing a stale complete window; resetting the steady target at a switch) were removed.
+
+Not yet: the tick path (E_tick = 32 rows per tick, occupancy mask, port FIFOs), the scheduler wiring with boundary
+deadlines, loop-length changes on a source switch, and the device measurement of `tick` cost.

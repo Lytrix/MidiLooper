@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E6.1 playback windows per track.**
+- `PlaybackTrack`: playing / next / transition windows, steady and transition compose cursors, deterministic
+  succession at boundaries (late switch and underrun counted), catch-up for a composer that missed its boundary.
+- Emitted streams equal a reference built from uninterrupted compositions in every case; 8 mutations caught.
+
 **2026-11-05 — Fixed-memory engine: E4.5 edit writer (owner: hear each edit).**
 - Each NOTE_EDIT action, E: undo and E: redo rewrites one session edit run in grains (hides + sorted replacements,
   noteIds kept) and swaps it in as the session's one history state; E: steps (99) live in the writer's log. Leave =

@@ -85,6 +85,11 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E4.5b Edit-writer grains within g: O(changes) acceptance, unit-bounded rebuild (gather / sift / write), writer in RAM2 + log in PSRAM. Device `cfb730eb…`: apply 532 µs, undo 453 µs, rebuild grain 158 µs (was 3,486 / 1,196 / 922). The seek / `begin` rise was PSRAM placement (back to 692 / 429 µs).
 - [ ] E4.4 History reconstruction on load (DEC-088), with persistence (E8).
 
+## E6 — playback and output
+
+- [x] E6.1 `PlaybackTrack`: three windows per track, steady + transition cursors, deterministic succession, late switch and underrun counted, catch-up targets (`test_content_engine_playback_track` 6, reference-stream comparison, mutation-checked).
+- [ ] E6.2 Tick path: E_tick rows per tick, occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines; device tick cost.
+
 ## CE-C1 — output
 
 - [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).
