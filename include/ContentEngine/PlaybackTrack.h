@@ -94,13 +94,22 @@ class PlaybackTrack {
     }
   }
 
-  /// One grain of compose work (`maxRows` row units). False when there is nothing to do.
-  bool work(uint32_t maxRows) {
-    if (steady_ != kNone && (next_ == kNone || buf_[next_].state == State::Filling)) {
-      composeSteady(maxRows);
-      return true;
-    }
-    if (!transActive_ || buf_[trans_].state == State::Complete) return false;
+  /// One grain of compose work (`maxRows` row units): the steady window first, then the transition. False when there
+  /// is nothing to do.
+  bool work(uint32_t maxRows) { return workSteady(maxRows) || workTransition(maxRows); }
+
+  /// The steady window for the next boundary (a hard job: its deadline is that boundary).
+  bool steadyPending() const { return steady_ != kNone && (next_ == kNone || buf_[next_].state == State::Filling); }
+  bool workSteady(uint32_t maxRows) {
+    if (!steadyPending()) return false;
+    composeSteady(maxRows);
+    return true;
+  }
+
+  /// The transition: cold-start replay, then its window. Late is allowed (the old source keeps playing).
+  bool transitionWorkPending() const { return transActive_ && buf_[trans_].state != State::Complete; }
+  bool workTransition(uint32_t maxRows) {
+    if (!transitionWorkPending()) return false;
     if (!transComposing_) {
       const typename Cold::Status st = cold_[transComp_].step(*buf_[trans_].w, maxRows);
       if (st == Cold::Status::Done) {
@@ -126,6 +135,9 @@ class PlaybackTrack {
     }
     return true;
   }
+
+  /// The first boundary after timeline tick `now` on this track's grid (0 before any source).
+  uint32_t boundaryAfter(uint32_t now) const { return loop_ == 0 ? 0 : nextBoundary(now); }
 
   /// One Clock tick at timeline tick `t`: succession at a boundary, then the window's emits.
   uint8_t tick(uint32_t t, Emit* out, uint8_t max) {

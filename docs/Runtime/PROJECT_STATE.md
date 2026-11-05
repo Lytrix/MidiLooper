@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E6.2b playback work under the scheduler.**
+- Each track's next window is a hard job with its boundary as deadline; source transitions are background jobs (owner
+  review: plan § 7.3 says hard). Background jobs now take turns — a long compaction held up every cold start before.
+- 8 tracks simulated at g = 810 µs with display and a 2.4 s background job: on time, no underruns, no missed
+  deadlines; track 0's stream equals the reference.
+
 **2026-11-05 — Fixed-memory engine: E6.2a continuous-controller limit (owner: 64) and tick spill.**
 - Continuous controllers: at most 64 per track per tick, when recorded (writer) and when played (composer); sustain,
   program change, bank select, channel mode and RPN/NRPN are never limited. The tick no longer loses rows or NoteOffs

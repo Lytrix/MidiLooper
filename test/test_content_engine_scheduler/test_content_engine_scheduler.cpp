@@ -103,6 +103,22 @@ void test_slack_check_defers_soft_grains() {
   TEST_ASSERT_TRUE(disp.runs < 40 / 4);
 }
 
+// Background jobs take grains in turn: a 10-grain job submitted after a 1,000-grain one finishes within 20 grains.
+void test_background_jobs_take_turns() {
+  gS.init(kG, 0);
+  Counter longJob{1000, 0}, shortJob{10, 0};
+  uint8_t a, b;
+  TEST_ASSERT_TRUE(gS.submit({JobClass::Background, 0, 1000, countDown, &longJob}, a));
+  TEST_ASSERT_TRUE(gS.submit({JobClass::Background, 0, 10, countDown, &shortJob}, b));
+  uint32_t grains = 0;
+  while (gS.live(b)) {
+    gS.runGrain(grains * kG);
+    TEST_ASSERT_TRUE(++grains <= 20);
+  }
+  TEST_ASSERT_EQUAL_UINT32(10, shortJob.runs);
+  TEST_ASSERT_TRUE(longJob.runs >= 9 && longJob.runs <= 10);
+}
+
 void test_overrun_and_full_table_are_named() {
   Counter c{5, 0};
   uint8_t id;
@@ -372,6 +388,7 @@ int main(int, char**) {
   RUN_TEST(test_display_and_persistence_shares);
   RUN_TEST(test_slack_check_defers_soft_grains);
   RUN_TEST(test_overrun_and_full_table_are_named);
+  RUN_TEST(test_background_jobs_take_turns);
   RUN_TEST(test_sustained_worst_load_meets_every_deadline);
   RUN_TEST(test_measured_grain_load_meets_every_deadline);
   RUN_TEST(test_infeasible_load_reports_missed_deadlines);

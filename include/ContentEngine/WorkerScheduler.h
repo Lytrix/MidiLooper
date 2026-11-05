@@ -10,8 +10,9 @@
 //   2. Before a soft grain is taken, every hard job's remaining declared grains x g must fit in its slack minus B_max
 //      (cumulative, in deadline order). If not, the hard job with the earliest deadline runs.
 //   3. While display work is pending, at least every fourth grain goes to display; persistence at least 1 in 16.
-//   4. Otherwise hard work runs ahead; with no hard work, background (reclaim, compaction, sweeps) takes the rest,
-//      and display / persistence take what background leaves.
+//   4. Otherwise hard work runs ahead; with no hard work, background (reclaim, compaction, sweeps, playback
+//      transitions) takes the rest, the live background jobs in turn (a long job does not hold up a short one), and
+//      display / persistence take what background leaves.
 // Progress: every job declares its worst-case grain count. A job that runs past it is reported (`overruns`), never
 // silently extended; a hard job that completes after its deadline is reported (`missedDeadlines`). The job table is
 // fixed (`MaxJobs`); a full table refuses `submit` by name. No allocation.
@@ -54,6 +55,7 @@ class WorkerScheduler {
     for (auto& j : jobs_) j.live = false;
     sinceDisplay_ = 0;
     sincePersist_ = 0;
+    lastBackground_ = MaxJobs - 1;
     report_ = Report{};
   }
 
@@ -157,6 +159,15 @@ class WorkerScheduler {
     return kNoJob;
   }
 
+  /// The live background job after the one last run (round robin).
+  uint8_t nextBackground() const {
+    for (uint8_t k = 1; k <= MaxJobs; ++k) {
+      const uint8_t i = static_cast<uint8_t>((lastBackground_ + k) % MaxJobs);
+      if (jobs_[i].live && jobs_[i].spec.cls == JobClass::Background) return i;
+    }
+    return kNoJob;
+  }
+
   uint8_t pick(uint32_t nowUs) {
     const uint8_t hard = earliestHard();
     const uint8_t display = firstOf(JobClass::Display);
@@ -169,8 +180,8 @@ class WorkerScheduler {
     if (display != kNoJob && sinceDisplay_ >= 3) return display;
     if (persist != kNoJob && sincePersist_ >= 15) return persist;
     if (hard != kNoJob) return hard;
-    const uint8_t background = firstOf(JobClass::Background);
-    if (background != kNoJob) return background;
+    const uint8_t background = nextBackground();
+    if (background != kNoJob) return lastBackground_ = background;
     if (display != kNoJob) return display;
     return persist;
   }
@@ -178,6 +189,7 @@ class WorkerScheduler {
   Job jobs_[MaxJobs];
   uint32_t g_ = 0, bMax_ = 0;
   uint32_t sinceDisplay_ = 0, sincePersist_ = 0;
+  uint8_t lastBackground_ = MaxJobs - 1;
   Report report_{};
 };
 

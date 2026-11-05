@@ -665,7 +665,10 @@ a non-blocking (DMA / multi-turn) write path; it does not get an exception.
 - **Display share:** while display work is pending, at least every fourth grain goes to display, unless the slack check
   above fails.
 - **Persistence share:** at least 1 in 16.
-- **Background (checkpoint sweeps, reclaim, compaction):** take the rest.
+- **Background (checkpoint sweeps, reclaim, compaction, playback transitions):** take the rest, the live background
+  jobs in turn (E6.2: a long compaction must not hold up a cold start). Playback transitions run as background, not
+  hard (E6.2, for owner review): a late transition keeps the old source playing and counts a late switch, while a hard
+  job declaring a whole warm-up cycle would make the slack check starve display.
 - **Display freshness bound:** with grain rate `r = U_e / g`:
   - visible bars of the focused slot reflect a new manifest within `F_vis = 264 / (r / 4)`;
   - the whole slot reflects it within `704 / (r / 4)`.

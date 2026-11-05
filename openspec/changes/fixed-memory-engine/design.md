@@ -1038,3 +1038,26 @@ Tests (`test_content_engine_tick_limits`, 5): classification; writer limit with 
 composer limit over two cycles (same rows kept); player spill with every row played once in order; 16 NoteOffs through
 a 4-message buffer, none lost. Mutations caught: no writer limit, no composer limit, the count kept across windows,
 essentials limited too, sustain classed continuous, no spill, NoteOffs beyond the buffer lost.
+
+### E6.2b — playback work under the scheduler (as built)
+
+`ContentEngine::PlaybackJobs` submits each track's compose work to the `WorkerScheduler`, each job only while its work
+is pending and never twice:
+- **steady** — the window for the next boundary: hard, deadline = that boundary (µs from the Clock position and tempo),
+  declared 100 grains (the measured worst window);
+- **transition** — cold-start replay plus the new source's window: **background** (deviation from plan § 7.3, which
+  lists the cold start as hard; for owner review). Succession already makes a late transition safe (the old source
+  plays, a late switch is counted), and declaring a whole warm-up cycle as hard would let the slack check starve
+  display.
+`PlaybackTrack::work` is split into `workSteady` / `workTransition` for this.
+
+**Scheduler change (found by the test):** background jobs were picked first-come-first-served, so a long background
+job (compaction-sized, 3,000 grains ≈ 2.4 s) held up every playback cold start: tracks missed their start. Live
+background jobs now take grains in turn (round robin).
+
+Tests: `test_content_engine_playback_jobs` — 8 tracks on a simulated clock (tick every 1,040 µs, every grain the
+measured worst g = 810 µs), a display job always pending and a 3,000-grain background job already running: every
+track starts on time, half switch source mid-loop at the next boundary, 0 underruns, 0 late switches, 0 missed hard
+deadlines, 0 overruns, display ≥ 1 grain in 4, and track 0's stream equals a reference from uninterrupted
+compositions. `test_content_engine_scheduler` gains the turn-taking case. Mutations caught: background FIFO, deadline
+at "now", a job that never ends, no transition jobs, no steady jobs.
