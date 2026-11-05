@@ -619,7 +619,7 @@ shortened in the next cycle, Q-OVL-3, OVL-9 across cycles, an edit hide of a wra
 revision transition (`test_convergence_within_two_cycles_per_mechanism`, `test_revision_transition_sweeps_the_new_manifest`),
 plus 25 random multi-pass sources.
 
-**Q-OUT-2 (owner question): saturated sources are not periodic.** Above OUT-POLY (more than 16 notes sounding), first-come
+**Q-OUT-2 (resolved 2026-11-05 as source-ordered refusal; see "OUT-2" below). Original finding:** Above OUT-POLY (more than 16 notes sounding), first-come
 admission makes which notes a cycle drops depend on the notes carried in. Uninterrupted playback itself then settles
 only after 2–4 cycles (probe: 25 of 40 saturated sources differ between cycle 1 and cycle 3). The sweep flags these
 (`periodic()` false), never promotes cold captures, and a cold start reconstructs the cycle-1 state deterministically,
@@ -692,3 +692,79 @@ look-ahead reads as work (8 reads = 1 row unit). Behaviour is unchanged (all eng
   needs a per-composer onset frontier (about +2 KB per cursor, beyond the 221,184 B composer budget): owner decision.
 - Seek and resume exceed 500 µs (binary searches over 60 runs); splitting them per run group is possible if g must be
   lower.
+
+## OUT-2 — source-ordered refusal (owner decision 2026-11-05, as built)
+
+**Rule.** The composer keeps every *effective* source instance that is open: started, not hidden, and not yet ended by
+its NoteOff, an OVL-1 shortening, a Q-LEN-1 re-strike or the window look-ahead. That includes instances refused for
+output. Instances started in an earlier loop cycle are marked *carried*. A NoteOn is **selected** iff, when the DEC-244
+merge reaches it, fewer than T = 16 open instances *occupy a voice*. An instance occupies a voice if it was selected in
+the current cycle, or if it was carried in, selected or not.
+
+**Proof of a one-cycle repeating selection.** It does not rely on sorting the NoteOns.
+1. *Effectiveness and ends never depend on a selection.* Hides use the raw source counters (OVL-8) and the edit index.
+   OVL-1 shortening, Q-LEN-1 re-strikes and NoteOffs end every open instance, selected or not.
+2. *The carried-in set is a function of the source.* Every effective span is shorter than L (Q-LEN-1: end ≤ S + L − 1).
+   An instance open at the start of cycle c therefore started in cycle c − 1, and by (1) the set is exactly the
+   source's effective instances that start in a cycle and remain open at its end. The same holds after a cold cycle 0,
+   because which instances started in cycle 0 are effective does not depend on what cycle 0 inherited.
+3. *In-cycle decisions are a deterministic function of (2) and the source.* Within the cycle the merge order is fixed
+   (DEC-244). The voice count at each NoteOn is |carried-in instances still open| plus |instances selected earlier in
+   this cycle and still open|. The first term is fixed by (2); the second is determined, by induction over the merge,
+   by earlier decisions of the same cycle.
+4. Hence cycle c ≥ 1 makes the same decisions as cycle 1. A cold start that seeds the carried-in set (checkpoint, or
+   one warm-up cycle) makes them in its first cycle too; only the physical state differs (DEC-148: carried notes it
+   never sent are not sounding).
+
+**Bound of 16, no stealing.** At any instant take the selected instance X that started last in the current cycle.
+Every other selected instance sounding then is either carried in (counted at X, since a carried instance that is
+still open was open at X's start) or selected earlier in this cycle (also counted). So at most 16 sound. If no instance
+of this cycle sounds, the carried selected ones are a subset of the previous cycle's bounded set. Decisions are made
+only at a NoteOn, so a selected instance plays its whole effective span.
+
+**Why not the alternatives.**
+- Counting every open effective instance, selected or not, is also periodic, but it starves: a 20-note held pad
+  re-struck every loop would be silent, because each re-strike sees 19 others open
+  (`test_twenty_note_pad_keeps_sixteen_voices`).
+- Counting only selected instances (the previous first-come rule) depends on which notes the previous cycle selected.
+  That is the 2–4-cycle settling the owner rejected.
+
+The carried-in term is what breaks the cycle-to-cycle dependency. The cost is that, right after the loop start, refused
+notes that are carried in can hold back new notes until they end. That cost is deterministic and the same every loop.
+
+**Memory and limits.**
+- **Open-instance table:** 48 entries (12 B each), replacing the 16-entry admitted list. The composer is 12,184 B, within
+  12,288. More than 48 effective instances open at once are refused untracked and counted (`Stats::openOverflow`); the
+  bound still holds, and the sweep reports `periodic()` false
+  (`test_open_table_overflow_is_named_and_bounded`).
+- **Checkpoints:** ≤ 56 source-counter pairs and ≤ 32 open instances, with their selected and carried flags (500 B;
+  64 × 8 tables = 257,280 B of 262,144). A boundary with more open instances is an unusable checkpoint, and the cold
+  start uses an earlier one or warms up.
+- **Sweep:** the end-of-cycle-0 capture is provisional, because cycle 0's selections lacked carried-in instances. The
+  end of cycle 1 is the steady position-0 state.
+
+**REDs (owner list) → tests.** `test_content_engine_selection`:
+- More than 16 cyclically overlapping notes with different starts and durations: identical over 8 cycles.
+- Wrap-held notes competing with tick-0 notes: 4 of 10 selected every loop; a cold start agrees.
+- A cold start (warm-up and checkpoint) at every window agrees with play after 2, 4 and 8 cycles.
+- Bound, no phantom NoteOffs and no repeated instances through the terminal scheduler.
+- The 20-note pad, and the 48-entry overflow.
+
+`test_content_engine_restart_backpressure`: after an adoption with a saturated 40 ms/message DIN port, an isolated cold
+start with no port decides every later window identically.
+
+Mutations caught: counting every open instance (starvation), counting only selected ones (history), no carry at
+`nextCycle`, a loop-end capture without the carry flag, and shortening only selected instances.
+
+## E5 — clustered look-ahead: onset-pitch mask (measured optimisation)
+
+Each run descriptor (RAM2, 64 → 80 B; +8.7 KB over 544 runs, not composer memory) keeps a 128-bit mask of the pitches
+it starts notes on, set by `RunTable::append`. The OVL-2/6 look-ahead skips any later pass whose mask lacks the
+NoteOn's pitch. Host counts for the densest clustered window: 124,360 → 9,440 reads, with each pass on its own pitches.
+In the adversarial case (pitches rotating per cluster, so the mask rarely skips) it is 67,008 reads.
+
+**Feasibility gate** (`test_feasibility_gate_clustered_eight_tracks`): it builds the adversarial window with the
+production composer, counts its grains (100 at 128 units), and simulates eight such tracks at the measured g = 786 µs and
+U_e = 50 %. Result: 0 missed deadlines. The gate is ignored and reported RED whenever it misses. **Device confirmation is
+pending:** g = 786 µs was measured before the open-instance table and the mask. The board was offline (not on USB) when
+the re-measurement was attempted.

@@ -35,6 +35,13 @@ needed).
 | LEN-1 | A note held for at least one loop length L replays with effective end min(recorded end, S + L − 1). Its NoteOn repeats every loop, each iteration ends one tick before its successor, the original late NoteOff is never sent against a newer iteration, and there is no clipping at tick 0. Live holds sound until the real NoteOff. | owner decision 2026-11-04 (Q-LEN-1) | `test_qlen1_*` | reviewed |
 | OVL-9 (was Q-OVL-4) | **Ratified by owner 2026-11-04.** Overlap applies to effective note instances across cycles: an earlier-pass note whose NoteOn lies inside a later-pass note's effective span is hidden, also when a previous repetition of it was sounding when the later note began. Overlap at B's NoteOn is no permission to skip A's later NoteOns. An A that starts outside B is shortened by B's next start. | owner decision 2026-11-04 | `test_qovl4_case1_*`, `test_qovl4_case2_*` (incl. adoption), random comparison | reviewed |
 
+## Output polyphony
+
+| Id | Clause | Source | Fixture | Status |
+|---|---|---|---|---|
+| OUT-1 | At most T = 16 note instances per track sound at once (OUT-POLY); output only, never recording, storage, undo or the piano roll. | owner decision 2026-11-04 | `test_content_engine_terminals`, `test_selected_instances_bounded_and_never_cut` | reviewed |
+| OUT-2 (was Q-OUT-2) | **Ratified by owner 2026-11-05: source-ordered refusal.** Which instances sound depends only on the revision, the effective cyclic geometry and DEC-244 order: a NoteOn is selected iff fewer than T instances occupy a voice when the merge reaches it, counting the instances selected earlier in the same loop cycle plus every effective instance carried in from the previous cycle (selected or not). The selection repeats identically every loop from the first steady cycle; a cold start makes the same decisions (only its physical sounding state differs); port congestion never feeds back; no selected instance is cut or restarted to make room. Up to 48 open effective instances are tracked; beyond that, refusals are counted and periodicity is not guaranteed (the bound still holds). | owner decision 2026-11-05 | `test_content_engine_selection` (6), `test_saturated_composition_is_periodic`, rig eligibility check in `test_content_engine_restart_backpressure` | reviewed (implementation qualified on host; device open) |
+
 ## Edits
 
 | Id | Clause | Source | Fixture | Status |

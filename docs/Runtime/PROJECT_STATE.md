@@ -1,3 +1,13 @@
+**2026-11-05 — Fixed-memory engine: OUT-2 (Q-OUT-2 source-ordered refusal) built; clustered look-ahead optimised.**
+- Output selection is a function of the revision and DEC-244 order: a NoteOn sounds iff fewer than 16 voices are
+  occupied by instances selected this cycle plus every effective instance carried in. It repeats every loop and a
+  cold start agrees (proof in design.md). A count-everything rule was rejected because it starves (a 20-note held pad
+  would be silent).
+- Composer 12,184 B (≤ 12,288); open-instance table 48; checkpoints 500 B.
+- Run descriptors carry an onset-pitch mask, so the clustered look-ahead drops 124,360 → 9,440 reads (adversarial
+  67,008). The eight-track feasibility gate passes in simulation at g = 786 µs; device re-measurement pending (board
+  offline). Full native 4,173 passed.
+
 **2026-11-05 — Fixed-memory engine: E3.3 and E5 (workers, checkpoints, grains) built on `rewrite/fixed-memory-engine`.**
 - Shared edit-hide index (composer 43 KB → 11.8 KB), now in its 576 reserved pool pages and built in grains.
 - Restart checkpoints: per-slot table, sweep and cold-start jobs with manifest leases, convergence proof (owner approved
