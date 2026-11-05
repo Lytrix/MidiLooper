@@ -63,10 +63,10 @@ constexpr uint8_t kInlinePagesPerRun = 16;
 // OUT-POLY (owner decision 2026-11-04, ratified end-state constant): at most 16 simultaneously sounding MIDI output
 // note instances per track. It limits output only, never recording, storage, undo history or the piano roll.
 constexpr uint8_t kMaxSoundingPerTrack = 16;
-// Continuous controllers (owner decision 2026-11-05, MidiClass.h): at most 32 values per track per tick, recorded (the
-// writer) and played (the composer leaves later ones out of the window). Device: 32 controller messages on 3 ports
-// take 15.4 us per tick (~0.5 us each), ~123 us for 8 tracks (~12 % of a 1.04 ms tick at 300 BPM); 64 would be ~24 %.
-constexpr uint8_t kMaxContinuousPerTick = 32;
+// Continuous controllers (owner decisions 2026-11-05, MidiClass.h): at most 64 values per track per tick, recorded
+// (the writer) and played (the composer leaves later ones out of the window). Device: a controller message on 3 ports
+// costs ~0.5 us, so 64 per track take ~31 us per tick and ~250 us for 8 tracks (~24 % of a 1.04 ms tick at 300 BPM).
+constexpr uint8_t kMaxContinuousPerTick = 64;
 constexpr uint16_t kWindowEntries = 3072;           // span-window buffer, kept pending E3 qualification
 constexpr uint16_t kWindowSourceAdmission = 2816;   // source START rows admitted per 2-bar window per slot
 static_assert(kWindowSourceAdmission + kMaxSoundingPerTrack <= kWindowEntries,

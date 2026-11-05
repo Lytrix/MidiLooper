@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // fixed-memory-engine E6.2: per-tick limits (owner decision 2026-11-05). Continuous controllers (every CC but the
-// essential and parameter ones, pitch bend, pressure) are limited to 32 values per track per tick, when recorded (the
+// essential and parameter ones, pitch bend, pressure) are limited to 64 values per track per tick, when recorded (the
 // writer) and when played (the composer leaves the rest out of the window); essential messages (Bank Select, Program Change, CC64-69, CC120-127) and RPN/NRPN are never limited.
 // The player consumes a row only if it can emit it: the rest waits for the next tick (spill), and due NoteOffs that
 // do not fit stay due. Nothing is consumed without being emitted.
@@ -64,17 +64,18 @@ void test_classification() {
   TEST_ASSERT_EQUAL(ControlClass::Continuous, controlClass(0xD0, 40));  // channel pressure
 }
 
-// Recording: 40 mod-wheel values on one tick keep 32; sustain, program change and RPN on that tick all record; the
-// next tick has its own 32.
+// Recording: L + 8 mod-wheel values on one tick keep L (the limit); sustain, program change and RPN on that tick all
+// record; the next tick has its own L.
 void test_writer_limits_continuous_per_tick() {
   TEST_ASSERT_EQUAL(WriterResult::Ok, gW.begin(0, RunKind::kRecord));
+  constexpr uint8_t L = Config::kMaxContinuousPerTick;
   uint32_t ok = 0, limited = 0;
-  for (uint8_t v = 0; v < 40; ++v) {
+  for (uint8_t v = 0; v < L + 8; ++v) {
     const WriterResult r = gW.channelEvent(100, 0xB0, 1, v);
     ok += r == WriterResult::Ok;
     limited += r == WriterResult::Limited;
   }
-  TEST_ASSERT_EQUAL_UINT32(32, ok);
+  TEST_ASSERT_EQUAL_UINT32(L, ok);
   TEST_ASSERT_EQUAL_UINT32(8, limited);
   TEST_ASSERT_EQUAL(WriterResult::Ok, gW.channelEvent(100, 0xB0, 64, 127));
   TEST_ASSERT_EQUAL(WriterResult::Ok, gW.channelEvent(100, 0xC0, 3, 0));
@@ -82,15 +83,15 @@ void test_writer_limits_continuous_per_tick() {
   TEST_ASSERT_EQUAL(WriterResult::Limited, gW.channelEvent(100, 0xE0, 0, 64));  // pitch bend shares the limit
   TEST_ASSERT_EQUAL(WriterResult::Ok, gW.channelEvent(101, 0xE0, 0, 64));
   TEST_ASSERT_EQUAL_UINT32(9, gW.continuousLimited());
-  TEST_ASSERT_EQUAL_UINT32(32 + 3 + 1, gRuns.run(gW.activeRun()).rowCount);
+  TEST_ASSERT_EQUAL_UINT32(L + 3 + 1, gRuns.run(gW.activeRun()).rowCount);
 }
 
 static void add(uint32_t tick, uint32_t id, uint8_t status, uint8_t d1, uint8_t d2, uint16_t length = 0) {
   gWin.entries[gWin.count++] = SpanEntry{tick, id, length, 0, status, d1, d2, 0};
 }
 
-// Playback: two passes put 50 continuous rows, 3 essential rows and 2 NoteOns on one tick. The composed window keeps
-// the notes, the essentials and the first 32 controllers in DEC-244 order — the same every cycle.
+// Playback: two passes put 100 continuous rows, 3 essential rows and 2 NoteOns on one tick. The composed window keeps
+// the notes, the essentials and the first L controllers in DEC-244 order — the same every cycle.
 void test_composer_limits_continuous_per_tick() {
   using CPool = PagePool<64, 64>;
   using CRuns = RunTable<8, CPool>;
@@ -119,7 +120,7 @@ void test_composer_limits_continuous_per_tick() {
       runs.append(r[p], row(10, 0, 0xC0, 7, 0), pool);
       runs.append(r[p], row(10, 0, 0xB0, 0, 1), pool);
     }
-    for (uint8_t i = 0; i < 25; ++i) runs.append(r[p], row(10, 0, 0xB0, 1, static_cast<uint8_t>(p * 25 + i)), pool);
+    for (uint8_t i = 0; i < 50; ++i) runs.append(r[p], row(10, 0, 0xB0, 1, static_cast<uint8_t>(p * 50 + i)), pool);
     runs.append(r[p], row(30, 1 + p, 0x80, static_cast<uint8_t>(60 + p), 0), pool);
     runs.seal(r[p]);
   }
@@ -143,10 +144,10 @@ void test_composer_limits_continuous_per_tick() {
     TEST_ASSERT_EQUAL_UINT32(2, notes);
     TEST_ASSERT_EQUAL_UINT32(3, essential);
     TEST_ASSERT_EQUAL_UINT32(Config::kMaxContinuousPerTick, continuous);
-    TEST_ASSERT_EQUAL_UINT32(31, lastValue);  // pass 0's 25 values, then pass 1's first 7
+    TEST_ASSERT_EQUAL_UINT32(Config::kMaxContinuousPerTick - 1, lastValue);  // pass 0's values first, then pass 1's
     comp.nextCycle();
   }
-  TEST_ASSERT_EQUAL_UINT32(2 * 18, comp.stats().continuousLimited);
+  TEST_ASSERT_EQUAL_UINT32(2 * (100 - Config::kMaxContinuousPerTick), comp.stats().continuousLimited);
   comp.end();
 }
 
