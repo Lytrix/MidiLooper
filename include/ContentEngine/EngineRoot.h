@@ -31,6 +31,7 @@
 #include "ContentEngine/EditWriter.h"
 #include "ContentEngine/EngineCore.h"
 #include "ContentEngine/NoteEditSession.h"
+#include "ContentEngine/PianoRollRender.h"
 #include "ContentEngine/History.h"
 #include "ContentEngine/OutputPort.h"
 #include "ContentEngine/PlaybackJobs.h"
@@ -67,6 +68,8 @@ using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = OutputHub<>;
 using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
+using ProductionDisplayJobs = DisplayJobs<ProductionDisplayComposer, ProductionWindow, ProductionManifests,
+                                          ProductionRuns, ProductionTiles, ProductionScheduler, /*workers*/ 1>;
 using ProductionNoteEdit = NoteEditSession<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                            ProductionDisplayComposer, ProductionWindow, ProductionEditWriter>;
 using ProductionEmit = ProductionPlayer::Emit;
@@ -121,6 +124,7 @@ struct EngineRam2 {
   ProductionOutput output;
   ProductionControl control;
   ProductionNoteEdit noteEdit;
+  ProductionDisplayJobs displayJobs;
 };
 
 // Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
@@ -130,7 +134,7 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6796508u;
-constexpr size_t kRam2Budget = 147056u;  // measured (E9.5: + 1,024 B NOTE_EDIT session; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 149432u;  // measured (E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -190,6 +194,11 @@ class EngineRoot {
     r_->noteEdit.init(p_->pool, r_->runs, r_->manifests, r_->history, p_->displayComposer, p_->displayWindow,
                       r_->editWriter, p_->editGather, p_->editGatherRuns, kWindowTicks);
     gatherLive_ = rebuildLive_ = false;
+    ProductionDisplayComposer* dc[1] = {&p_->displayComposer};
+    ProductionWindow* dw[1] = {&p_->displayWindow};
+    r_->displayJobs.init(dc, dw, p_->tiles, r_->manifests, r_->runs, r_->scheduler, kWindowTicks, kTicksPerBar);
+    overlaySlot_ = ProductionTransport::kNoSlot;
+    overlayUntil_ = 0;
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -211,6 +220,7 @@ class EngineRoot {
     if (!rebuildLive_ && r_->noteEdit.rebuildPending() &&
         r_->scheduler.submit(JobSpec{JobClass::Transition, nowUs, kEditGrains, &rebuildStep, this}, id))
       rebuildLive_ = true;
+    serviceDisplay(clock);
     uint8_t slot;
     if (r_->noteEdit.takePublished(slot)) {
       ProductionEmit buf[kGestureEmits];
@@ -265,6 +275,35 @@ class EngineRoot {
     return r;
   }
 
+  // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
+  /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).
+  void setDisplayFocus(uint8_t slot, uint8_t successor) {
+    p_->tiles.setDetail(0, slot);
+    p_->tiles.setDetail(1, successor);
+    r_->displayJobs.setFocus(slot);
+    // Detail tiles now show this slot: sweep it again for them (its density tiles stay meanwhile).
+    p_->tiles.setWanted(slot, 0);
+  }
+  /// The live overlay's view (the detailed piano roll's): loop length, first position, ticks per column, lowest pitch.
+  void setOverlayView(uint32_t loop, uint32_t first, uint32_t ticksPerColumn, uint8_t lowPitch) {
+    p_->overlay.setView(loop, first, ticksPerColumn, lowPitch);
+  }
+  /// Live input with the overlay painted when the take is on the shown slot.
+  void inputNoteOn(uint32_t clock, uint8_t status, uint8_t pitch, uint8_t velocity, uint32_t nowUs, uint32_t usPerTick) {
+    r_->control.inputNoteOn(clock, status, pitch, velocity, nowUs, usPerTick);
+    if (overlayLive()) p_->overlay.noteOn(r_->transport.writePosition(clock), pitch, velocity);
+  }
+  void inputNoteOff(uint32_t clock, uint8_t status, uint8_t pitch, uint32_t nowUs) {
+    if (overlayLive()) p_->overlay.noteOff(r_->transport.writePosition(clock), pitch);
+    r_->control.inputNoteOff(clock, status, pitch, nowUs);
+  }
+  /// Bands of the detailed note layer and the overview strip (`PianoRollRender.h`).
+  void drawRollBand(const RollView& v, uint8_t* fb, uint16_t width, int16_t rowFrom, int16_t rowTo) const {
+    const bool live = v.slot == overlaySlot_;
+    ContentEngine::drawRollBand(p_->tiles, live ? &p_->overlay : nullptr, v, fb, width, rowFrom, rowTo);
+  }
+  const ProductionDisplayJobs& displayJobs() const { return r_->displayJobs; }
+
   /// One grain; false when nothing is pending.
   bool runGrain(uint32_t nowUs) { return r_->scheduler.runGrain(nowUs) != ProductionScheduler::kNoJob; }
 
@@ -317,10 +356,48 @@ class EngineRoot {
     out(Region::Ram2, "output_keys", sizeof(ProductionOutput));
     out(Region::Ram2, "control", sizeof(ProductionControl));
     out(Region::Ram2, "note_edit", sizeof(ProductionNoteEdit));
+    out(Region::Ram2, "display_jobs", sizeof(ProductionDisplayJobs));
     out(Region::Ram2, "total", sizeof(EngineRam2));
   }
 
  private:
+  bool overlayLive() const {
+    const uint8_t s = r_->transport.writingSlot();
+    return s != ProductionTransport::kNoSlot && s == p_->tiles.detailSlot(0);
+  }
+  /// Every slot's tiles follow its state (commits, Undo / Redo, edits, completions, Clear); the shown take's overlay
+  /// clears once the committed tiles show it; sweeps yield the display cursor to a NOTE_EDIT gather.
+  void serviceDisplay(uint32_t clock) {
+    for (uint8_t s = 0; s < Config::kSlotCount; ++s) {
+      const ManifestId m = r_->transport.contentOf(s);
+      if (m == kNoManifest) {
+        if (p_->tiles.wanted(s) != 0 || p_->tiles.densityIdentity(s) != 0) p_->tiles.clearSlot(s);
+        continue;
+      }
+      const uint32_t id = r_->manifests.manifest(m).identity;
+      if (p_->tiles.wanted(s) != id && sealed(m)) r_->displayJobs.request(s, m);
+    }
+    const uint8_t w = r_->transport.writingSlot();
+    if (w != ProductionTransport::kNoSlot && w == p_->tiles.detailSlot(0)) {
+      overlaySlot_ = w;
+      overlayUntil_ = 0;
+      p_->overlay.advance(r_->transport.writePosition(clock));
+    } else if (overlaySlot_ != ProductionTransport::kNoSlot) {
+      if (overlayUntil_ == 0) {
+        const ManifestId m = r_->transport.contentOf(overlaySlot_);
+        overlayUntil_ = m == kNoManifest ? 1 : r_->manifests.manifest(m).identity;
+      }
+      if (p_->tiles.densityIdentity(overlaySlot_) == overlayUntil_ || overlayUntil_ == 1) {
+        p_->overlay.clear();
+        overlaySlot_ = ProductionTransport::kNoSlot;
+      }
+    }
+    if (r_->noteEdit.gatherPending())
+      r_->displayJobs.yield();
+    else
+      r_->displayJobs.service();
+  }
+
   bool sealed(ManifestId m) const {
     const auto& x = r_->manifests.manifest(m);
     for (uint8_t i = 0; i < x.runCount; ++i)
@@ -376,6 +453,8 @@ class EngineRoot {
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
   bool gatherLive_ = false, rebuildLive_ = false;
+  uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
+  uint32_t overlayUntil_ = 0;    // cleared once the slot's tiles show this identity
   static constexpr uint32_t kEditGrains = 2000;  // a gather composes up to two loops; a rebuild <= 24 grains (§ 8.4)
   uint8_t sweepNext_ = 0;
   Stats stats_{};

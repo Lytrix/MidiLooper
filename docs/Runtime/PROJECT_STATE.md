@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E9.6 piano roll from tiles.**
+- Tiles now follow every slot's state (commits, Undo / Redo, edits; Clear blanks), the shown slot gets span tiles, a
+  take on it is painted live until its tiles show it, and `PianoRollRender` draws the note layer in bands from tiles at
+  the legacy geometry. On the Teensy a whole frame takes 233 µs.
+
 **2026-11-05 — Fixed-memory engine: E9.5 NOTE_EDIT for the surface.**
 - `NoteEditSession` gathers the selection as the piano roll shows it, with each note's recorded geometry (overlaps stay
   derived, so the edited note drives and the others adapt), runs edits as E: steps heard from the next boundary, and

@@ -1548,3 +1548,32 @@ importer write 0x80), so that guard's mutation is equivalent. Teensy (`aeac1ab7�
 
 Open: the gather grain is bounded by the same units as tile-sweep grains but not yet measured on the Teensy; the
 selection's 9,216 B is carved from the worker-scratch line for now and is settled with persistence (E9.7).
+
+## E9.6 — the piano roll from tiles (as built)
+
+- **Sweeps follow state:** each main-loop pass compares every slot's current state (`SlotTransport::contentOf`) with
+  the identity its tiles want; a sealed new state is requested (`DisplayJobs`, focus first, a newer request replacing
+  an older one); an empty or cleared slot clears its tiles (`TileStore::clearSlot`: density bars and detail tiles drop
+  out). States still waiting for a completion are not swept (their identity is replaced when they complete).
+- **Focus:** `setDisplayFocus(slot, successor)` gives both span tiles and sweeps the focus again for them; its density
+  tiles show meanwhile (never blank).
+- **One display cursor:** one sweep worker on the display cursor and its scratch window (budgeted, E9.2), shared with
+  the NOTE_EDIT gather: while a gather is pending, running sweeps stop and their slots are asked again
+  (`DisplayJobs::yield`), and no new sweep starts.
+- **Live overlay:** a take on the shown slot paints into the overlay (input notes, held notes advanced each pass, at
+  the take's position: the loop position while overdubbing, the take's length so far while recording); it is cleared
+  once the slot's committed tiles show the new state.
+- **Drawing (`PianoRollRender.h`):** the note layer only, into the SSD1322 4-bit framebuffer (even x in the high
+  nibble), one band of rows at a time, from tiles and the overlay — nothing on the draw path composes, allocates or
+  reads pages. Legacy geometry: x = x0 + map(position in the view, 0, view ticks, 0, width), y = map(pitch, low, high,
+  y1, y0), one-row bars at brightness 7, the highlighted note at 10. Per bar: span segments; a dense bar's 32-column
+  raster; else its density tile as a dim (3) bar-wide line per sounding pitch. `drawOverviewBand` draws the whole loop
+  from density tiles; `pitchExtent` gives the auto-fit pitch range from them. Grid, playhead, bracket and sidebar stay
+  `DisplayManager`'s.
+
+Tests (`test_content_engine_piano_roll`, 8): renderer — segments at the legacy geometry, highlight, band clipping, a
+dense bar's raster, the density fallback, overview, pitch extent, overlay on top; root — the overlay paints a take on
+the shown slot and gives way to its tiles, Clear blanks the slot, a gather takes the display cursor from a running
+sweep (one grain a tick) and the sweep completes afterwards, a newly shown slot gets span tiles, no allocation.
+Mutations caught: 13 of 13. Teensy (`e6512efa…`): a frame drawn in four 8-row bands plus the overview 233 µs (a band
+≤ 55 µs); longest grain 351 µs with sweeps running; RAM2 149,432 B.

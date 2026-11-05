@@ -226,6 +226,11 @@ class SlotTransport {
   }
   /// The track that records or overdubs, or 0xFF.
   uint8_t writingTrack() const { return mode_ == Mode::Idle ? 0xFF : wTrack_; }
+  uint8_t writingSlot() const { return mode_ == Mode::Idle ? kNoSlot : wSlot_; }
+  /// Where the take is at `clock`: the loop position while overdubbing, the take's length so far while recording.
+  uint32_t writePosition(uint32_t clock) const {
+    return mode_ == Mode::Overdubbing ? local(wTrack_, clock) % loop_ : clock - wStart_;
+  }
 
   /// Clear (owner 2026-11-05: undoable): an empty state on top of the slot's history; its playing tracks stop.
   Result clear(uint8_t slot, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {

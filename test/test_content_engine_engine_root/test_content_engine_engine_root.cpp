@@ -228,6 +228,7 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
   gTrap = true;
   const unsigned long heapBefore = gHeapAllocations;
   gD.clock = s0;
+  gE.setDisplayFocus(0, 8);  // the piano roll shows track 0's slot (E9.6)
   TEST_ASSERT_EQUAL(R::Ok, x.startRecord(0, 0, gD.clock));
   run(s0 + loop0, take0);
   stop();
@@ -282,6 +283,25 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
   }
   TEST_ASSERT_TRUE(gE.reservations().check());
   TEST_ASSERT_TRUE(checkConservation(gE.pool(), gE.runs(), gE.manifests()));
+  // E9.6: the piano roll of the shown slot from its tiles — a frame drawn in 8-row bands, and the overview strip.
+  TEST_ASSERT_EQUAL(ProductionTiles::Kind::Span, gE.tiles().drawSource(0, 0).kind);
+  static uint8_t fb[256 * 64 / 2];
+  const RollView v{0, loop0, kBar, 0, loop0, 40, 110, 22, 225, 0, 31};
+  uint32_t maxBandUs = 0;
+  const uint32_t f0 = realMicros();
+  for (int16_t row = 0; row < 32; row += 8) {
+    const uint32_t b0 = realMicros();
+    gE.drawRollBand(v, fb, 256, row, static_cast<int16_t>(row + 7));
+    if (realMicros() - b0 > maxBandUs) maxBandUs = realMicros() - b0;
+  }
+  drawOverviewBand(gE.tiles(), 0, loop0, kBar, 40, 110, 22, 225, 33, 40, fb, 256, 33, 40);
+  const uint32_t frameUs = realMicros() - f0;
+  uint32_t litPixels = 0;
+  for (uint8_t b : fb) litPixels += (b >> 4 != 0) + ((b & 0x0F) != 0);
+  TEST_ASSERT_TRUE(litPixels > 0);
+  snprintf(line, sizeof line, "#CAP,ENGINE_DRAW,frame_us=%u,max_band_us=%u,lit=%u", static_cast<unsigned>(frameUs),
+           static_cast<unsigned>(maxBandUs), static_cast<unsigned>(litPixels));
+  TEST_MESSAGE(line);
 #ifdef ARDUINO
   TEST_ASSERT_TRUE(gD.maxGrainUs <= kGrainUs);
 #endif

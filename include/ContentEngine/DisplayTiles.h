@@ -91,6 +91,7 @@ class TileStore {
   uint32_t wanted(uint8_t slot) const { return wanted_[slot]; }
   /// Gives the slot detail tiles (focus or its successor). Its bars keep showing their previous tiles until swept.
   void setDetail(uint8_t detail, uint8_t slot) { detailSlot_[detail] = slot; }
+  uint8_t detailSlot(uint8_t detail) const { return detailSlot_[detail]; }
   uint8_t detailOf(uint8_t slot) const {
     for (uint8_t d = 0; d < DetailSlots; ++d)
       if (detailSlot_[d] == slot) return d;
@@ -130,6 +131,22 @@ class TileStore {
     return Draw{Kind::Empty, 0, nullptr, nullptr, nullptr};
   }
   uint16_t freeSpares() const { return freeSpares_; }
+
+  /// E9.6: an empty (or cleared) slot shows nothing: its density bars and its detail tiles drop out. One step per bar.
+  void clearSlot(uint8_t slot) {
+    densitySwept_[slot] = 0;
+    densityIdentity_[slot] = 0;
+    wanted_[slot] = 0;
+    const uint8_t d = detailOf(slot);
+    if (d != kNone)
+      for (uint8_t b = 0; b < Bars; ++b) header_[map_[d][b]].identity = 0;
+  }
+  /// The bar's density tile, or nullptr when the bar was never swept (overview, pitch extent).
+  const DensityTile* densityTile(uint8_t slot, uint8_t bar) const {
+    return ((densitySwept_[slot] >> bar) & 1u) ? &density_[slot][bar] : nullptr;
+  }
+  /// The identity the slot's density tiles were last published from (0: none).
+  uint32_t densityIdentity(uint8_t slot) const { return densityIdentity_[slot]; }
 
   static constexpr uint16_t kNoTile = 0xFFFF;
 
@@ -457,7 +474,7 @@ class DisplayJobs {
 
   void init(Composer* const* composers, Window* const* scratch, Store& store, Manifests& manifests, Runs& runs,
             Scheduler& scheduler, uint32_t windowTicks, uint32_t barTicks) {
-    for (uint8_t i = 0; i < Workers; ++i) worker_[i] = Worker{composers[i], scratch[i], this, {}, false, 0xFF};
+    for (uint8_t i = 0; i < Workers; ++i) worker_[i] = Worker{composers[i], scratch[i], this, {}, false, 0xFF, kNoManifest};
     store_ = &store;
     manifests_ = &manifests;
     runs_ = &runs;
@@ -490,10 +507,30 @@ class DisplayJobs {
         continue;
       uint8_t id;
       w.slot = slot;
+      w.manifest = m;
       w.live = scheduler_->submit(JobSpec{JobClass::Display, 0, kDeclaredGrains, &step, &w}, id);
       if (!w.live) w.sweep.cancel();  // table full: the slot's request is retried
       if (!w.live) pending_[slot] = m;
     }
+  }
+
+  /// E9.6: the display cursor is wanted elsewhere (a NOTE_EDIT gather): running sweeps stop and their slots are asked
+  /// again; `service` starts nothing until the caller resumes calling it.
+  void yield() {
+    for (auto& w : worker_) {
+      if (!w.live || w.sweep.status() != Sweep::Status::Running) continue;
+      const ManifestId m = w.manifest;
+      w.sweep.cancel();
+      if (pending_[w.slot] == kNoManifest) {
+        pending_[w.slot] = m;
+        requestOrder_[w.slot] = ++order_;
+      }
+    }
+  }
+  bool sweeping() const {
+    for (const auto& w : worker_)
+      if (w.live) return true;
+    return false;
   }
 
   bool idle() const {
@@ -512,6 +549,7 @@ class DisplayJobs {
     Sweep sweep;
     bool live;
     uint8_t slot;
+    ManifestId manifest;  // the source of the running sweep (asked again when it yields)
   };
 
   /// The focused slot's request, else the oldest.
