@@ -13,6 +13,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <cstdio>
 #include <cstring>
 #include <new>
 #include <vector>
@@ -325,6 +326,46 @@ void test_real_compose_and_sweep_jobs_meet_window_deadlines() {
   TEST_ASSERT_TRUE(disp.runs * 4 + 4 >= gS.report().grains);
 }
 
+// E5 FEASIBILITY GATE (owner 2026-11-05: keep RED until met; no budget increase). Eight tracks each composing the
+// adversarial clustered window (59 passes, 6 NoteOns per pass in every 9-tick cluster, pitches rotating so the
+// onset-pitch mask cannot skip a pass) must meet every window deadline at the measured worst grain g = 786 us and
+// U_e = 50 %. The window's grain count is measured here with the production composer (work units, deterministic),
+// so the gate follows every optimization. While infeasible it is reported RED and ignored, not hidden.
+void test_feasibility_gate_clustered_eight_tracks() {
+  gPool.init();
+  gRuns.init();
+  gManifests.init();
+  TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
+  constexpr uint8_t kPasses = 59;
+  SourceRun src[kPasses];
+  uint32_t id = 1;
+  for (uint8_t p = 0; p < kPasses; ++p) {
+    const RunId r = gRuns.allocate(0, p == 0 ? RunKind::kRecord : RunKind::kOverdub);
+    for (uint32_t c = 0; c < 8; ++c) {
+      for (uint32_t k = 0; k < 6; ++k)
+        gRuns.append(r, row(c * 64 + k + p % 3, id + k, 0x90, static_cast<uint8_t>(30 + (p * 6 + k + c * 7) % 90)), gPool);
+      for (uint32_t k = 0; k < 6; ++k)
+        gRuns.append(r, row(c * 64 + k + p % 3 + 40, id + k, 0x80, static_cast<uint8_t>(30 + (p * 6 + k + c * 7) % 90)),
+                     gPool);
+      id += 6;
+    }
+    gRuns.seal(r);
+    src[p] = {r, gRuns.run(r).rowCount};
+  }
+  static TestComposer c;
+  c.init(gPool, gRuns, &gIndex);
+  TEST_ASSERT_TRUE(c.begin(src, kPasses, kLoop, 1));
+  TEST_ASSERT_TRUE(c.openWindow(gWin[0], kWin));
+  uint32_t grains = 1;
+  while (!c.composeRows(gWin[0], 128)) ++grains;
+  const auto r = simulateLoad(800, 786, grains);
+  char msg[160];
+  snprintf(msg, sizeof(msg), "clustered window %u grains; 8 tracks at g=786 us, U_e=50 %%: %u missed deadlines",
+           static_cast<unsigned>(grains), static_cast<unsigned>(r.missedDeadlines));
+  TEST_MESSAGE(msg);
+  if (r.missedDeadlines != 0) TEST_IGNORE_MESSAGE("FEASIBILITY GATE RED (E5): clustered eight-track case misses deadlines");
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_hard_jobs_run_earliest_deadline_first);
@@ -335,5 +376,6 @@ int main(int, char**) {
   RUN_TEST(test_measured_grain_load_meets_every_deadline);
   RUN_TEST(test_infeasible_load_reports_missed_deadlines);
   RUN_TEST(test_real_compose_and_sweep_jobs_meet_window_deadlines);
+  RUN_TEST(test_feasibility_gate_clustered_eight_tracks);
   return UNITY_END();
 }

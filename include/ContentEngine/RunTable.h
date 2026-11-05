@@ -55,6 +55,7 @@ class RunTable {
     uint8_t slot;
     uint8_t kind;
     RunState state;
+    uint32_t onsetPitches[4];  // pitches with at least one NoteOn in this run (set on append; composer look-ahead skip)
   };
 
   void init() {
@@ -109,6 +110,7 @@ class RunTable {
     }
     pool.rows(pageAt(id, r.rowCount / kRowsPerPage, pool))[r.rowCount % kRowsPerPage] = row;
     ++r.rowCount;
+    if ((row.status & 0xF0) == 0x90 && row.data2 != 0) r.onsetPitches[(row.data1 & 0x7F) >> 5] |= 1u << (row.data1 & 31);
     return AppendResult::Ok;
   }
 
@@ -117,6 +119,11 @@ class RunTable {
     if (index < InlinePages) return r.inlinePages[index];
     const uint32_t k = index - InlinePages;
     return pool.dirIds(r.dirPages[k / kIdsPerDirPage])[k % kIdsPerDirPage];
+  }
+
+  /// The run has at least one NoteOn on `pitch` (O(1), RAM).
+  bool startsPitch(RunId id, uint8_t pitch) const {
+    return (runs_[id].onsetPitches[(pitch & 0x7F) >> 5] >> (pitch & 31)) & 1u;
   }
 
   const PassEvent& rowAt(RunId id, uint32_t i, const Pool& pool) const {
@@ -186,6 +193,7 @@ class RunTable {
     r.slot = 0xFF;
     r.kind = 0;
     r.state = RunState::Free;
+    for (auto& m : r.onsetPitches) m = 0;
   }
 
   Run runs_[RunCount];

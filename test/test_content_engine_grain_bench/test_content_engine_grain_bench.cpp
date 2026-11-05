@@ -126,6 +126,55 @@ static void buildWorkload() {
   TEST_ASSERT_NOT_EQUAL(kNoManifest, gManifest);
 }
 
+/// Clustered window for the OVL-2/6 look-ahead: every pass has 6 NoteOns inside each 9-tick cluster (clusters every
+/// 64 ticks), each pass on 6 pitches of its own per cluster. `rotating`: the pitches move every cluster, so over the
+/// loop every pass starts notes on most pitches and the onset-pitch mask cannot skip it (adversarial worst case);
+/// otherwise each pass keeps its 6 pitches (the mask skips every pass without the NoteOn's pitch).
+static void clusteredWindow(bool rotating, const char* name) {
+  gPool.init();
+  TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
+  gRuns.init();
+  gManifests.init();
+  RunId ids[kPasses];
+  uint32_t id = 1;
+  constexpr uint32_t kClusters = 8;  // 59 x 8 x 6 = 2,832 NoteOns in window 0
+  for (uint8_t p = 0; p < kPasses; ++p) {
+    const RunId r = gRuns.allocate(0, p == 0 ? RunKind::kRecord : RunKind::kOverdub);
+    for (uint32_t c = 0; c < kClusters; ++c) {  // rows in tick order: the six NoteOns, then their NoteOffs
+      for (uint32_t k = 0; k < 6; ++k) {
+        const uint8_t pitch = static_cast<uint8_t>(30 + (p * 6 + k + (rotating ? c * 7 : 0)) % 90);
+        TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(c * 64 + k + (p % 3), id + k, 0x90, pitch), gPool));
+      }
+      for (uint32_t k = 0; k < 6; ++k) {
+        const uint8_t pitch = static_cast<uint8_t>(30 + (p * 6 + k + (rotating ? c * 7 : 0)) % 90);
+        TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(c * 64 + k + (p % 3) + 40, id + k, 0x80, pitch), gPool));
+      }
+      id += 6;
+    }
+    gRuns.seal(r);
+    ids[p] = r;
+  }
+  const ManifestId mc = gManifests.create(0, 1, kLoop, ids, kPasses, gRuns);
+  SourceRun src[kPasses];
+  for (uint8_t i = 0; i < kPasses; ++i) src[i] = {ids[i], gRuns.run(ids[i]).rowCount};
+  gComp.init(gPool, gRuns, &gIndex);
+  TEST_ASSERT_TRUE(gComp.begin(src, kPasses, kLoop, gManifests.manifest(mc).identity));
+  Stat cluster;
+  TEST_ASSERT_TRUE(gComp.openWindow(gWin, kWinTicks));
+  bool done;
+  do {
+    const uint32_t c0 = cycles();
+    done = gComp.composeRows(gWin, 128);
+    cluster.add(cycles() - c0);
+  } while (!done);
+  report(name, cluster);
+  char la[140];
+  snprintf(la, sizeof(la), "GRAIN,%s_lookahead_rows=%lu,max_per_noteon=%lu", name,
+           static_cast<unsigned long>(gComp.stats().lookaheadRowsLastWindow),
+           static_cast<unsigned long>(gComp.stats().maxLookaheadRowsPerNoteOn));
+  TEST_MESSAGE(la);
+}
+
 void setUp() {}
 void tearDown() {}
 
@@ -255,48 +304,8 @@ void test_grain_durations() {
   }
   report("scheduler_pick_32_jobs", pick);
 
-  // Clustered worst case for the OVL-2/6 look-ahead fallback: every pass has 6 NoteOns inside each 9-tick cluster
-  // (clusters every 64 ticks), so each NoteOn finds several rows of every later pass in [on, on + 8].
-  gPool.init();
-  TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
-  gRuns.init();
-  gManifests.init();
-  RunId ids[kPasses];
-  uint32_t id = 1;
-  constexpr uint32_t kClusters = 8;  // 59 x 8 x 6 = 2,832 NoteOns in window 0
-  for (uint8_t p = 0; p < kPasses; ++p) {
-    const RunId r = gRuns.allocate(0, p == 0 ? RunKind::kRecord : RunKind::kOverdub);
-    for (uint32_t c = 0; c < kClusters; ++c) {  // rows in tick order: the six NoteOns, then their NoteOffs
-      for (uint32_t k = 0; k < 6; ++k)
-        TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(c * 64 + k + (p % 3), id + k, 0x90,
-                                                                static_cast<uint8_t>(30 + (p * 6 + k) % 90)), gPool));
-      for (uint32_t k = 0; k < 6; ++k)
-        TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(c * 64 + k + (p % 3) + 40, id + k, 0x80,
-                                                                static_cast<uint8_t>(30 + (p * 6 + k) % 90)), gPool));
-      id += 6;
-    }
-    gRuns.seal(r);
-    ids[p] = r;
-  }
-  const ManifestId mc = gManifests.create(0, 1, kLoop, ids, kPasses, gRuns);
-  SourceRun src[kPasses];
-  for (uint8_t i = 0; i < kPasses; ++i) src[i] = {ids[i], gRuns.run(ids[i]).rowCount};
-  gComp.init(gPool, gRuns, &gIndex);
-  TEST_ASSERT_TRUE(gComp.begin(src, kPasses, kLoop, gManifests.manifest(mc).identity));
-  Stat cluster;
-  TEST_ASSERT_TRUE(gComp.openWindow(gWin, kWinTicks));
-  bool done;
-  do {
-    const uint32_t c0 = cycles();
-    done = gComp.composeRows(gWin, 128);
-    cluster.add(cycles() - c0);
-  } while (!done);
-  report("compose_128_rows_clustered", cluster);
-  char la[120];
-  snprintf(la, sizeof(la), "GRAIN,clustered_lookahead_rows=%lu,max_per_noteon=%lu",
-           static_cast<unsigned long>(gComp.stats().lookaheadRowsLastWindow),
-           static_cast<unsigned long>(gComp.stats().maxLookaheadRowsPerNoteOn));
-  TEST_MESSAGE(la);
+  clusteredWindow(false, "compose_128_rows_clustered");
+  clusteredWindow(true, "compose_128_rows_clustered_rotating");
 }
 
 #if defined(__IMXRT1062__)
