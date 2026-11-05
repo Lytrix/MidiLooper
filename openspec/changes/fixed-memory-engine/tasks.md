@@ -69,8 +69,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E5.5 Device grain measurements (`teensy41-engine-bench`); composer head cache, hide-row skip, look-ahead work units (9.7 ms → 655 µs).
 - [x] E5.6 OUT-2 (Q-OUT-2 ratified 2026-11-05, source-ordered refusal): open effective-instance table, carried-in voices, proof, owner REDs (`test_content_engine_selection` 6, rig eligibility check), mutation-checked.
 - [x] E5.7 Clustered look-ahead: run onset-pitch mask (RAM2); feasibility gate in `test_content_engine_scheduler` (adversarial window 100 grains, 8 tracks feasible at g = 786 µs, U_e = 50 % in simulation).
-- [ ] E5.8 Device: re-measure grains with OUT-2 and the mask (board offline 2026-11-05); confirm or re-open the gate.
-- [ ] E5.9 Plan bounds: g = 786 µs and 44–100-grain windows into plan § 7 (owner).
+- [x] E5.8 Device: re-measure grains with OUT-2 and the mask; confirm or re-open the gate. Done 2026-11-05: worst grain 800 µs (clustered compose), g = 810 µs; resume split into two grains (was 1.1 ms); gate met. Image `59c8a6f8…`.
+- [ ] E5.9 Plan bounds: g = 810 µs and 44–100-grain windows into plan § 7 (owner).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output

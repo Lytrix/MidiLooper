@@ -683,7 +683,7 @@ class, pitch, next tick) are now cached in RAM, edit-run cursors skip their lead
 look-ahead reads as work (8 reads = 1 row unit). Behaviour is unchanged (all engine suites and the oracle).
 
 **Findings for the plan's bounds (§ 7):**
-- g = 786 µs (worst measured, checkpoint resume) replaces 500 µs.
+- g = 786 µs (worst measured, checkpoint resume) replaces 500 µs. Superseded by E5.8: g = 810 µs.
 - A window is 44–47 grains when its rows are spread (2,773 NoteOns + NoteOffs), not 23: the plan counted START rows,
   composition merges NoteOffs too. C1 at the measured figures: 8 × 47 × 0.786 ms = 296 ms per 1.6 s; the simulation
   meets every deadline at U_e = 50 %.
@@ -765,6 +765,37 @@ In the adversarial case (pitches rotating per cluster, so the mask rarely skips)
 
 **Feasibility gate** (`test_feasibility_gate_clustered_eight_tracks`): it builds the adversarial window with the
 production composer, counts its grains (100 at 128 units), and simulates eight such tracks at the measured g = 786 µs and
-U_e = 50 %. Result: 0 missed deadlines. The gate is ignored and reported RED whenever it misses. **Device confirmation is
-pending:** g = 786 µs was measured before the open-instance table and the mask. The board was offline (not on USB) when
-the re-measurement was attempted.
+U_e = 50 %. Result: 0 missed deadlines. The gate is ignored and reported RED whenever it misses. Device confirmation:
+E5.8 below.
+
+## E5.8 — device re-measurement with OUT-2 and the mask (image `59c8a6f8…`)
+
+Same bench and placement as E5. Worst / average per grain:
+
+| Grain | Worst | Average |
+|---|---|---|
+| compose, 128 row units (spread) | 719 µs | 581 µs |
+| compose, 128 row units (clustered, 45 grains) | 785–800 µs (5 runs) | 562 µs |
+| compose, 128 row units (clustered rotating, 100 grains) | 603 µs | 391 µs |
+| sweep step | 684 µs | 583 µs |
+| cold-start step | 664 µs | 574 µs |
+| compose seek / `begin` | 681 / 420 µs | 451 / 410 µs |
+| checkpoint resume, bind grain | 408 µs | 402 µs |
+| checkpoint resume, seek grain | 697 µs | 686 µs |
+| checkpoint capture | 68 µs | 67 µs |
+| index build, 256 units | 398 µs | 191 µs |
+| scheduler decision (32 jobs) | 4.7 µs | 3.0 µs |
+
+**Resume was a 1.1 ms grain.** The first re-run reported resume at 0.1 µs: the bench ignored `capture`'s result, and
+the densest spread window opens more than 48 instances (`openOverflow` = 1), so every capture was refused and resume
+timed its own rejection. Timed from a capturable boundary it took 1,106 µs: binding the source (band seeks and the
+index pin for 60 runs) plus seeking every stream cursor. `resume` is now `resumeBind` + `resumeSeek`, and `ColdStart`
+runs them on two grains. The bench asserts capture and resume, and times `begin` separately.
+
+**Result.** The worst grain is the clustered compose, 800.3 µs; the gate and the measured-load test use g = 810 µs.
+At U_e = 50 % the eight-track adversarial clustered case (100 grains per window) misses no deadline, so the feasibility
+gate is met on device figures. C1 for the spread case: 8 × 47 × 0.81 ms = 305 ms per 1.6 s.
+
+**Finding for OUT-2's limits.** The CE-B1 densest spread source (2,773 NoteOns in one window, 59 passes) overflows the
+48-entry open-instance table. Output still holds T = 16, but periodicity is not guaranteed for that source, its
+checkpoints are unusable, and cold start warms up a cycle (a bounded replay of up to 94 grains measured).
