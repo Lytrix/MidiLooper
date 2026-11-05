@@ -585,5 +585,110 @@ start's carry list was a permutation of uninterrupted playback's, and checkpoint
 
 Mutations caught: promoting cold captures, no warm-up, swap removal, no convergence check, ignoring supersession.
 
-**Not yet built (E5):** the worker scheduler (EDF of hard jobs, display and persistence shares, slack check); compose,
-sweep and index builds sliced into grains; the edit-index store placed in the page reserve.
+**Owner review 2026-11-05:** both departures approved — the two-loop sweep (a work bound, not waiting) and the table
+without a manifest pin (completed checkpoints are value snapshots); an active sweep job still holds a source lease.
+
+## E5 slice 2 — job leases, grains and convergence (owner review 2026-11-05, as built)
+
+**Lease (`SourceLease`):** a sweep or cold-start job pins its manifest while it reads it, holds the run list with sealed
+row limits, and builds the manifest's edit index in grains before composing. Done, superseded, refused and cancelled
+all release the pin (and the composer's index lease). A slot that drops the manifest mid-sweep leaves it alive until
+the sweep ends; then the manifest is freed and its runs go to reclaim (`test_pin_keeps_source_alive_until_the_sweep_ends`).
+
+**Publication guard:** a checkpoint is published only at a window boundary and only while the slot's table still
+belongs to the sweep; the check runs at the start of every grain, so a sweep replaced between the grains of one window
+(after composing, before publishing) ends `Superseded` and writes nothing (`test_replacement_between_grains_publishes_nothing`).
+
+**Grains:** `Composer::openWindow` / `composeRows` compose a window incrementally and equal `composeNext`. The sweep and
+the cold start (`ColdStart`, nearest usable checkpoint, else one warm-up cycle) advance one grain per `step`; neither
+waits for playback.
+
+**Convergence within two cycles (proof).** A composer's state at a window boundary is (source counters, admitted notes
+in admission order, cursors); cursors are a function of the position, and resume equivalence shows the captured part is
+the rest. Source counters are a function of the position in every cycle (the cold pre-pass counts wrap-held notes at
+tick 0). Every admission decision is a function of the source: hides (OVL-2/6, OVL-9, Q-OVL-3, edit index), shortening
+(OVL-1) and the Q-LEN-1 effective end (≤ S + L − 1) depend only on source rows. The admitted set therefore depends on
+history only through OUT-POLY refusal (more than T = 16 sounding). Below saturation, the admitted set at position p of
+any cycle ≥ 1 is exactly the instances started in (p − L, p] whose effective end is ≥ p; cycle 0 lacks only those
+started in the previous cycle, all of which end by position L − 2. Hence state(cycle 1, p) = state(cycle n, p) for every
+n ≥ 1, and cycle 0 agrees with it from the first checkpoint position after the last carried end. The sweep detects this
+exactly: equal captures at one position mean equal state from there on (determinism), so it publishes the remaining
+provisional captures; otherwise it composes all of cycle 1 and `periodic()` compares the end-of-cycle state with the
+position-0 state. Covered by hand-specified sources for Q-LEN-1 held-loop notes (> 2L and exactly L), a wrap hold
+shortened in the next cycle, Q-OVL-3, OVL-9 across cycles, an edit hide of a wrap-held note with its replacement, and a
+revision transition (`test_convergence_within_two_cycles_per_mechanism`, `test_revision_transition_sweeps_the_new_manifest`),
+plus 25 random multi-pass sources.
+
+**Q-OUT-2 (owner question): saturated sources are not periodic.** Above OUT-POLY (more than 16 notes sounding), first-come
+admission makes which notes a cycle drops depend on the notes carried in. Uninterrupted playback itself then settles
+only after 2–4 cycles (probe: 25 of 40 saturated sources differ between cycle 1 and cycle 3). The sweep flags these
+(`periodic()` false), never promotes cold captures, and a cold start reconstructs the cycle-1 state deterministically,
+within T (`test_saturated_composition_is_flagged_aperiodic`). Options: (a) accept a cycle-1 reconstruction under
+saturation; (b) make OUT-POLY refusal history-independent (for example by source order), which makes saturated
+playback periodic from cycle 1 too.
+
+## E5.3 — edit index in its reserved pages, built in grains (as built)
+
+`EditIndexStore::init` takes the 576-page edit-index partition from the pool once, tagged `kOwnerIndex`; it is never
+returned or added to, and content cannot receive those pages (`test_partition_taken_from_pool_and_never_borrowed`). Init
+order: pool, index store, then the reservation ledger with only the compaction partition as its fixed reserve
+(`kLedgerFixedReservePages`). The store object is 1,760 B (headers and page lists).
+
+`reserve` takes and pins a slot in state `Building` (reading no rows); `buildStep` advances gather, heapify, sort and
+collapse by at most 256 units; capacity is found while gathering; `Building` is a named outcome for a second requester.
+Incremental equals synchronous for 200 random sources. Jobs prepare the index through `SourceLease`, so no composer
+`begin` builds synchronously (`syncBuilds() == 0`). Full capacity (4,096 hides): 57 grains, worst 415 µs on the
+device (the plan estimated 16 grains of "256 entries"; the heapsort phases cost more units).
+
+## E5.2 — worker scheduler (as built)
+
+`WorkerScheduler<MaxJobs>`: one grain per main-loop turn. Hard jobs EDF; a soft grain only when every hard job keeps
+remaining × g within slack − B_max; display ≥ 1 in 4 and persistence ≥ 1 in 16 while pending; overruns and missed
+deadlines (live or completing past the deadline) reported; fixed job table, `submit` refused by name when full.
+Decision cost with 32 jobs: 4.7 µs worst on the device.
+
+Tests (`test_content_engine_scheduler` 8): EDF, shares, slack deferral, overrun / full table, the plan's sustained worst
+at U_e = 50 % (no miss, shares kept, service gap ≤ g + other + B_max), the same at measured figures (g = 800 µs, 47-grain
+windows), misses reported at U_e = 5 %, and real composer + sweep jobs composing every window of 4 tracks before its
+boundary, byte-identical to direct composition.
+
+## E5 invariant — checkpoints are not transmission proof (owner 2026-11-05, tested)
+
+Checkpoints reconstruct musical source state. Physical sounding-note ownership stays with the terminal scheduler (per
+track) and `OutputHub` (per destination). `test_content_engine_restart_backpressure`: composer → player / terminal
+scheduler → hub with a 40 ms/message DIN port and a USB port; play M1, cold-start M2 mid-loop from its checkpoint, adopt
+M3, stop. Every transmitted NoteOn gets exactly one NoteOff per port; no NoteOff for a note never transmitted; nothing
+sounds after the stop. At the restart 5 carried instances, and at the adoption 4, had never reached the DIN wire
+(655 DIN expiries); none received a DIN NoteOff.
+
+## E5 — device grain measurements (`teensy41-engine-bench`, image `7a6bab95…`)
+
+Production placement (pool and index partition in PSRAM, tables and windows in RAM2), DWT cycles, interrupts enabled,
+60-run manifest with a 4,096-hide edit run; densest spread window 2,773 NoteOns. Worst / average per grain:
+
+| Grain | Worst | Average |
+|---|---|---|
+| compose, 128 row units (spread) | 655 µs | 514 µs |
+| compose, 128 row units (clustered within 9 ticks) | 486 µs | 303 µs |
+| sweep step | 613 µs | 527 µs |
+| compose seek (`begin`) | 655 µs | 447 µs |
+| checkpoint resume | 786 µs | 769 µs |
+| checkpoint capture | 70 µs | 67 µs |
+| index build, 256 units | 415 µs | 191 µs |
+| scheduler decision (32 jobs) | 4.7 µs | 3.1 µs |
+
+**Fix found by measuring:** the first image measured 9.7 ms per compose grain. Selecting the next row re-read every
+run's stream heads from PSRAM, and the OVL-2/6 look-ahead read every later pass per NoteOn. Stream heads (position,
+class, pitch, next tick) are now cached in RAM, edit-run cursors skip their leading hide rows, and `composeRows` counts
+look-ahead reads as work (8 reads = 1 row unit). Behaviour is unchanged (all engine suites and the oracle).
+
+**Findings for the plan's bounds (§ 7):**
+- g = 786 µs (worst measured, checkpoint resume) replaces 500 µs.
+- A window is 44–47 grains when its rows are spread (2,773 NoteOns + NoteOffs), not 23: the plan counted START rows,
+  composition merges NoteOffs too. C1 at the measured figures: 8 × 47 × 0.786 ms = 296 ms per 1.6 s; the simulation
+  meets every deadline at U_e = 50 %.
+- When later passes cluster inside the OVL-6 range the look-ahead is O(rows of later passes within 9 ticks) per NoteOn:
+  124,360 reads and 155 bounded grains for the clustered window. Eight such tracks at once need U_e ≥ 63 %. Removing it
+  needs a per-composer onset frontier (about +2 KB per cursor, beyond the 221,184 B composer budget): owner decision.
+- Seek and resume exceed 500 µs (binary searches over 60 runs); splitting them per run group is possible if g must be
+  lower.

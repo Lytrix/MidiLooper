@@ -1,3 +1,14 @@
+**2026-11-05 — Fixed-memory engine: E3.3 and E5 (workers, checkpoints, grains) built on `rewrite/fixed-memory-engine`.**
+- Shared edit-hide index (composer 43 KB → 11.8 KB), now in its 576 reserved pool pages and built in grains.
+- Restart checkpoints: per-slot table, sweep and cold-start jobs with manifest leases, convergence proof (owner approved
+  the two-loop sweep and the pin-free table); saturated OUT-POLY sources flagged aperiodic (owner question Q-OUT-2).
+- Worker scheduler (EDF, slack check, display/persistence shares); restart and adoption under DIN backpressure keep
+  every port's wire balanced.
+- Device grain bench (`teensy41-engine-bench`): compose grains 9.7 ms → 655 µs after caching stream heads; worst grain
+  786 µs (resume); windows 44–47 grains (spread) or 155 (clustered look-ahead). Full native 4,166 passed.
+- Open for the owner: Q-OUT-2; a look-ahead frontier (+2 KB per cursor) vs the composer budget; measured g and window
+  grains into the plan's bounds. [design.md E5](../../openspec/changes/fixed-memory-engine/design.md)
+
 **2026-11-04 — Fixed-memory engine: E0 and E1 started on `rewrite/fixed-memory-engine` (DEC-252).**
 - **E1 storage core** (`include/ContentEngine/`):
   - page pool with owner tags, global run and manifest tables, row-reservation ledger (CE-A1), explicit `init()`;

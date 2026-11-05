@@ -62,8 +62,12 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E3.3 Hide table moved to the shared, identity-keyed `EditIndexStore` (18 slots, pinning, LRU of unpinned, named exhaustion); composer 43,184 → 10,428 B; budgets statically checked (`test_content_engine_edit_index` 7).
 - [x] E3.3b EDIT-1 regression: two successive edits of one NoteId plus an unrelated earlier same-pitch note.
 - [x] E5.1 Checkpoint table owner: per-slot identity-stamped table, steady-state sweep with convergence, supersession, cold start (`test_content_engine_checkpoint_table` 5, mutation-checked); admitted order made canonical.
-- [ ] E5.2 Worker scheduler (EDF hard jobs, display/persistence shares, slack check).
-- [ ] E5.3 Compose, sweep and index builds sliced into grains; edit-index store placed in the page reserve.
+- [x] E5.1b Job leases (manifest pin, cancel releases), publication guard between grains, convergence proof and tests per mechanism; Q-OUT-2 saturation flagged (`test_content_engine_checkpoint_table` 11).
+- [x] E5.2 Worker scheduler: EDF, slack check, display/persistence shares, overrun/miss reporting (`test_content_engine_scheduler` 8).
+- [x] E5.3 Compose / sweep / cold start / index build in grains; edit index in its 576 reserved pool pages (`test_content_engine_edit_index` 11).
+- [x] E5.4 Restart and adoption under DIN backpressure: wire balanced, carried-never-sent notes get no NoteOff (`test_content_engine_restart_backpressure`).
+- [x] E5.5 Device grain measurements (`teensy41-engine-bench`); composer head cache, hide-row skip, look-ahead work units (9.7 ms → 655 µs).
+- [ ] E5.6 Owner decisions: Q-OUT-2 (saturated periodicity); clustered look-ahead frontier vs composer budget; g = 786 µs and 47-grain windows into the plan bounds.
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output

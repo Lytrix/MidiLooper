@@ -6,6 +6,11 @@ implementation. Authorized scope is design only: the [fixed-memory engine direct
 measurements) and E1 (storage core) are authorized and in progress** (DEC-252, OpenSpec `fixed-memory-engine`). The
 recording writer waits for CE-A1 acknowledgement; the playback consumer waits for CE-B1, CE-C1 and CE-D1 bounds.
 
+**2026-11-05 — fixed-memory engine progress (owner-authorized E3.3 and E5.2/E5.3, no further architecture revision).**
+E1–E3 and E5 (checkpoint ownership, job leases, worker scheduler, grain-sliced jobs, edit index in its reserved pages)
+are built and host-tested; device grain bench measured (worst 786 µs). Next authorized work follows the owner's answers
+to Q-OUT-2 and the look-ahead budget question in `openspec/changes/fixed-memory-engine/tasks.md` (E5.6).
+
 **2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.** The wrap hands its interval to a bounded obligation
 answered by the discharge lane against its own source cut. On device (`19f11706`) wraps run on schedule; the worst
 per-wrap Clock is 150-235 ms (previously 123 s). The intense run then aborts at 201.7 s on PSRAM exhaustion. Next: the
