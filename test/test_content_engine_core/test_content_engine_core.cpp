@@ -216,7 +216,7 @@ void test_production_core_initializes_over_poison_without_heap() {
   TEST_ASSERT_EQUAL_UINT16(Config::kManifestCount, gProdManifests.freeCount());
   TEST_ASSERT_EQUAL_UINT32(Config::kContentQuotaPages, gProdRes.contentFreePages());
   TEST_ASSERT_TRUE(checkConservation(gProdPool, gProdRuns, gProdManifests));
-  // A full-quota take at production capacity: 3,222 pages of content rows (incl. directory pages) then refusal.
+  // A full-quota take at production capacity: 3,247 pages of content rows (incl. directory pages) then refusal.
   const RunId run = gProdRuns.allocate(0, 0);
   uint32_t accepted = 0;
   while (gProdRes.accept(run, row(accepted, 0xB0, 1, accepted), 0) == Admission::Ok) ++accepted;
@@ -225,7 +225,7 @@ void test_production_core_initializes_over_poison_without_heap() {
   TEST_ASSERT_TRUE(checkConservation(gProdPool, gProdRuns, gProdManifests));
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - heapBefore);
   const RegionBytes regions = productionRegions();
-  TEST_ASSERT_EQUAL_UINT32(4151296u, static_cast<uint32_t>(regions.poolPages));
+  TEST_ASSERT_EQUAL_UINT32(4176896u, static_cast<uint32_t>(regions.poolPages));
   TEST_MESSAGE("production regions measured (bytes) — see the test log line below");
   char line[200];
   std::snprintf(line, sizeof line, "regions: pages=%u pool_meta=%u runs=%u (desc %u B) manifests=%u (desc %u B) res=%u rows=%u",

@@ -24,18 +24,25 @@ namespace Config {
 constexpr uint8_t kWriterCount = 1;
 constexpr uint8_t kMaxOpenNotesPerWriter = 128;
 constexpr uint32_t kWriterReserveRows = kMaxOpenNotesPerWriter + 32;  // owed NoteOffs + controller closures
-constexpr uint32_t kEditReserveRows = 1536;                           // one NOTE_EDIT session
+// NOTE_EDIT (E4.5): one session of <= 512 selected notes; its edit run is <= 3 rows per note (hide + NoteOn + NoteOff),
+// and a rebuild writes a fresh run while the published one still plays, so two edit runs are budgeted.
+constexpr uint16_t kEditSelection = 512;
+constexpr uint8_t kEditSteps = 99;            // E: steps (owner 2026-11-05: limit 99), oldest forgotten
+constexpr uint16_t kEditLogEntries = 1024;    // changed notes recorded across the E: steps
+constexpr uint32_t kEditRunRows = 3u * kEditSelection;
+constexpr uint32_t kEditReserveRows = 2u * kEditRunRows;
 constexpr uint32_t kCommittedRowLimit = 131072;                        // today's admission ceiling
 constexpr uint32_t kContentRows = kCommittedRowLimit + kWriterCount * kWriterReserveRows + kEditReserveRows;
 
-// Descriptors (plan § 5.2): committed and history runs <= 512, per writer <= 3 (active + closing + next), one edit
-// run, one compaction output. Manifests: history 99 (slot currents and overdub / NOTE_EDIT session steps are history
-// states), writer commits 3 each, pinned after replacement 24 windows + 18 cursors + 6 tiles + 3 workers.
+// Descriptors (plan § 5.2): committed and history runs <= 512, per writer <= 3 (active + closing + next), two edit
+// runs (published + rebuilding), one compaction output. Manifests: history 99 (slot currents and overdub / NOTE_EDIT session steps are history
+// states), writer commits 3 each, one NOTE_EDIT rebuild being published, pinned after replacement 24 windows +
+// 18 cursors + 6 tiles + 3 workers.
 constexpr uint16_t kCommittedRunLimit = 512;
 constexpr uint16_t kRunCount = 520;
-static_assert(kCommittedRunLimit + kWriterCount * 3 + 1 + 1 <= kRunCount, "run descriptors cover W");
+static_assert(kCommittedRunLimit + kWriterCount * 3 + 2 + 1 <= kRunCount, "run descriptors cover W");
 constexpr uint16_t kManifestCount = 256;
-static_assert(99 + kWriterCount * 3 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
+static_assert(99 + kWriterCount * 3 + 1 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
 
 constexpr uint16_t kRowsPerPage = 64;  // 64 x 16 B = 1 KiB pages
 // Content quota (plan § 5.1): full pages for every row, a partial page per live run plus one hide partial per edit run
@@ -46,7 +53,7 @@ constexpr uint16_t kContentQuotaPages = static_cast<uint16_t>(kContentFullPages 
 constexpr uint16_t kCompactionReservePages = 256;
 constexpr uint16_t kIndexReservePages = 576;
 constexpr uint16_t kPageCount = kContentQuotaPages + kCompactionReservePages + kIndexReservePages;
-static_assert(kContentQuotaPages == 3222 && kPageCount == 4054, "plan § 5.1 figures (one writer)");
+static_assert(kContentQuotaPages == 3247 && kPageCount == 4079, "plan § 5.1 figures (one writer, two edit runs)");
 
 constexpr uint8_t kRunsPerManifest = 63;  // 60 committed + 3 writer runs; fits the 6-bit merge key
 constexpr uint8_t kHistoryDepth = 99;  // undo states held across all slots (owner 2026-11-05: shared, oldest evicted)

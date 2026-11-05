@@ -906,3 +906,38 @@ random. Mutations caught: abandon below the floor, abandon moving current withou
 slot, redo into pre-session redo, the start taken from the current state's seq; for the restore point: start not
 protected, empty start not protected, a broken relink around the protected start (walks are bounded, so it fails
 rather than hangs), abandon keeping the first step. 1,608 B.
+
+## E4.5 — edit writer (owner decision 2026-11-05: hear each edit, rewrite one run; as built)
+
+`ContentEngine::EditWriter` owns a NOTE_EDIT session's selection and edits (`include/ContentEngine/EditWriter.h`).
+- **Admission:** `begin(slot, selection, n)` takes ≤ 512 notes of the slot's current manifest (noteId + geometry) and
+  opens the History NOTE_EDIT session, which protects that manifest as the restore point.
+- **E: steps** live in the writer's log, not in History: `apply` (one step of ≤ 512 changes: tick, length, pitch,
+  velocity, channel, or delete) records the replaced values; undo swaps them back newest-first, redo oldest-first (a
+  step may change one note twice). At most 99 steps and 1,024 changes; the oldest steps are forgotten when full. This
+  supersedes E4.3's "E: steps are history states": a NOTE_EDIT session now holds one history state
+  (`History::setSessionState`), replaced in place on every rebuild.
+- **Audible at once:** every apply / undo / redo is new input (CE-A1). At acceptance it reserves a fresh edit run
+  through the ledger (`RowReservations::reserve`, rows owed without a row written) — refused by name, nothing
+  changed, only when content is full. The rebuild job (`step`, ≤ N rows per grain) writes HideNote rows for every
+  edited or deleted note, sorts the replacements (one grain, heapsort), writes NoteOn / NoteOff rows in tick order
+  (NoteOff first at a tick) keeping each noteId (DEC-245), seals, and publishes base runs + edit run as a manifest that
+  becomes the session state; the previous state's manifest is released, its edit run reclaimed. With nothing edited
+  the session state is removed (the slot plays its start, no run). A newer action supersedes a running rebuild:
+  `RowReservations::forgive` drops its owed rows and its run is reclaimed.
+- **Leave** keeps the state as one U: step (after a running rebuild, ≤ 13 grains); **abandon** forgives the rebuild and
+  returns to the protected start.
+- **Budget:** two edit runs (published + rebuilding) in W: content rows 134,304, content quota 3,247 pages, pool 4,079
+  pages; run descriptors 518 ≤ 520; manifests 154 ≤ 256. The writer object is 54,760 B and lives in PSRAM (the
+  planned 4 KB RAM2 selection is gone). Rapid actions faster than reclaim can be refused by name near full content.
+
+Tests (`test_content_engine_edit_writer`, 9): effective content is checked by composing the slot's current manifest
+(production composer + edit index, 4 windows per loop) and every published edit run is checked for hides-first, tick
+order; edit heard after its rebuild; delete with E: undo / redo; leave as one U: step; leave and abandon during a
+rebuild; supersession; refusal at full content (nothing changed); the log forgetting its oldest steps; 3,000 random
+apply / undo / redo / delete actions against a reference model (selection, E: depth and redo depth every action,
+heard content every 7th); no heap. Mutations caught: redo newest-first, no hides, unsorted replacements, a superseded
+rebuild not forgiven, no return to the start with nothing edited.
+
+Device grains: the bench measures the worst rebuild (512 notes moved: 512 hides, 1,024-event sort, 1,024 rows at 128
+per grain; 12 grains on host). Not yet measured on the device: the board dropped off USB (image `e7ea4134…` built).

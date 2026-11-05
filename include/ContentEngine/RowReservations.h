@@ -66,6 +66,29 @@ class RowReservations {
     return Admission::Ok;
   }
 
+  /// New input that writes nothing yet: `run` takes on `rows` owed rows (a NOTE_EDIT action reserving the edit run it
+  /// will write in grains). Refused (nothing reserved) unless they and every row the run already owes fit.
+  Admission reserve(RunId run, uint16_t rows) {
+    const auto& r = runs_->run(run);
+    if (r.state != RunState::Writing) return Admission::DeniedNotWriting;
+    const uint32_t before = need(r, outstanding_[run]);
+    const uint32_t total = static_cast<uint32_t>(outstanding_[run]) + rows;
+    if (static_cast<uint64_t>(r.rowCount) + total > static_cast<uint64_t>(Runs::kMaxPagesPerRun) * Runs::kRowsPerPage)
+      return Admission::DeniedRunFull;
+    const uint32_t after = need(r, total);
+    const uint32_t others = reservedPages_ - before;
+    if (contentFreePages() < others + after) return Admission::DeniedCapacity;
+    outstanding_[run] = static_cast<uint16_t>(total);
+    reservedPages_ = others + after;
+    return Admission::Ok;
+  }
+
+  /// Forgives every row `run` still owes: its owner abandoned the work (a superseded NOTE_EDIT rebuild). O(1).
+  void forgive(RunId run) {
+    reservedPages_ -= need(runs_->run(run), outstanding_[run]);
+    outstanding_[run] = 0;
+  }
+
   /// Writes one row `run` owes (a NoteOff, a closure). Never refused while the run owes rows: invariant R guarantees the
   /// pages. Returns false only for a caller error (nothing owed), which writes nothing.
   bool writeOwed(RunId run, const PassEvent& row) {

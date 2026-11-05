@@ -17,6 +17,8 @@
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/EngineCore.h"
 #include "ContentEngine/ReclaimJob.h"
+#include "ContentEngine/EditWriter.h"
+#include "ContentEngine/History.h"
 #include "ContentEngine/SpanWindow.h"
 #include "ContentEngine/WorkerScheduler.h"
 
@@ -53,6 +55,13 @@ BENCH_RAM2 static TestComposer gComp;
 BENCH_RAM2 static Table gTable;
 static Sweep gSweep;
 static Cold gCold;
+using Hist = History<Manifests, Runs>;
+using Edits = EditWriter<Pool, Runs, Manifests, Hist>;
+BENCH_RAM2 static Hist gHist;
+BENCH_RAM2 static ProductionReservations gRes;
+BENCH_PSRAM static Edits gEdits;
+BENCH_PSRAM static EditNote gSel[Config::kEditSelection];
+BENCH_PSRAM static EditChange gChanges[Config::kEditSelection];
 
 constexpr uint32_t kLoop = 768 * 8, kWinTicks = 1536;
 constexpr uint8_t kPasses = 59;            // + 1 edit run = 60 committed runs
@@ -134,6 +143,50 @@ static void buildWorkload() {
 /// 64 ticks), each pass on 6 pitches of its own per cluster. `rotating`: the pitches move every cluster, so over the
 /// loop every pass starts notes on most pitches and the onset-pitch mask cannot skip it (adversarial worst case);
 /// otherwise each pass keeps its 6 pitches (the mask skips every pass without the NoteOn's pitch).
+/// Edit writer rebuild grains (E4.5), worst case: a 512-note selection, every note moved, then the session rebuilt
+/// (512 hides, a 1,024-event sort, 1,024 replacement rows) at 128 rows per grain; then an E: undo of that step.
+static void editGrains() {
+  gPool.init();
+  gRuns.init();
+  gManifests.init();
+  TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
+  gRes.init(gPool, gRuns, kLedgerFixedReservePages);
+  gHist.init(gManifests, gRuns);
+  gEdits.init(gPool, gRuns, gManifests, gRes, gHist);
+  const RunId r = gRuns.allocate(0, RunKind::kRecord);
+  for (uint32_t i = 0; i < Config::kEditSelection; ++i) {  // tick order: NoteOn at 11i, its NoteOff at 11i + 8
+    gSel[i] = EditNote{1000 + i, i * 11, 8, static_cast<uint8_t>(i & 0x7F), 90, 0, 0};
+    gRuns.append(r, row(gSel[i].tick, gSel[i].noteId, 0x90, gSel[i].pitch), gPool);
+    gRuns.append(r, row(gSel[i].tick + 8, gSel[i].noteId, 0x80, gSel[i].pitch), gPool);
+  }
+  gRuns.seal(r);
+  const ManifestId base = gManifests.create(0, 1, kLoop, &r, 1, gRuns);
+  gRuns.release(r);
+  gHist.commit(0, base);
+  TEST_ASSERT_EQUAL(EditResult::Ok, gEdits.begin(0, gSel, Config::kEditSelection));
+  for (uint32_t i = 0; i < Config::kEditSelection; ++i) {
+    gChanges[i] = EditChange{static_cast<uint16_t>(i), gSel[i]};
+    gChanges[i].value.tick = (kLoop - 1 - i * 11) % kLoop;  // reversed order: the sort has real work
+  }
+  Stat apply, rebuild, undo;
+  uint32_t c0 = cycles();
+  TEST_ASSERT_EQUAL(EditResult::Ok, gEdits.apply(gChanges, Config::kEditSelection));
+  apply.add(cycles() - c0);
+  bool more = true;
+  while (more) {
+    c0 = cycles();
+    more = gEdits.step(128);
+    rebuild.add(cycles() - c0);
+  }
+  c0 = cycles();
+  TEST_ASSERT_EQUAL(EditResult::Ok, gEdits.undo());
+  undo.add(cycles() - c0);
+  gEdits.leave();
+  report("edit_apply_512", apply);
+  report("edit_rebuild_128_rows", rebuild);
+  report("edit_undo_512", undo);
+}
+
 /// Reclaim worker grains: 60 released runs of 40 pages each (24 directory-listed), returned 64 units per grain.
 static void reclaimGrains() {
   gPool.init();
@@ -351,6 +404,7 @@ void test_grain_durations() {
   clusteredWindow(false, "compose_128_rows_clustered");
   clusteredWindow(true, "compose_128_rows_clustered_rotating");
   reclaimGrains();
+  editGrains();
 }
 
 #if defined(__IMXRT1062__)

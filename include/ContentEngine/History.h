@@ -140,6 +140,30 @@ class History {
     s.newest = start;
   }
 
+  /// NOTE_EDIT (E4.5): the open session of `kind` has one state, replaced in place as edits are rebuilt. `manifest`
+  /// becomes it (History takes the reference; a replaced manifest is released); `kNoManifest` removes it, so the slot is
+  /// back at the session start. False when no session of `kind` is open.
+  bool setSessionState(SessionKind kind, ManifestId manifest) {
+    const Session& x = sessions_[static_cast<uint8_t>(kind)];
+    if (x.slot == kNone) return false;
+    Slot& s = slots_[x.slot];
+    const bool sessionCurrent = s.current != kNone && entries_[s.current].seq > x.baseSeq;
+    if (manifest == kNoManifest) {
+      if (sessionCurrent) {
+        s.current = entries_[s.current].older;  // the start (protected, so still held)
+        dropRedo(x.slot);
+      }
+      return true;
+    }
+    if (!sessionCurrent) {
+      commit(x.slot, manifest);
+      return true;
+    }
+    manifests_->release(entries_[s.current].manifest, *runs_);
+    entries_[s.current].manifest = manifest;
+    return true;
+  }
+
   /// Makes `manifest` the slot's new current state. History takes over the caller's reference.
   HistoryCommit commit(uint8_t slot, ManifestId manifest) {
     if (slot >= Slots || manifest == kNoManifest) return HistoryCommit::Refused;

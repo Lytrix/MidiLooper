@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E4.5 edit writer (owner: hear each edit).**
+- Each NOTE_EDIT action, E: undo and E: redo rewrites one session edit run in grains (hides + sorted replacements,
+  noteIds kept) and swaps it in as the session's one history state; E: steps (99) live in the writer's log. Leave =
+  one U: step; abandon = the protected start. Two edit runs budgeted (pool 4,079 pages); writer 54,760 B in PSRAM.
+- Reference-model fuzz plus composed-content checks; 5 mutations caught. Device grains pending (board offline).
+
 **2026-11-05 — Fixed-memory engine: E4.3 NOTE_EDIT session undo (owner: limit 99, shared).**
 - Edit actions are E: steps (99, shared with all history); leaving NOTE_EDIT folds them into one step; abandon returns
   to the session start, which the session protects from eviction (owner: the pre-session state is the restore point;

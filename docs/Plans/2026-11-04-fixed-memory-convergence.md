@@ -226,7 +226,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Concurrent NOTE_EDIT sessions | 1, selection ≤ 512 notes |
 | Loop length | ≤ 64 bars (49,152 ticks) |
 | Tempo | ≤ 300 BPM: window period P = 2 bars = 1.6 s |
-| Content rows (committed + in flight + reserved), all slots and history | ≤ 132,768 [133,888] |
+| Content rows (committed + in flight + reserved), all slots and history | ≤ 134,304 [133,888] |
 | Committed rows guaranteed alongside full writer reservations | ≤ 131,072 (today's admission ceiling) |
 | Live runs (committed, history, writer, edit, compaction) | ≤ 520 descriptors [544], of which ≤ 512 committed |
 | Runs per manifest | ≤ 60 committed + ≤ 3 writer runs |
@@ -236,7 +236,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
 | Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 32 open instances (beyond that, the checkpoint is marked unusable; § 7.2) |
 | Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
-| Undo history | ≤ 99 states shared by all slots, including overdub and NOTE_EDIT session steps (owner 2026-11-05; NOTE_EDIT session limit 99 [32]) |
+| Undo history | ≤ 99 states shared by all slots, including overdub session steps (owner 2026-11-05); a NOTE_EDIT session holds one history state and keeps its E: steps (≤ 99, owner limit [32]) in the edit writer's log |
 | Playing tracks | 8 (one slot each) |
 | Display | 1 focused slot + 1 successor in detail; density for all 64 slots |
 | MIDI outputs | DIN (Serial8, 31,250 baud), USB device, USB host |
@@ -309,8 +309,8 @@ growing container.
 
 | Region | Bytes | Sizing |
 |---|---|---|
-| Page pool data | 4,151,296 | 4,054 pages [4,096] × 1,024 B (64 rows × 16 B); split in § 5.1 |
-| Page free stack | 8,108 | 4,054 × 2 B |
+| Page pool data | 4,176,896 | 4,079 pages [4,096] × 1,024 B (64 rows × 16 B); split in § 5.1 |
+| Page free stack | 8,158 | 4,079 × 2 B |
 | Playback windows | 1,179,648 | 8 tracks × 3 windows × 3,072 rows × 16 B |
 | Compose carry state | 221,184 | 18 cursors × 12 KiB: 16 playback (2 per track: steady + transition) + 2 display. Each holds 128 sounding entries × 12 B, 128 pitch × 64 run occluder counters, 128 run masks |
 | Checkpoint tables | 262,144 | 64 slots × 8 checkpoints × 64 entries × 8 B |
@@ -318,9 +318,10 @@ growing container.
 | Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
 | Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
-| **Engine total** | **6,481,068** [6,524,160] | |
+| Edit writer (E4.5) | 54,760 | selection 512 × 16 B as admitted and as edited, E: log 1,024 changes + 99 steps, rebuild scratch (1,024 sort keys) |
+| **Engine total** | **6,561,478** [6,524,160] | |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **847,184** (capture build) / **1,895,760** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **766,774** (capture build) / **1,815,350** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
 Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
 tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
@@ -337,12 +338,11 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | + History (99 shared states, per-slot chains and currents, overdub and NOTE_EDIT sessions; measured 1,608 B) | +1,608 |
 | + SlotState 64 × 32 B | +2,048 |
 | + Writer 1 × 2,612 B (measured on ARM: open-note table 128 × 16 B, cursors, reservation counters, occupancy bits) | +2,612 |
-| + Edit writer selection 512 × 8 B | +4,096 |
 | + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
 | + Output FIFOs 3 × 512 × 4 B | +6,144 |
 | + Scheduler job table | +1,024 |
-| **Statics after cutover** | **209,705** [225,581] |
-| Heap left for libraries (USB host, SD, Serial) | **314,583** [298,707] (today: 337,568 arena, 172 KB free after boot) |
+| **Statics after cutover** | **205,609** [225,581] |
+| Heap left for libraries (USB host, SD, Serial) | **318,679** [298,707] (today: 337,568 arena, 172 KB free after boot) |
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -370,8 +370,8 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 847,184 B` on capture builds (≤ 1,895,760 B shipping) and
-  `non-content RAM2 heap ≤ 314,583 B`.
+- the budget closes iff `non-content PSRAM ≤ 766,774 B` on capture builds (≤ 1,815,350 B shipping) and
+  `non-content RAM2 heap ≤ 318,679 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
 
@@ -390,20 +390,21 @@ If it does not close, these levers apply, in order. Each is a W change for the o
 
 | Part | Pages | Derivation |
 |---|---|---|
-| Content quota | 3,222 | rows ≤ 132,768 → ≤ 2,075 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 520, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,020; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,075 / 17⌋ + ⌈2,075 / 512⌉ = 122 + 5 = 127. **Total ≤ 2,075 + 1,020 + 127 = 3,222** (`Config::kContentQuotaPages`, derived and asserted) |
+| Content quota | 3,247 | rows ≤ 134,304 → ≤ 2,099 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 520, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,020; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,099 / 17⌋ + ⌈2,099 / 512⌉ = 123 + 5 = 128. **Total ≤ 2,099 + 1,020 + 128 = 3,247** (`Config::kContentQuotaPages`, derived and asserted) |
 | Compaction reserve | 256 | one history-closed range in flight with its directories (design D5c); used by compaction only |
 | Edit-index reserve | 576 | 18 index slots (one per compose cursor) × 32 pages (4,096 ids × 8 B); used only by index builds for those cursors |
 
 The **132,768 rows** are 131,072 committed rows plus the standing reservations of the one writer:
-1 × (128 NoteOff + 32 controller closures) + 1,536 NOTE_EDIT rows = 1,696. So full committed content and the writer
+1 × (128 NoteOff + 32 controller closures) + 2 × 1,536 NOTE_EDIT rows (the published edit run and the one being
+rebuilt, E4.5) = 3,232. So full committed content and the writer
 coexist by construction.
 
 ### 5.2 Descriptors and manifest slots
 
 | Table | Capacity | Holders, worst case at once |
 |---|---|---|
-| RunTable | 520 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 1 × 3 = 3; edit run 1; compaction output 1 → **517 ≤ 520**. Committed runs are admitted against 512. |
-| ManifestTable | 256 | history 99 (slot currents, overdub and NOTE_EDIT session steps are history states); writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **153 ≤ 256**; the owner keeps 256 as headroom (2026-11-05) |
+| RunTable | 520 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 1 × 3 = 3; edit runs 2 (published + rebuilding); compaction output 1 → **518 ≤ 520**. Committed runs are admitted against 512. |
+| ManifestTable | 256 | history 99 (slot currents, overdub session steps and the NOTE_EDIT session state are history states); writer pending commits (2 closing + next) 1 × 3 = 3; NOTE_EDIT rebuild being published 1; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **154 ≤ 256**; the owner keeps 256 as headroom (2026-11-05) |
 | History | 99 states | shared across all slots (owner 2026-11-05); a full table evicts the oldest step in the set, never refuses a commit (§ 8.5) |
 
 ### 5.3 Reference counting, reclamation, retention
@@ -434,7 +435,7 @@ coexist by construction.
 | Reserve | Only for | Optional work that may *not* use it |
 |---|---|---|
 | Writer holdings: rows, its partial pages, 3 descriptors, 3 manifest slots | that writer's accepted notes, wrap and Stop | NOTE_EDIT, compaction, persistence, display |
-| Edit holdings: 1,536 rows, 1 descriptor, slots | that session's selection | all others |
+| Edit holdings: each E: action's fresh edit run (≤ 1,536 rows, 1 descriptor), reserved at acceptance | that session's rebuild | all others |
 | Compaction 256 pages | compaction | — (compaction is itself optional; it can never take content quota) |
 | Index 576 pages, 18 fixed slots | the compose cursor the slot belongs to | — |
 | Compose carry, windows, tiles, checkpoints, FIFOs | their fixed owner | — (fixed regions, no pool) |
@@ -505,7 +506,7 @@ because it lives in `origin` or flag bits. If neither is possible, E1 does not s
 | Overlap consequence (any time) | **0** (derived, § 6.2) | — | — |
 | Wrap | 0 rows; 1 descriptor + 1 manifest slot + the next run's first page | next wrap's start | the next wrap is reserved before this wrap releases its own |
 | Record / overdub Stop | ≤ `ow` closures + ≤ 32 controller closures | — | inside the standing reservation |
-| NOTE_EDIT session admission | 0 | hide + replacement NoteOn + NoteOff per selected note: ≤ 3 × 512 | at admission |
+| NOTE_EDIT action (apply, E: undo / redo; E4.5) | 0 | a fresh edit run: hide + replacement NoteOn + NoteOff per edited note, ≤ 3 × 512 | at acceptance (refused by name when content is full) |
 | Undo / redo | 0 | — | — |
 | Load (boot / set) | the file's rows | — | at admission |
 
@@ -541,7 +542,7 @@ Each operation checks before it mutates, all or nothing:
 | closing run seal | its last NoteOff written | publish with its reserved slot | reserved |
 | Stop | none | write `ow` NoteOffs + ≤ `kw` controller closures from `Hw`; seal; publish with reserved slots; push the undo entry (evicting the oldest at depth is the normal rule); return unused `Hw` to `Q` and unused descriptors/slots | uses only held items; **cannot fail or wait** |
 | edit admission | `Q ≥ 1,536`, 1 descriptor, slots | hold them | — |
-| edit commit / abandon | none | write ≤ 3 rows per selected note from the hold; seal; publish; or return everything | reserved |
+| NOTE_EDIT leave / abandon | none | leave: let a running rebuild finish, keep its state (one U: step); abandon: forgive the rebuild, return to the protected start | reserved |
 | undo / redo | none | move cursor and current pin | no rows |
 | commit after undo | none | drop the redo branch to reclaim | frees only |
 | compaction / index | their own reserves | — | never touch `Q`, `Hw`, `D`, `M` of writers |
@@ -603,7 +604,7 @@ are kept in brackets where they changed.
 | Class | Job | Grains per P, worst (spread / clustered) |
 |---|---|---|
 | Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 47 = **376** / 8 × 100 = **800** [184] |
-| Hard | edit-run seal (one session) | ≤ ⌈512 × 9 / 256⌉ = 18 per edit commit (not yet measured) |
+| Hard | NOTE_EDIT rebuild (one session) | ≤ ⌈1,536 / 128⌉ = 12 row grains + 1 sort grain + publish per E: action (host count 12; device not yet measured) |
 | Hard | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58) |
 | Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
 | Soft, bounded | density after any slot commit | ≤ 11 grains per bar of the committing slot; one overdub at a time commits at most once per loop → ≤ 11 × 2 = **22 per P** [176, 8 overdubs] (not yet measured). A Record's Stop is a one-off 704 per slot |
@@ -753,8 +754,8 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
   - *Acceptance:* record the tick, close input (DEC-233 — input closes independently), write closures from the
     reservation, commit the active run. All are bounded constants, so acceptance is constant-time.
   - *Completion:* closing runs seal as soon as their closures are written, which happens in acceptance. Publishes use
-    reserved slots. Edit runs only sort their hides: ≤ 18 grains.
-  - So a record or overdub Stop **completes inside acceptance plus ≤ 1 grain**, and an edit commit within ≤ 19 grains,
+    reserved slots. Leaving NOTE_EDIT waits only for a running rebuild: ≤ 13 grains.
+  - So a record or overdub Stop **completes inside acceptance plus ≤ 1 grain**, and leaving NOTE_EDIT within ≤ 13 grains,
     from held resources only.
   - Gestures during completion follow DEC-096.
 
@@ -773,11 +774,12 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
 - **Overdub session (DEC-038, E4.2):** each non-empty wrap is a step (O:); while overdubbing, undo on that slot stops
   at the session start; Stop drops the session's redo and folds its steps into one (none if every wrap was undone), so
   U: undoes the whole session. Session steps share the 99 and are forgotten like any oldest step.
-- **NOTE_EDIT session (E4.3):** each edit action is a step (E:), with the same bound and fold when NOTE_EDIT is left;
-  abandon returns the slot to its session-start state, which the session protects from eviction (owner 2026-11-05:
-  the pre-session state is the restore point; a long session forgets its own oldest steps instead). One overdub and
-  one NOTE_EDIT session may be open at once, on different slots; redo from before a session is out of reach while it
-  is open and kept by an empty abandon.
+- **NOTE_EDIT session (E4.3, E4.5; owner 2026-11-05: hear each edit):** each edit action, E: undo and E: redo
+  rewrites one session edit run (hides + replacements for every edited note) in grains and swaps it in as the
+  session's single history state; the E: steps (≤ 99, oldest forgotten) live in the edit writer's log. Leaving keeps
+  that state as one U: step; abandon returns the slot to its session-start state, which the session protects from
+  eviction (the pre-session state is the restore point). One overdub and one NOTE_EDIT session may be open at once,
+  on different slots; redo from before a session is out of reach while it is open and kept by an empty abandon.
 - Load rebuilds history from saved runs (DEC-088).
 
 ---
@@ -955,7 +957,7 @@ musical clauses they protected.
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 209,705 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 205,609 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
 | D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
 | D3 Owner chain | parity with reviewed fixtures for the same stimulus |
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |
