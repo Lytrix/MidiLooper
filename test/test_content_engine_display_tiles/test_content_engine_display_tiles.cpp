@@ -167,6 +167,20 @@ void test_segments_per_bar() {
   TEST_ASSERT_EQUAL_UINT32(0, segments(0, 5).size());  // an empty bar of a swept slot: a span tile with nothing
 }
 
+// Freshness: bars after the wrap reach are final in cycle 0, so a source with nothing held across the loop end is
+// swept in one loop; one whose held note reaches into bar 0 needs one more window (bar 0, from the steady cycle).
+void test_one_loop_unless_the_wrap_reach_needs_more() {
+  gStore.setDetail(0, 0);
+  sweep(0, manifest({run({{1, 60, 100, 400}, {2, 62, kLoop - 300, kLoop - 10}}, RunKind::kRecord)}, 1));
+  TEST_ASSERT_EQUAL_UINT32(kLoop / kWin, gSweep.windows());
+  TEST_ASSERT_EQUAL_UINT32(8, gSweep.barsPublished());
+  sweep(0, manifest({run({{3, 60, 100, 400}, {4, 62, kLoop - 300, kLoop + 200}}, RunKind::kRecord)}, 2));
+  TEST_ASSERT_EQUAL_UINT32(kLoop / kWin + 1, gSweep.windows());
+  auto s0 = segments(0, 0);
+  TEST_ASSERT_EQUAL_UINT32(2, s0.size());  // bar 0 from the steady cycle: the held note's end is there
+  TEST_ASSERT_TRUE(s0[1].pitch == 62 && s0[1].start == 0 && s0[1].length == 200 && s0[1].left);
+}
+
 // Density tiles for a slot without detail tiles: notes sounding in each bar, per pitch.
 void test_density_for_other_slots() {
   const RunId r = run({{1, 60, 100, 400}, {2, 60, 500, 600}, {3, 61, 700, 900}}, RunKind::kRecord);
@@ -238,6 +252,102 @@ void test_draw_rule_never_blanks() {
   TEST_ASSERT_EQUAL(Store::Kind::Density, gStore.drawSource(1, 0).kind);
 }
 
+// ---- E7.2: live overlay and display jobs -------------------------------------------------------------------------------
+
+// The overlay paints what is being recorded over the view: the start column at NoteOn, new columns as the held note
+// grows, the rest at NoteOff; pitches and positions outside the view are ignored; a held note wraps the loop end.
+void test_live_overlay_paints_the_recorded_notes() {
+  static LiveOverlay<256, 64> overlay;
+  overlay.init();
+  overlay.setView(kLoop, kBar, 3, 40);  // bar 1 onward, 3 ticks per column, pitches 40..103
+  overlay.noteOn(800, 60, 127);
+  TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel((800 - kBar) / 3, 20));
+  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((800 - kBar) / 3 + 1, 20));
+  overlay.advance(900);
+  for (uint32_t c = (800 - kBar) / 3; c <= (900 - kBar) / 3; ++c) TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel(c, 20));
+  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((900 - kBar) / 3 + 1, 20));
+  overlay.noteOff(1000, 60);
+  TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel((1000 - kBar) / 3, 20));
+  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((1000 - kBar) / 3 + 1, 20));
+  overlay.noteOn(800, 20, 127);  // below the view
+  overlay.noteOff(900, 20);
+  overlay.noteOn(100, 61, 127);  // before the view
+  overlay.noteOff(200, 61);
+  for (uint16_t c = 0; c < 256; ++c) TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel(c, 21));
+  // Wrap: a view from position 0 sees the end of a note held across the loop end.
+  overlay.setView(kLoop, 0, 3, 40);
+  overlay.noteOn(kLoop - 30, 50, 64);
+  overlay.advance(kLoop + 30);  // the Clock wrapped
+  TEST_ASSERT_EQUAL_UINT8(8, overlay.pixel(0, 10));
+  TEST_ASSERT_EQUAL_UINT8(8, overlay.pixel(10, 10));
+  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel(11, 10));
+}
+
+using Sched = WorkerScheduler<16>;
+using Jobs = DisplayJobs<DisplayComposer, Window, Manifests, Runs, Store, Sched, 2, 4>;
+
+// Display jobs under the scheduler: the focused slot is swept first; every request ends with its slot showing the
+// newest manifest; a newer request supersedes a running sweep; display grains keep flowing beside hard work.
+void test_display_jobs_focus_first_and_newest_wins() {
+  static DisplayComposer c1;
+  static Window w1;
+  static Sched sched;
+  static Jobs jobs;
+  c1.init(gPool, gRuns, nullptr);
+  sched.init(810, 0);
+  DisplayComposer* comps[2] = {&gComp, &c1};
+  Window* wins[2] = {&gWin, &w1};
+  jobs.init(comps, wins, gStore, gManifests, gRuns, sched, kWin, kBar);
+  std::vector<ManifestId> m;
+  for (uint8_t s = 0; s < 4; ++s) {
+    std::vector<N> notes;
+    for (uint32_t i = 0; i < 40; ++i) notes.push_back({1 + s * 100 + i, static_cast<uint8_t>(40 + i), i * 150, i * 150 + 100});
+    m.push_back(manifest({run(notes, RunKind::kRecord)}, 1, s));
+  }
+  gStore.setDetail(0, 3);
+  for (uint8_t s = 0; s < 3; ++s) jobs.request(s, m[s]);
+  jobs.request(3, m[3]);
+  jobs.setFocus(3);
+  // A hard job is always pending beside the sweeps (feasible: a far deadline, a small declared remainder).
+  struct Hard {
+    uint32_t left;
+  } hard{1u << 30};
+  uint8_t id;
+  TEST_ASSERT_TRUE(sched.submit(JobSpec{JobClass::Hard, 2000000000u, 100,
+                                        [](void* c) {
+                                          --static_cast<Hard*>(c)->left;
+                                          return JobStep::Continue;
+                                        },
+                                        &hard},
+                                id));
+  uint32_t grains = 0, focusDoneAt = 0, slot0DoneAt = 0;
+  bool superseded = false;
+  while (!jobs.idle()) {
+    jobs.service();
+    sched.runGrain(grains * 810);
+    ++grains;
+    TEST_ASSERT_TRUE(grains < 200000);
+    if (!focusDoneAt && gStore.drawSource(3, 7).identity == identityOf(m[3])) focusDoneAt = grains;
+    if (!slot0DoneAt && gStore.drawSource(0, 7).identity != 0) slot0DoneAt = grains;
+    if (!superseded && grains == 20) {  // slot 1 gets a newer revision while it may be sweeping
+      std::vector<N> notes = {{900, 70, 100, 400}};
+      m[1] = manifest({run(notes, RunKind::kOverdub)}, 2, 1);
+      jobs.request(1, m[1]);
+      superseded = true;
+    }
+  }
+  TEST_ASSERT_TRUE(focusDoneAt > 0 && slot0DoneAt > 0);
+  TEST_ASSERT_TRUE(focusDoneAt <= slot0DoneAt);  // focus first (both workers start at once: focus and slot 0)
+  for (uint8_t s = 0; s < 4; ++s)
+    for (uint8_t bar = 0; bar < 8; ++bar) TEST_ASSERT_EQUAL_UINT32(identityOf(m[s]), gStore.drawSource(s, bar).identity);
+  TEST_ASSERT_TRUE(sched.report().displayGrains * 4 + 4 >= sched.report().grains);
+  TEST_ASSERT_TRUE(sched.report().hardGrains > 0);
+  char line[120];
+  snprintf(line, sizeof line, "display jobs: focus slot's tiles complete after %lu grains beside hard work",
+           static_cast<unsigned long>(focusDoneAt));
+  TEST_MESSAGE(line);
+}
+
 void test_no_heap() {
   const RunId r = run({{1, 60, 100, 400}, {2, 61, kLoop - 50, kLoop + 50}}, RunKind::kRecord);
   const ManifestId m = manifest({r}, 1);
@@ -254,9 +364,12 @@ void test_no_heap() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_segments_per_bar);
+  RUN_TEST(test_one_loop_unless_the_wrap_reach_needs_more);
   RUN_TEST(test_density_for_other_slots);
   RUN_TEST(test_dense_bar);
   RUN_TEST(test_draw_rule_never_blanks);
+  RUN_TEST(test_live_overlay_paints_the_recorded_notes);
+  RUN_TEST(test_display_jobs_focus_first_and_newest_wins);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

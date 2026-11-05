@@ -10,9 +10,11 @@
 //   tile is written into a staging copy and copied in one step between draws. The draw rule (`drawSource`): a bar's span
 //   tile, else its density tile — whatever identity they hold — so a starved sweep, a focus switch, an Undo or an
 //   exhausted pool show the previous content, never a blank bar. Nothing on the draw path allocates or reads pages.
-// * `TileSweep` (a display job, soft) composes the slot's manifest — cycle 0 to warm up, then the steady cycle 1, so
-//   notes held across the loop end appear from bar 0 — with every effective note selected (the piano roll shows stored
-//   content; OUT-POLY limits only output), and publishes each bar as it completes. A sweep whose slot was given another
+// * `TileSweep` (a display job, soft) composes the slot's manifest with every effective note selected (the piano roll
+//   shows stored content; OUT-POLY limits only output) and publishes each bar as it completes. Bars after the source's
+//   wrap reach compose the same in cycle 0 as in steady state, so they are published in cycle 0; the early bars that
+//   notes held across the loop end reach are published from cycle 1, after which the sweep stops (one loop plus those
+//   bars, instead of two loops). A sweep whose slot was given another
 //   manifest stops (`Superseded`), returns its spare and releases its source lease.
 // No allocation; `init()` writes every field.
 
@@ -22,6 +24,7 @@
 
 #include "ContentEngine/CheckpointTable.h"
 #include "ContentEngine/SpanWindow.h"
+#include "ContentEngine/WorkerScheduler.h"
 
 namespace ContentEngine {
 
@@ -166,6 +169,8 @@ class TileSweep {
     spare_ = Store::kNoTile;
     bars_ = 0;
     overflow_ = 0;
+    windows_ = 0;
+    deferred_ = 0;
     source_.open(manifests, runs, composer, manifest);
     identity_ = source_.identity();
     loop_ = source_.loopLength();
@@ -186,14 +191,13 @@ class TileSweep {
       if (!composer_->begin(source_.source(), source_.count(), loop_, identity_)) return stop(Status::Refused);
       source_.dropIndexLease();
       composing_ = true;
+      deferred_ = (composer_->wrapReach() + bar_ - 1) / bar_;  // bars the wrap reach touches: published from cycle 1
       return status_;
     }
     if (!composer_->windowOpen() && !composer_->openWindow(w, window_)) {
-      if (cycle_ == 1) {  // the steady cycle is tiled
-        while (currentBar_ * bar_ < loop_) finishBar();
-        return stop(Status::Done);
-      }
-      // Cycle 0 only follows its notes: those still sounding at the loop end start before bar 0 of cycle 1.
+      while (currentBar_ * bar_ < loop_) finishBar();
+      if (cycle_ == 1 || deferred_ == 0) return stop(Status::Done);
+      // Notes still sounding at the loop end start before bar 0 of cycle 1, which re-tiles the deferred bars.
       for (uint8_t i = 0; i < openCount_;) {
         Open& n = open_[i];
         if (n.end != kOpenEnd && n.end <= loop_) {
@@ -207,10 +211,14 @@ class TileSweep {
       }
       composer_->nextCycle();
       cycle_ = 1;
+      currentBar_ = 0;
+      beginBar();
       return status_;
     }
     if (!composer_->composeRows(w, maxRows)) return status_;
-    consume(w, cycle_ == 1);
+    ++windows_;
+    consume(w);
+    if (cycle_ == 1 && currentBar_ >= deferred_) return stop(Status::Done);
     return status_;
   }
 
@@ -220,6 +228,7 @@ class TileSweep {
   Status status() const { return status_; }
   bool pinned() const { return source_.pinned(); }
   uint32_t barsPublished() const { return bars_; }
+  uint32_t windows() const { return windows_; }  // windows composed: one loop, plus the bars the wrap reach touches
   /// Bar-crossing notes beyond the sweep's open table (cannot happen inside W: the composer holds at most 48).
   uint32_t overflow() const { return overflow_; }
 
@@ -232,12 +241,11 @@ class TileSweep {
     bool before;  // started before this cycle (held across the loop end)
   };
 
-  /// The window's entries, in tick order: NoteOn starts, TERMINAL ends. With `tile` (cycle 1) every bar boundary they
-  /// pass is finished; in cycle 0 notes are only followed (ended ones dropped after the window).
-  void consume(const Window& w, bool tile) {
+  /// The window's entries, in tick order: NoteOn starts, TERMINAL ends; every bar boundary they pass is finished.
+  void consume(const Window& w) {
     for (uint16_t k = 0; k < w.count; ++k) {
       const SpanEntry& e = w.entries[k];
-      while (tile && e.tick >= (currentBar_ + 1) * bar_) finishBar();
+      while (e.tick >= (currentBar_ + 1) * bar_) finishBar();
       if (e.terminal) {
         for (uint8_t i = 0; i < openCount_; ++i)
           if (open_[i].noteId == e.noteId && open_[i].runKey == e.runKey && open_[i].end == kOpenEnd) {
@@ -249,8 +257,8 @@ class TileSweep {
       if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
       const Open n{e.noteId, e.runKey, e.tick, e.length == kOpenLength ? kOpenEnd : e.tick + e.length,
                    e.data1, e.data2, static_cast<uint8_t>(e.status & 0x0F), false};
-      if (n.end != kOpenEnd && (tile ? n.end <= (currentBar_ + 1) * bar_ : n.end <= loop_)) {
-        if (tile) draw(n, n.start - currentBar_ * bar_, n.end - n.start, false, false);  // inside this bar: drawn now
+      if (n.end != kOpenEnd && n.end <= (currentBar_ + 1) * bar_) {
+        draw(n, n.start - currentBar_ * bar_, n.end - n.start, false, false);  // inside this bar: drawn now
         continue;
       }
       if (openCount_ == kMaxOpen) {  // more bar-crossing notes than the composer can hold open: named, not silent
@@ -258,14 +266,6 @@ class TileSweep {
         continue;
       }
       open_[openCount_++] = n;
-    }
-    if (!tile) {
-      for (uint8_t i = 0; i < openCount_;)
-        if (open_[i].end != kOpenEnd && open_[i].end <= w.end)
-          open_[i] = open_[--openCount_];
-        else
-          ++i;
-      return;
     }
     while ((currentBar_ + 1) * bar_ <= w.end && currentBar_ * bar_ < loop_) finishBar();
   }
@@ -322,6 +322,7 @@ class TileSweep {
 
   void publish() {
     const uint8_t bar = static_cast<uint8_t>(currentBar_);
+    if (cycle_ == 0 && bar < deferred_) return;  // reached by notes held across the loop end: published from cycle 1
     store_->publishDensity(slot_, bar, density_, identity_);
     const uint8_t d = store_->detailOf(slot_);
     if (spare_ != Store::kNoTile && d != Store::kNone) {
@@ -347,12 +348,197 @@ class TileSweep {
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool composing_ = false, dense_ = false;
-  uint32_t identity_ = 0, window_ = 0, bar_ = 0, loop_ = 0, cycle_ = 0, currentBar_ = 0, bars_ = 0, overflow_ = 0;
+  uint32_t identity_ = 0, window_ = 0, bar_ = 0, loop_ = 0, cycle_ = 0, currentBar_ = 0, bars_ = 0, overflow_ = 0,
+           deferred_ = 0, windows_ = 0;
   uint16_t segCount_ = 0, spare_ = 0xFFFF;
   uint8_t openCount_ = 0;
   Open open_[kMaxOpen];
   DensityTile density_;
   Status status_ = Status::Idle;
+};
+
+/// The live overlay (plan § 9.3): what the writer is recording, painted over the visible bars until the committed
+/// tiles show it. 4-bit pixels, `Columns` x `Rows` (8 KiB at 256 x 64). A NoteOn paints its start column; a held note
+/// grows as `advance` reaches new columns (only those are painted); a NoteOff paints the rest of its span. Spans that
+/// cross the loop end wrap. Positions outside the view are ignored. No allocation.
+template <uint16_t Columns = 256, uint8_t Rows = 64>
+class LiveOverlay {
+ public:
+  void init() {
+    loop_ = 1;
+    first_ = 0;
+    perColumn_ = 1;
+    low_ = 0;
+    clear();
+  }
+  /// The visible area: loop position of column 0, ticks per column, lowest pitch shown (rows go up from it). Clears.
+  void setView(uint32_t loopLength, uint32_t firstTick, uint32_t ticksPerColumn, uint8_t lowPitch) {
+    loop_ = loopLength;
+    first_ = firstTick;
+    perColumn_ = ticksPerColumn;
+    low_ = lowPitch;
+    clear();
+  }
+  void clear() {
+    for (auto& b : pixels_) b = 0;
+    for (auto& h : held_) h = Held{kNone, 0, 0};
+  }
+
+  void noteOn(uint32_t pos, uint8_t pitch, uint8_t velocity) {
+    held_[pitch & 0x7F] = Held{pos % loop_, pos % loop_, static_cast<uint8_t>(velocity >> 3)};
+    paint(pos % loop_, pos % loop_ + 1, pitch, held_[pitch & 0x7F].value);
+  }
+  /// Held notes paint up to `pos` (the Clock position): O(held notes + new columns).
+  void advance(uint32_t pos) {
+    for (uint8_t p = 0; p < 128; ++p)
+      if (held_[p].start != kNone) extend(p, pos % loop_);
+  }
+  void noteOff(uint32_t pos, uint8_t pitch) {
+    if (held_[pitch & 0x7F].start == kNone) return;
+    extend(pitch & 0x7F, pos % loop_);
+    held_[pitch & 0x7F].start = kNone;
+  }
+
+  uint8_t pixel(uint16_t column, uint8_t row) const {
+    const uint32_t i = static_cast<uint32_t>(row) * Columns + column;
+    return (pixels_[i / 2] >> ((i & 1) ? 4 : 0)) & 0xF;
+  }
+
+ private:
+  static constexpr uint32_t kNone = 0xFFFFFFFFu;
+  struct Held {
+    uint32_t start, paintedTo;  // loop positions
+    uint8_t value;
+  };
+
+  void extend(uint8_t pitch, uint32_t pos) {
+    Held& h = held_[pitch];
+    if (pos >= h.paintedTo) {
+      paint(h.paintedTo, pos + 1, pitch, h.value);
+    } else {  // crossed the loop end
+      paint(h.paintedTo, loop_, pitch, h.value);
+      paint(0, pos + 1, pitch, h.value);
+    }
+    h.paintedTo = pos + 1 >= loop_ ? 0 : pos + 1;
+  }
+  /// Paints positions [a, b) of one pitch: the columns of the view they cover.
+  void paint(uint32_t a, uint32_t b, uint8_t pitch, uint8_t value) {
+    if (pitch < low_ || pitch >= low_ + Rows || b <= a) return;
+    const uint32_t end = first_ + static_cast<uint32_t>(Columns) * perColumn_;
+    if (b <= first_ || a >= end) return;
+    const uint32_t c0 = (a > first_ ? a - first_ : 0) / perColumn_;
+    uint32_t c1 = ((b < end ? b : end) - first_ - 1) / perColumn_;
+    if (c1 >= Columns) c1 = Columns - 1;
+    for (uint32_t c = c0; c <= c1; ++c) set(static_cast<uint16_t>(c), static_cast<uint8_t>(pitch - low_), value);
+  }
+  void set(uint16_t column, uint8_t row, uint8_t value) {
+    const uint32_t i = static_cast<uint32_t>(row) * Columns + column;
+    uint8_t& b = pixels_[i / 2];
+    b = (i & 1) ? static_cast<uint8_t>((b & 0x0F) | (value << 4)) : static_cast<uint8_t>((b & 0xF0) | value);
+  }
+
+  uint8_t pixels_[Columns * Rows / 2];
+  Held held_[128];
+  uint32_t loop_ = 1, first_ = 0, perColumn_ = 1;
+  uint8_t low_ = 0;
+};
+
+/// Tile sweeps as scheduler jobs (E7.2). `Workers` sweep workers (the display compose cursors), each with its own
+/// composer and scratch window. A slot's newest request replaces its older one (and supersedes a running sweep for the
+/// slot). The focused slot's request is started first, then the others in request order. Each running sweep is a
+/// display-class job, so it gets at least one grain in four while display work is pending.
+template <typename Composer, typename Window, typename Manifests, typename Runs, typename Store, typename Scheduler,
+          uint8_t Workers = 2, uint8_t Slots = 64>
+class DisplayJobs {
+ public:
+  using Sweep = TileSweep<Composer, Window, Manifests, Runs, Store>;
+  static constexpr uint32_t kRowsPerGrain = 128;
+  static constexpr uint32_t kDeclaredGrains = 4000;  // one loop and the wrap-reach bars of a W-sized slot
+
+  void init(Composer* const* composers, Window* const* scratch, Store& store, Manifests& manifests, Runs& runs,
+            Scheduler& scheduler, uint32_t windowTicks, uint32_t barTicks) {
+    for (uint8_t i = 0; i < Workers; ++i) worker_[i] = Worker{composers[i], scratch[i], this, {}, false, 0xFF};
+    store_ = &store;
+    manifests_ = &manifests;
+    runs_ = &runs;
+    scheduler_ = &scheduler;
+    window_ = windowTicks;
+    bar_ = barTicks;
+    for (auto& r : pending_) r = kNoManifest;
+    order_ = 0;
+    for (auto& o : requestOrder_) o = 0;
+    focus_ = 0xFF;
+  }
+
+  /// The slot's tiles should show `manifest` (a commit, Undo / Redo, an edit, a load). Replaces the slot's older request.
+  void request(uint8_t slot, ManifestId manifest) {
+    pending_[slot] = manifest;
+    requestOrder_[slot] = ++order_;
+    store_->setWanted(slot, manifests_->manifest(manifest).identity);
+  }
+  void setFocus(uint8_t slot) { focus_ = slot; }
+
+  /// Starts sweeps on idle workers (focus first) and submits their jobs.
+  void service() {
+    for (auto& w : worker_) {
+      if (w.live) continue;
+      const uint8_t slot = next();
+      if (slot == 0xFF) return;
+      const ManifestId m = pending_[slot];
+      pending_[slot] = kNoManifest;
+      if (w.sweep.start(*w.composer, *store_, *manifests_, *runs_, slot, m, window_, bar_) != Sweep::Status::Running)
+        continue;
+      uint8_t id;
+      w.slot = slot;
+      w.live = scheduler_->submit(JobSpec{JobClass::Display, 0, kDeclaredGrains, &step, &w}, id);
+      if (!w.live) w.sweep.cancel();  // table full: the slot's request is retried
+      if (!w.live) pending_[slot] = m;
+    }
+  }
+
+  bool idle() const {
+    for (const auto& w : worker_)
+      if (w.live) return false;
+    for (const auto r : pending_)
+      if (r != kNoManifest) return false;
+    return true;
+  }
+
+ private:
+  struct Worker {
+    Composer* composer;
+    Window* scratch;
+    DisplayJobs* owner;
+    Sweep sweep;
+    bool live;
+    uint8_t slot;
+  };
+
+  /// The focused slot's request, else the oldest.
+  uint8_t next() const {
+    if (focus_ != 0xFF && pending_[focus_] != kNoManifest) return focus_;
+    uint8_t best = 0xFF;
+    for (uint8_t s = 0; s < Slots; ++s)
+      if (pending_[s] != kNoManifest && (best == 0xFF || requestOrder_[s] < requestOrder_[best])) best = s;
+    return best;
+  }
+
+  static JobStep step(void* ctx) {
+    Worker& w = *static_cast<Worker*>(ctx);
+    if (w.sweep.step(*w.scratch, kRowsPerGrain) == Sweep::Status::Running) return JobStep::Continue;
+    w.live = false;
+    return JobStep::Done;
+  }
+
+  Worker worker_[Workers];
+  Store* store_ = nullptr;
+  Manifests* manifests_ = nullptr;
+  Runs* runs_ = nullptr;
+  Scheduler* scheduler_ = nullptr;
+  uint32_t window_ = 0, bar_ = 0, order_ = 0;
+  ManifestId pending_[Slots];
+  uint32_t requestOrder_[Slots];
+  uint8_t focus_ = 0xFF;
 };
 
 }  // namespace ContentEngine

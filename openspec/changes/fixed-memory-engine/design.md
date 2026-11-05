@@ -1226,5 +1226,25 @@ dense bar overflowed the sweep's open table and lost notes silently; they are no
 held notes not carried into cycle 1, a replaced tile not freed, the slot stamp ignored, supersession ignored, the dense
 state never named.
 
-Not yet (E7.2): visible-bars-first ordering (§ 7.5 freshness), the live overlay, banded drawing, and scheduling tile
-sweeps as display jobs.
+### E7.2 — freshness, display jobs, live overlay (as built)
+
+- **Freshness:** `Composer::wrapReach()` gives the positions notes held across the loop end can reach (the last wrap
+  row's position + 1, read in O(1) per run; the whole loop when a note is held past a second wrap). Bars after it
+  compose the same in cycle 0 as in steady state, so the tile sweep publishes them in cycle 0 and re-tiles only the
+  bars the reach touches from cycle 1: one loop plus those bars instead of two loops — a source with nothing held across
+  the loop end is swept in exactly one loop. (Visible-bars-first beyond this needs a positioned start; composition from
+  the loop start dominates, so the gain is this halving.)
+- **`DisplayJobs`:** two sweep workers (the two display compose cursors), each a display-class scheduler job (≥ 1 grain
+  in 4 while display work is pending); a slot's newest request replaces its older one and supersedes a running sweep;
+  the focused slot is started first, then the oldest request.
+- **`LiveOverlay`** (8 KiB of 4-bit pixels, 256 × 64, plus a 128-entry held table): the writer's NoteOn paints its
+  start column, a held note grows as `advance` reaches new columns (only those are painted), the NoteOff paints the
+  rest; spans across the loop end wrap; outside the view is ignored. The integration clears it when the committed
+  manifest's tiles cover those bars.
+- **Banded drawing** (≤ 8 bands of ≤ 1 ms) belongs to the display driver and lands with the integration (E9), drawing
+  `TileStore::drawSource` + the overlay per band.
+
+Tests (`test_content_engine_display_tiles`, 8): one-loop sweep unless the wrap reach needs more; the overlay (start,
+growth, release, out of view, loop-end wrap); display jobs beside always-pending hard work (focus first, every slot
+ends on its newest manifest after a mid-sweep supersession, display ≥ 1 in 4). Mutations caught: focus ignored, wrap
+reach ignored, everything deferred, release painting nothing, wrap not painted.

@@ -157,6 +157,10 @@ class Composer {
   }
   static constexpr uint32_t kLookaheadReadsPerUnit = 8;
   bool windowOpen() const { return windowOpen_; }
+  /// The positions [0, wrapReach) where notes held across the loop end can sound (the last wrap row's position + 1; the
+  /// loop length when a note is held past a second wrap; 0 when none). Later positions compose the same in cycle 0 as
+  /// in every later cycle.
+  uint32_t wrapReach() const { return wrapReach_; }
 
   /// Releases the pinned edit-index slot (also done by the next `begin`).
   void end() {
@@ -360,11 +364,18 @@ class Composer {
       for (auto& c : p) c = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
+    wrapReach_ = 0;
     for (uint8_t r = 0; r < count_; ++r) {
       src_[r] = source[r];
       edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
       wrapStart_[r] = firstRowAtOrAfter(r, loop_);
       band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
+      if (band2Start_[r] < src_[r].rowLimit) {
+        wrapReach_ = loop_;  // a note held past the second wrap: the whole loop
+      } else if (wrapStart_[r] < band2Start_[r]) {
+        const uint32_t reach = row(r, band2Start_[r] - 1).tick - loop_ + 1;  // rows are in tick order
+        if (reach > wrapReach_) wrapReach_ = reach;
+      }
       hideEnd_[r] = edit_[r] ? leadingHideRows(r) : 0;
       if (fromStart) {
         cursor_[r] = hideEnd_[r];
@@ -676,6 +687,7 @@ class Composer {
   Stats stats_;
   mutable uint32_t lookaheadRows_;
   uint32_t ccPos_ = UINT32_MAX;  // the position the continuous-controller count belongs to
+  uint32_t wrapReach_ = 0;
   uint8_t ccCount_ = 0;
 };
 

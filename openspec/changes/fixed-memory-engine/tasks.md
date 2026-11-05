@@ -101,7 +101,7 @@ revision 3 is the baseline; no whole-plan revisions.
 ## E7 — display
 
 - [x] E7.1 `TileStore` + `TileSweep`: span / density tiles, atomic swap with spares, draw rule never blank, steady-cycle display composition with every effective note, dense state (`test_content_engine_display_tiles` 5, mutation-checked; 602,416 B).
-- [ ] E7.2 Visible-bars-first sweep order (F_vis), live overlay, banded draw, tile sweeps as display jobs.
+- [x] E7.2 Freshness (cycle-0 publishing past the wrap reach: one loop instead of two), `DisplayJobs` (focus first, newest request wins, display class), `LiveOverlay` (`test_content_engine_display_tiles` 8, mutation-checked). Banded drawing moves to the integration (E9).
 
 ## CE-C1 — output
 

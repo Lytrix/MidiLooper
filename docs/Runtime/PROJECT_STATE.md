@@ -1,3 +1,7 @@
+**2026-11-05 — Fixed-memory engine: E7.2 display freshness, display jobs, live overlay.**
+- Tile sweeps publish in cycle 0 past the wrap reach (one loop instead of two); they run as display jobs (focus first,
+  newest request wins); the live overlay paints recorded notes at bounded cost. Banded drawing moves to E9.
+
 **2026-11-05 — Fixed-memory engine: E7.1 piano-roll tiles.**
 - Span tiles (detail slots) and density tiles (all slots) swept from the steady cycle with every effective note; a bar
   draws its span tile, else its density tile, and never goes blank on a starved sweep, Undo, focus switch or exhausted
