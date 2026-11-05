@@ -1454,3 +1454,64 @@ USB port. Teensy (`dac84427…`): `clockTick` ≤ 11 µs for two tracks, a drain
 144,408 B (`kRam2Budget`: + 1,048 B output keys, + 64 B job boundaries). Mutations caught: 12 of 13 (no generation,
 masked NoteOff, unmasked NoteOn / controller, close ignoring the run, unstamped tick / stop, unrouted Undo / live NoteOn,
 velocity / status lost, DIN timing); the scheduled-end mutation is equivalent (above).
+
+## E9.4 — gestures, input and bounded late join (owner decisions 2026-11-05, as built)
+
+**Owner decisions:** one sounding slot per track for the cutover — layered slots and jam bar-range playback are later
+slices (each extra sounding slot ≈ 172 KB PSRAM: 3 windows + 2 cursors); Clear is undoable; bounded late join for
+every transition (ruling below).
+
+`include/ContentEngine/TrackControl.h` keeps the legacy gesture semantics (TrackManager capture queue, slot state
+machine, transport). Timing: a gesture at Clock tick `c` takes effect before `c` is played, input at `c` after it;
+queued gestures run in `beforeTick`, never on the tick they were queued.
+- **Record (queued):** on a track that plays, at its slot's next loop start (phase reference); otherwise at the next
+  bar. The playing slot stops then and the take begins on the queued slot. With another track writing (one writer),
+  the Record waits and starts at the first eligible tick after the writer is free.
+- **Stop (queued):** at the next bar; `stopNow` at once.
+- **Slot switch:** the target composes from the request on — `PlaybackTrack::launch` composes window 0 of cycle 0 of
+  the target without warm-up (a fresh start carries nothing), while the old slot plays; it commits on the next grid step
+  (`NextGrid`, 16ths) or the playing slot's loop end (`LoopEnd`): the track's origin moves to that tick, what sounded
+  ends (`commitLaunch`), and the launched window plays from tick 0 of the new timeline. A take on the track ends
+  first. An empty target stops the track and takes the slot, ready to record.
+- **Clear:** an empty state (a manifest with no runs) committed on the slot; every gesture treats it as empty
+  (`SlotTransport::contentOf`), its tracks stop, Undo brings the content back. The engine root never sweeps it.
+- **Mute / solo:** a track is audible when not muted and either no track is soloed or it is; going silent ends what it
+  sounds on every port at once (`ClockOutput::setAudible`), and its NoteOns are dropped while silent.
+- **Transport stop / start:** queued gestures dropped, a take ends, every track stops — and starts composing its slot
+  from the loop start, so transport start plays every track from position 0 at once.
+- **Input:** notes and events go to the writer while a take runs (live occupancy NoteOffs routed) and through to the
+  ports of the writing track, else the selected track. Thru notes hold 16 key slots of their own with generations, so a
+  fast repeated note is a new note; thru is not muted.
+- **Tracks play** (`SlotTransport::playing`) from a Record Stop or a committed launch until stopped; Undo / Redo / Clear
+  select only on playing tracks.
+
+**Bounded late join (owner ruling 2026-11-05)** — for Record Stop, slot switch, Undo, Redo and every accepted source
+transition (`PlaybackTrack`):
+- A transition that misses its boundary opens a late window instead of retargeting at once. The limit is the earlier of
+  24 ticks and 25 ms at the tempo (`EngineRoot::clockTick` sets it per tick: 24 at 300 BPM, 9 at 120 BPM).
+- When its window completes inside the window, worker grains prepare the join state for the next tick, from the window
+  start, at most `maxRows` entries a grain: START entries begun before the join and still sounding then, carried
+  instances still alive (a TERMINAL in the missed span ends one), and the essential / parameter events of the missed
+  span (continuous values are dropped: the next value follows). If the Clock passes the prepared point first, the scan
+  continues to the next tick and notes that ended meanwhile drop out.
+- The Clock tick only adopts it (`WindowPlayer::beginWindowLate`): instances not kept close now; kept instances already
+  sounding continue with the new end (no restart); the others start late with their original end; play resumes at the
+  first entry at or after the join tick. Notes wholly in the missed span are never emitted. T = 16, admission,
+  per-port limits and expiry apply unchanged.
+- Beyond the limit: the boundary rule — retarget the next boundary, `lateJoinsMissed` counted. Underruns and late
+  counters are kept: late join is recovery, not a licence to miss deadlines.
+
+**Defects found while building:** the first launch commit kept the old timeline's steady target, so the new slot's
+next windows were discarded as stale (two underruns); the commit now resets it.
+
+Tests: `test_content_engine_track_control` (8, production root, USB port): queued Record and Stop on the bar; Record at
+the playing slot's loop start and waiting for the one writer; switches on the grid and at the loop end with the
+downbeat on the commit tick and the old slot's notes ended; a one-window take late-joined (every underrun recovered,
+none missed); empty target; undoable Clear; mute / solo; transport stop / start from position 0; thru on the right
+ports and recorded; no allocation. `test_content_engine_late_join` (7, the owner's REDs): one- and two-bar takes
+joining 1, 10 and 24 ticks late (long note once with its end, short notes skipped, a note crossing the join started
+late, sustain kept, a continuous value dropped, the next cycle whole); the 25 ms cap (9 ticks at 120 BPM) and one tick
+beyond either limit (missed, counted, next boundary); notes already sounding from the previous source (Redo-like: kept,
+not restarted; Undo-like: ended at the join); dense MIDI at the join prepared in > 40 bounded grains, only long notes
+started, no orphan NoteOff; a join point the Clock passes moves on; DIN refusing the late note while USB plays it, no
+orphan NoteOff on DIN; later cycles equal uninterrupted composition.

@@ -126,6 +126,43 @@ class WindowPlayer {
     return n;
   }
 
+  /// Bounded late join (owner ruling 2026-11-05): `w` starts playing at tick `t`, inside its span. The join state was
+  /// prepared by worker grains: `keep` are the instances the new source has sounding at `t` (with their ends: open for a
+  /// carried one whose end comes later), `starts` the START entries begun before `t` and still sounding then, `events`
+  /// the essential / parameter events of the missed span. Instances not kept close now; a kept instance already
+  /// sounding continues with its new end; the others in `starts` begin now with their original end; play resumes at
+  /// entry `from` (the first at or after `t`). Notes wholly in the missed span are not emitted. `out` must hold T plus
+  /// the starts and events. The Clock work is bounded by T and the prepared lists.
+  template <uint16_t Cap>
+  uint8_t beginWindowLate(const SpanWindow<Cap>& w, uint16_t from, const typename Scheduler::Carry* keep, uint8_t nKeep,
+                          const uint16_t* starts, uint8_t nStarts, const uint16_t* events, uint8_t nEvents, uint32_t t,
+                          Emit* out, uint8_t max) {
+    uint8_t n = 0;
+    typename Scheduler::Out offs[T];
+    const uint8_t closed = sched_->transition(t, keep, nKeep, offs, static_cast<uint8_t>(T));
+    for (uint8_t i = 0; i < closed && n < max; ++i) out[n++] = fromOut(offs[i]);
+    identity_ = w.identity;
+    base_ = w.cycleBase;
+    entries_ = w.entries;
+    count_ = w.count;
+    next_ = from;
+    for (uint8_t k = 0; k < nStarts; ++k) {
+      const SpanEntry& e = w.entries[starts[k]];
+      const uint32_t end = e.length == kOpenLength ? kOpenEnd : base_ + e.tick + e.length;
+      const uint8_t ch = static_cast<uint8_t>((e.status & 0x0F) + 1);
+      if (sched_->start(t, e.noteId, runIdOf(e.runKey), orderOf(e.runKey), ch, e.data1, end) == StartResult::Started &&
+          n < max)
+        out[n++] = Emit{t, 1, e.noteId, e.runKey, ch, e.data1, static_cast<uint8_t>(0x90 | (e.status & 0x0F)), e.data2,
+                        0, end};
+    }
+    for (uint8_t k = 0; k < nEvents && n < max; ++k) {
+      const SpanEntry& e = w.entries[events[k]];
+      out[n++] = Emit{t, 2, e.noteId, e.runKey, static_cast<uint8_t>((e.status & 0x0F) + 1), e.data1, e.status,
+                      e.data2, 0, kOpenEnd};
+    }
+    return n;
+  }
+
   /// One tick (timeline ticks): composed ends due now, NoteOffs, then this tick's STARTs (DEC-244: NoteOff before
   /// NoteOn). Entry positions are offset by the window's cycle base.
   uint8_t tick(uint32_t t, Emit* out, uint8_t max) {

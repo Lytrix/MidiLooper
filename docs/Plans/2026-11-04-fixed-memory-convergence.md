@@ -352,7 +352,8 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 E9.2 measurement on the Teensy: the engine's RAM2 regions (`EngineRam2`: tables, writer, edit writer, 8 playback
 tracks with their terminal schedulers, scheduler and jobs, transport, output hub) are 143,360 B (`kRam2Budget`) against
 the 143,220 B of additions above (+140 B: the playback tracks and transport, which the list did not itemise, net of a
-smaller run table). E9.3 adds the Clock path's output keys (1,048 B) and job boundaries (64 B): 144,408 B. The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
+smaller run table). E9.3 adds the Clock path's output keys (1,048 B) and job boundaries (64 B): 144,408 B. E9.4 adds the late-join
+state of the 8 playback tracks (1,248 B), thru keys (112 B) and the gesture state (248 B): 146,032 B. The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -690,6 +691,13 @@ a non-blocking (DMA / multi-turn) write path; it does not get an exception.
   replacement is ready; a superseded transition releases its leases and never publishes (the latest selection wins);
   Stop stays a bounded hard operation independent of transitions; late transitions are counted
   (`lateSourceSwitches`).
+- **Bounded late join (owner ruling 2026-11-05, E9.4):** a transition (Record Stop, slot switch, Undo, Redo, any
+  accepted source change) whose window completes after its boundary may still become audible inside that window, up to
+  the earlier of 24 ticks and 25 ms (never 60–94 ms at slow tempos). It joins at the current tick: notes sounding there
+  start late with their original end, notes wholly inside the missed span are not emitted, later events keep their
+  schedule, old-source notes the new source carries keep sounding and the others end. The join state is prepared in
+  worker grains; the Clock tick only adopts it. Beyond the limit the boundary rule holds and the miss is counted. A
+  recovery mechanism, not a licence to miss deadlines: hard-window measurements and late counters stay.
 - **Background (checkpoint sweeps, reclaim, compaction):** take the rest, the live background jobs in turn (a long
   compaction must not hold up a short job).
 - **Display freshness bound:** with grain rate `r = U_e / g`:
@@ -1092,6 +1100,9 @@ Before E1:
    (≤ 105 grains with a checkpoint, ≤ 721 worst). Accept, or name a tighter musical bound for E0 fixtures.
 8. **Record-keeping:** a new `DEC-###` "one bounded content engine" superseding the mechanism DECs, and a new OpenSpec
    change for the cutover.
+
+Decided 2026-11-05 at E9.4: one sounding slot per track for the cutover (layered slots and jam bar-range playback
+are later slices, sized then); Clear is undoable (an empty state); bounded late join for every transition (§ 7.5).
 
 Decision 9, controller closures (which controllers, if any, get closure rows at Stop, for example sustain off), is
 settled by E0 from the register, not assumed.

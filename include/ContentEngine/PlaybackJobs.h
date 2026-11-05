@@ -59,9 +59,10 @@ class PlaybackJobs {
       }
       Job& t = transition_[i];
       if (!t.live && t.track->transitionWorkPending()) {
-        // A prepared Record window aims at a provisional boundary far ahead (E9.1b): bound the lead so the deadline
-        // stays representable.
-        const uint32_t lead = t.track->transitionTarget() - nowTick;
+        // Bound the lead so the deadline stays representable.
+        // Late (the target passed: a late join being prepared) is due now.
+        const uint32_t target = t.track->transitionTarget();
+        const uint32_t lead = target > nowTick ? target - nowTick : 0;
         submit(t, JobSpec{JobClass::Transition, nowUs + (lead < kMaxLeadTicks ? lead : kMaxLeadTicks) * usPerTick,
                           kTransitionGrains, &step, &t});
       }

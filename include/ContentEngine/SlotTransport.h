@@ -36,6 +36,14 @@
 //   closures, release it.
 // * Undo / Redo: History moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
 //   selects the new current, or stops when the slot is empty.
+// * E9.4 (owner 2026-11-05: one sounding slot per track; Clear is undoable):
+//   - Clear commits an empty state (a manifest with no runs): the slot is empty for every gesture (`contentOf`), its
+//     tracks stop, and Undo brings the content back.
+//   - Launch: a track starts a slot from its loop start, fresh (nothing carried), at a tick the caller commits; its
+//     window 0 composes from `launch` on while what plays continues (`PlaybackTrack::launch`), and at `commitLaunch` the
+//     track's origin moves to that tick and what sounded ends.
+//   - A track plays (`playing`) from a Record Stop or a committed launch until `stopTrack`; Undo / Redo / Clear select
+//     only on playing tracks.
 // The writer's reference on each run is dropped once the run sealed and is listed by the manifests that need it.
 // No allocation.
 
@@ -96,6 +104,8 @@ class SlotTransport {
       tracks_[i] = tracks[i];
       slot_[i] = kNoSlot;
       origin_[i] = 0;
+      playing_[i] = false;
+      launchSlot_[i] = kNoSlot;
     }
     mode_ = Mode::Idle;
     wTrack_ = 0;
@@ -109,7 +119,7 @@ class SlotTransport {
 
   Result startRecord(uint8_t track, uint8_t slot, uint32_t clock) {
     if (mode_ != Mode::Idle) return Result::Busy;
-    if (history_->current(slot) != kNoManifest) return Result::DeniedSlot;
+    if (contentOf(slot) != kNoManifest) return Result::DeniedSlot;
     if (manifests_->freeCount() == 0) return Result::DeniedManifest;
     if (writer_->begin(slot, RunKind::kRecord, 0, clock) != WriterResult::Ok) return Result::DeniedRun;
     mode_ = Mode::Recording;
@@ -124,7 +134,7 @@ class SlotTransport {
   Result startOverdub(uint8_t track, uint32_t clock) {
     if (mode_ != Mode::Idle) return Result::Busy;
     const uint8_t slot = slot_[track];
-    if (slot == kNoSlot || history_->current(slot) == kNoManifest) return Result::Empty;
+    if (slot == kNoSlot || !playing_[track] || contentOf(slot) == kNoManifest) return Result::Empty;
     const ManifestId base = history_->current(slot);
     loop_ = manifests_->manifest(base).loopLengthTicks;
     if (manifests_->manifest(base).runCount + 1 > Manifests::kMaxRuns) return Result::DeniedRun;
@@ -208,6 +218,74 @@ class SlotTransport {
 
   Mode mode() const { return mode_; }
   uint8_t playingSlot(uint8_t track) const { return slot_[track]; }
+  bool playing(uint8_t track) const { return playing_[track]; }
+  /// The slot's current state with content, or kNoManifest: empty, never recorded, or cleared (E9.4).
+  ManifestId contentOf(uint8_t slot) const {
+    const ManifestId m = history_->current(slot);
+    return m == kNoManifest || manifests_->manifest(m).runCount == 0 ? kNoManifest : m;
+  }
+  /// The track that records or overdubs, or 0xFF.
+  uint8_t writingTrack() const { return mode_ == Mode::Idle ? 0xFF : wTrack_; }
+
+  /// Clear (owner 2026-11-05: undoable): an empty state on top of the slot's history; its playing tracks stop.
+  Result clear(uint8_t slot, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
+    if (contentOf(slot) == kNoManifest) return Result::NoChange;
+    const ManifestId empty = manifests_->create(slot, ++revision_, 0, nullptr, 0, *runs_);
+    if (empty == kNoManifest) return Result::DeniedManifest;
+    history_->commit(slot, empty);
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+
+  /// Starts composing `slot` for `track` from its loop start; `commitLaunch` makes it play.
+  Result launch(uint8_t track, uint8_t slot) {
+    if (mode_ != Mode::Idle && wTrack_ == track) return Result::Busy;
+    const ManifestId m = contentOf(slot);
+    if (m == kNoManifest) return Result::Empty;
+    tracks_[track]->launch(slot, m);
+    launchSlot_[track] = slot;
+    return Result::Ok;
+  }
+  /// The launched slot plays on `track` from Clock tick `clock` (before that tick is played): its loop position 0.
+  /// What sounded ends now (`out`, at least T). Without a launch in progress (an Undo superseded it), one starts now.
+  Result commitLaunch(uint8_t track, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    const uint8_t slot = launchSlot_[track];
+    if (slot == kNoSlot) return Result::NoChange;
+    if (mode_ != Mode::Idle && wTrack_ == track) return Result::Busy;
+    launchSlot_[track] = kNoSlot;
+    const ManifestId m = contentOf(slot);
+    if (m == kNoManifest) {  // cleared meanwhile
+      emitted = stopTrack(track, clock, out, max);
+      return Result::Empty;
+    }
+    if (!tracks_[track]->launchPending()) tracks_[track]->launch(slot, m);
+    emitted = stamp(track, out, tracks_[track]->commitLaunch(out, max));
+    slot_[track] = slot;
+    origin_[track] = clock;
+    playing_[track] = true;
+    return Result::Ok;
+  }
+  uint8_t launchingSlot(uint8_t track) const { return launchSlot_[track]; }
+  /// A launch in progress for `track` is dropped (a queued switch cancelled or replaced).
+  void stopLaunch(uint8_t track) {
+    if (launchSlot_[track] == kNoSlot) return;
+    launchSlot_[track] = kNoSlot;
+    tracks_[track]->cancelLaunch();
+  }
+  uint32_t loopLength(ManifestId m) const { return manifests_->manifest(m).loopLengthTicks; }
+  /// A stopped track takes `slot` (e.g. an empty one, ready to record) without playing it.
+  void assign(uint8_t track, uint8_t slot) {
+    if (!playing_[track]) slot_[track] = slot;
+  }
+  /// The track stops playing (its slot stays assigned); what sounded ends (`out`, at least T).
+  uint8_t stopTrack(uint8_t track, uint32_t clock, Emit* out, uint8_t max) {
+    playing_[track] = false;
+    launchSlot_[track] = kNoSlot;
+    return stamp(track, out, tracks_[track]->stop(local(track, clock), out, max));
+  }
   uint32_t origin(uint8_t track) const { return origin_[track]; }
   const Stats& stats() const { return stats_; }
 
@@ -245,9 +323,9 @@ class SlotTransport {
   /// when that tick is not played yet (`played` false: a gesture). Returns NoteOffs written to `out`.
   uint8_t selectSlot(uint8_t slot, uint32_t clock, bool played, Emit* out, uint8_t max) {
     uint8_t n = 0;
-    const ManifestId m = history_->current(slot);
+    const ManifestId m = contentOf(slot);
     for (uint8_t t = 0; t < Tracks; ++t) {
-      if (slot_[t] != slot) continue;
+      if (slot_[t] != slot || !playing_[t]) continue;
       if (m == kNoManifest)
         n = static_cast<uint8_t>(
             n + stamp(t, out + n, tracks_[t]->stop(local(t, clock), out + n, static_cast<uint8_t>(max - n))));
@@ -333,6 +411,7 @@ class SlotTransport {
       history_->commit(wSlot_, m);
       slot_[wTrack_] = wSlot_;
       origin_[wTrack_] = wStart_;
+      playing_[wTrack_] = true;
       tracks_[wTrack_]->handoff(wSlot_, m, local(wTrack_, clock));
     }
     drainSealed(before, clock);
@@ -391,6 +470,8 @@ class SlotTransport {
   WriterT* writer_ = nullptr;
   Track* tracks_[Tracks] = {};
   uint8_t slot_[Tracks] = {};
+  bool playing_[Tracks] = {};
+  uint8_t launchSlot_[Tracks] = {};  // a launch composing for the track (kNoSlot: none)
   uint32_t origin_[Tracks] = {};
   Mode mode_ = Mode::Idle;
   uint8_t wTrack_ = 0, wSlot_ = kNoSlot;

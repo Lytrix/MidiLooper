@@ -24,6 +24,7 @@
 #include <cstdint>
 
 #include "ContentEngine/CheckpointTable.h"
+#include "ContentEngine/MidiClass.h"
 #include "ContentEngine/SpanWindow.h"
 
 namespace ContentEngine {
@@ -51,6 +52,11 @@ class PlaybackTrack {
     uint32_t staleWindows;   // windows composed after their boundary had passed, discarded to catch up
     uint32_t refusedStarts;  // cold starts refused (e.g. index capacity): the old source keeps playing
     uint32_t preparedHandoffs;  // Record Stops that played a window composed ahead (E9.1b)
+    uint32_t launches;          // slot launches committed (E9.4)
+    uint32_t lateJoins;         // transitions adopted inside their window after missing its boundary (bounded)
+    uint32_t lateJoinsMissed;   // transitions whose window came after the late-join limit: the boundary rule
+    uint32_t lastLateTicks, maxLateTicks;  // ticks after the boundary a late join became audible
+    uint32_t joinOverflow;      // join-state entries beyond the prepared lists (not started / not sent)
   };
 
   void init(Composer& a, Composer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
@@ -74,6 +80,8 @@ class PlaybackTrack {
     transActive_ = false;
     transComposing_ = false;
     prepared_ = false;
+    launching_ = false;
+    launchLoop_ = 0;
     handoffFinal_ = kNoManifest;
     transComp_ = 0;
     transTarget_ = steadyTarget_ = 0;
@@ -153,7 +161,61 @@ class PlaybackTrack {
     ++stats_.preparedHandoffs;
   }
 
+  /// E9.4, a slot launch: `manifest` will start from its loop start — a fresh start, nothing carried — when the caller
+  /// commits it. Its window 0 composes now, without warm-up, while what plays continues; the transition takes no part
+  /// in succession until `commitLaunch`.
+  void launch(uint8_t slot, ManifestId manifest) {
+    cancelTransition();
+    const auto& m = manifests_->manifest(manifest);
+    const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
+    trans_ = freeBuffer();
+    buf_[trans_].state = State::Filling;
+    transComp_ = tc;
+    transActive_ = true;
+    transTarget_ = 0;
+    transComposing_ = false;
+    launching_ = true;
+    launchLoop_ = m.loopLengthTicks;
+    wanted_ = manifest;
+    wantedIdentity_ = m.identity;
+    ++stats_.accepted;
+    selectTick_ = 0;
+    transBoundaries_ = 0;
+    transGrains_ = 0;
+    if (cold_[tc].start(*comp_[tc], *table_, *manifests_, *runs_, slot, manifest, 0, 0, window_, false) ==
+        Cold::Status::Refused) {
+      ++stats_.refusedStarts;
+      cancelTransition();
+    }
+  }
+  bool launchPending() const { return launching_ && transActive_; }
+  /// A launch in progress is dropped; what plays continues.
+  void cancelLaunch() {
+    if (launching_) cancelTransition();
+  }
+  /// The launch takes effect: the caller's timeline for this track restarts, its next tick is 0. Everything sounding
+  /// ends now (returned, `out` must hold T) and the old cursors end; the launched window is adopted at tick 0 when it
+  /// is ready, else at the first boundary it is ready for (silence until then, no note left sounding).
+  uint8_t commitLaunch(Emit* out, uint8_t max) {
+    if (!launchPending()) return 0;
+    if (steady_ != kNone) cold_[steady_].release();
+    steady_ = kNone;
+    if (next_ != kNone) buf_[next_].state = State::Free;
+    next_ = kNone;
+    if (playing_ != kNone) buf_[playing_].state = State::Free;
+    playing_ = kNone;
+    playingIdentity_ = 0;
+    loop_ = launchLoop_;
+    launching_ = false;
+    steadyTarget_ = 0;  // the timeline restarts: no old target may mark the new windows stale
+    ++stats_.launches;
+    return player_->stopAll(0, out, max);
+  }
+
   uint32_t windowTicks() const { return window_; }
+  /// Bounded late join (owner ruling 2026-11-05): a transition that misses its boundary may still become audible
+  /// inside that window up to `ticks` later — the caller passes min(24 ticks, 25 ms at the tempo). 0: off.
+  void setLateJoinLimit(uint32_t ticks) { lateLimit_ = ticks; }
 
   /// One grain of compose work (`maxRows` row units): the steady window first, then the transition. False when there
   /// is nothing to do.
@@ -168,10 +230,16 @@ class PlaybackTrack {
   }
 
   /// The transition: cold-start replay, then its window. Late is allowed (the old source keeps playing).
-  bool transitionWorkPending() const { return transActive_ && buf_[trans_].state != State::Complete; }
+  bool transitionWorkPending() const {
+    return transActive_ && (buf_[trans_].state != State::Complete || (late_ && !joinReady_));
+  }
   bool workTransition(uint32_t maxRows) {
     if (!transitionWorkPending()) return false;
     ++transGrains_;
+    if (buf_[trans_].state == State::Complete) {  // late: prepare the join state, bounded per grain
+      scanJoin(maxRows);
+      return true;
+    }
     if (!transComposing_) {
       const typename Cold::Status st = cold_[transComp_].step(*buf_[trans_].w, maxRows);
       if (st == Cold::Status::Done) {
@@ -194,6 +262,7 @@ class PlaybackTrack {
         ++stats_.staleWindows;  // composed only to advance the cursor: discard, compose the next one
       } else {
         complete(trans_);
+        if (late_) beginJoin(lastTick_ + 1);
       }
     }
     return true;
@@ -205,7 +274,11 @@ class PlaybackTrack {
   /// One Clock tick at timeline tick `t`: succession at a boundary, then the window's emits.
   uint8_t tick(uint32_t t, Emit* out, uint8_t max) {
     uint8_t n = 0;
-    if (loop_ != 0 && (t % loop_) % window_ == 0) n = succession(t, out, max);
+    lastTick_ = t;
+    if (loop_ != 0 && (t % loop_) % window_ == 0)
+      n = succession(t, out, max);
+    else if (late_)
+      n = lateStep(t, out, max);
     return static_cast<uint8_t>(n + player_->tick(t, out + n, static_cast<uint8_t>(max - n)));
   }
 
@@ -286,6 +359,8 @@ class PlaybackTrack {
     trans_ = kNone;
     transActive_ = false;
     prepared_ = false;
+    launching_ = false;
+    late_ = false;
     handoffFinal_ = kNoManifest;
   }
 
@@ -293,22 +368,29 @@ class PlaybackTrack {
     // No complete window is ever stale here: a composer that missed a boundary discards every window before its target.
     uint8_t take = kNone;
     bool transition = false;
-    if (transActive_ && buf_[trans_].state == State::Complete && buf_[trans_].start == t) {
+    const bool trans = transActive_ && !launching_;  // a launch waits for its commit
+    if (trans && buf_[trans_].state == State::Complete && buf_[trans_].start == t) {
       take = trans_;
       transition = true;
     } else if (next_ != kNone && buf_[next_].state == State::Complete && buf_[next_].start == t) {
       take = next_;
-      if (transActive_) ++stats_.lateSourceSwitches;
+      if (trans) ++stats_.lateSourceSwitches;
     }
     if (playing_ != kNone) buf_[playing_].state = State::Free;
     playing_ = kNone;
-    if (transActive_ && !transition) {  // missed: counted, and aim at the next boundary
-      ++transBoundaries_;
-      transTarget_ = nextBoundary(t);
+    if (trans && !transition) {
+      if (lateLimit_ != 0 && !late_ && transTarget_ == t) {  // missed by a little, maybe: the late-join window opens
+        late_ = true;
+        lateBoundary_ = t;
+        joinReady_ = false;
+      } else {  // missed: counted, and aim at the next boundary
+        ++transBoundaries_;
+        transTarget_ = nextBoundary(t);
+      }
     }
     if (steady_ != kNone && !transition && take == kNone) steadyTarget_ = nextBoundary(t);
     if (take == kNone) {
-      if (steady_ != kNone || transActive_) ++stats_.underruns;
+      if (steady_ != kNone || trans) ++stats_.underruns;
       return 0;
     }
     if (transition) {
@@ -341,6 +423,144 @@ class PlaybackTrack {
     return n;
   }
 
+  // ---- Bounded late join ----
+  /// The join state for timeline tick `tick`, prepared from the window's start by `scanJoin`.
+  void beginJoin(uint32_t tick) {
+    joinTick_ = tick;
+    scanIdx_ = 0;
+    joinIndex_ = kNoIndex;
+    soundCount_ = 0;
+    eventCount_ = 0;
+    const uint8_t carried = buf_[trans_].w->carryCount;
+    carryAlive_ = carried >= 32 ? 0xFFFFFFFFu : (1u << carried) - 1u;
+    joinReady_ = false;
+  }
+  /// The join point moved on (the Clock passed it first): the scan continues from where it left the old point. O(2T).
+  void extendJoin(uint32_t tick) {
+    const Window& w = *buf_[trans_].w;
+    joinTick_ = tick;
+    if (joinIndex_ != kNoIndex) scanIdx_ = joinIndex_;
+    joinIndex_ = kNoIndex;
+    const uint32_t joinPos = tick - w.cycleBase;
+    for (uint8_t i = 0; i < soundCount_;) {  // notes that ended in the extended span drop out
+      const SpanEntry& e = w.entries[sound_[i]];
+      if (e.length != kOpenLength && e.tick + e.length <= joinPos)
+        sound_[i] = sound_[--soundCount_];
+      else
+        ++i;
+    }
+    joinReady_ = false;
+  }
+  /// One grain of join preparation: at most `maxRows` window entries before the join point.
+  void scanJoin(uint32_t maxRows) {
+    const Window& w = *buf_[trans_].w;
+    const uint32_t joinPos = joinTick_ - w.cycleBase;
+    for (uint32_t k = 0; k < maxRows && scanIdx_ < w.count; ++k, ++scanIdx_) {
+      const SpanEntry& e = w.entries[scanIdx_];
+      if (e.tick > joinPos) break;
+      if (e.terminal) {  // an end in the missed span (a TERMINAL may sit one tick late in the entry order)
+        if (e.tick < joinPos) endJoinInstance(w, e.noteId, e.runKey);
+        continue;
+      }
+      if (e.tick == joinPos) {  // played normally at the join tick
+        if (joinIndex_ == kNoIndex) joinIndex_ = scanIdx_;
+        continue;
+      }
+      const uint8_t type = e.status & 0xF0;
+      if (type == 0x90 && e.data2 != 0) {
+        if (e.length != kOpenLength && e.tick + e.length <= joinPos) continue;  // wholly missed: not emitted
+        if (soundCount_ < 2 * T)
+          sound_[soundCount_++] = scanIdx_;
+        else
+          ++stats_.joinOverflow;
+      } else if (type != 0x80 && type != 0x90 && controlClass(e.status, e.data1) != ControlClass::Continuous) {
+        if (eventCount_ < kJoinEvents)  // essential state (sustain, program, ...) of the missed span is kept
+          events_[eventCount_++] = scanIdx_;
+        else
+          ++stats_.joinOverflow;
+      }
+    }
+    if (scanIdx_ >= w.count || w.entries[scanIdx_].tick > joinPos) {
+      if (joinIndex_ == kNoIndex) joinIndex_ = scanIdx_;
+      joinReady_ = true;
+    }
+  }
+  void endJoinInstance(const Window& w, uint32_t noteId, uint16_t runKey) {
+    for (uint8_t i = 0; i < soundCount_; ++i) {
+      const SpanEntry& s = w.entries[sound_[i]];
+      if (s.noteId == noteId && runIdOf(s.runKey) == runIdOf(runKey)) {
+        sound_[i] = sound_[--soundCount_];
+        return;
+      }
+    }
+    for (uint8_t k = 0; k < w.carryCount && k < 32; ++k)
+      if (w.carry[k].noteId == noteId && runIdOf(w.carry[k].runKey) == runIdOf(runKey)) carryAlive_ &= ~(1u << k);
+  }
+  /// Between boundaries while late: adopt the prepared join at its tick, or give up past the limit.
+  uint8_t lateStep(uint32_t t, Emit* out, uint8_t max) {
+    if (!transActive_) {
+      late_ = false;
+      return 0;
+    }
+    if (t > lateBoundary_ + lateLimit_) {  // the boundary rule: counted, aim at the next boundary
+      late_ = false;
+      ++stats_.lateJoinsMissed;
+      ++transBoundaries_;
+      transTarget_ = nextBoundary(t);
+      if (buf_[trans_].state == State::Complete) buf_[trans_].state = State::Filling;  // compose on to that boundary
+      return 0;
+    }
+    if (buf_[trans_].state != State::Complete || !joinReady_) return 0;
+    if (joinTick_ != t) {
+      if (joinTick_ < t) extendJoin(t + 1);
+      return 0;
+    }
+    return adoptLate(t, out, max);
+  }
+  uint8_t adoptLate(uint32_t t, Emit* out, uint8_t max) {
+    Window& w = *buf_[trans_].w;
+    typename TerminalScheduler<T>::Carry keep[3 * T];
+    uint8_t nKeep = 0;
+    for (uint8_t k = 0; k < w.carryCount && k < 32; ++k)
+      if (carryAlive_ & (1u << k)) keep[nKeep++] = {w.carry[k].noteId, runIdOf(w.carry[k].runKey), kOpenEnd};
+    for (uint8_t i = 0; i < soundCount_; ++i) {
+      const SpanEntry& e = w.entries[sound_[i]];
+      keep[nKeep++] = {e.noteId, runIdOf(e.runKey),
+                       e.length == kOpenLength ? kOpenEnd : w.cycleBase + e.tick + e.length};
+    }
+    if (steady_ != kNone) cold_[steady_].release();
+    if (next_ != kNone) buf_[next_].state = State::Free;
+    if (playing_ != kNone) buf_[playing_].state = State::Free;
+    steady_ = transComp_;
+    next_ = kNone;
+    playing_ = trans_;
+    buf_[playing_].state = State::Playing;
+    playingIdentity_ = buf_[playing_].identity;
+    trans_ = kNone;
+    transActive_ = false;
+    late_ = false;
+    steadyTarget_ = nextBoundary(t);
+    ++stats_.switches;
+    ++stats_.lateJoins;
+    stats_.lastLateTicks = t - lateBoundary_;
+    if (stats_.lastLateTicks > stats_.maxLateTicks) stats_.maxLateTicks = stats_.lastLateTicks;
+    stats_.lastLatencyTicks = t - selectTick_;
+    stats_.lastTransitionGrains = transGrains_;
+    stats_.lastBoundaries = transBoundaries_ + 1;
+    if (stats_.lastBoundaries > stats_.maxBoundaries) stats_.maxBoundaries = stats_.lastBoundaries;
+    if (stats_.lastLatencyTicks > stats_.maxLatencyTicks) stats_.maxLatencyTicks = stats_.lastLatencyTicks;
+    const uint8_t n =
+        player_->beginWindowLate(w, joinIndex_, keep, nKeep, sound_, soundCount_, events_, eventCount_, t, out, max);
+    if (handoffFinal_ != kNoManifest) {
+      cold_[steady_].release();
+      steady_ = kNone;
+      const ManifestId f = handoffFinal_;
+      handoffFinal_ = kNoManifest;
+      select(handoffSlot_, f, t);
+    }
+    return n;
+  }
+
   Composer* comp_[2];
   Cold cold_[2];
   Buffer buf_[3];
@@ -355,6 +575,19 @@ class PlaybackTrack {
   ManifestId wanted_ = kNoManifest;
   uint32_t wantedIdentity_ = 0;
   bool transActive_ = false, transComposing_ = false, prepared_ = false;
+  bool launching_ = false;   // a launch composes; succession ignores it until `commitLaunch`
+  // Bounded late join.
+  static constexpr uint16_t kNoIndex = 0xFFFF;
+  static constexpr uint8_t kJoinEvents = 16;
+  uint32_t lateLimit_ = 0, lateBoundary_ = 0, lastTick_ = 0, joinTick_ = 0;
+  bool late_ = false, joinReady_ = false;
+  uint16_t scanIdx_ = 0, joinIndex_ = kNoIndex;
+  uint16_t sound_[2 * T];  // START entries begun before the join and sounding at it
+  uint8_t soundCount_ = 0;
+  uint32_t carryAlive_ = 0;  // bit k: the window's carried instance k still sounds at the join
+  uint16_t events_[kJoinEvents];
+  uint8_t eventCount_ = 0;
+  uint32_t launchLoop_ = 0;
   uint8_t handoffSlot_ = 0;
   ManifestId handoffFinal_ = kNoManifest;  // selected once the prepared window it follows is adopted
   uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0, transBoundaries_ = 0;

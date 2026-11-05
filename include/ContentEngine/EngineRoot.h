@@ -36,6 +36,7 @@
 #include "ContentEngine/PlaybackTrack.h"
 #include "ContentEngine/ReclaimJob.h"
 #include "ContentEngine/SlotTransport.h"
+#include "ContentEngine/TrackControl.h"
 #include "ContentEngine/WorkerScheduler.h"
 #include "ContentEngine/Writer.h"
 
@@ -68,6 +69,12 @@ using ProductionEmit = ProductionPlayer::Emit;
 using ProductionOutput =
     ClockOutput<ProductionHub, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack, /*ports*/ 3>;
 constexpr uint8_t kPortDin = 0, kPortUsbDevice = 1, kPortUsbHost = 2;
+using ProductionControl =
+    TrackControl<ProductionTransport, ProductionOutput, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack>;
+constexpr uint32_t kTicksPerBar = 768;  // 4/4 at 192 PPQN (the runtime value comes from the time signature)
+constexpr uint32_t kLaunchGridTicks = 48;  // a 16th
+constexpr uint32_t kLateJoinTicks = 24;     // owner ruling 2026-11-05: a late join at most a 32nd ...
+constexpr uint32_t kLateJoinUs = 25000;     // ... and at most 25 ms after the boundary
 
 /// EXTMEM.
 struct EnginePsram {
@@ -102,6 +109,7 @@ struct EngineRam2 {
   ProductionTransport transport;
   ProductionHub hub;
   ProductionOutput output;
+  ProductionControl control;
 };
 
 // Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
@@ -111,7 +119,8 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6796508u;
-constexpr size_t kRam2Budget = 144408u;  // measured (E9.3): + 64 B job boundaries, + 1,048 B output keys
+constexpr size_t kRam2Budget = 146032u;  // measured (E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+                                          // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
 static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit plan § 4.2 (ARM layout)");
@@ -165,6 +174,7 @@ class EngineRoot {
     r_->reclaim.bind(r_->runs, p_->pool);
     r_->sweep = ProductionSweep{};
     r_->transport.init(p_->pool, r_->runs, r_->manifests, r_->history, r_->writer, tracks);
+    r_->control.init(r_->transport, r_->output, kTicksPerBar, kLaunchGridTicks);
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -179,8 +189,13 @@ class EngineRoot {
     r_->reclaim.submitIfPending(r_->scheduler);
     if (!sweeping_) startSweep(nowUs);
   }
-  /// The Clock tick `clock` at `nowUs`: every track plays; its events go to the hub on its ports.
+  /// The Clock tick `clock` at `nowUs`: the gestures due (E9.4), then every track plays; its events go to the hub on
+  /// its ports.
   void clockTick(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    r_->control.beforeTick(clock, nowUs, usPerTick);
+    // Bounded late join (owner ruling 2026-11-05): the earlier of 24 ticks and 25 ms at this tempo.
+    const uint32_t lateTicks = usPerTick == 0 ? 0 : (kLateJoinUs / usPerTick < kLateJoinTicks ? kLateJoinUs / usPerTick : kLateJoinTicks);
+    for (uint8_t t = 0; t < kTrackCount; ++t) r_->tracks[t].setLateJoinLimit(lateTicks);
     ProductionEmit buf[kTickEmits];
     for (uint8_t t = 0; t < kTrackCount; ++t)
       r_->output.route(buf, r_->transport.tick(t, clock, buf, kTickEmits), nowUs, usPerTick);
@@ -234,6 +249,7 @@ class EngineRoot {
   const ProductionTiles& tiles() const { return p_->tiles; }
   const ProductionHub& hub() const { return r_->hub; }
   ProductionOutput& output() { return r_->output; }
+  ProductionControl& control() { return r_->control; }
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }
   const ProductionPool& pool() const { return p_->pool; }
   const ProductionRuns& runs() const { return r_->runs; }
@@ -268,6 +284,7 @@ class EngineRoot {
     out(Region::Ram2, "transport", sizeof(ProductionTransport));
     out(Region::Ram2, "hub", sizeof(ProductionHub));
     out(Region::Ram2, "output_keys", sizeof(ProductionOutput));
+    out(Region::Ram2, "control", sizeof(ProductionControl));
     out(Region::Ram2, "total", sizeof(EngineRam2));
   }
 
@@ -284,8 +301,8 @@ class EngineRoot {
     for (uint8_t k = 0; k < kTrackCount; ++k) {
       const uint8_t t = static_cast<uint8_t>((sweepNext_ + k) % kTrackCount);
       const uint8_t slot = r_->transport.playingSlot(t);
-      if (slot == ProductionTransport::kNoSlot) continue;
-      const ManifestId m = r_->history.current(slot);
+      if (slot == ProductionTransport::kNoSlot || !r_->transport.playing(t)) continue;
+      const ManifestId m = r_->transport.contentOf(slot);  // a cleared slot's empty state is never swept
       if (m == kNoManifest || !sealed(m) || p_->checkpoints.holds(slot, r_->manifests.manifest(m).identity)) continue;
       uint8_t id;
       if (!r_->scheduler.submit(JobSpec{JobClass::Background, nowUs, kSweepGrains, &sweepStep, this}, id)) return;

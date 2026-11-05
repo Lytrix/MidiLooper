@@ -1,3 +1,11 @@
+**2026-11-05 — Fixed-memory engine: E9.4 gestures, input and bounded late join (owner decisions).**
+- `TrackControl` keeps the legacy gesture timing: queued Record on the bar or the playing slot's loop start (waiting for
+  the one writer), queued Stop on the bar, slot switches on the grid or at the loop end (window 0 composed ahead, so
+  the new slot's downbeat lands on the commit tick), undoable Clear, mute / solo, transport stop / start, live thru.
+- Owner: one sounding slot per track for now (layering and jam later); bounded late join for every transition —
+  within min(24 ticks, 25 ms), notes still sounding start late with their end, missed short notes are skipped, the
+  Clock only adopts what workers prepared.
+
 **2026-11-05 — Fixed-memory engine: E9.3 Clock path to the MIDI ports.**
 - Each Clock tick now plays every track into the output hub and out of its three ports (DIN, USB device, USB host),
   with per-track routing, no stuck notes on a routing change or Undo, and re-strikes kept apart. On the Teensy a tick
