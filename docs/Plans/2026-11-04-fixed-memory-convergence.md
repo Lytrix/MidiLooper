@@ -352,7 +352,7 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 E9.2 measurement on the Teensy: the engine's RAM2 regions (`EngineRam2`: tables, writer, edit writer, 8 playback
 tracks with their terminal schedulers, scheduler and jobs, transport, output hub) are 143,360 B (`kRam2Budget`) against
 the 143,220 B of additions above (+140 B: the playback tracks and transport, which the list did not itemise, net of a
-smaller run table). The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
+smaller run table). E9.3 adds the Clock path's output keys (1,048 B) and job boundaries (64 B): 144,408 B. The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table

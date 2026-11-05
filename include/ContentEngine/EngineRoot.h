@@ -13,8 +13,11 @@
 // * Checkpoint sweeps (background, one at a time): each playing track's slot current, once, when the table holds no
 //   set for it and every run it lists has sealed — never a provisional source (E9.1b) or a state still waiting for
 //   its completion (E9.1), whose rows may still grow under their identity.
-// Display tiles, the edit writer and the output hub are placed and initialised here; their jobs are wired by E9.3,
-// E9.5 and E9.6. No allocation.
+// * Clock path (E9.3, plan § 9.2): `clockTick` plays every track and routes its events into the output hub on the
+//   track's ports (`ClockOutput`); gestures that end notes (`stop`, `undo`, `redo`, a live NoteOn) route theirs too.
+//   The caller puts each port's `transmit` result on the wire: port 0 DIN, 1 USB device, 2 USB host.
+// Display tiles and the edit writer are placed and initialised here; their jobs are wired by E9.5 and E9.6.
+// No allocation.
 
 #pragma once
 
@@ -22,6 +25,7 @@
 #include <cstdint>
 
 #include "ContentEngine/CheckpointTable.h"
+#include "ContentEngine/ClockOutput.h"
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/DisplayTiles.h"
 #include "ContentEngine/EditWriter.h"
@@ -60,6 +64,10 @@ using ProductionTiles = TileStore<>;
 using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = OutputHub<>;
+using ProductionEmit = ProductionPlayer::Emit;
+using ProductionOutput =
+    ClockOutput<ProductionHub, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack, /*ports*/ 3>;
+constexpr uint8_t kPortDin = 0, kPortUsbDevice = 1, kPortUsbHost = 2;
 
 /// EXTMEM.
 struct EnginePsram {
@@ -93,6 +101,7 @@ struct EngineRam2 {
   ProductionSweep sweep;
   ProductionTransport transport;
   ProductionHub hub;
+  ProductionOutput output;
 };
 
 // Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
@@ -102,7 +111,7 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6796508u;
-constexpr size_t kRam2Budget = 143360u;  // measured 143,296 + 64 B: each playback job's boundary (diagnostic)
+constexpr size_t kRam2Budget = 144408u;  // measured (E9.3): + 64 B job boundaries, + 1,048 B output keys
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
 static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit plan § 4.2 (ARM layout)");
@@ -135,6 +144,10 @@ class EngineRoot {
     p_->tiles.init();
     p_->overlay.init();
     r_->hub.init();
+    r_->hub.configure(kPortDin, kDinMessageMicros);
+    r_->hub.configure(kPortUsbDevice, kUsbMessageMicros);
+    r_->hub.configure(kPortUsbHost, kUsbMessageMicros);
+    r_->output.init(r_->hub);
     ProductionTrack* tracks[kTrackCount];
     for (uint8_t t = 0; t < kTrackCount; ++t) {
       p_->composers[t][0].init(p_->pool, r_->runs, &r_->index);
@@ -166,6 +179,49 @@ class EngineRoot {
     r_->reclaim.submitIfPending(r_->scheduler);
     if (!sweeping_) startSweep(nowUs);
   }
+  /// The Clock tick `clock` at `nowUs`: every track plays; its events go to the hub on its ports.
+  void clockTick(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    ProductionEmit buf[kTickEmits];
+    for (uint8_t t = 0; t < kTrackCount; ++t)
+      r_->output.route(buf, r_->transport.tick(t, clock, buf, kTickEmits), nowUs, usPerTick);
+  }
+  /// Port `port`'s messages due at `nowUs` (at most `max`), in order, for the wire.
+  uint8_t transmit(uint8_t port, uint32_t nowUs, ProductionHub::Sent* out, uint8_t max) {
+    return r_->hub.transmit(nowUs, port, out, max);
+  }
+
+  /// Gestures whose NoteOffs reach the ports (the transport's own results otherwise).
+  ProductionTransport::Result stop(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    ProductionEmit buf[Config::kMaxSoundingPerTrack];
+    uint8_t n;
+    const auto r = r_->transport.stop(clock, buf, Config::kMaxSoundingPerTrack, n);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+  ProductionTransport::Result undo(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    ProductionEmit buf[kGestureEmits];
+    uint8_t n;
+    const auto r = r_->transport.undo(slot, clock, buf, kGestureEmits, n);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+  ProductionTransport::Result redo(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    ProductionEmit buf[kGestureEmits];
+    uint8_t n;
+    const auto r = r_->transport.redo(slot, clock, buf, kGestureEmits, n);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+  /// A live NoteOn on the writing track (the played note itself goes out through the input path, E9.4).
+  ProductionTransport::Result noteOn(uint32_t clock, uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t nowUs,
+                                     uint32_t usPerTick) {
+    ProductionEmit buf[Config::kMaxSoundingPerTrack];
+    uint8_t n;
+    const auto r = r_->transport.noteOn(clock, channel, pitch, velocity, buf, Config::kMaxSoundingPerTrack, n);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+
   /// One grain; false when nothing is pending.
   bool runGrain(uint32_t nowUs) { return r_->scheduler.runGrain(nowUs) != ProductionScheduler::kNoJob; }
 
@@ -177,6 +233,7 @@ class EngineRoot {
   const ProductionEditWriter& editWriter() const { return r_->editWriter; }
   const ProductionTiles& tiles() const { return p_->tiles; }
   const ProductionHub& hub() const { return r_->hub; }
+  ProductionOutput& output() { return r_->output; }
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }
   const ProductionPool& pool() const { return p_->pool; }
   const ProductionRuns& runs() const { return r_->runs; }
@@ -210,6 +267,7 @@ class EngineRoot {
     out(Region::Ram2, "jobs", sizeof(ProductionJobs) + sizeof(ProductionReclaim) + sizeof(ProductionSweep));
     out(Region::Ram2, "transport", sizeof(ProductionTransport));
     out(Region::Ram2, "hub", sizeof(ProductionHub));
+    out(Region::Ram2, "output_keys", sizeof(ProductionOutput));
     out(Region::Ram2, "total", sizeof(EngineRam2));
   }
 
@@ -249,6 +307,8 @@ class EngineRoot {
     return JobStep::Done;
   }
 
+  static constexpr uint8_t kTickEmits = 64;  // per track per tick (the player spills the rest to the next tick)
+  static constexpr uint8_t kGestureEmits = kTrackCount * Config::kMaxSoundingPerTrack;  // every track playing a slot
   static constexpr uint32_t kSweepGrains = 6000;  // two loops of a 64-bar take at 128 row units (background: no deadline)
 
   EnginePsram* p_ = nullptr;

@@ -70,11 +70,17 @@ struct Live {
   uint32_t on, off;
   uint8_t pitch;
 };
+struct On {
+  uint32_t local;  // the track-local tick it went out on
+  uint8_t pitch;
+};
 struct Driver {
   uint32_t clock = 0;
   uint32_t simUs = 0;        // host: simulated time, each grain costs g
   uint32_t maxGrainUs = 0;   // device: measured
-  std::vector<Emit> out[2];  // per track, ticks track-local
+  uint32_t maxTickUs = 0;    // device: `clockTick` (both tracks into the hub)
+  uint32_t maxDrainUs = 0;   // device: one pass of the three ports' `transmit`
+  std::vector<On> out[2];    // NoteOns on the USB device port, by channel = track + 1
   uint32_t accepted = 0;
   uint32_t incompleteSeen = 0;  // ticks at which a playing current still waited for its completion
 };
@@ -98,7 +104,6 @@ static uint32_t now() {
 /// Clock ticks up to `to`: the engine's pass (jobs, then grains for the rest of the tick period), each track's tick,
 /// then the live input landing on that tick.
 static void run(uint32_t to, const std::vector<Live>& live = {}) {
-  Emit buf[64];
   for (; gD.clock < to; ++gD.clock) {
     const uint32_t tickStart = now();
     gE.submitJobs(gD.clock, tickStart, kUsPerTick);
@@ -125,9 +130,25 @@ static void run(uint32_t to, const std::vector<Live>& live = {}) {
     while (realMicros() - tickStart < kUsPerTick) {
     }
 #endif
+    const uint32_t c0 = realMicros();
+    gE.clockTick(gD.clock, now(), kUsPerTick);  // the Clock path: tracks -> hub
+    const uint32_t tickUs = realMicros() - c0;
+    if (tickUs > gD.maxTickUs) gD.maxTickUs = tickUs;
+    for (uint32_t step = 0; step < kUsPerTick; step += 125) {  // the ports drain through the tick
+      ProductionHub::Sent sent[16];
+      const uint32_t d0 = realMicros();
+      for (uint8_t p = 0; p < 3; ++p) {
+        const uint8_t n = gE.transmit(p, now() + step, sent, 16);
+        for (uint8_t i = 0; p == kPortUsbDevice && i < n; ++i)
+          if ((sent[i].status & 0xF0) == 0x90) {
+            const uint8_t t = sent[i].status & 0x0F;
+            gD.out[t].push_back({gD.clock - gE.transport().origin(t), sent[i].data1});
+          }
+      }
+      const uint32_t drainUs = realMicros() - d0;
+      if (drainUs > gD.maxDrainUs) gD.maxDrainUs = drainUs;
+    }
     for (uint8_t t = 0; t < 2; ++t) {
-      const uint8_t n = gE.transport().tick(t, gD.clock, buf, 64);
-      gD.out[t].insert(gD.out[t].end(), buf, buf + n);
       // No checkpoint set is ever built for a state whose runs may still grow under its identity.
       const uint8_t slot = gE.transport().playingSlot(t);
       const ManifestId m = slot == Transport::kNoSlot ? kNoManifest : gE.history().current(slot);
@@ -137,26 +158,19 @@ static void run(uint32_t to, const std::vector<Live>& live = {}) {
       }
     }
     for (const Live& l : live) {
-      if (l.off == gD.clock) gE.transport().noteOff(gD.clock, 1, l.pitch, 0);
-      if (l.on == gD.clock) {
-        uint8_t k;
-        if (gE.transport().noteOn(gD.clock, 1, l.pitch, 100, buf, 64, k) == R::Ok) ++gD.accepted;
-        gD.out[l.track].insert(gD.out[l.track].end(), buf, buf + k);
-      }
+      const uint8_t channel = static_cast<uint8_t>(l.track + 1);
+      if (l.off == gD.clock) gE.transport().noteOff(gD.clock, channel, l.pitch, 0);
+      if (l.on == gD.clock && gE.noteOn(gD.clock, channel, l.pitch, 100, now(), kUsPerTick) == R::Ok) ++gD.accepted;
     }
   }
 }
-static void stop() {
-  Emit buf[Config::kMaxSoundingPerTrack];
-  uint8_t n;
-  TEST_ASSERT_EQUAL(R::Ok, gE.transport().stop(gD.clock, buf, Config::kMaxSoundingPerTrack, n));
-}
+static void stop() { TEST_ASSERT_EQUAL(R::Ok, gE.stop(gD.clock, now(), kUsPerTick)); }
 
 /// (position, pitch) of every NoteOn track `t` sent in its local cycle `cycle` of `loop`.
 static std::set<std::pair<uint32_t, uint8_t>> cycleOns(uint8_t t, uint32_t loop, uint32_t cycle) {
   std::set<std::pair<uint32_t, uint8_t>> s;
-  for (const Emit& e : gD.out[t])
-    if (e.cls == 1 && e.tick >= cycle * loop && e.tick < (cycle + 1) * loop) s.insert({e.tick - cycle * loop, e.pitch});
+  for (const On& e : gD.out[t])
+    if (e.local >= cycle * loop && e.local < (cycle + 1) * loop) s.insert({e.local - cycle * loop, e.pitch});
   return s;
 }
 static std::vector<Live> notes(uint8_t track, uint32_t from, uint32_t span, uint32_t every, uint8_t pitch0, uint32_t len) {
@@ -246,15 +260,16 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
 
   // Workers: no hard deadline missed; a checkpoint set for each track's current.
   const auto& rep = gE.scheduler().report();
-  char line[200];
+  char line[240];
   snprintf(line, sizeof line,
            "#CAP,ENGINE_RUN,grains=%u,hard=%u,transition=%u,background=%u,missed=%u,overruns=%u,max_grain_us=%u,"
-           "sweeps=%u/%u",
+           "sweeps=%u/%u,max_tick_us=%u,max_drain_us=%u",
            static_cast<unsigned>(rep.grains), static_cast<unsigned>(rep.hardGrains),
            static_cast<unsigned>(rep.transitionGrains), static_cast<unsigned>(rep.backgroundGrains),
            static_cast<unsigned>(rep.missedDeadlines), static_cast<unsigned>(rep.overruns),
            static_cast<unsigned>(gD.maxGrainUs), static_cast<unsigned>(gE.stats().sweepsDone),
-           static_cast<unsigned>(gE.stats().sweepsStarted));
+           static_cast<unsigned>(gE.stats().sweepsStarted), static_cast<unsigned>(gD.maxTickUs),
+           static_cast<unsigned>(gD.maxDrainUs));
   TEST_MESSAGE(line);
   TEST_ASSERT_EQUAL_UINT32(0, rep.missedDeadlines);
   TEST_ASSERT_TRUE(gE.stats().sweepsStarted <= 8);  // each current once (superseded ones included), never in a loop

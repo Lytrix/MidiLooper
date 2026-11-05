@@ -84,7 +84,12 @@ class WindowPlayer {
     uint32_t noteId;
     uint16_t runKey;
     uint8_t channel;  // 1..16
-    uint8_t pitch;
+    uint8_t pitch;    // data1 for other events
+    // E9.3, what physical output needs:
+    uint8_t status;    // the full status byte (type | channel - 1)
+    uint8_t data2;     // velocity, controller value, ...
+    uint8_t track;     // set by the transport (the player does not know its track)
+    uint32_t endTick;  // a NoteOn's scheduled end (kOpenEnd: open); a NoteOff's own tick
   };
 
   void init(Scheduler& s) {
@@ -152,9 +157,11 @@ class WindowPlayer {
         if (sched_->start(t, e.noteId, runIdOf(e.runKey), orderOf(e.runKey), static_cast<uint8_t>((e.status & 0x0F) + 1),
                           e.data1, end) == StartResult::Started &&
             n < max)
-          out[n++] = Emit{t, 1, e.noteId, e.runKey, static_cast<uint8_t>((e.status & 0x0F) + 1), e.data1};
+          out[n++] = Emit{t, 1, e.noteId, e.runKey, static_cast<uint8_t>((e.status & 0x0F) + 1), e.data1,
+                          static_cast<uint8_t>(0x90 | (e.status & 0x0F)), e.data2, 0, end};
       } else if (n < max) {
-        out[n++] = Emit{t, 2, e.noteId, e.runKey, static_cast<uint8_t>((e.status & 0x0F) + 1), e.data1};
+        out[n++] = Emit{t, 2, e.noteId, e.runKey, static_cast<uint8_t>((e.status & 0x0F) + 1), e.data1, e.status,
+                        e.data2, 0, kOpenEnd};
       }
     }
     return n;
@@ -189,7 +196,8 @@ class WindowPlayer {
 
  private:
   static Emit fromOut(const typename Scheduler::Out& o) {
-    return Emit{o.tick, 0, o.noteId, o.runKey, o.channel, o.pitch};
+    return Emit{o.tick, 0, o.noteId, o.runKey, o.channel, o.pitch,
+                static_cast<uint8_t>(0x80 | ((o.channel - 1) & 0x0F)), 0, 0, o.tick};
   }
 
   Scheduler* sched_;

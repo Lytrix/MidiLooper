@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E9.3 Clock path to the MIDI ports.**
+- Each Clock tick now plays every track into the output hub and out of its three ports (DIN, USB device, USB host),
+  with per-track routing, no stuck notes on a routing change or Undo, and re-strikes kept apart. On the Teensy a tick
+  for two tracks costs at most 11 µs. The firmware's `ClockManager` and MIDI senders switch over at E9.8.
+
 **2026-11-05 — Fixed-memory engine: E9.2 engine root, placed and measured on the Teensy (owner: two sweep windows).**
 - The whole engine now lives in two placed regions with one `init()` (1.9 ms on the Teensy over unzeroed memory), a
   memory census and budget checks, and a main-loop job service: two tracks record, overdub and play exactly under the

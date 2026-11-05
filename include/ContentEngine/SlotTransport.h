@@ -157,7 +157,8 @@ class SlotTransport {
     if (mode_ == Mode::Idle) return Result::NotWriting;
     if (writer_->noteOn(clock, channel, pitch, velocity) != WriterResult::Ok) return Result::Refused;
     ++held_[pitch & 0x7F];
-    if (mode_ == Mode::Overdubbing) emitted = tracks_[wTrack_]->liveNoteOn(pitch, local(wTrack_, clock), out, max);
+    if (mode_ == Mode::Overdubbing)
+      emitted = stamp(wTrack_, out, tracks_[wTrack_]->liveNoteOn(pitch, local(wTrack_, clock), out, max));
     return Result::Ok;
   }
   Result noteOff(uint32_t clock, uint8_t channel, uint8_t pitch, uint8_t velocity) {
@@ -176,7 +177,7 @@ class SlotTransport {
   /// The Clock tick for `track`: the track plays (adopting a prepared window at a boundary), then the writing track
   /// wraps at its loop end, takes the provisional source before it, or prepares a Record take's window 0.
   uint8_t tick(uint8_t track, uint32_t clock, Emit* out, uint8_t max) {
-    uint8_t n = tracks_[track]->tick(local(track, clock), out, max);
+    uint8_t n = stamp(track, out, tracks_[track]->tick(local(track, clock), out, max));
     if (track != wTrack_) return n;
     if (mode_ == Mode::Overdubbing) {
       const uint32_t pos = local(track, clock) % loop_;
@@ -212,6 +213,11 @@ class SlotTransport {
 
  private:
   uint32_t local(uint8_t track, uint32_t clock) const { return clock - origin_[track]; }
+  /// Emits carry their track (E9.3): the player does not know it.
+  static uint8_t stamp(uint8_t track, Emit* out, uint8_t n) {
+    for (uint8_t i = 0; i < n; ++i) out[i].track = track;
+    return n;
+  }
 
   void release(uint8_t pitch) {
     if (held_[pitch & 0x7F] == 0) return;
@@ -243,7 +249,8 @@ class SlotTransport {
     for (uint8_t t = 0; t < Tracks; ++t) {
       if (slot_[t] != slot) continue;
       if (m == kNoManifest)
-        n = static_cast<uint8_t>(n + tracks_[t]->stop(local(t, clock), out + n, static_cast<uint8_t>(max - n)));
+        n = static_cast<uint8_t>(
+            n + stamp(t, out + n, tracks_[t]->stop(local(t, clock), out + n, static_cast<uint8_t>(max - n))));
       else
         tracks_[t]->select(slot, m, played || local(t, clock) == 0 ? local(t, clock) : local(t, clock) - 1);
     }

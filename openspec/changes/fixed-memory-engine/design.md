@@ -1423,3 +1423,34 @@ no state awaiting completion is ever swept, a set for each playing current, the 
 deadline or underrun, no allocation after `init()` (host). Teensy: longest grain 342 µs, 3 / 3 sweeps. Mutations
 caught (12): cold-start reset, prepare warm-up, unsealed sweep, repeated sweep, shared timeline, sweep reset, no
 reclaim, no sweeps, sweep never ending, edit-writer / tile / hub init.
+
+## E9.3 — the Clock path to the ports (plan § 9.2, as built)
+
+`EngineRoot::clockTick(clock, nowUs, usPerTick)` plays every track (`SlotTransport::tick`) and routes its events
+through `ClockOutput` (`include/ContentEngine/ClockOutput.h`) into the `OutputHub`; the caller puts each port's
+`transmit(port, nowUs, …)` on the wire (port 0 DIN at 960 µs per message, 1 USB device and 2 USB host at 125 µs).
+- **Events:** a player emit now carries what output needs — the full status byte, data2 (velocity, controller value),
+  the track (stamped by the transport; the player does not know it) and a NoteOn's scheduled end.
+- **Keys:** the hub keys a logical note by 32 bits; a track's sounding instance is (noteId, run). Each track has T = 16
+  key slots: a NoteOn takes a free slot and a new 16-bit generation, its NoteOff frees it; key = generation | track |
+  slot. A re-strike of one instance (NoteOff and NoteOn on one tick: Q-LEN-1, or an edit replacement keeping its id) is
+  a new note in the hub instead of being swallowed by the old note's pending NoteOff; two instances sharing an id in
+  different runs end separately. A 17th instance is refused (counted); its NoteOff is dropped (counted).
+- **Routing:** NoteOns and controllers go to the track's port mask (default all three; C.3 sets it per track); NoteOffs
+  go to every port, so moving a track while a note sounds never strands it.
+- **Ends:** a NoteOn's scheduled end (microseconds) reaches the hub for expired-note cancellation (C.7). In this model a
+  NoteOff is routed on its end tick and cancels an unsent NoteOn anyway, so the end only matters when a NoteOff is late
+  (a spill); the mutation that drops it is equivalent here.
+- **Gestures:** `stop`, `undo`, `redo` and a live `noteOn` on the root route the NoteOffs they cause (an Undo to the
+  empty slot, live occupancy ending a composed note) to the ports.
+
+Tests (`test_content_engine_clock_path`, 5, production root): every port carries the take — notes with velocities each
+cycle, controllers (a continuous lane does not resend an unchanged value, C.4; CC64 every cycle), USB in its tick, DIN
+spaced by 960 µs; Undo mid-note silences every port; routing: two tracks on different ports, a track moved while a
+note sounds, an Undo mid-note — no stuck note, nothing on the wrong port; a live note ends the composed note on every
+port; a re-strike is a new note, shared ids in different runs end separately, the key bound; a congested DIN port
+cancels notes whose end passed while USB keeps up; no allocation. The engine-root test now reads its content off the
+USB port. Teensy (`dac84427…`): `clockTick` ≤ 11 µs for two tracks, a drain pass ≤ 9 µs, longest grain 347 µs; RAM2
+144,408 B (`kRam2Budget`: + 1,048 B output keys, + 64 B job boundaries). Mutations caught: 12 of 13 (no generation,
+masked NoteOff, unmasked NoteOn / controller, close ignoring the run, unstamped tick / stop, unrouted Undo / live NoteOn,
+velocity / status lost, DIN timing); the scheduled-end mutation is equivalent (above).
