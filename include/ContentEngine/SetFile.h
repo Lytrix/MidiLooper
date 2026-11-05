@@ -401,9 +401,10 @@ class LoadJob {
 };
 
 /// V1 import (E8.2; owner decision 2026-11-05: exact current content only). A V1 slot's current content — its resolved
-/// notes and events, as the old firmware plays them (LSV1 `LoopSnapshot`, or the legacy loader's resolution) — becomes
-/// one record take, one manifest and the slot's only history state; no undo history from before the import. Input
-/// comes in tick order (`addNote` by start, `addEvent` by tick, merged by the caller); a note whose end is before its
+/// notes and events, as the old firmware plays them (LSV1 `LoopSnapshot`) — becomes one take, one manifest and the
+/// slot's only history state; no undo history from before the import. Notes come in start order and events in tick
+/// order, each stream on its own (E9.7b: events take a run of their own, listed first in the manifest so an event on a
+/// note's tick comes before it; a file stores all notes, then all events); a note whose end is before its
 /// start is held across the loop end. Rows: NoteOffs due at or before a NoteOn's tick first (DEC-244), held notes'
 /// NoteOffs in the wrap band. Notes get fresh ids. Admission and failure behave like `LoadJob`: every row is reserved
 /// at `start` or the import is refused by name; any failure releases everything. Within one take same-pitch overlaps do
@@ -426,7 +427,8 @@ class ResolvedImport {
     ids_ = &ids;
     slot_ = slot;
     loop_ = loopLength;
-    last_ = 0;
+    last_ = lastEvent_ = 0;
+    eventRun_ = kNoRun;
     held_ = 0;
     ManifestId probe[1];
     int16_t cur;
@@ -435,7 +437,11 @@ class ResolvedImport {
     if (loopLength == 0 || manifests.freeCount() == 0) return status_ = Status::DeniedCapacity;
     run_ = runs.allocate(slot, RunKind::kRecord);
     if (run_ == kNoRun) return status_ = Status::DeniedCapacity;
-    if (res.reserve(run_, 2 * notes + events) != Admission::Ok) return fail(Status::DeniedCapacity);
+    if (res.reserve(run_, 2 * notes) != Admission::Ok) return fail(Status::DeniedCapacity);
+    if (events != 0) {  // E9.7b: events take their own run, so notes and events each arrive in their own tick order
+      eventRun_ = runs.allocate(slot, RunKind::kRecord);
+      if (eventRun_ == kNoRun || res.reserve(eventRun_, events) != Admission::Ok) return fail(Status::DeniedCapacity);
+    }
     return status_ = Status::Running;
   }
 
@@ -459,10 +465,9 @@ class ResolvedImport {
     if (status_ != Status::Running) return status_;
     if (tick >= loop_ || (status & 0x80) == 0 || (status & 0xF0) == 0x80 || (status & 0xF0) == 0x90)
       return fail(Status::BadInput);
-    if (tick < last_) return fail(Status::BadOrder);
-    flushUpTo(tick);
-    last_ = tick;
-    write(row(tick, 0, status, d1, d2));
+    if (tick < lastEvent_ || eventRun_ == kNoRun) return fail(eventRun_ == kNoRun ? Status::BadInput : Status::BadOrder);
+    lastEvent_ = tick;
+    res_->writeOwed(eventRun_, row(tick, 0, status, d1, d2));
     return status_;
   }
 
@@ -472,10 +477,20 @@ class ResolvedImport {
     flushUpTo(0xFFFFFFFFu);
     res_->forgive(run_);  // rows the admission counted but the content did not use
     runs_->seal(run_);
-    const ManifestId m = manifests_->create(slot_, 1, loop_, &run_, 1, *runs_);
+    RunId list[2];
+    uint8_t n = 0;
+    if (eventRun_ != kNoRun) {  // events first: a program change on a note's tick comes before it (pass order)
+      res_->forgive(eventRun_);
+      runs_->seal(eventRun_);
+      list[n++] = eventRun_;  // admitted only with events to write (the reader counts the kept ones)
+    }
+    list[n++] = run_;
+    const ManifestId m = manifests_->create(slot_, 1, loop_, list, n, *runs_);
     if (m == kNoManifest) return fail(Status::DeniedCapacity);
     runs_->release(run_);  // the manifest holds the take
     run_ = kNoRun;
+    if (eventRun_ != kNoRun) runs_->release(eventRun_);
+    eventRun_ = kNoRun;
     history_->restoreSlot(slot_, &m, 1, 0, true);
     return status_ = Status::Done;
   }
@@ -535,11 +550,12 @@ class ResolvedImport {
     }
   }
   Status fail(Status s) {
-    if (run_ != kNoRun) {
-      res_->forgive(run_);
-      runs_->seal(run_);
-      runs_->release(run_);
-      run_ = kNoRun;
+    for (RunId* r : {&run_, &eventRun_}) {
+      if (*r == kNoRun) continue;
+      res_->forgive(*r);
+      runs_->seal(*r);
+      runs_->release(*r);
+      *r = kNoRun;
     }
     held_ = 0;
     return status_ = s;
@@ -552,8 +568,8 @@ class ResolvedImport {
   Reservations* res_ = nullptr;
   NoteIdSource* ids_ = nullptr;
   uint8_t slot_ = 0;
-  uint32_t loop_ = 0, last_ = 0;
-  RunId run_ = kNoRun;
+  uint32_t loop_ = 0, last_ = 0, lastEvent_ = 0;
+  RunId run_ = kNoRun, eventRun_ = kNoRun;
   Pending heap_[MaxHeld];
   uint16_t held_ = 0, heldPeak_ = 0;
   Status status_ = Status::Idle;

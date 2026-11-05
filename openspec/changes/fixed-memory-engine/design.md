@@ -1610,3 +1610,42 @@ gate, settle, busy slots, rename, in-place write, resave after load, redo, appro
 owners); the undo-depth term guards eviction of a slot's oldest state, which the tests do not provoke.
 Teensy (`b5933b32…`): PSRAM 6,810,984 B, RAM2 149,432 B; the SD adapter and device writes come with E9.8, with the
 owner's permission for writing to the card.
+
+## E9.7b — V1 import from the card (owner decision 2026-11-05: exact current content; pass-stream skipped; as built)
+
+`include/ContentEngine/V1Import.h` (`Lsv1Reader`), run by `Persistence` at boot for each slot without an engine file
+(`/MidiLooper/current/slots/loop_TT_SS.bin`, slot = TT × 8 + SS). Read-only.
+- **Format, as measured on the owner's card:** an optional **10-byte** epoch header (epoch u32, schema u16, CRC u32 —
+  the persistence guide said 16 B; corrected), the LSV1 body ("LSV1", version 1, flags, sections: name length u8, name,
+  payload length u32, payload), the `SAVE` token (never read). The `LoopSnapshot` section: root header (loop length,
+  loop start), notes (16 B: noteId, pitch, velocity, start, end — end may be stored unwrapped up to a bar past the loop;
+  **sorted by noteId, not start**), events (eventId, order, the firmware's raw 20-byte `MidiEvent`, payload at 12;
+  note events among them are skipped — the notes list holds the notes).
+- **Windows:** a counting pass builds histograms of note starts and kept event ticks over 64 spans of the loop; the
+  spans are grouped so each group fits the collect area (768 notes / 1,024 events); per group one pass over the file
+  collects its records, heap-sorts them by start (then file order) and feeds `ResolvedImport`. Each pass re-reads the
+  file from the start (no seek); each grain reads at most 4 KiB. The histograms sit at the end of the import scratch.
+- **ResolvedImport:** events now take their own run, listed first in the manifest (a program change on a note's tick
+  comes before it), so notes and events each arrive in their own tick order; held-note heap 64 (the owner's open-note
+  ceiling is 20), within the worker scratch's 1 KiB merge-heap line.
+- **Named outcomes:** imported; skipped — pass-stream (older format), a loop start other than 0 (loop-start editing:
+  not imported at an unconfirmed offset), an empty snapshot (no notes and no kept events; seen on the owner's card,
+  whose passes may hold content); failed — malformed, a span denser than the collect area, the importer's refusal
+  (everything released).
+- **Output channel (correction to E9.3):** the old firmware plays every channel message on its track's MIDI channel
+  (`remappedPlaybackChannel`); `ClockOutput::setChannel` now does the same per track (default: as recorded), thru too.
+  V1 snapshot notes carry no channel and rely on it.
+
+Tests: `test_content_engine_v1_lsv1` (5, LSV1 bytes built as the firmware writes them): a slot's notes with stored
+geometry (wrapped and unwrapped holds), CC / program change (stale second byte cleared) / pitch bend, read-only, saved in
+the new format after approval with the V1 file unchanged; 2,000 notes in reverse start order imported in order across
+windows, an over-dense span refused; pass-stream, shifted start, empty snapshot skipped and named, a truncated file
+failed, a file without epoch header imported; an engine file takes precedence; no allocation. Legacy parity
+(`test_storage_loop_io`): the legacy LSV1 writer's bytes import as exactly its snapshot's notes. Mutations caught: 12
+(epoch size, sort, window cap, note events kept, empty / offset imported, unwrap, pitch bend, program byte, events run
+dropped, channel remap, V1 import off). Owner's card, read only (image `1ab15b47…`): 2 slots imported (641 notes / 31
+bars, 177 notes / 16 bars), 20 pass-stream slots with content and 1 empty snapshot skipped, 40 empty placeholders,
+0.58 s for the whole boot import.
+
+Open (owner): 20 of the 22 slots with content on the card are pass-stream files, skipped by the decision; importing
+them would compose their passes with the engine (E9.7c).

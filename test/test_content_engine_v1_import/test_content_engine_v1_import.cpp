@@ -111,9 +111,13 @@ void test_the_take_composes_back_to_the_resolved_content() {
   TEST_ASSERT_NOT_EQUAL(kNoManifest, m);
   TEST_ASSERT_FALSE(gH.canUndo(0) && gH.undoDepth(0) > 1);  // the only state: no history from before
   TEST_ASSERT_EQUAL_UINT8(1, gH.undoDepth(0));            // (Undo empties the slot)
-  const RunId r = gManifests.manifest(m).runs[0];
+  // Two runs (E9.7b): the events first, then the notes.
+  TEST_ASSERT_EQUAL_UINT8(2, gManifests.manifest(m).runCount);
+  const RunId ev = gManifests.manifest(m).runs[0];
+  const RunId r = gManifests.manifest(m).runs[1];
   TEST_ASSERT_EQUAL_UINT8(RunKind::kRecord, gRuns.run(r).kind);
-  TEST_ASSERT_EQUAL_UINT32(2 * kNotes.size() + kEvents.size(), gRuns.run(r).rowCount);
+  TEST_ASSERT_EQUAL_UINT32(2 * kNotes.size(), gRuns.run(r).rowCount);
+  TEST_ASSERT_EQUAL_UINT32(kEvents.size(), gRuns.run(ev).rowCount);
   // Rows: tick order, NoteOff before NoteOn at a tick, fresh ids, the held note's NoteOff in the wrap band.
   for (uint32_t i = 1; i < gRuns.run(r).rowCount; ++i) TEST_ASSERT_TRUE(gRuns.rowAt(r, i - 1, gPool).tick <= gRuns.rowAt(r, i, gPool).tick);
   std::vector<uint32_t> ids;
@@ -130,8 +134,8 @@ void test_the_take_composes_back_to_the_resolved_content() {
   TEST_ASSERT_TRUE(std::adjacent_find(ids.begin(), ids.end()) == ids.end());  // fresh and unique
   TEST_ASSERT_EQUAL_UINT32(kLoop + 150, gRuns.rowAt(r, gRuns.run(r).rowCount - 1, gPool).tick);
   // Composition, steady cycle 1: (start, end, pitch) of every note and every event.
-  const SourceRun src[1] = {{r, gRuns.run(r).rowCount}};
-  TEST_ASSERT_TRUE(gC.begin(src, 1, kLoop, gManifests.manifest(m).identity));
+  const SourceRun src[2] = {{ev, gRuns.run(ev).rowCount}, {r, gRuns.run(r).rowCount}};
+  TEST_ASSERT_TRUE(gC.begin(src, 2, kLoop, gManifests.manifest(m).identity));
   while (gC.composeNext(gWin, kLoop)) {
   }
   gC.nextCycle();

@@ -103,10 +103,10 @@ struct EnginePsram {
   ProductionWindow displayWindow;
   EditNote editGather[Config::kEditSelection];
   uint16_t editGatherRuns[Config::kEditSelection];
-  // E9.7: the worker scratch line — save, load and V1-import chunks, and the import's merge heap.
+  // E9.7: the worker scratch line — save, load and V1-import chunks (its 1 KiB merge heap is the V1 importer's held-note
+  // heap, inside `persistence`).
   uint8_t persistScratch[3][ProductionPersistence::kChunk];
-  uint8_t mergeHeap[1024];
-  // E9.7 (owner 2026-11-05): the save / load jobs' state, touched only in persistence grains.
+  // E9.7 (owner 2026-11-05): the save / load / import jobs' state, touched only in persistence grains.
   ProductionPersistence persistence;
 };
 
@@ -144,9 +144,13 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6812948u;
-constexpr size_t kRam2Budget = 149432u;  // measured (E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 149440u;  // measured (E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
+#if defined(__arm__)
+static_assert(sizeof(ProductionPersistence) <= 7224u + 1024u,
+              "persistence state (7,224 B line) plus the V1 importer in the worker scratch's 1 KiB merge heap (ARM)");
+#endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
               "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");
 #if defined(__arm__)
@@ -301,9 +305,11 @@ class EngineRoot {
   void attachCard(CardIo& card) {
     card_ = &card;
     p_->persistence.init(card, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
-                         p_->persistScratch[0], p_->persistScratch[1]);
+                         p_->persistScratch[0], p_->persistScratch[1], p_->persistScratch[2], v1Layout_);
     p_->persistence.probe();
   }
+  /// Tests: the `MidiEvent` layout V1 files were written with (the Teensy's by default).
+  void setV1Layout(MidiEventLayout l) { v1Layout_ = l; }
   /// The owner approved saving on the device (owner 2026-11-05: once, remembered by the folder).
   bool approveSaving() { return card_ != nullptr && p_->persistence.approve(); }
   /// Loads every slot that has an engine file (before playing; nothing is written).
@@ -375,7 +381,7 @@ class EngineRoot {
     out(Region::Psram, "edit_log", sizeof(EnginePsram::editLog));
     out(Region::Psram, "display_cursor", sizeof(ProductionDisplayComposer) + sizeof(ProductionWindow));
     out(Region::Psram, "edit_gather", sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns));
-    out(Region::Psram, "worker_scratch", sizeof(EnginePsram::persistScratch) + sizeof(EnginePsram::mergeHeap));
+    out(Region::Psram, "worker_scratch", sizeof(EnginePsram::persistScratch));
     out(Region::Psram, "persistence", sizeof(ProductionPersistence));
     out(Region::Psram, "total", sizeof(EnginePsram));
     out(Region::Ram2, "runs", sizeof(ProductionRuns));
@@ -500,6 +506,7 @@ class EngineRoot {
   bool sweeping_ = false;
   bool gatherLive_ = false, rebuildLive_ = false, persistLive_ = false;
   CardIo* card_ = nullptr;
+  MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   static constexpr uint32_t kPersistGrains = 2000;
   uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
   uint32_t overlayUntil_ = 0;    // cleared once the slot's tiles show this identity

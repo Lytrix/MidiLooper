@@ -212,6 +212,28 @@ void test_a_live_note_ends_the_composed_note_on_the_ports() {
   for (uint8_t p = 0; p < 3; ++p) expectBalanced(p);
 }
 
+void test_a_track_channel_rewrites_every_channel_message() {
+  // The legacy playback rule: with a track channel set, notes and controllers go out on it, whatever was recorded.
+  gE.output().setChannel(0, 5);
+  recordTake(0, 0, kS, kLoop, {{kS + 100, kS + 200, 60, 90}}, {{kS + 50, 0xB0, 7, 77}});
+  run(kS + 2 * kLoop + 10);
+  uint32_t on = 0, cc = 0;
+  for (const Wire& w : gWire[kPortUsbDevice]) {
+    if (w.clock < kS + kLoop) continue;  // the take, played back
+    if ((w.s.status & 0xF0) == 0x90) {
+      TEST_ASSERT_EQUAL_HEX8(0x94, w.s.status);
+      ++on;
+    }
+    if ((w.s.status & 0xF0) == 0xB0) {
+      TEST_ASSERT_EQUAL_HEX8(0xB4, w.s.status);
+      ++cc;
+    }
+    if ((w.s.status & 0xF0) == 0x80) TEST_ASSERT_EQUAL_HEX8(0x84, w.s.status);
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, on);
+  TEST_ASSERT_EQUAL_UINT32(1, cc);
+}
+
 void test_a_restrike_is_a_new_note_and_keys_are_bounded() {
   ProductionEmit on{100, 1, 5, makeRunKey(3, 0), 1, 60, 0x90, 99, 2, 200};
   ProductionEmit off{100, 0, 5, makeRunKey(3, 0), 1, 60, 0x80, 0, 2, 100};
@@ -277,6 +299,7 @@ int main(int, char**) {
   RUN_TEST(test_every_port_carries_the_take);
   RUN_TEST(test_routing_changes_never_strand_a_note);
   RUN_TEST(test_a_live_note_ends_the_composed_note_on_the_ports);
+  RUN_TEST(test_a_track_channel_rewrites_every_channel_message);
   RUN_TEST(test_a_restrike_is_a_new_note_and_keys_are_bounded);
   RUN_TEST(test_a_congested_din_port_cancels_notes_whose_end_passed);
   return UNITY_END();

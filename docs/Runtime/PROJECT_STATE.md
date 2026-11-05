@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E9.7b V1 import from the card.**
+- LSV1 slot files import at boot (read only) as exactly what the old firmware plays: their notes (stored by id, so read
+  in sorted windows) and events. On the owner's card 2 slots imported; 20 pass-stream slots with content are skipped by
+  the earlier decision — the owner is asked about importing them (E9.7c). The engine now also plays each track on its
+  MIDI channel, as the old firmware does.
+
 **2026-11-05 — Fixed-memory engine: E9.7a saving and loading (owner decisions).**
 - Nothing is written to the card until saving is approved once on the device (the new engine folder remembers it);
   then a changed slot autosaves 2 s after its last change, never mid-take or mid-edit, via a temp file and rename; boot

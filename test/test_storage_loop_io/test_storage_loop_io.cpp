@@ -3403,6 +3403,90 @@ void test_4_2_a_divergent_settled_root_is_saved_without_a_root() {
                            "a divergent settled root is never embedded");
 }
 
+// fixed-memory-engine E9.7b parity: the legacy LSV1 writer's bytes, read by the engine's `Lsv1Reader` (with this
+// build's `MidiEvent` layout), import as exactly the snapshot's notes.
+#include "ContentEngine/ManifestTable.h"
+#include "ContentEngine/V1Import.h"
+#include <cstddef>
+namespace {
+struct MemoryCard {
+  const std::vector<uint8_t>* bytes = nullptr;
+  size_t at = 0;
+  bool exists(const char*) { return true; }
+  bool openRead(const char*) {
+    at = 0;
+    return true;
+  }
+  bool read(uint8_t* d, uint32_t n) {
+    if (at + n > bytes->size()) return false;
+    std::memcpy(d, bytes->data() + at, n);
+    at += n;
+    return true;
+  }
+  void closeRead() {}
+};
+}  // namespace
+
+void test_engine_lsv1_reader_matches_the_legacy_writer() {
+  const ImmutableLoopSnapshotRef snapshot = buildLsv1SnapshotWithNoteCount(40);
+  PersistedLoopSnapshot metadata{};
+  metadata.loopId = 3;
+  metadata.loopLengthTicks = snapshot->loopLengthTicks();
+  metadata.nextNoteId = snapshot->nextNoteId();
+  PersistedLoopSnapshot oracle = metadata;
+  std::vector<uint8_t> buffer;
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writeLoopSnapshotBodyFormatV1(mem.io(), metadata, oracle, *snapshot));
+
+  using Pool = ContentEngine::PagePool<512, 64>;
+  using Runs = ContentEngine::RunTable<16, Pool>;
+  using Manifests = ContentEngine::ManifestTable<8, 8>;
+  using Hist = ContentEngine::History<Manifests, Runs, 4, 20>;
+  using Res = ContentEngine::RowReservations<Pool, Runs>;
+  using Import = ContentEngine::ResolvedImport<Pool, Runs, Manifests, Hist, 64>;
+  static Pool pool;
+  static Runs runs;
+  static Manifests manifests;
+  static Hist history;
+  static Res res;
+  static ContentEngine::NoteIdSource ids;
+  static Import import;
+  static uint8_t scratch[16384];
+  pool.init();
+  runs.init();
+  manifests.init();
+  res.init(pool, runs, 0);
+  history.init(manifests, runs);
+  ids.init(1);
+  MemoryCard card;
+  card.bytes = &buffer;
+  ContentEngine::Lsv1Reader<MemoryCard, Import> reader;
+  const ContentEngine::MidiEventLayout layout{static_cast<uint8_t>(sizeof(MidiEvent)),
+                                              static_cast<uint8_t>(offsetof(MidiEvent, data))};
+  auto st = reader.start(card, "x", import, pool, runs, manifests, history, res, ids, 0, scratch, sizeof scratch, layout);
+  while (st == decltype(st)::Running) st = reader.step();
+  TEST_ASSERT_EQUAL(decltype(st)::Done, st);
+  TEST_ASSERT_EQUAL_UINT32(40, reader.notesRead());
+  const auto& m = manifests.manifest(history.current(0));
+  TEST_ASSERT_EQUAL_UINT8(1, m.runCount);  // only note events in the file: no event run
+  TEST_ASSERT_EQUAL_UINT32(snapshot->loopLengthTicks(), m.loopLengthTicks);
+  const ContentEngine::RunId r = m.runs[0];
+  TEST_ASSERT_EQUAL_UINT32(80, runs.run(r).rowCount);
+  // Every snapshot note: a NoteOn at its start with its pitch and velocity, and a NoteOff at its end.
+  for (size_t index = 0; index < 40; ++index) {
+    const uint32_t start = static_cast<uint32_t>(index * 10u), end = start + 80u;
+    const uint8_t pitch = static_cast<uint8_t>(60u + (index % 12u));
+    bool on = false, off = false;
+    for (uint32_t i = 0; i < runs.run(r).rowCount; ++i) {
+      const ContentEngine::PassEvent& e = runs.rowAt(r, i, pool);
+      on |= (e.status & 0xF0) == 0x90 && e.tick == start && e.data1 == pitch;
+      off |= (e.status & 0xF0) == 0x80 && e.tick == end && e.data1 == pitch;
+    }
+    TEST_ASSERT_TRUE(on);
+    TEST_ASSERT_TRUE(off);
+  }
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
     return decodeSlotBodyFile(argv[2]);
@@ -3451,6 +3535,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_loop_persist_body_decision_awaits_settlement_within_its_budget);
   RUN_TEST(test_publication_owed_for_the_committed_state_is_waited_for);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
+  RUN_TEST(test_engine_lsv1_reader_matches_the_legacy_writer);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
   RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);
   RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);

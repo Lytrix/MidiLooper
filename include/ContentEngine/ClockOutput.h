@@ -19,6 +19,9 @@
 //   `thruNoteOff` / `thruEvent`) plays the input on a track's ports; its notes hold `kThruSlots` keys of their own with
 //   generations (top bit set: never a composed key), so a fast repeated note is a new note, not swallowed by the
 //   previous one's pending NoteOff. Thru is not gated by mute: the musician hears what they play.
+// * Output channel (E9.7b, the legacy playback rule `remappedPlaybackChannel`): a track with a MIDI channel set sends
+//   every channel message (notes, controllers, pitch bend, program change, aftertouch) on that channel, whatever channel
+//   it was recorded on; `kAsRecorded` keeps the recorded channel. Thru follows the same rule.
 // No allocation.
 
 #pragma once
@@ -37,6 +40,7 @@ class ClockOutput {
   static constexpr uint32_t kNoKey = 0xFFFFFFFFu;
   static constexpr uint8_t kAllPorts = static_cast<uint8_t>((1u << Ports) - 1u);
   static constexpr uint8_t kThruSlots = 16;
+  static constexpr uint8_t kAsRecorded = 0;  // `setChannel`: keep each message's recorded channel
 
   struct Stats {
     uint32_t refusedNoKey;  // NoteOns with no free key slot
@@ -51,6 +55,7 @@ class ClockOutput {
       for (auto& k : t) k = Key{0, kFree, 0};
     for (auto& m : mask_) m = kAllPorts;
     for (auto& a : audible_) a = true;
+    for (auto& c : channel_) c = kAsRecorded;
     for (auto& x : thru_) x = Thru{0, 0, false, 0};
     stats_ = Stats{};
   }
@@ -75,8 +80,9 @@ class ClockOutput {
           continue;
         }
         const uint32_t end = x.endTick == kOpenEnd ? kNoEnd : nowUs + (x.endTick - x.tick) * usPerTick;
+        const uint8_t status = remap(x.track, x.status);
         for (uint8_t p = 0; p < Ports; ++p)
-          if (mask & (1u << p)) hub_->noteOn(nowUs, p, x.status, x.pitch, x.data2, key, end);
+          if (mask & (1u << p)) hub_->noteOn(nowUs, p, status, x.pitch, x.data2, key, end);
       } else if (x.cls == 0) {
         const uint32_t key = close(x.track, x.noteId, runIdOf(x.runKey));
         if (key == kNoKey) {
@@ -85,11 +91,16 @@ class ClockOutput {
         }
         for (uint8_t p = 0; p < Ports; ++p) hub_->noteOff(nowUs, p, key);
       } else if (audible_[x.track]) {
+        const uint8_t status = remap(x.track, x.status);
         for (uint8_t p = 0; p < Ports; ++p)
-          if (mask & (1u << p)) hub_->control(nowUs, p, x.status, x.pitch, x.data2);
+          if (mask & (1u << p)) hub_->control(nowUs, p, status, x.pitch, x.data2);
       }
     }
   }
+
+  /// The track's MIDI channel, 1..16 (kAsRecorded: as recorded).
+  void setChannel(uint8_t t, uint8_t channel) { channel_[t] = channel <= 16 ? channel : kAsRecorded; }
+  uint8_t channel(uint8_t t) const { return channel_[t]; }
 
   /// Mute / solo: a track going silent ends what it sounds now, on every port.
   void setAudible(uint8_t t, bool audible, uint32_t nowUs) {
@@ -114,8 +125,9 @@ class ClockOutput {
       Thru& x = thru_[s];
       if (x.used) continue;
       x = Thru{note, t, true, static_cast<uint16_t>(x.generation + 1)};
+      const uint8_t out = remap(t, status);
       for (uint8_t p = 0; p < Ports; ++p)
-        if (mask_[t] & (1u << p)) hub_->noteOn(nowUs, p, status, pitch, velocity, thruKey(s), kNoEnd);
+        if (mask_[t] & (1u << p)) hub_->noteOn(nowUs, p, out, pitch, velocity, thruKey(s), kNoEnd);
       return;
     }
     ++stats_.thruRefused;
@@ -131,8 +143,9 @@ class ClockOutput {
     }
   }
   void thruEvent(uint8_t t, uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
+    const uint8_t out = remap(t, status);
     for (uint8_t p = 0; p < Ports; ++p)
-      if (mask_[t] & (1u << p)) hub_->control(nowUs, p, status, d1, d2);
+      if (mask_[t] & (1u << p)) hub_->control(nowUs, p, out, d1, d2);
   }
 
   /// Key slots in use on track `t` (instances whose NoteOff has not been routed).
@@ -152,6 +165,11 @@ class ClockOutput {
     uint16_t generation;
   };
 
+  /// Channel messages (0x80..0xEF) take the track's channel when it has one.
+  uint8_t remap(uint8_t t, uint8_t status) const {
+    if (channel_[t] == kAsRecorded || status < 0x80 || status >= 0xF0) return status;
+    return static_cast<uint8_t>((status & 0xF0) | ((channel_[t] - 1) & 0x0F));
+  }
   struct Thru {
     uint16_t note;  // channel << 7 | pitch
     uint8_t track;
@@ -188,6 +206,7 @@ class ClockOutput {
   Key keys_[Tracks][PerTrack];
   uint8_t mask_[Tracks];
   bool audible_[Tracks];
+  uint8_t channel_[Tracks];
   Thru thru_[kThruSlots];
   Stats stats_{};
 };

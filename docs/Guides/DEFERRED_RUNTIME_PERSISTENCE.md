@@ -63,7 +63,7 @@ Boot: `loadState` → `MidiLooper/current/`; on failure → latest recovery chec
 **CurrentSet slot file:**
 
 ```text
-[epoch header]  optional 16 B when v6 epoch wrapper present
+[epoch header]  optional 10 B when v6 epoch wrapper present (epoch u32, schema u16, CRC u32; measured 2026-11-05)
 [payload]       StorageLoopIo slot body: legacy pass stream **or** LSV1 dual-write (DEC-057)
 [4 B]           SAVE
 ```

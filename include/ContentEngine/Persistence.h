@@ -13,7 +13,11 @@
 //   `slot_NN.mle` when complete, so an interrupted save leaves the previous file whole. A slot that changes during its
 //   save is saved again later.
 // * Boot load: every slot with an engine file is loaded (`LoadJob`: admission, CRC, full release on failure); a slot
-//   whose file fails stays empty and is counted by name (`Stats::loadFailed`); loading never writes.
+//   whose file fails stays empty and is counted by name (`Stats::loadFailed`); loading never writes. A slot without
+//   one whose V1 file (`/MidiLooper/current/slots/loop_TT_SS.bin`, slot = TT x 8 + SS) holds an LSV1 snapshot is
+//   imported from it (E9.7b, `Lsv1Reader`: exact current content); a pass-stream or loop-start-shifted V1 slot is
+//   skipped and named (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved in the new
+//   format once approved; V1 files are never written.
 // `Card` (one file open for reading and one for writing at a time): exists(path), makeDir(path), openRead(path),
 // read(data, n), closeRead(), openWrite(path), write(data, n), closeWrite(), rename(from, to) — rename replaces `to`.
 // No allocation.
@@ -23,6 +27,7 @@
 #include <cstdint>
 
 #include "ContentEngine/SetFile.h"
+#include "ContentEngine/V1Import.h"
 
 namespace ContentEngine {
 
@@ -65,11 +70,23 @@ class Persistence {
     uint32_t loads;          // slots loaded at boot
     uint32_t loadFailed;     // engine files that failed to load (slot left empty)
     uint64_t loadFailedMask; // which slots
+    uint32_t v1Imported;     // slots imported from V1 files
+    uint64_t v1SkippedMask;  // V1 slots skipped: pass-stream format or a shifted loop start (owner: reported)
+    uint64_t v1OffsetMask;   // ... of them, skipped for a shifted loop start
+    uint64_t v1EmptyMask;    // ... of them, an LSV1 snapshot without notes or events (the rest: pass stream)
+    uint8_t v1Outcome[Slots];  // per slot: the reader's status (and the importer's in the high nibble when refused)
+    uint64_t v1FailedMask;   // V1 slots that failed to read or import
   };
+  using Import = ResolvedImport<Pool, Runs, Manifests, HistoryT, /*held*/ 64>;
+  using Reader = Lsv1Reader<Card, Import>;
 
   /// `saveScratch` / `loadScratch`: `kChunk` bytes each (the persistence worker scratch).
   void init(Card& card, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res,
-            NoteIdSource& ids, uint8_t* saveScratch, uint8_t* loadScratch) {
+            NoteIdSource& ids, uint8_t* saveScratch, uint8_t* loadScratch, uint8_t* importScratch,
+            MidiEventLayout v1Layout = kTeensyMidiEvent) {
+    importScratch_ = importScratch;
+    v1Layout_ = v1Layout;
+    importing_ = kNone;
     card_ = &card;
     pool_ = &pool;
     runs_ = &runs;
@@ -105,7 +122,7 @@ class Persistence {
 
   // ---- Boot load ------------------------------------------------------------------------------------------------------
   void startBootLoad() { bootNext_ = 0; }
-  bool booting() const { return bootNext_ < Slots || loading_ != kNone; }
+  bool booting() const { return bootNext_ < Slots || loading_ != kNone || importing_ != kNone; }
 
   // ---- Service --------------------------------------------------------------------------------------------------------
   /// Once per pass: tracks changes and starts the next save when one is due. `busySlotA` / `busySlotB`: slots a take or
@@ -131,10 +148,14 @@ class Persistence {
   bool step() {
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
+    if (importing_ != kNone) return stepImport();
     while (bootNext_ < Slots) {
       const uint8_t s = bootNext_++;
       path(s, ".mle", name_);
-      if (!card_->exists(name_)) continue;
+      if (!card_->exists(name_)) {
+        if (startImport(s)) return true;
+        continue;
+      }
       if (!card_->openRead(name_) || load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, s, source_,
                                                  loadScratch_) != Load::Status::Running) {
         card_->closeRead();
@@ -235,6 +256,52 @@ class Persistence {
     }
     return true;
   }
+  static void v1Path(uint8_t slot, char* out) {
+    const char* p = "/MidiLooper/current/slots/loop_";
+    uint8_t n = 0;
+    while (*p) out[n++] = *p++;
+    out[n++] = '0';
+    out[n++] = static_cast<char>('0' + slot / 8);
+    out[n++] = '_';
+    out[n++] = '0';
+    out[n++] = static_cast<char>('0' + slot % 8);
+    const char* e = ".bin";
+    while (*e) out[n++] = *e++;
+    out[n] = 0;
+  }
+  bool startImport(uint8_t s) {
+    v1Path(s, v1Name_);
+    const typename Reader::Status st = reader_.start(*card_, v1Name_, import_, *pool_, *runs_, *manifests_, *history_,
+                                                      *res_, *ids_, s, importScratch_, kChunk, v1Layout_);
+    if (st == Reader::Status::Running) {
+      importing_ = s;
+      return true;
+    }
+    if (st != Reader::Status::NoFile) stats_.v1FailedMask |= 1ull << s;
+    return false;
+  }
+  bool stepImport() {
+    const typename Reader::Status st = reader_.step();
+    if (st == Reader::Status::Running) return true;
+    const uint8_t s = importing_;
+    importing_ = kNone;
+    stats_.v1Outcome[s] = static_cast<uint8_t>(static_cast<uint8_t>(st) |
+                                               (st == Reader::Status::ImportRefused ? reader_.importStatus() << 4 : 0));
+    if (st == Reader::Status::Done) {
+      ++stats_.v1Imported;
+      seen_[s] = fingerprint(s);  // saved in the new format once approved and settled; saved_ stays "nothing"
+      changedUs_[s] = 0;
+    } else if (st == Reader::Status::PassStream || st == Reader::Status::StartOffset ||
+               st == Reader::Status::EmptySnapshot) {
+      stats_.v1SkippedMask |= 1ull << s;
+      if (st == Reader::Status::StartOffset) stats_.v1OffsetMask |= 1ull << s;
+      if (st == Reader::Status::EmptySnapshot) stats_.v1EmptyMask |= 1ull << s;
+    } else {
+      stats_.v1FailedMask |= 1ull << s;
+    }
+    return true;
+  }
+
   void failLoad(uint8_t s) {
     ++stats_.loadFailed;
     stats_.loadFailedMask |= 1ull << s;
@@ -258,6 +325,12 @@ class Persistence {
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};
   uint32_t changedUs_[Slots] = {};
   char name_[40] = {};
+  char v1Name_[48] = {};
+  uint8_t* importScratch_ = nullptr;
+  MidiEventLayout v1Layout_ = kTeensyMidiEvent;
+  uint8_t importing_ = kNone;
+  Import import_;
+  Reader reader_;
   Stats stats_{};
 };
 
