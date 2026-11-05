@@ -403,7 +403,7 @@ coexist by construction.
 | Table | Capacity | Holders, worst case at once |
 |---|---|---|
 | RunTable | 520 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 1 × 3 = 3; edit run 1; compaction output 1 → **517 ≤ 520**. Committed runs are admitted against 512. |
-| ManifestTable | 256 | history 99 (slot currents, overdub and NOTE_EDIT session steps are history states); writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **153 ≤ 256** |
+| ManifestTable | 256 | history 99 (slot currents, overdub and NOTE_EDIT session steps are history states); writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **153 ≤ 256**; the owner keeps 256 as headroom (2026-11-05) |
 | History | 99 states | shared across all slots (owner 2026-11-05); a full table evicts the oldest step in the set, never refuses a commit (§ 8.5) |
 
 ### 5.3 Reference counting, reclamation, retention
