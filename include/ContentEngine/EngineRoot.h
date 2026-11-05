@@ -30,6 +30,7 @@
 #include "ContentEngine/DisplayTiles.h"
 #include "ContentEngine/EditWriter.h"
 #include "ContentEngine/EngineCore.h"
+#include "ContentEngine/NoteEditSession.h"
 #include "ContentEngine/History.h"
 #include "ContentEngine/OutputPort.h"
 #include "ContentEngine/PlaybackJobs.h"
@@ -65,6 +66,9 @@ using ProductionTiles = TileStore<>;
 using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = OutputHub<>;
+using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
+using ProductionNoteEdit = NoteEditSession<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
+                                           ProductionDisplayComposer, ProductionWindow, ProductionEditWriter>;
 using ProductionEmit = ProductionPlayer::Emit;
 using ProductionOutput =
     ClockOutput<ProductionHub, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack, /*ports*/ 3>;
@@ -87,6 +91,12 @@ struct EnginePsram {
   ProductionTiles tiles;
   ProductionOverlay overlay;
   EditChange editLog[Config::kEditLogEntries];
+  // E9.5: the display cursor and scratch window (the 18th cursor and the 2nd sweep window: the NOTE_EDIT gather now,
+  // shared with the tile sweep in E9.6), and the gathered selection (from the worker-scratch line).
+  ProductionDisplayComposer displayComposer;
+  ProductionWindow displayWindow;
+  EditNote editGather[Config::kEditSelection];
+  uint16_t editGatherRuns[Config::kEditSelection];
 };
 
 /// DMAMEM.
@@ -110,6 +120,7 @@ struct EngineRam2 {
   ProductionHub hub;
   ProductionOutput output;
   ProductionControl control;
+  ProductionNoteEdit noteEdit;
 };
 
 // Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
@@ -119,7 +130,7 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6796508u;
-constexpr size_t kRam2Budget = 146032u;  // measured (E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 147056u;  // measured (E9.5: + 1,024 B NOTE_EDIT session; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -175,6 +186,10 @@ class EngineRoot {
     r_->sweep = ProductionSweep{};
     r_->transport.init(p_->pool, r_->runs, r_->manifests, r_->history, r_->writer, tracks);
     r_->control.init(r_->transport, r_->output, kTicksPerBar, kLaunchGridTicks);
+    p_->displayComposer.init(p_->pool, r_->runs, &r_->index);
+    r_->noteEdit.init(p_->pool, r_->runs, r_->manifests, r_->history, p_->displayComposer, p_->displayWindow,
+                      r_->editWriter, p_->editGather, p_->editGatherRuns, kWindowTicks);
+    gatherLive_ = rebuildLive_ = false;
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -188,6 +203,19 @@ class EngineRoot {
     r_->jobs.service(now, nowUs, usPerTick);
     r_->reclaim.submitIfPending(r_->scheduler);
     if (!sweeping_) startSweep(nowUs);
+    // NOTE_EDIT (E9.5): the gather and the rebuild are transition-class (an edit is heard at once).
+    uint8_t id;
+    if (!gatherLive_ && r_->noteEdit.gatherPending() &&
+        r_->scheduler.submit(JobSpec{JobClass::Transition, nowUs, kEditGrains, &gatherStep, this}, id))
+      gatherLive_ = true;
+    if (!rebuildLive_ && r_->noteEdit.rebuildPending() &&
+        r_->scheduler.submit(JobSpec{JobClass::Transition, nowUs, kEditGrains, &rebuildStep, this}, id))
+      rebuildLive_ = true;
+    uint8_t slot;
+    if (r_->noteEdit.takePublished(slot)) {
+      ProductionEmit buf[kGestureEmits];
+      r_->output.route(buf, r_->transport.follow(slot, clock, buf, kGestureEmits), nowUs, usPerTick);
+    }
   }
   /// The Clock tick `clock` at `nowUs`: the gestures due (E9.4), then every track plays; its events go to the hub on
   /// its ports.
@@ -250,6 +278,7 @@ class EngineRoot {
   const ProductionHub& hub() const { return r_->hub; }
   ProductionOutput& output() { return r_->output; }
   ProductionControl& control() { return r_->control; }
+  ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }
   const ProductionPool& pool() const { return p_->pool; }
   const ProductionRuns& runs() const { return r_->runs; }
@@ -268,6 +297,8 @@ class EngineRoot {
     out(Region::Psram, "tiles", sizeof(ProductionTiles));
     out(Region::Psram, "overlay", sizeof(ProductionOverlay));
     out(Region::Psram, "edit_log", sizeof(EnginePsram::editLog));
+    out(Region::Psram, "display_cursor", sizeof(ProductionDisplayComposer) + sizeof(ProductionWindow));
+    out(Region::Psram, "edit_gather", sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns));
     out(Region::Psram, "total", sizeof(EnginePsram));
     out(Region::Ram2, "runs", sizeof(ProductionRuns));
     out(Region::Ram2, "manifests", sizeof(ProductionManifests));
@@ -285,6 +316,7 @@ class EngineRoot {
     out(Region::Ram2, "hub", sizeof(ProductionHub));
     out(Region::Ram2, "output_keys", sizeof(ProductionOutput));
     out(Region::Ram2, "control", sizeof(ProductionControl));
+    out(Region::Ram2, "note_edit", sizeof(ProductionNoteEdit));
     out(Region::Ram2, "total", sizeof(EngineRam2));
   }
 
@@ -314,6 +346,18 @@ class EngineRoot {
       return;
     }
   }
+  static JobStep gatherStep(void* ctx) {
+    EngineRoot& e = *static_cast<EngineRoot*>(ctx);
+    if (e.r_->noteEdit.gatherStep(ProductionJobs::kRowsPerGrain)) return JobStep::Continue;
+    e.gatherLive_ = false;
+    return JobStep::Done;
+  }
+  static JobStep rebuildStep(void* ctx) {
+    EngineRoot& e = *static_cast<EngineRoot*>(ctx);
+    if (e.r_->noteEdit.rebuildStep(ProductionJobs::kRowsPerGrain)) return JobStep::Continue;
+    e.rebuildLive_ = false;
+    return JobStep::Done;
+  }
   static JobStep sweepStep(void* ctx) {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
     const ProductionSweep::Status st = e.r_->sweep.step(e.p_->sweepWindow, ProductionJobs::kRowsPerGrain);
@@ -331,6 +375,8 @@ class EngineRoot {
   EnginePsram* p_ = nullptr;
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
+  bool gatherLive_ = false, rebuildLive_ = false;
+  static constexpr uint32_t kEditGrains = 2000;  // a gather composes up to two loops; a rebuild <= 24 grains (§ 8.4)
   uint8_t sweepNext_ = 0;
   Stats stats_{};
 };

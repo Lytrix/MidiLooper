@@ -1515,3 +1515,36 @@ beyond either limit (missed, counted, next boundary); notes already sounding fro
 not restarted; Undo-like: ended at the join); dense MIDI at the join prepared in > 40 bounded grains, only long notes
 started, no orphan NoteOff; a join point the Clock passes moves on; DIN refusing the late note while USB plays it, no
 orphan NoteOff on DIN; later cycles equal uninterrupted composition.
+
+## E9.5 — NOTE_EDIT for the surface (as built)
+
+`include/ContentEngine/NoteEditSession.h`, on the edit writer (E4.5):
+- **Selection (`request`, gathered in worker grains):** the notes that start in a range [from, to) within a pitch range,
+  as the piano roll shows them — the slot's current state composed with the display cursor (`Composer` T = 48: every
+  effective note) — so a deleted or wholly occluded note is not selectable. Each carries its **stored** geometry: its
+  NoteOn and NoteOff rows in the run that holds its current instance (an edit run's replacement after earlier edits),
+  found by a binary search on the NoteOn tick and a forward scan, a bounded number of rows a grain. Effective lengths are
+  never stored: overlap results are derived at composition (EDIT-1), so the edited note drives and the others adapt, as
+  in legacy NOTE_EDIT (`MOVE_NOTE_LOGIC.md`: the causing note is never modified). Composition stops at the range end;
+  cycle 0 is exact for notes starting in the range, since `begin` counts notes held across the loop end as sounding at
+  position 0 and the hide look-ahead reads across it. More than 512: `TooMany`, nothing selected.
+- **Session:** `enter` opens the edit writer on the selection; `apply` / `undo` / `redo` are E: steps heard at once —
+  the rebuild is a transition-class job, and when it publishes (or, with nothing edited any more, at once) the slot's
+  playing tracks follow from the next boundary (`SlotTransport::follow`; late join applies). Each step keeps the
+  caller's focus token (what the UI shows: selection, cursor), returned by undo / redo; the entry focus is step 0.
+  `leave` keeps one U: step, `abandon` returns to the session start.
+- **Placement:** the display cursor and the second sweep scratch window (both budgeted in E9.2; shared with the tile
+  sweep of E9.6, one at a time) and the gathered selection (9,216 B, PSRAM) in `EnginePsram`; the session (1,024 B,
+  RAM2: 99 focus tokens).
+
+Tests (`test_content_engine_note_edit`, 5, production root, USB port): the selection after an overdub — a note
+shortened by a later pass keeps its recorded length, a note hidden by a same-start later pass and a note hidden under
+a later pass's note held across the loop end are not selectable, a note stored across the loop end keeps its length,
+range and pitch filters; a moved note heard at its new place, Undo / Redo heard and returning the entry / step focus,
+leave as one U: step undone by slot Undo; delete heard, abandon restores; more than 512 refused by name; no allocation.
+Mutations caught: 10 of 11 (stored length, pitch filter, truncation instead of `TooMany`, entry / step focus, immediate
+publish, abandon not followed, follow, rebuild job, ...); a NoteOff stored as NoteOn velocity 0 never occurs (writer and
+importer write 0x80), so that guard's mutation is equivalent. Teensy (`aeac1ab7…`): RAM2 147,056 B, root test 2 / 2.
+
+Open: the gather grain is bounded by the same units as tile-sweep grains but not yet measured on the Teensy; the
+selection's 9,216 B is carved from the worker-scratch line for now and is settled with persistence (E9.7).

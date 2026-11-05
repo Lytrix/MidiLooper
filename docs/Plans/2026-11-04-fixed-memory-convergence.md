@@ -353,7 +353,9 @@ E9.2 measurement on the Teensy: the engine's RAM2 regions (`EngineRam2`: tables,
 tracks with their terminal schedulers, scheduler and jobs, transport, output hub) are 143,360 B (`kRam2Budget`) against
 the 143,220 B of additions above (+140 B: the playback tracks and transport, which the list did not itemise, net of a
 smaller run table). E9.3 adds the Clock path's output keys (1,048 B) and job boundaries (64 B): 144,408 B. E9.4 adds the late-join
-state of the 8 playback tracks (1,248 B), thru keys (112 B) and the gesture state (248 B): 146,032 B. The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
+state of the 8 playback tracks (1,248 B), thru keys (112 B) and the gesture state (248 B): 146,032 B. E9.5 adds the
+NOTE_EDIT session (1,024 B, mostly 99 focus tokens): 147,056 B. PSRAM: E9.5 places the display cursor and the 2nd sweep
+window (budgeted) and the gathered selection (9,216 B: to be carved from the worker-scratch line or added at E9.7). The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table

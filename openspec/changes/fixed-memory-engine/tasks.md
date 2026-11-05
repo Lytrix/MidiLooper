@@ -120,7 +120,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [ ] E9.4b Layered slots: several sounding slots per track (owner: after the first bootable image, sized from real use; ~172 KB PSRAM per extra sounding slot).
 - [ ] E9.4c Jam: bar-range playback and bar / 16th seek (owner: a later slice).
 - [ ] E9.4d Auto-align / master loop length: a take's length forced to the master needs truncation semantics for rows past it (legacy default off).
-- [ ] E9.5 NOTE_EDIT: `EditManager` / `NoteEditFocus` → `EditWriter`; focus / selection restore per E: step.
+- [x] E9.5 NOTE_EDIT (engine side): `NoteEditSession` — selection gathered in worker grains as the piano roll shows it (display cursor, hidden notes not selectable) with stored geometry (a shortened note keeps its recorded length; overlaps derived at composition, EDIT-1), ≤ 512 or `TooMany`; E: steps through the edit writer with a focus token per step returned by undo / redo; rebuilds as transition jobs, the slot's playing tracks follow each publish; leave / abandon (`test_content_engine_note_edit` 5, mutation-checked 10/11 + 1 equivalent). Teensy `aeac1ab7…`: RAM2 147,056 B. `EditManager` / `NoteEditFocus` call it when the legacy owners go (E9.8). Open: the gather grain on the device; the 9,216 B selection's budget line (E9.7).
 - [ ] E9.6 Display: `DisplayManager` draws from `TileStore` (banded drawing), `DisplayJobs` wired.
 - [ ] E9.7 Persistence: `StorageManager` sink / source for `SaveJob` / `LoadJob`, the V1 reader (E8.2b), the save schedule and approval gate (E8.3).
 - [ ] E9.8 Delete the legacy owners (§ 12.1) and their tests; first bootable image; D1 build gates.

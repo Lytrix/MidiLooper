@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E9.5 NOTE_EDIT for the surface.**
+- `NoteEditSession` gathers the selection as the piano roll shows it, with each note's recorded geometry (overlaps stay
+  derived, so the edited note drives and the others adapt), runs edits as E: steps heard from the next boundary, and
+  returns each step's focus token on undo / redo; leave keeps one undo step, abandon restores.
+
 **2026-11-05 — Fixed-memory engine: E9.4 gestures, input and bounded late join (owner decisions).**
 - `TrackControl` keeps the legacy gesture timing: queued Record on the bar or the playing slot's loop start (waiting for
   the one writer), queued Stop on the bar, slot switches on the grid or at the loop end (window 0 composed ahead, so
