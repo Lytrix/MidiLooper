@@ -1,3 +1,9 @@
+**2026-11-06 — Fixed-memory engine: E9.8a the engine firmware boots.**
+- A new `teensy41-engine` image runs the engine alone (legacy untouched, owner: boot first, then delete): it boots
+  clean, imports the card's 21 V1 slots in 1.1 s without writing anything, follows the internal or an external MIDI
+  clock, and plays launched slots over USB MIDI with every note closed at stop. Controls are serial commands until
+  E9.8b wires the buttons and faders; the display is E9.8c.
+
 **2026-11-06 — Fixed-memory engine: E9.7c-2 edited V1 slots imported, edits discarded.**
 - Owner: the V1 import only feeds the test setup, so the 9 slots with legacy note edits now import their passes as
   recorded and drop the edits (named in the boot report). On the owner's card 21 of 22 slots with content import, 0

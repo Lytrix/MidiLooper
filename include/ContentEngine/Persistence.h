@@ -10,7 +10,10 @@
 // * Autosave (owner: when settled): a slot whose history changed (current state identity, undo / redo depth) is saved
 //   once it has not changed for `kSettleUs` and no take or NOTE_EDIT session is open on it, one slot at a time, as
 //   persistence-class grains (`SaveJob`, ≤ 16 KiB a write). The file is written to `slot_NN.tmp` and renamed over
-//   `slot_NN.mle` when complete, so an interrupted save leaves the previous file whole. A slot that changes during its
+//   `slot_NN.mle` when complete, so an interrupted save leaves the previous file whole. A card whose rename cannot
+//   replace (SdFat refuses an existing target) removes `slot_NN.mle` first; a save interrupted between the two leaves
+//   only the complete `.tmp`, which boot load then loads (E9.8a) — and a `.tmp` that fails its CRC with no `.mle`
+//   beside it (a first save interrupted) falls back to the slot's V1 file. A slot that changes during its
 //   save is saved again later.
 // * Boot load: every slot with an engine file is loaded (`LoadJob`: admission, CRC, full release on failure); a slot
 //   whose file fails stays empty and is counted by name (`Stats::loadFailed`); loading never writes. A slot without
@@ -20,7 +23,7 @@
 //   skipped and named (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved in the new
 //   format once approved; V1 files are never written.
 // `Card` (one file open for reading and one for writing at a time): exists(path), makeDir(path), openRead(path),
-// read(data, n), closeRead(), openWrite(path), write(data, n), closeWrite(), rename(from, to) — rename replaces `to`.
+// read(data, n), closeRead(), openWrite(path), write(data, n), closeWrite(), rename(from, to) — rename replaces `to`, removing it first where the card cannot replace (see above).
 // No allocation.
 
 #pragma once
@@ -42,7 +45,7 @@ struct CardIo {
   virtual bool openWrite(const char* path) = 0;
   virtual bool write(const uint8_t* data, uint32_t n) = 0;
   virtual bool closeWrite() = 0;
-  virtual bool rename(const char* from, const char* to) = 0;  // replaces `to`
+  virtual bool rename(const char* from, const char* to) = 0;  // replaces `to` (may remove it first: boot load copes)
   virtual ~CardIo() = default;
 };
 
@@ -155,13 +158,22 @@ class Persistence {
     while (bootNext_ < Slots) {
       const uint8_t s = bootNext_++;
       path(s, ".mle", name_);
+      fromTmp_ = false;
       if (!card_->exists(name_)) {
-        if (startImport(s)) return true;
-        continue;
+        path(s, ".tmp", name_);  // a save interrupted between removing the old file and the rename
+        fromTmp_ = card_->exists(name_);
+        if (!fromTmp_) {
+          if (startImport(s)) return true;
+          continue;
+        }
       }
       if (!card_->openRead(name_) || load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, s, source_,
                                                  loadScratch_) != Load::Status::Running) {
         card_->closeRead();
+        if (fromTmp_) {
+          if (startImport(s)) return true;
+          continue;
+        }
         failLoad(s);
         continue;
       }
@@ -253,7 +265,11 @@ class Persistence {
     card_->closeRead();
     if (st == Load::Status::Done) {
       ++stats_.loads;
-      saved_[s] = seen_[s] = fingerprint(s);  // what the card holds
+      // What the card holds (from a `.tmp`, the next save writes the `.mle` again).
+      saved_[s] = seen_[s] = fingerprint(s);
+      if (fromTmp_) saved_[s] = Fingerprint{};
+    } else if (fromTmp_) {
+      startImport(s);  // an incomplete first save: the slot's V1 file, if any
     } else {
       failLoad(s);
     }
@@ -324,7 +340,7 @@ class Persistence {
   Source source_{};
   Save save_;
   Load load_;
-  bool approved_ = false;
+  bool approved_ = false, fromTmp_ = false;
   uint8_t saving_ = kNone, loading_ = kNone, bootNext_ = Slots;
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};
   uint32_t changedUs_[Slots] = {};

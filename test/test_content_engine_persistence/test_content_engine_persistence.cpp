@@ -280,6 +280,54 @@ void test_a_corrupt_file_fails_by_name_and_an_interrupted_save_keeps_the_old_fil
   TEST_ASSERT_NOT_EQUAL(kNoManifest, gB.history().current(0));
 }
 
+// E9.8a: a card whose rename cannot replace removes the old file first. A save interrupted between the two leaves only
+// the complete `.tmp`: boot loads it (and the next save writes the `.mle` again). A first save interrupted part way
+// (an incomplete `.tmp`, no `.mle`) falls back to the slot's V1 file.
+static void put(const char* path, const std::vector<uint8_t>& bytes) {
+  gCard.openWrite(path);
+  gCard.write(bytes.data(), static_cast<uint32_t>(bytes.size()));
+  gCard.closeWrite();
+}
+static std::vector<uint8_t> v1PassStream() {  // one record pass: 60 at 0-300, loop 3072 (the legacy writer's layout)
+  std::vector<uint8_t> b;
+  auto u32 = [&](uint32_t v) { for (int i = 0; i < 4; ++i) b.push_back(static_cast<uint8_t>(v >> (8 * i))); };
+  u32(0x1142); b.push_back(1); b.push_back(0); u32(0);  // epoch header
+  for (uint32_t w : {5u, 0u, 3072u, 0u, 9u, 100u, 7u, 4u}) u32(w);
+  u32(1);
+  u32(1); u32(0); b.push_back(0); b.push_back(0); u32(3072); u32(2);
+  for (uint32_t t : {0u, 300u}) {
+    u32(t); b.push_back(t == 0 ? 0x90 : 0x80); b.push_back(1); b.push_back(0); b.push_back(0); u32(7);
+    b.push_back(60); b.push_back(t == 0 ? 100 : 0); for (int i = 0; i < 6; ++i) b.push_back(0);
+  }
+  u32(9); u32(0x45505433u); u32(0);
+  return b;
+}
+
+void test_an_interrupted_replace_boots_from_the_tmp_file() {
+  gA.approveSaving();
+  record(gA, 0, 0, 60);
+  run(gA, gClock + kSettleTicks + 100);
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().saves);
+  // Interrupted after the old `.mle` was removed, before the rename: only the complete `.tmp` is left.
+  std::strcpy(gCard.files[gCard.find("/MidiLooper/engine/slot_00.mle")].name, "/MidiLooper/engine/slot_00.tmp");
+  // Slot 3: a first save interrupted part way (garbage `.tmp`, no `.mle`) beside its V1 file.
+  put("/MidiLooper/engine/slot_03.tmp", {1, 2, 3, 4, 5, 6, 7, 8});
+  put("/MidiLooper/current/slots/loop_00_03.bin", v1PassStream());
+  TEST_ASSERT_TRUE(gB.init(gPsramB, gRam2B, 2000));
+  gB.attachCard(gCard);
+  gB.startBootLoad();
+  run(gB, gClock + 30);
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().loads);
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT8(gA.history().undoDepth(0), gB.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().v1Imported);  // slot 3
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, gB.history().current(3));
+  // Loaded from the `.tmp`: saved again as the `.mle`.
+  run(gB, gClock + kSettleTicks + 100);
+  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/slot_00.mle"));
+  TEST_ASSERT_TRUE(gB.persistence().savedCurrent(0));
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -304,6 +352,7 @@ int main(int, char**) {
   RUN_TEST(test_autosave_waits_for_settle_and_free_slots);
   RUN_TEST(test_a_second_engine_boots_from_the_card);
   RUN_TEST(test_a_corrupt_file_fails_by_name_and_an_interrupted_save_keeps_the_old_file);
+  RUN_TEST(test_an_interrupted_replace_boots_from_the_tmp_file);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

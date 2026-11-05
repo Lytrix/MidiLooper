@@ -1698,3 +1698,29 @@ slot 2 skipped for its shifted loop start, 0 failed, 4 notes held for the whole 
 edits had moved their NoteOffs), 0.89 s for the whole boot import.
 
 Open: the slot with a shifted loop start (owner decision pending since E9.7b).
+
+## E9.8a — the engine firmware boots (owner 2026-11-06: boot first, then delete; as built)
+
+- **Env:** `teensy41-engine` builds only `src/EngineFirmware/` (`ENGINE_FIRMWARE`); the legacy sources stay out and
+  keep building in their envs, and `src/main.cpp` is not touched before E9.8d.
+- **Main loop** (`EngineMain.cpp`, no interrupts of its own): input bounded a pass (DIN on Serial8 with running status,
+  USB device, USB host); every tick the clock has due, in order, through `clockTick`; jobs and worker grains (a tick
+  that comes due between grains is played first); each port's due messages to the wire; serial commands
+  (`!ENGINE start|stop|bpm|launch|record|overdub|end|undo|redo|status|approve-saving`, `!STOP_STATUS`, `!REBOOT`) until
+  the surface is wired (E9.8b). Input arrives at the last played tick.
+- **`EngineClock`:** internal tempo, or the external MIDI clock at 8 engine ticks a pulse — ticks up to a pulse due at
+  once, spread over the measured interval between pulses but never past the next pulse's tick (never ahead of the
+  source), the tempo from the last 24 intervals, the source lost after 500 ms. Tick numbers only rise and a running
+  clock never skips one (a late clock catches up 16 a pass), because tracks, jobs and queued gestures key on them; a
+  start (surface or MIDI Start, held until the first pulse) moves on to the next bar line instead of back to 0.
+- **`SdCardIo`:** `CardIo` over the SD library. SdFat's rename refuses an existing target, so the old `.mle` is removed
+  first; `Persistence` boot load now takes the complete `.tmp` when the `.mle` is missing (saved again as `.mle`), and
+  a `.tmp` that fails its CRC with no `.mle` (a first save interrupted) falls back to the V1 file. Writes still only
+  after the owner's approval.
+- **Boot proof:** `#CAP,…,DIAG,boot_reset,crash=…`, the `MEM_REGION` census, `#CAP,…,BOOT,load,ok,…` with every
+  outcome named.
+
+Device (image `c58fb6ac…`, RAM1 304 KB free for locals, PSRAM 6,811,104 B): `boot_reset,crash=0`; `BOOT,load,ok` after
+1.09 s with 21 V1 slots imported, saving not approved, nothing written; two V1 slots launched on the internal clock
+played over USB MIDI (338 messages in 8 s) and every note closed at stop. Output is on the recorded channel (V1 notes
+carry none, so channel 1) until per-track channels are set with the surface (E9.8b).
