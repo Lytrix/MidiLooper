@@ -46,6 +46,8 @@ constexpr uint32_t kWin = 1536;
 constexpr uint32_t kUsPerTick = 1040;
 constexpr uint32_t kGrainUs = 810;
 constexpr uint8_t kDense = 7;
+constexpr uint32_t kCachedBoundaries = 2;    // ratified § 7.3 target with a usable checkpoint (owner 2026-11-05)
+constexpr uint32_t kUncachedBoundaries = 5;  // ... without one (warm-up)
 constexpr uint32_t kStart = kLoop - 1300;  // the first source is selected here: its cold start precedes the measured part
 
 static Pool gPool;
@@ -261,10 +263,11 @@ static void expectStream(const std::vector<Emit>& want, const std::vector<Emit>&
 static void report(const char* name, const Sim& sim) {
   char line[220];
   snprintf(line, sizeof line,
-           "%s: latency last %lu ticks (%.0f ms), worst %lu ticks; last transition %lu grains; late source switches %lu; "
-           "transition grains %lu of %lu; hard misses %lu",
+           "%s: latency last %lu ticks (%.0f ms, %lu boundaries), worst %lu ticks (%lu boundaries); last transition %lu "
+           "grains; late source switches %lu; transition grains %lu of %lu; hard misses %lu",
            name, static_cast<unsigned long>(gTrack.stats().lastLatencyTicks),
-           gTrack.stats().lastLatencyTicks * kUsPerTick / 1000.0, static_cast<unsigned long>(gTrack.stats().maxLatencyTicks),
+           gTrack.stats().lastLatencyTicks * kUsPerTick / 1000.0, static_cast<unsigned long>(gTrack.stats().lastBoundaries),
+           static_cast<unsigned long>(gTrack.stats().maxLatencyTicks), static_cast<unsigned long>(gTrack.stats().maxBoundaries),
            static_cast<unsigned long>(gTrack.stats().lastTransitionGrains),
            static_cast<unsigned long>(gTrack.stats().lateSourceSwitches),
            static_cast<unsigned long>(gS.report().transitionGrains), static_cast<unsigned long>(gS.report().grains),
@@ -297,6 +300,7 @@ void test_eight_dense_tracks_and_an_undo() {
   const uint32_t adopted = sim.adoptions.back();
   TEST_ASSERT_TRUE(adopted > undoAt);
   TEST_ASSERT_EQUAL_UINT32(adopted - undoAt, gTrack.stats().lastLatencyTicks);
+  TEST_ASSERT_TRUE(gTrack.stats().lastBoundaries <= kUncachedBoundaries);  // ratified target (§ 7.3)
   TEST_ASSERT_TRUE(sim.display.runs * 4 + 4 >= gS.report().grains);
   expectStream(reference({current, before}, kLoop, 4 * kLoop, [adopted](uint32_t t) { return t < adopted ? 0 : 1; }),
                sim.emits);
@@ -330,6 +334,8 @@ void test_eight_dense_tracks_and_an_undo_with_checkpoints() {
   TEST_ASSERT_EQUAL_UINT32(2, gTrack.stats().switches);
   const uint32_t adopted = sim.adoptions.back();
   TEST_ASSERT_EQUAL_UINT32(kLoop + 3 * kWin, adopted);  // the first boundary after acceptance
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().lastBoundaries);
+  TEST_ASSERT_TRUE(gTrack.stats().lastBoundaries <= kCachedBoundaries);
   expectStream(reference({current, before}, kLoop, 4 * kLoop, [adopted](uint32_t t) { return t < adopted ? 0 : 1; }),
                sim.emits);
 }
@@ -436,6 +442,8 @@ void test_sustained_load_bounded_progress_for_the_latest_source() {
   report("(e) sustained", sim);
   TEST_ASSERT_EQUAL_UINT32(selections + 1, gTrack.stats().switches);
   TEST_ASSERT_TRUE(gTrack.stats().maxLatencyTicks <= 2 * kWin);  // adopted by the second boundary after acceptance
+  TEST_ASSERT_TRUE(gTrack.stats().maxBoundaries <= kUncachedBoundaries);  // every non-superseded transition
+  TEST_ASSERT_EQUAL_UINT32(2, gTrack.stats().maxBoundaries);  // the late ones: the missed boundary is counted
   TEST_ASSERT_EQUAL_UINT32(gManifests.manifest(s[latest]).identity, gTrack.playingIdentity());
   TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().underruns);
   TEST_ASSERT_EQUAL_UINT32(0, gS.report().missedDeadlines);
@@ -540,6 +548,8 @@ void test_undo_redo_reuse_retained_checkpoints() {
                  {{s0, 1}, {s0 + 2 * kWin, 2}, {s0 + 4 * kWin, 1}, {s0 + 6 * kWin, 0}},  // Undo, Redo, Undo, Undo
                  6 * kLoop);
   TEST_ASSERT_EQUAL_UINT32(4, gTrack.stats().checkpointStarts);  // C at start, then B, C, B
+  TEST_ASSERT_TRUE(gTrack.stats().maxBoundaries <= kUncachedBoundaries);
+  TEST_ASSERT_TRUE(gTrack.stats().lastBoundaries <= kUncachedBoundaries);  // the uncached Undo to A
   TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().warmupStarts);      // the last Undo to A
   TEST_ASSERT_TRUE(gTable.holds(0, ib) && gTable.holds(0, ic));  // Undo / Redo replaced nothing
   TEST_ASSERT_FALSE(gTable.holds(0, ia));
@@ -563,6 +573,7 @@ void test_switching_between_two_revisions_never_rebuilds() {
   for (size_t k = 0; k < selections.size(); ++k)  // each at the first boundary after its acceptance
     TEST_ASSERT_EQUAL_UINT32(selections[k].first - 100 + kWin, adoptions[k + 1]);
   TEST_ASSERT_EQUAL_UINT32(12, gTrack.stats().checkpointStarts);
+  TEST_ASSERT_TRUE(gTrack.stats().maxBoundaries <= kCachedBoundaries);
   TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().warmupStarts);
   TEST_ASSERT_TRUE(gTable.holds(0, ib) && gTable.holds(0, ic));
   report("(E6.2d) B <-> C x11", Sim{});
@@ -571,6 +582,56 @@ void test_switching_between_two_revisions_never_rebuilds() {
   TEST_ASSERT_TRUE(gTable.holds(0, ib));
   TEST_ASSERT_FALSE(gTable.holds(0, ic));
   TEST_ASSERT_TRUE(gTable.holds(0, gManifests.manifest(d).identity));
+}
+
+// Checkpoint overflow (owner 2026-11-05): a revision keeps 30 notes open at every checkpoint position — more than the
+// 20 a checkpoint holds, within the composer's 48, and not a polyphony limit (OUT-2 still sounds 16). Its sweep names
+// every refused capture; an Undo to it is a named cache miss and reconstructs safely by warm-up, audible within the
+// uncached target, with every overlap and selection equal to uninterrupted playback.
+void test_checkpoint_overflow_is_a_named_miss_with_safe_reconstruction() {
+  const ManifestId c = denseSource(27, 2);
+  const RunId r = gRuns.allocate(0, RunKind::kRecord);
+  struct Ev {
+    uint32_t tick;
+    bool on;
+    uint32_t id;
+    uint8_t pitch;
+  };
+  std::vector<Ev> ev;
+  for (uint32_t i = 0; i < 30; ++i) {  // 30 long notes, staggered: 30 open everywhere
+    const uint32_t on = i * (kLoop / 30), len = kLoop - 300;
+    ev.push_back({on, true, 7000 + i, static_cast<uint8_t>(40 + i)});
+    ev.push_back({on + len, false, 7000 + i, static_cast<uint8_t>(40 + i)});
+  }
+  std::stable_sort(ev.begin(), ev.end(), [](const Ev& a, const Ev& b) { return a.tick < b.tick || (a.tick == b.tick && !a.on && b.on); });
+  for (const Ev& e : ev) {
+    PassEvent p{};
+    p.tick = e.tick;
+    p.noteId = e.id;
+    p.status = e.on ? 0x90 : 0x80;
+    p.data1 = e.pitch;
+    p.data2 = e.on ? 100 : 0;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, p, gPool));
+  }
+  gRuns.seal(r);
+  const ManifestId x = manifestOf(&r, 1, 1);
+  using Sweep = CheckpointSweep<TestComposer, Table, Window, Manifests, Runs>;
+  static Sweep sweep;
+  static TestComposer composer;
+  static Window scratch;
+  composer.init(gPool, gRuns, &gIndex);
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, sweep.start(composer, gTable, gManifests, gRuns, 0, x, kWin, 2 * kWin));
+  while (sweep.step(scratch, 128) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, sweep.status());
+  TEST_ASSERT_TRUE(sweep.unusable() > 0);  // named: every position held 30 open instances
+  TEST_ASSERT_NULL(gTable.nearest(0, gManifests.manifest(x).identity, kLoop - 1));
+  sweepCommit(c);
+  const uint32_t undoAt = kLoop + kWin + 100;
+  playSelections({x, c}, 1, {{undoAt, 0}}, 5 * kLoop);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().warmupStarts);  // the miss: reconstructed from the loop start
+  TEST_ASSERT_TRUE(gTrack.stats().lastBoundaries <= kUncachedBoundaries);
+  report("(overflow) Undo to a revision with refused checkpoints", Sim{});
 }
 
 int main(int, char**) {
@@ -584,5 +645,6 @@ int main(int, char**) {
   RUN_TEST(test_infeasible_load_names_misses_without_corruption);
   RUN_TEST(test_undo_redo_reuse_retained_checkpoints);
   RUN_TEST(test_switching_between_two_revisions_never_rebuilds);
+  RUN_TEST(test_checkpoint_overflow_is_a_named_miss_with_safe_reconstruction);
   return UNITY_END();
 }

@@ -42,6 +42,8 @@ class PlaybackTrack {
     uint32_t accepted;            // source selections accepted (a selection superseding an unfinished one included)
     uint32_t lastLatencyTicks;    // acceptance to audible, the latest adopted selection
     uint32_t maxLatencyTicks;     // acceptance to audible, worst adopted selection
+    uint32_t lastBoundaries;      // eligible window boundaries from acceptance to audible adoption (the adopting one
+    uint32_t maxBoundaries;       // included, missed ones counted): 1 = the first boundary after acceptance
     uint32_t lastTransitionGrains;  // compose grains the latest adopted selection took (replay, window, catch-up)
     uint32_t checkpointStarts;      // cold starts that resumed from a checkpoint set of their manifest
     uint32_t warmupStarts;          // cold starts that found none and warmed up from the loop start
@@ -86,6 +88,7 @@ class PlaybackTrack {
     cancelTransition();
     ++stats_.accepted;
     selectTick_ = now;
+    transBoundaries_ = 0;
     transGrains_ = 0;
     loop_ = m.loopLengthTicks;
     const uint32_t b = nextBoundary(now);
@@ -242,7 +245,10 @@ class PlaybackTrack {
     }
     if (playing_ != kNone) buf_[playing_].state = State::Free;
     playing_ = kNone;
-    if (transActive_ && !transition) transTarget_ = nextBoundary(t);  // missed: aim at the next boundary
+    if (transActive_ && !transition) {  // missed: counted, and aim at the next boundary
+      ++transBoundaries_;
+      transTarget_ = nextBoundary(t);
+    }
     if (steady_ != kNone && !transition && take == kNone) steadyTarget_ = nextBoundary(t);
     if (take == kNone) {
       if (steady_ != kNone || transActive_) ++stats_.underruns;
@@ -258,6 +264,8 @@ class PlaybackTrack {
       ++stats_.switches;
       stats_.lastLatencyTicks = t - selectTick_;
       stats_.lastTransitionGrains = transGrains_;
+      stats_.lastBoundaries = transBoundaries_ + 1;
+      if (stats_.lastBoundaries > stats_.maxBoundaries) stats_.maxBoundaries = stats_.lastBoundaries;
       if (stats_.lastLatencyTicks > stats_.maxLatencyTicks) stats_.maxLatencyTicks = stats_.lastLatencyTicks;
     } else {
       next_ = kNone;
@@ -282,7 +290,7 @@ class PlaybackTrack {
   ManifestId wanted_ = kNoManifest;
   uint32_t wantedIdentity_ = 0;
   bool transActive_ = false, transComposing_ = false;
-  uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0;
+  uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0, transBoundaries_ = 0;
   Stats stats_{};
 };
 

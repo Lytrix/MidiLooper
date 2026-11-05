@@ -1143,3 +1143,30 @@ compositions):
 two newer sweeps supersede the oldest running one; a set being swept is not replaced; a re-sweep reuses its set.
 Mutations caught: the set being swept unprotected, most-recently-used replaced, a use not recorded, a lost set not
 noticed by its sweep, no reuse of the own set, a sweep that never releases its set.
+
+### E6.2e — § 7.3 transition targets ratified (owner 2026-11-05, conditional) and qualified on the host
+
+**Approved targets** (pending device qualification D7): with a valid, complete checkpoint of the target manifest,
+audible by the 2nd eligible window boundary after acceptance; without one, by the 5th; the 1st whenever preparation
+time allows. Each requirement and where it is met:
+1. Acceptance → audible adoption: `PlaybackTrack::Stats::lastLatencyTicks / maxLatencyTicks` (selection tick to the
+   adopting boundary).
+2. Eligible boundaries, missed ones included: `lastBoundaries / maxBoundaries` (1 = the first boundary after
+   acceptance; every boundary the transition misses while pending is counted).
+3. The previous source plays until a complete matching replacement is ready (succession, E6.1).
+4. A superseded transition releases its leases and never publishes; the latest selection wins (E6.1, RED (c)).
+5. Stop is a bounded hard operation independent of transitions (`PlaybackTrack::stop`, RED (d)).
+6. Late transitions are counted (`lateSourceSwitches`).
+7. Bounded progress of every non-superseded transition under a feasible load (RED (e), now asserting ≤ 5 boundaries
+   for every transition and the counted 2-boundary worst case).
+
+**Checkpoint capacity is not a polyphony limit:** 20 open instances per checkpoint bounds what a checkpoint stores;
+sources may hold more (the composer tracks 48) and T = 16 limits only sounding output. A boundary beyond it is captured
+unusable and named (`CheckpointSweep::unusable`); a cold start there resumes from an earlier checkpoint or warms up.
+RED: a revision holding 30 open notes at every checkpoint — all captures named unusable, the Undo to it warms up, is
+audible within the uncached target, and its stream (overlaps and selections) equals uninterrupted playback.
+
+**Host qualification** (simulated clock, 8 dense tracks): every cached transition audible at the 1st boundary, every
+uncached one by the 2nd (worst measured 2 boundaries, 2.7 s, in the sustained case); the overflow case at the 1st.
+Mutations caught: a missed boundary not counted; a checkpoint capacity above ~21 open instances fails the budget's
+`static_assert`. Device qualification is task E10 / gate D7.

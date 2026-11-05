@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: § 7.3 transition targets ratified (conditional) — host-qualified.**
+- Approved targets: audible by the 2nd eligible boundary with a valid checkpoint, by the 5th without; measured from
+  acceptance to adoption in counted boundaries. All REDs assert them; worst on the host 2 boundaries.
+- Checkpoint capacity (20 open) is not a polyphony limit: overflow is a named miss with safe reconstruction (tested).
+- Device qualification (D7) pending integration.
+
 **2026-11-05 — Fixed-memory engine: E6.2d retained historical checkpoints (owner).**
 - Two checkpoint sets per slot keyed by manifest identity (current + one historical, LRU); Undo / Redo reuse them
   without rebuilding and never replace a set; completed sets pin nothing; a miss warms up with the previous source

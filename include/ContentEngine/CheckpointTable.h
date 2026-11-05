@@ -282,6 +282,7 @@ class CheckpointSweep {
     cycle_ = 0;
     windows_ = 0;
     grains_ = 0;
+    unusable_ = 0;
     periodic_ = false;
     composing_ = false;
     source_.open(manifests, runs, composer, manifest);
@@ -329,13 +330,14 @@ class CheckpointSweep {
         return status_;
       }
       // A whole steady cycle 1 without convergence: its end is the steady position-0 state (Q-OUT-2 proof).
+      if (!cp.valid) ++unusable_;
       table_->store(slot_, identity_, cp, State::Usable);
       return finish(composer_->stats().openOverflow == 0);
     }
     const uint8_t k = table_->indexOf(slot_, identity_, position_);
     if (k == Table::kPerSlot) return status_;
     Checkpoint cp;
-    composer_->capture(cp);
+    if (!composer_->capture(cp) && cycle_ != 0) ++unusable_;  // stored as Unusable: a named miss at this position
     if (cycle_ == 0) {
       table_->store(slot_, identity_, cp, State::Provisional);
       return status_;
@@ -358,6 +360,9 @@ class CheckpointSweep {
   bool pinned() const { return source_.pinned(); }
   uint32_t windows() const { return windows_; }
   uint32_t grains() const { return grains_; }
+  /// Checkpoint positions whose capture was refused (more open instances or occluder pairs than a checkpoint holds):
+  /// named cache misses there; a cold start resumes from an earlier checkpoint or warms up, never from partial state.
+  uint32_t unusable() const { return unusable_; }
 
  private:
   /// Converged (equal state at one position, so equal from there on) or cycle 1 complete: what is still provisional is
@@ -381,7 +386,7 @@ class CheckpointSweep {
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool composing_ = false, periodic_ = false;
-  uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0, grains_ = 0;
+  uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0, grains_ = 0, unusable_ = 0;
   Status status_ = Status::Idle;
 };
 

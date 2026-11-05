@@ -92,7 +92,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E6.2b Playback jobs under the scheduler: steady hard (boundary deadline), transitions background (owner review vs plan § 7.3); background round robin (`test_content_engine_playback_jobs`, 8 tracks simulated; mutation-checked).
 - [x] E6.2c Source-transition liveness (owner ruling): Transition job class (≥ 1 grain in 2 while pending, slack permitting), late adoption with pins held, acceptance-to-audible latency, stop closes notes and releases pins; six REDs + a checkpointed Undo (`test_content_engine_source_transitions` 7, mutation-checked).
 - [x] E6.2d Retained historical checkpoints (owner: keep them): two identity-keyed sets per slot, LRU among sets no sweep is writing, Undo / Redo reuse without rebuild; checkpoint open capacity 32 → 20 (owner ceiling) to fit ~416 KB (417,284 B). Tests: A→B→C + Undo/Redo/Undo/Undo, B↔C ×11 (mutation-checked).
-- [ ] E6.2e Owner: ratify the § 7.3 transition latency bound (proposed: ≤ 2 boundaries with a checkpoint, ≤ 5 on the warm-up path).
+- [x] E6.2e § 7.3 transition targets ratified as approved targets (owner 2026-11-05, conditional): boundary counting, ratified bounds asserted in the REDs, checkpoint overflow as a named miss with safe reconstruction (`test_content_engine_source_transitions` 10).
+- [ ] D7 Device qualification of the transition targets (E10): 8 dense tracks, cached / uncached Undo-Redo, 64-bar loops and worst checkpoint misses, continuous overdubbing with revision changes, display + USB/DIN + SD, clustered workload; boundary counts, hard misses, max grain, CPU capacity.
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 
 ## CE-C1 — output

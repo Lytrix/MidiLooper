@@ -234,7 +234,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Source rows per slot per 2-bar window | ≤ 2,816 (admission); window buffer 3,072 rows |
 | Open notes per writer | ≤ 128 (`ActiveNoteLedger::kMaxOpenNotes`) |
 | Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
-| Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 20 open instances (the owner's 20-open-note ceiling; beyond that the checkpoint is marked unusable; § 7.2) |
+| Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 20 open instances. **A checkpoint capacity, not a polyphony limit:** sources may hold more open instances (the composer tracks 48) and T = 16 limits only sounding output. A boundary beyond it is captured unusable — a named cache miss (`CheckpointSweep::unusable`) reconstructed safely from an earlier checkpoint or by warm-up (§ 7.2) |
 | Checkpoint sets per slot | 2: the current source's and one historical (least recently used), keyed by manifest identity (owner 2026-11-05, E6.2d) |
 | Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
 | Undo history | ≤ 99 states shared by all slots, including overdub session steps (owner 2026-11-05); a NOTE_EDIT session holds one history state and keeps its E: steps (≤ 99, owner limit [32]) in the edit writer's log |
@@ -612,7 +612,7 @@ are kept in brackets where they changed.
 |---|---|---|
 | Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 47 = **376** / 8 × 100 = **800** [184] |
 | Hard | NOTE_EDIT rebuild (one session) | 512 gather + ≤ 512 heapify + ≤ 1,024 extract + ≤ 1,024 write units, 128 per grain: ≤ 24 grains per E: action (device worst 158 µs per grain) |
-| Hard → **Transition (proposed, E6.2c — owner to ratify)** | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58); at ≈ 985 transition grains per window under W's worst steady load: audible ≤ 2 boundaries after acceptance with a checkpoint, ≤ 5 on the warm-up path, previous source playing meanwhile |
+| **Transition** (approved target 2026-11-05, pending device qualification D7) | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58); at ≈ 985 transition grains per window under W's worst steady load: audible ≤ 2 boundaries after acceptance with a checkpoint, ≤ 5 on the warm-up path, previous source playing meanwhile |
 | Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
 | Soft, bounded | density after any slot commit | ≤ 11 grains per bar of the committing slot; one overdub at a time commits at most once per loop → ≤ 11 × 2 = **22 per P** [176, 8 overdubs] (not yet measured). A Record's Stop is a one-off 704 per slot |
 | Background | checkpoint sweep | 3,008 + 58 per committed manifest, superseded by the next commit |
@@ -671,9 +671,14 @@ a non-blocking (DMA / multi-turn) write path; it does not get an exception.
 - **Display share:** while display work is pending, at least every fourth grain goes to display, unless the slack check
   above fails.
 - **Persistence share:** at least 1 in 16.
-- **Transition (owner ruling 2026-11-05):** preparing a newly selected source (Undo, Redo, slot switch, edit commit)
-  gets at least every second grain while pending, whenever the hard slack check allows, and priority over soft work;
-  late adoption keeps the previous source and counts `lateSourceSwitches` (E6.2c; latency bound proposed in § 7.3).
+- **Transition (owner ruling and ratification 2026-11-05):** preparing a newly selected source (Undo, Redo, slot switch,
+  edit commit) gets at least every second grain while pending, whenever the hard slack check allows, and priority over
+  soft work. Targets (approved, pending D7): audible by the 2nd eligible boundary after acceptance with a valid
+  checkpoint, by the 5th without, the 1st whenever preparation time allows. Latency is measured from acceptance to
+  audible adoption and in eligible boundaries (missed ones counted); the previous source plays until a complete
+  replacement is ready; a superseded transition releases its leases and never publishes (the latest selection wins);
+  Stop stays a bounded hard operation independent of transitions; late transitions are counted
+  (`lateSourceSwitches`).
 - **Background (checkpoint sweeps, reclaim, compaction):** take the rest, the live background jobs in turn (a long
   compaction must not hold up a short job).
 - **Display freshness bound:** with grain rate `r = U_e / g`:
@@ -974,6 +979,7 @@ musical clauses they protected.
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |
 | D5 Saturation | drive past W: only new input refused, by name; every accepted note intact; Stop completes |
 | D6 Restore | reboot-restore parity; undo/redo on device; DEC-159 trace (A stop → B → C → late A completion) on device |
+| D7 Source transitions (owner 2026-11-05; § 7.3 targets are guaranteed only after this) | on the Teensy: eight dense tracks playing; cached and uncached Undo / Redo; 64-bar loops and worst-case checkpoint misses (overflowed checkpoints included); continuous overdubbing with repeated revision changes; display, USB / DIN output and SD work running; the clustered composition workload. Measured: acceptance-to-audible boundary counts (≤ 2 with a valid checkpoint, ≤ 5 without, first boundary whenever time allows), late transitions counted, hard-window misses = 0, maximum grain, CPU scheduling capacity. A failing workload is reported with its exact infeasible demand and either optimized or named as a supported-capacity boundary — the transition contract is not weakened silently. |
 
 ---
 
