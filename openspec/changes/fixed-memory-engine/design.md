@@ -1061,3 +1061,53 @@ track starts on time, half switch source mid-loop at the next boundary, 0 underr
 deadlines, 0 overruns, display ≥ 1 grain in 4, and track 0's stream equals a reference from uninterrupted
 compositions. `test_content_engine_scheduler` gains the turn-taking case. Mutations caught: background FIFO, deadline
 at "now", a job that never ends, no transition jobs, no steady jobs.
+
+### E6.2c — source-transition liveness (owner ruling 2026-11-05, as built; § 7.3 amendment proposed)
+
+**Classes (ruling):** Hard — accepted Stop / edit sealing, publication obligations, steady playback windows; never
+depends on spare capacity. **Transition** — preparing a newly selected source (Undo, Redo, slot switch, edit commit):
+`JobClass::Transition`, ordered by target boundary, priority over soft work, and at least every second grain while
+pending whenever the hard slack check allows (so it cannot starve behind repeated or long hard work while the hard load
+is feasible). Soft — display, persistence, background (sweeps, reclamation, compaction).
+**Late adoption:** a transition not ready at its boundary leaves the previous source playing with its pins held,
+counts `lateSourceSwitches`, keeps composing toward the next boundary, and is adopted at the first boundary after it
+is ready. **Latency:** `PlaybackTrack::Stats` reports acceptance-to-audible ticks (last, worst) and each adopted
+transition's grains, separately from steady deadlines. **Stop** (`PlaybackTrack::stop`) closes every sounding note,
+cancels a pending transition and releases both cursors' pins.
+
+**REDs** (`test_content_engine_source_transitions`): simulated clock (tick 1,040 µs, every grain 810 µs); load = seven
+dense playing tracks, each a hard 100-grain window job per boundary, plus display always pending; track 0 plays real
+admission-dense music (~2,700 notes per window, ≤ 20 open notes) and its stream is compared with uninterrupted
+compositions. The steady-window simulation of E6.2b is not used as evidence here.
+
+| Case | Acceptance → audible | Transition grains | Named outcomes |
+|---|---|---|---|
+| (a) 8 dense + Undo, warm-up (no checkpoint) | 1,436 ticks (1.49 s) — first boundary | 729 | 0 hard misses |
+| (a2) the same, Undo target's checkpoints present | 1,436 ticks — first boundary | 183 | 0 |
+| (b) demand + edit commit with a 4,096-hide index build | 836 ticks (0.87 s) | 548 | 0 |
+| (c) B superseded by C, C by D before ready | D at its first boundary | 640 | B, C leave no pin |
+| (d) stop while a transition is pending | — | — | sounding notes closed, silence, no pin |
+| (e) sustained: + a 10,000-grain hard obligation (always pending), a new source every 3 windows | worst 2,572 ticks (2.7 s) | ~640 each | 2 late of 10, latest adopted, 0 misses |
+| (f) infeasible (7 × 400 grains per window) | — | — | 26 hard misses, 10 late switches; no phantom or duplicate note, no pin left |
+
+Under this load a transition gets ≈ 0.64 grains per tick (≈ 985 per window). Mutations caught: no transition share,
+transitions demoted to background (both: only 4 of 9 selections adopted within two boundaries in (e)), stop closing
+nothing, a cancelled transition keeping its pin, latency measured from the target.
+
+**Finding — Undo / Redo lose their checkpoints:** the checkpoint table keeps one manifest per slot (the current one).
+An Undo or Redo selects another manifest, so as built it always takes the warm-up path ((a): 729 grains instead of
+183).
+
+**Trade-off against plan § 7.3** (which lists the cold start as hard with the next boundary as its response). Measured
+here: next-boundary response holds when the transition's grains fit the transition share before that boundary. In W's
+worst case — a 64-bar admission-dense loop, warm-up ≈ 3,009 grains (§ 7.2) — that is ≈ 3.1 windows of share: audible at
+the 4th boundary after acceptance (≈ 5–6.5 s at 300 BPM), the previous source playing meanwhile. With a usable
+checkpoint (≤ 190 + 58 grains) it is the first boundary, or the second if accepted in the last ~25 % of a window.
+
+**Proposed amendment (owner to ratify):** § 7.3's "one cold start (gesture)" row becomes a Transition-class row:
+acceptance-to-audible ≤ the first boundary by which ⌈G / ρ⌉ windows of transition share have passed (ρ ≈ 985 grains
+per window under W's worst steady load; G = the transition's grains), i.e. ≤ 2 boundaries with a usable checkpoint and
+≤ 5 boundaries on the warm-up path; the previous source plays until then (`lateSourceSwitches`). Two options would
+bring Undo / Redo back to the checkpoint case: keep the previous manifest's checkpoints per slot as well (≈ 207 KB more
+PSRAM: 64 slots × 8 × 404 B, inside the 801 KB allowance), or sweep a history manifest on demand when it becomes the
+Undo / Redo target (no memory, latency unchanged).

@@ -5,9 +5,10 @@
 // jobs, each submitted only while its work is pending and never twice:
 //   * steady: the window for the track's next boundary. Hard, deadline = that boundary; declared grains = the measured
 //     worst window (100 grains at 128 row units, E5.8). Missing it is an underrun.
-//   * transition: cold-start replay plus the new source's window. Background: succession lets it land late without
-//     silence (the old source keeps playing, a late switch is counted), and declaring a whole warm-up cycle as hard
-//     work would starve display through the slack check. (Plan § 7.3 lists the cold start as hard; owner review.)
+//   * transition: cold-start replay plus the new source's window. Transition class (owner ruling 2026-11-05): bounded
+//     progress — at least every second grain while the hard load allows — and priority over soft work, ordered by
+//     target boundary. If it is not ready at its boundary the previous source keeps playing (pins held), a late source
+//     switch is counted, and it is adopted at the first boundary after it is ready.
 // `service` is called from the main loop with the Clock position; the jobs run one grain per scheduler turn.
 
 #pragma once
@@ -49,7 +50,8 @@ class PlaybackJobs {
       }
       Job& t = transition_[i];
       if (!t.live && t.track->transitionWorkPending())
-        submit(t, JobSpec{JobClass::Background, 0, kTransitionGrains, &step, &t});
+        submit(t, JobSpec{JobClass::Transition,
+                          nowUs + (t.track->transitionTarget() - nowTick) * usPerTick, kTransitionGrains, &step, &t});
     }
   }
 

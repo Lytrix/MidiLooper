@@ -90,6 +90,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E6.1 `PlaybackTrack`: three windows per track, steady + transition cursors, deterministic succession, late switch and underrun counted, catch-up targets (`test_content_engine_playback_track` 6, reference-stream comparison, mutation-checked).
 - [x] E6.2a Continuous-controller limit (owner: 64 per track per tick, recorded and played; essentials and RPN never limited), shared classifier, tick spill instead of loss (`test_content_engine_tick_limits` 5, mutation-checked; device burst tick 417 → 29.7 µs).
 - [x] E6.2b Playback jobs under the scheduler: steady hard (boundary deadline), transitions background (owner review vs plan § 7.3); background round robin (`test_content_engine_playback_jobs`, 8 tracks simulated; mutation-checked).
+- [x] E6.2c Source-transition liveness (owner ruling): Transition job class (≥ 1 grain in 2 while pending, slack permitting), late adoption with pins held, acceptance-to-audible latency, stop closes notes and releases pins; six REDs + a checkpointed Undo (`test_content_engine_source_transitions` 7, mutation-checked).
+- [ ] E6.2d Owner: ratify the § 7.3 transition latency bound (≤ 2 boundaries with checkpoint, ≤ 5 warm-up) and choose how Undo / Redo get checkpoints (keep the previous manifest's table, ≈ 207 KB PSRAM, or sweep on demand).
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 
 ## CE-C1 — output

@@ -1,3 +1,10 @@
+**2026-11-05 — Fixed-memory engine: E6.2c source-transition liveness (owner ruling).**
+- Transition job class: priority over soft work and ≥ 1 grain in 2 while pending (slack permitting); late adoption
+  keeps the previous source and its pins; acceptance-to-audible latency measured; stop closes notes and pins.
+- Six REDs (8 dense tracks + Undo, edit-index build, supersession, stop, sustained load, infeasible load) pass.
+  Measured: Undo audible at the first boundary (1.5 s) in an 8-bar dense loop; W's 64-bar warm-up extrapolates to the
+  4th boundary. Undo / Redo lose their checkpoints (one manifest per slot). § 7.3 amendment proposed for the owner.
+
 **2026-11-05 — Fixed-memory engine: E6.2b playback work under the scheduler.**
 - Each track's next window is a hard job with its boundary as deadline; source transitions are background jobs (owner
   review: plan § 7.3 says hard). Background jobs now take turns — a long compaction held up every cold start before.

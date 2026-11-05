@@ -606,7 +606,7 @@ are kept in brackets where they changed.
 |---|---|---|
 | Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 47 = **376** / 8 × 100 = **800** [184] |
 | Hard | NOTE_EDIT rebuild (one session) | 512 gather + ≤ 512 heapify + ≤ 1,024 extract + ≤ 1,024 write units, 128 per grain: ≤ 24 grains per E: action (device worst 158 µs per grain) |
-| Hard | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58) |
+| Hard → **Transition (proposed, E6.2c — owner to ratify)** | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58); at ≈ 985 transition grains per window under W's worst steady load: audible ≤ 2 boundaries after acceptance with a checkpoint, ≤ 5 on the warm-up path, previous source playing meanwhile |
 | Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
 | Soft, bounded | density after any slot commit | ≤ 11 grains per bar of the committing slot; one overdub at a time commits at most once per loop → ≤ 11 × 2 = **22 per P** [176, 8 overdubs] (not yet measured). A Record's Stop is a one-off 704 per slot |
 | Background | checkpoint sweep | 3,008 + 58 per committed manifest, superseded by the next commit |
@@ -665,10 +665,11 @@ a non-blocking (DMA / multi-turn) write path; it does not get an exception.
 - **Display share:** while display work is pending, at least every fourth grain goes to display, unless the slack check
   above fails.
 - **Persistence share:** at least 1 in 16.
-- **Background (checkpoint sweeps, reclaim, compaction, playback transitions):** take the rest, the live background
-  jobs in turn (E6.2: a long compaction must not hold up a cold start). Playback transitions run as background, not
-  hard (E6.2, for owner review): a late transition keeps the old source playing and counts a late switch, while a hard
-  job declaring a whole warm-up cycle would make the slack check starve display.
+- **Transition (owner ruling 2026-11-05):** preparing a newly selected source (Undo, Redo, slot switch, edit commit)
+  gets at least every second grain while pending, whenever the hard slack check allows, and priority over soft work;
+  late adoption keeps the previous source and counts `lateSourceSwitches` (E6.2c; latency bound proposed in § 7.3).
+- **Background (checkpoint sweeps, reclaim, compaction):** take the rest, the live background jobs in turn (a long
+  compaction must not hold up a short job).
 - **Display freshness bound:** with grain rate `r = U_e / g`:
   - visible bars of the focused slot reflect a new manifest within `F_vis = 264 / (r / 4)`;
   - the whole slot reflects it within `704 / (r / 4)`.

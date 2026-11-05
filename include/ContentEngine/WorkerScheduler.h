@@ -5,14 +5,19 @@
 // turn; it runs exactly one grain of one job and returns, so MIDI service, NoteOff service and display drawing run
 // between any two grains (a grain is the only non-preemptible engine unit; the Clock ISR still preempts it).
 //
+// Classes (owner ruling 2026-11-05): Hard (accepted Stop / edit sealing, publication obligations, steady playback
+// windows) never depends on spare capacity; Transition (preparing a newly selected source: Undo, Redo, slot switch,
+// edit commit) has bounded progress and priority over soft work; soft is Display, Persistence and Background
+// (speculative preparation, checkpoint sweeps, reclamation, compaction).
 // Policy, per grain:
 //   1. Hard jobs (deadline: a window boundary) run earliest-deadline-first.
-//   2. Before a soft grain is taken, every hard job's remaining declared grains x g must fit in its slack minus B_max
-//      (cumulative, in deadline order). If not, the hard job with the earliest deadline runs.
-//   3. While display work is pending, at least every fourth grain goes to display; persistence at least 1 in 16.
-//   4. Otherwise hard work runs ahead; with no hard work, background (reclaim, compaction, sweeps, playback
-//      transitions) takes the rest, the live background jobs in turn (a long job does not hold up a short one), and
-//      display / persistence take what background leaves.
+//   2. Before any non-hard grain is taken, every hard job's remaining declared grains x g must fit in its slack minus
+//      B_max (cumulative, in deadline order). If not, the hard job with the earliest deadline runs.
+//   3. While a transition is pending it gets at least every second grain (earliest target first), so it cannot starve
+//      behind repeated steady-window jobs while the hard load is feasible; while display work is pending, at least
+//      every fourth grain goes to display; persistence at least 1 in 16.
+//   4. Otherwise hard work runs ahead, then transitions; with neither, background takes the rest (the live background
+//      jobs in turn: a long job does not hold up a short one), and display / persistence take what background leaves.
 // Progress: every job declares its worst-case grain count. A job that runs past it is reported (`overruns`), never
 // silently extended; a hard job that completes after its deadline is reported (`missedDeadlines`). The job table is
 // fixed (`MaxJobs`); a full table refuses `submit` by name. No allocation.
@@ -23,13 +28,13 @@
 
 namespace ContentEngine {
 
-enum class JobClass : uint8_t { Hard, Display, Persistence, Background };
+enum class JobClass : uint8_t { Hard, Transition, Display, Persistence, Background };
 enum class JobStep : uint8_t { Continue, Done };
 using JobFn = JobStep (*)(void* ctx);
 
 struct JobSpec {
   JobClass cls;
-  uint32_t deadlineUs;      // Hard only: absolute time the job must be complete by
+  uint32_t deadlineUs;      // Hard: absolute time the job must be complete by; Transition: its target (ordering only)
   uint32_t declaredGrains;  // worst-case grain count
   JobFn fn;
   void* ctx;
@@ -42,7 +47,7 @@ class WorkerScheduler {
 
   struct Report {
     uint32_t grains;
-    uint32_t hardGrains, displayGrains, persistenceGrains, backgroundGrains;
+    uint32_t hardGrains, transitionGrains, displayGrains, persistenceGrains, backgroundGrains;
     uint32_t overruns;         // jobs that ran past their declared grain count
     uint32_t missedDeadlines;  // hard jobs still live, or completing, after their deadline (counted once each)
     uint32_t slackForcedHard;  // soft share deferred because a hard job's slack was short
@@ -55,6 +60,7 @@ class WorkerScheduler {
     for (auto& j : jobs_) j.live = false;
     sinceDisplay_ = 0;
     sincePersist_ = 0;
+    sinceTransition_ = 0;
     lastBackground_ = MaxJobs - 1;
     report_ = Report{};
   }
@@ -88,12 +94,14 @@ class WorkerScheduler {
     ++report_.grains;
     switch (j.spec.cls) {
       case JobClass::Hard: ++report_.hardGrains; break;
+      case JobClass::Transition: ++report_.transitionGrains; break;
       case JobClass::Display: ++report_.displayGrains; break;
       case JobClass::Persistence: ++report_.persistenceGrains; break;
       case JobClass::Background: ++report_.backgroundGrains; break;
     }
     sinceDisplay_ = j.spec.cls == JobClass::Display ? 0 : sinceDisplay_ + 1;
     sincePersist_ = j.spec.cls == JobClass::Persistence ? 0 : sincePersist_ + 1;
+    sinceTransition_ = j.spec.cls == JobClass::Transition ? 0 : sinceTransition_ + 1;
     ++j.used;
     if (j.used > j.spec.declaredGrains && !j.overran) {
       j.overran = true;
@@ -120,11 +128,11 @@ class WorkerScheduler {
 
   uint32_t remaining(const Job& j) const { return j.used < j.spec.declaredGrains ? j.spec.declaredGrains - j.used : 1; }
 
-  /// Earliest-deadline hard job, or kNoJob.
-  uint8_t earliestHard() const {
+  /// Earliest-deadline live job of class `c`, or kNoJob.
+  uint8_t earliest(JobClass c) const {
     uint8_t best = kNoJob;
     for (uint8_t i = 0; i < MaxJobs; ++i)
-      if (jobs_[i].live && jobs_[i].spec.cls == JobClass::Hard &&
+      if (jobs_[i].live && jobs_[i].spec.cls == c &&
           (best == kNoJob || static_cast<int32_t>(jobs_[i].spec.deadlineUs - jobs_[best].spec.deadlineUs) < 0))
         best = i;
     return best;
@@ -169,17 +177,22 @@ class WorkerScheduler {
   }
 
   uint8_t pick(uint32_t nowUs) {
-    const uint8_t hard = earliestHard();
+    const uint8_t hard = earliest(JobClass::Hard);
+    const uint8_t transition = earliest(JobClass::Transition);
     const uint8_t display = firstOf(JobClass::Display);
     const uint8_t persist = firstOf(JobClass::Persistence);
-    const bool softOwed = (display != kNoJob && sinceDisplay_ >= 3) || (persist != kNoJob && sincePersist_ >= 15);
+    const bool transitionOwed = transition != kNoJob && sinceTransition_ >= 1;
+    const bool softOwed =
+        transitionOwed || (display != kNoJob && sinceDisplay_ >= 3) || (persist != kNoJob && sincePersist_ >= 15);
     if (hard != kNoJob && !slackAllowsSoftGrain(nowUs)) {
       if (softOwed) ++report_.slackForcedHard;
       return hard;
     }
+    if (transitionOwed) return transition;
     if (display != kNoJob && sinceDisplay_ >= 3) return display;
     if (persist != kNoJob && sincePersist_ >= 15) return persist;
     if (hard != kNoJob) return hard;
+    if (transition != kNoJob) return transition;
     const uint8_t background = nextBackground();
     if (background != kNoJob) return lastBackground_ = background;
     if (display != kNoJob) return display;
@@ -188,7 +201,7 @@ class WorkerScheduler {
 
   Job jobs_[MaxJobs];
   uint32_t g_ = 0, bMax_ = 0;
-  uint32_t sinceDisplay_ = 0, sincePersist_ = 0;
+  uint32_t sinceDisplay_ = 0, sincePersist_ = 0, sinceTransition_ = 0;
   uint8_t lastBackground_ = MaxJobs - 1;
   Report report_{};
 };

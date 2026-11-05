@@ -183,7 +183,7 @@ void test_switch_on_time() {
   }
   expectEqual(reference(t0, 3 * kLoop, [b](uint32_t t) { return t < b ? 0 : 1; }), got);
   TEST_ASSERT_EQUAL_UINT32(2, gTrack.stats().switches);
-  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().lateSwitches);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().lateSourceSwitches);
   TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().underruns);
 }
 
@@ -204,7 +204,7 @@ void test_late_switch_keeps_the_old_source() {
     got.insert(got.end(), buf, buf + n);
   }
   TEST_ASSERT_EQUAL_UINT32(b + kWin, switchedAt);
-  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().lateSwitches);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().lateSourceSwitches);
   expectEqual(reference(t0, 3 * kLoop, [switchedAt](uint32_t t) { return t < switchedAt ? 0 : 1; }), got);
 }
 
@@ -278,7 +278,7 @@ void test_no_heap_while_playing() {
     gTrack.work(128);
     gTrack.tick(t, buf, 64);
   }
-  gTrack.stop();
+  gTrack.stop(3 * kLoop, buf, 64);
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
 }

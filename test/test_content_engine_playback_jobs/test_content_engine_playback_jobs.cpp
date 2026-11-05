@@ -4,8 +4,9 @@
 // fixed-memory-engine E6.2: playback compose work run by the worker scheduler. Eight tracks, each with its own
 // playback windows and compose cursors, on a simulated clock: a Clock tick every 1,040 µs (300 BPM, 192 PPQN), every
 // scheduler grain costing the measured worst g = 810 µs, a display job always pending. The steady window of each track
-// is a hard job with its next boundary as deadline; transitions (cold starts) are background jobs, sharing background
-// grains in turn with a long compaction-sized job that is already running. Every track starts
+// is a hard job with its next boundary as deadline; transitions (cold starts) are transition-class jobs, ahead of a long
+// compaction-sized background job that is already running. This proves steady-window deadlines under load, not
+// source-transition liveness (test_content_engine_source_transitions). Every track starts
 // on time, half the tracks switch source mid-loop, nothing underruns, no hard deadline is missed, display keeps its
 // share, and track 0's emitted stream equals a reference built from uninterrupted compositions.
 
@@ -202,7 +203,7 @@ void test_eight_tracks_play_and_switch_under_the_scheduler() {
   const uint32_t b = kLoop + 3 * kWin;  // the boundary after the mid-loop selection
   for (uint8_t i = 0; i < kTracks; ++i) {
     TEST_ASSERT_EQUAL_UINT32(0, gTrack[i].stats().underruns);
-    TEST_ASSERT_EQUAL_UINT32(0, gTrack[i].stats().lateSwitches);
+    TEST_ASSERT_EQUAL_UINT32(0, gTrack[i].stats().lateSourceSwitches);
     TEST_ASSERT_EQUAL_UINT32(i % 2 == 0 ? 2 : 1, gTrack[i].stats().switches);
     if (i % 2 == 0) TEST_ASSERT_EQUAL_UINT32(b, switchAt[i]);
   }

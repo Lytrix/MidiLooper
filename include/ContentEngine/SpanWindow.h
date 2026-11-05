@@ -160,6 +160,18 @@ class WindowPlayer {
     return n;
   }
 
+  /// Transport stop at timeline tick `t`: every sounding instance ends now (`out` must hold T); nothing plays after.
+  uint8_t stopAll(uint32_t t, Emit* out, uint8_t max) {
+    typename Scheduler::Out offs[T];
+    const uint8_t closed = sched_->transition(t, nullptr, 0, offs, static_cast<uint8_t>(T));
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < closed && n < max; ++i) out[n++] = fromOut(offs[i]);
+    identity_ = 0;
+    entries_ = nullptr;
+    count_ = next_ = 0;
+    return n;
+  }
+
   /// The live writer's NoteOff for one of its notes that may be sounding here; it goes out at the next `tick`.
   void liveNoteOff(uint32_t noteId, uint16_t runId, uint32_t now) { sched_->liveNoteOff(noteId, runId, now); }
 

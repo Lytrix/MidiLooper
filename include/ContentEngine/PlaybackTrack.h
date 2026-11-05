@@ -11,7 +11,7 @@
 //   and timeline start; a `Complete` buffer is immutable.
 // * Succession is deterministic (§ 9.1). At a boundary the track takes the `Complete` window stamped with the wanted
 //   source and starting at the boundary; otherwise the next window of the source already playing, and counts a late
-//   switch; otherwise nothing (an underrun, counted: notes already sounding still end on time). A window that starts
+//   source switch; otherwise nothing (an underrun, counted: notes already sounding still end on time). A window that starts
 //   before the boundary is stale. A composer (steady or transition) that missed its boundary moves its target to the
 //   next boundary and composes, then discards, windows that start before it; composing a window takes less than a
 //   window's time, so it catches up.
@@ -38,7 +38,11 @@ class PlaybackTrack {
 
   struct Stats {
     uint32_t switches;       // transitions taken at their boundary or later
-    uint32_t lateSwitches;   // boundaries where the wanted source was not ready and the old one continued
+    uint32_t lateSourceSwitches;  // boundaries where the selected source was not ready and the previous one continued
+    uint32_t accepted;            // source selections accepted (a selection superseding an unfinished one included)
+    uint32_t lastLatencyTicks;    // acceptance to audible, the latest adopted selection
+    uint32_t maxLatencyTicks;     // acceptance to audible, worst adopted selection
+    uint32_t lastTransitionGrains;  // compose grains the latest adopted selection took (replay, window, catch-up)
     uint32_t underruns;      // boundaries with no window to play
     uint32_t staleWindows;   // windows composed after their boundary had passed, discarded to catch up
     uint32_t refusedStarts;  // cold starts refused (e.g. index capacity): the old source keeps playing
@@ -78,6 +82,9 @@ class PlaybackTrack {
       return;
     }
     cancelTransition();
+    ++stats_.accepted;
+    selectTick_ = now;
+    transGrains_ = 0;
     loop_ = m.loopLengthTicks;
     const uint32_t b = nextBoundary(now);
     const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
@@ -110,6 +117,7 @@ class PlaybackTrack {
   bool transitionWorkPending() const { return transActive_ && buf_[trans_].state != State::Complete; }
   bool workTransition(uint32_t maxRows) {
     if (!transitionWorkPending()) return false;
+    ++transGrains_;
     if (!transComposing_) {
       const typename Cold::Status st = cold_[transComp_].step(*buf_[trans_].w, maxRows);
       if (st == Cold::Status::Done) {
@@ -146,15 +154,21 @@ class PlaybackTrack {
     return static_cast<uint8_t>(n + player_->tick(t, out + n, static_cast<uint8_t>(max - n)));
   }
 
-  /// The track stops: compose cursors and pins end. Sounding notes are the caller's (player / ports) to close.
-  void stop() {
+  /// The track stops at tick `t`: every sounding note ends now (returned in `out`, which must hold T), a pending
+  /// transition is cancelled, and both compose cursors end, releasing their source pins.
+  uint8_t stop(uint32_t t, Emit* out, uint8_t max) {
     cancelTransition();
     if (steady_ != kNone) cold_[steady_].release();
     steady_ = kNone;
     for (auto& b : buf_) b.state = State::Free;
     playing_ = next_ = kNone;
     playingIdentity_ = 0;
+    loop_ = 0;
+    return player_->stopAll(t, out, max);
   }
+
+  /// The boundary a pending transition aims at (moves on when it is missed).
+  uint32_t transitionTarget() const { return transTarget_; }
 
   uint32_t playingIdentity() const { return playing_ == kNone ? 0 : playingIdentity_; }
   bool transitionPending() const { return transActive_; }
@@ -221,7 +235,7 @@ class PlaybackTrack {
       transition = true;
     } else if (next_ != kNone && buf_[next_].state == State::Complete && buf_[next_].start == t) {
       take = next_;
-      if (transActive_) ++stats_.lateSwitches;
+      if (transActive_) ++stats_.lateSourceSwitches;
     }
     if (playing_ != kNone) buf_[playing_].state = State::Free;
     playing_ = kNone;
@@ -239,6 +253,9 @@ class PlaybackTrack {
       trans_ = kNone;
       transActive_ = false;
       ++stats_.switches;
+      stats_.lastLatencyTicks = t - selectTick_;
+      stats_.lastTransitionGrains = transGrains_;
+      if (stats_.lastLatencyTicks > stats_.maxLatencyTicks) stats_.maxLatencyTicks = stats_.lastLatencyTicks;
     } else {
       next_ = kNone;
     }
@@ -262,7 +279,7 @@ class PlaybackTrack {
   ManifestId wanted_ = kNoManifest;
   uint32_t wantedIdentity_ = 0;
   bool transActive_ = false, transComposing_ = false;
-  uint32_t transTarget_ = 0, steadyTarget_ = 0;
+  uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0;
   Stats stats_{};
 };
 
