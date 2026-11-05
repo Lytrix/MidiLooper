@@ -57,6 +57,7 @@ constexpr uint32_t kLoop = 768 * 8, kWinTicks = 1536;
 constexpr uint8_t kPasses = 59;            // + 1 edit run = 60 committed runs
 constexpr uint32_t kNotesPerPass = 47;     // 59 x 47 = 2,773 NoteOns in window 0 (CE-B1 admission 2,816)
 constexpr uint32_t kHides = 4096;
+constexpr uint32_t kNoteTicks = 10;
 
 struct Stat {
   uint32_t n = 0, max = 0;
@@ -93,7 +94,9 @@ static PassEvent row(uint32_t tick, uint32_t id, uint8_t status, uint8_t d1) {
 static ManifestId gManifest;
 
 /// 59 dense passes (all NoteOns of each pass in window 0, sorted, short notes, every pitch reused across passes so
-/// the occlusion look-ahead works) plus one edit run with 4,096 hides (one index probe per NoteOn).
+/// the occlusion look-ahead works) plus one edit run with 4,096 hides (one index probe per NoteOn). Pass onsets are
+/// staggered across each 32-tick slot and notes last 10 ticks, so at most about 19 instances are open at once: the
+/// owner's realistic ceiling is 20 open notes per track (2026-11-05), enough to exercise the T = 16 voice limit.
 static void buildWorkload() {
   gPool.init();
   TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
@@ -106,10 +109,10 @@ static void buildWorkload() {
     const RunId r = gRuns.allocate(0, p == 0 ? RunKind::kRecord : RunKind::kOverdub);
     TEST_ASSERT_NOT_EQUAL(kNoRun, r);
     for (uint32_t k = 0; k < kNotesPerPass; ++k) {
-      const uint32_t on = k * (kWinTicks / kNotesPerPass) + p % 8;
+      const uint32_t on = k * (kWinTicks / kNotesPerPass) + p * (kWinTicks / kNotesPerPass) / kPasses;
       const uint8_t pitch = static_cast<uint8_t>(24 + (k * 7 + p) % 80);
       TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(on, id, 0x90, pitch), gPool));
-      TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(on + 20, id, 0x80, pitch), gPool));
+      TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(on + kNoteTicks, id, 0x80, pitch), gPool));
       ++id;
     }
     gRuns.seal(r);
@@ -248,13 +251,6 @@ void test_grain_durations() {
     const auto& m = gManifests.manifest(gManifest);
     SourceRun src[Manifests::kMaxRuns];
     for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], gRuns.run(m.runs[i]).rowCount};
-    TEST_ASSERT_TRUE(gComp.begin(src, m.runCount, kLoop, m.identity));
-    // Window 0 opens more instances than the open table holds (OUT-2: overflow is counted and makes every later
-    // checkpoint unusable, so cold start warms up a cycle instead). Resume cost is begin plus the per-run cursor
-    // seeks and does not depend on the open set, so it is timed from the position-0 boundary, which is capturable.
-    TEST_ASSERT_TRUE(gComp.composeNext(gWin, kWinTicks));
-    snprintf(line, sizeof(line), "GRAIN,window0_open_overflow=%lu", static_cast<unsigned long>(gComp.stats().openOverflow));
-    TEST_MESSAGE(line);
     Stat beg;
     for (int k = 0; k < 8; ++k) {
       uint32_t c0 = cycles();
@@ -265,6 +261,9 @@ void test_grain_durations() {
     report("composer_begin", beg);
     snprintf(line, sizeof(line), "GRAIN,index_sync_builds=%lu", static_cast<unsigned long>(gIndex.syncBuilds()));
     TEST_MESSAGE(line);
+    // A real mid-loop checkpoint: the end of window 0, within the open-instance table.
+    TEST_ASSERT_TRUE(gComp.composeNext(gWin, kWinTicks));
+    TEST_ASSERT_EQUAL_UINT32(0, gComp.stats().openOverflow);
     for (int k = 0; k < 8; ++k) {
       uint32_t c0 = cycles();
       const bool ok = gComp.capture(cp);

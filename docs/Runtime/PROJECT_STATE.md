@@ -2,8 +2,8 @@
 - Device bench with OUT-2 and the onset-pitch mask (image `59c8a6f8…`): worst grain 800 µs (clustered compose), so
   g = 810 µs; the eight-track clustered gate misses no deadline at U_e = 50 %.
 - Checkpoint resume was one 1.1 ms grain; now two (bind 408 µs, seek 697 µs). The bench had timed refused captures.
-- Finding: the densest spread source overflows OUT-2's 48-entry open table (periodicity not guaranteed; cold start
-  warms up). [design.md E5.8](../../openspec/changes/fixed-memory-engine/design.md)
+- Owner: at most 20 open notes per track is the realistic test ceiling. The bench source now stays under it, so
+  cold start resumes from a real checkpoint in 3 grains. [design.md E5.8](../../openspec/changes/fixed-memory-engine/design.md)
 
 **2026-11-05 — Fixed-memory engine: OUT-2 (Q-OUT-2 source-ordered refusal) built; clustered look-ahead optimised.**
 - Output selection is a function of the revision and DEC-244 order: a NoteOn sounds iff fewer than 16 voices are

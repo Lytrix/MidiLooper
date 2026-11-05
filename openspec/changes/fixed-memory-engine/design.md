@@ -796,6 +796,11 @@ runs them on two grains. The bench asserts capture and resume, and times `begin`
 At U_e = 50 % the eight-track adversarial clustered case (100 grains per window) misses no deadline, so the feasibility
 gate is met on device figures. C1 for the spread case: 8 × 47 × 0.81 ms = 305 ms per 1.6 s.
 
-**Finding for OUT-2's limits.** The CE-B1 densest spread source (2,773 NoteOns in one window, 59 passes) overflows the
-48-entry open-instance table. Output still holds T = 16, but periodicity is not guaranteed for that source, its
-checkpoints are unusable, and cold start warms up a cycle (a bounded replay of up to 94 grains measured).
+**Open-instance ceiling (owner 2026-11-05).** The first bench source kept 37–59 notes open on one track (20-tick notes,
+all passes starting within 8 ticks), which overflowed the 48-entry open table. The owner ruled that unrealistic: at
+most 20 open notes per track is the test ceiling, enough to exercise the T = 16 limit. The spread source now staggers
+pass onsets across each 32-tick slot with 10-tick notes (same 2,773 NoteOns, about 19 open), and the bench asserts no
+overflow. Re-measured (image `4285a123…`): compose 710 µs; a mid-loop checkpoint resumes in two grains (bind 418 µs,
+seek 358 µs), so cold start takes 3 grains instead of a 94-grain warm-up; worst grain still the clustered compose
+(782–800 µs), g = 810 µs unchanged. The clustered benches still exceed 48 open; their look-ahead runs before the
+overflow check and their open table stays full, so their grain costs remain an upper bound.
