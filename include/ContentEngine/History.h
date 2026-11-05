@@ -12,6 +12,11 @@
 //   is never refused for history. Evicting a slot's oldest undo state moves its floor up; evicting a redo state drops
 //   that slot's whole redo branch (a redo chain cannot have a hole).
 // * Undo / redo: O(1) pointer moves; they return the slot's new current manifest (`kNoManifest`: the empty slot).
+// * Overdub session (DEC-038, E4.2): every non-empty wrap is an ordinary commit. While the session is open, undo on its
+//   slot stops at the session start (the O: level counts the session's states). `endSession` (Stop) drops the
+//   session's redo and collapses its states into one step — the session's current — so U: undoes the whole session
+//   at once; with every wrap undone it leaves no step. The start is kept as a commit seq, so eviction (the session's
+//   states share the 99) can never leave it dangling. One session at a time (one writer).
 // Every dropped state releases its manifest reference, so its runs reach the reclaim queue. No allocation.
 
 #pragma once
@@ -34,6 +39,7 @@ class History {
   struct Stats {
     uint32_t evictedUndo;     // oldest undo states forgotten to make room
     uint32_t droppedRedo;     // redo states dropped (by a commit on their slot, or by eviction)
+    uint32_t collapsedWraps;  // session states folded into the session's one step at its end
   };
 
   void init(Manifests& manifests, Runs& runs) {
@@ -48,6 +54,49 @@ class History {
     seq_ = 0;
     for (auto& s : slots_) s = Slot{kNone, kNone, kNone, true};
     stats_ = Stats{};
+    sessionSlot_ = kNone;
+    sessionBaseSeq_ = 0;
+  }
+
+  /// Opens the overdub session of `slot` at its current state. False while another session is open.
+  bool beginSession(uint8_t slot) {
+    if (slot >= Slots || sessionSlot_ != kNone) return false;
+    sessionSlot_ = slot;
+    const uint8_t c = slots_[slot].current;
+    sessionBaseSeq_ = c == kNone ? 0 : entries_[c].seq;
+    return true;
+  }
+  bool inSession(uint8_t slot) const { return sessionSlot_ == slot && slot != kNone; }
+  /// The O: level: the session's states at or below the slot's current.
+  uint8_t sessionDepth() const {
+    if (sessionSlot_ == kNone) return 0;
+    uint8_t n = 0;
+    for (uint8_t e = slots_[sessionSlot_].current; e != kNone && entries_[e].seq > sessionBaseSeq_; e = entries_[e].older)
+      ++n;
+    return n;
+  }
+  /// Stop: drops the session's redo and folds its states into one step (the current). No step when every wrap was
+  /// undone. O(session states).
+  void endSession() {
+    if (sessionSlot_ == kNone) return;
+    const uint8_t slot = sessionSlot_;
+    sessionSlot_ = kNone;
+    dropRedo(slot);
+    Slot& s = slots_[slot];
+    const uint8_t c = s.current;
+    if (c == kNone || entries_[c].seq <= sessionBaseSeq_) return;
+    uint8_t e = entries_[c].older;
+    while (e != kNone && entries_[e].seq > sessionBaseSeq_) {
+      const uint8_t older = entries_[e].older;
+      freeEntry(e);
+      ++stats_.collapsedWraps;
+      e = older;
+    }
+    entries_[c].older = e;
+    if (e == kNone)
+      s.oldest = c;
+    else
+      entries_[e].newer = c;
   }
 
   /// Makes `manifest` the slot's new current state. History takes over the caller's reference.
@@ -74,6 +123,7 @@ class History {
   bool canUndo(uint8_t slot) const {
     const Slot& s = slots_[slot];
     if (s.current == kNone) return false;
+    if (inSession(slot) && entries_[s.current].seq <= sessionBaseSeq_) return false;  // not below the session start
     return entries_[s.current].older != kNone || s.emptyBelow;
   }
   bool canRedo(uint8_t slot) const {
@@ -195,6 +245,8 @@ class History {
   uint8_t nextFree_[Depth];
   uint8_t freeHead_ = kNone;
   uint8_t count_ = 0;
+  uint8_t sessionSlot_ = kNone;
+  uint32_t sessionBaseSeq_ = 0;
   uint32_t seq_ = 0;
   Slot slots_[Slots];
   Stats stats_{};

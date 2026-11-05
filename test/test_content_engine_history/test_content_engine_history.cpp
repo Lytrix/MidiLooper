@@ -4,8 +4,10 @@
 // fixed-memory-engine E4: undo history and slot currents (owner decisions 2026-11-05). Undo / redo are per slot; at
 // most 99 states are held across all slots; a commit drops its slot's redo branch and, when full, evicts the oldest
 // step in the set (oldest-committed non-current state; a redo state takes its whole branch with it). Recording is never
-// refused for history. Dropped states release their manifests, so their runs reach the reclaim queue. A random sequence
-// is checked against an independent reference model written from those rules.
+// refused for history. Dropped states release their manifests, so their runs reach the reclaim queue. Overdub session
+// (DEC-038, E4.2): wraps are commits, undo on the session slot stops at the session start, and Stop folds the session
+// into one step. A random sequence (with sessions) is checked against an independent reference model written from
+// those rules.
 
 #include <unity.h>
 
@@ -167,6 +169,112 @@ void test_eviction_takes_the_oldest_step_across_slots() {
   TEST_ASSERT_FALSE(gManifests.manifest(r2).live);
 }
 
+// ---- E4.2 overdub session (DEC-038) -------------------------------------------------------------------------------------
+
+// Wraps are steps while overdubbing (O:), undo stops at the session start, and after Stop one U: undoes the session.
+void test_session_undo_is_bounded_and_stop_makes_one_step() {
+  setup();
+  const ManifestId rec = take(0);
+  gH.commit(0, rec);
+  TEST_ASSERT_TRUE(gH.beginSession(0));
+  TEST_ASSERT_FALSE(gH.beginSession(1));  // one writer
+  const ManifestId w1 = take(0), w2 = take(0), w3 = take(0);
+  gH.commit(0, w1);
+  gH.commit(0, w2);
+  gH.commit(0, w3);
+  TEST_ASSERT_EQUAL_UINT8(3, gH.sessionDepth());
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
+  TEST_ASSERT_FALSE(gH.undo(0));  // not below the session start
+  TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth());
+  TEST_ASSERT_TRUE(gH.redo(0));
+  TEST_ASSERT_TRUE(gH.redo(0));  // w2 current, w3 redo
+  gH.endSession();
+  TEST_ASSERT_FALSE(gH.inSession(0));
+  TEST_ASSERT_EQUAL_UINT16(w2, gH.current(0));
+  TEST_ASSERT_FALSE(gManifests.manifest(w1).live);  // folded
+  TEST_ASSERT_FALSE(gManifests.manifest(w3).live);  // session redo dropped
+  TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));      // record, session
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));      // one step undoes the whole session
+  TEST_ASSERT_TRUE(gH.redo(0));
+  TEST_ASSERT_EQUAL_UINT16(w2, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().collapsedWraps);
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+// Every wrap undone at Stop: the session leaves no step, and the slot keeps its pre-session redo-free state.
+void test_session_fully_undone_leaves_no_step() {
+  setup();
+  const ManifestId rec = take(0);
+  gH.commit(0, rec);
+  gH.beginSession(0);
+  const ManifestId w1 = take(0), w2 = take(0);
+  gH.commit(0, w1);
+  gH.commit(0, w2);
+  gH.undo(0);
+  gH.undo(0);
+  gH.endSession();
+  TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
+  TEST_ASSERT_FALSE(gH.canRedo(0));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());
+  TEST_ASSERT_FALSE(gManifests.manifest(w1).live);
+  TEST_ASSERT_FALSE(gManifests.manifest(w2).live);
+}
+
+// Partial undo then a new wrap drops the session's redo; other slots keep their own undo during the session.
+void test_session_new_wrap_after_undo_and_other_slots() {
+  setup();
+  gH.commit(0, take(0));
+  const ManifestId o1 = take(1), o2 = take(1);
+  gH.commit(1, o1);
+  gH.commit(1, o2);
+  gH.beginSession(0);
+  const ManifestId w1 = take(0), w2 = take(0), w3 = take(0);
+  gH.commit(0, w1);
+  gH.commit(0, w2);
+  gH.undo(0);
+  gH.commit(0, w3);  // drops w2
+  TEST_ASSERT_FALSE(gManifests.manifest(w2).live);
+  TEST_ASSERT_EQUAL_UINT8(2, gH.sessionDepth());
+  TEST_ASSERT_TRUE(gH.undo(1));  // slot 1 is not in the session
+  TEST_ASSERT_TRUE(gH.undo(1));
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(1));
+  gH.endSession();
+  TEST_ASSERT_EQUAL_UINT16(w3, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT8(2, gH.redoDepth(1));
+}
+
+// A session longer than the history: its oldest wraps (and the start) are forgotten like any oldest step; undo stops
+// at the floor; Stop still folds what is left into one step.
+void test_long_session_shares_the_99() {
+  setup();
+  gH.commit(0, take(0));
+  gH.beginSession(0);
+  ManifestId last = kNoManifest;
+  for (uint32_t i = 0; i < 150; ++i) {
+    drainReclaim();
+    last = take(0);
+    gH.commit(0, last);
+    TEST_ASSERT_TRUE(gH.heldStates() <= 99);
+  }
+  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth());
+  uint32_t undos = 0;
+  while (gH.undo(0)) ++undos;
+  TEST_ASSERT_EQUAL_UINT32(98, undos);  // the floor: the oldest kept wrap
+  while (gH.redo(0)) {
+  }
+  gH.endSession();
+  TEST_ASSERT_EQUAL_UINT16(last, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());
+  TEST_ASSERT_FALSE(gH.canUndo(0));  // the pre-session state was forgotten during the session
+  drainReclaim();
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
 // ---- Independent reference model: per slot a list of (manifest, commit seq) and a cursor ------------------------------
 struct RefState {
   ManifestId m;
@@ -182,6 +290,8 @@ struct Ref {
   uint32_t seq = 0;
   size_t depth;
   std::vector<ManifestId> released;
+  int sessionSlot = -1;
+  uint32_t baseSeq = 0;
   Ref(size_t s, size_t d) : slots(s), depth(d) {}
   size_t held() const {
     size_t n = 0;
@@ -220,8 +330,29 @@ struct Ref {
     slots[slot].states.push_back({m, ++seq});
     slots[slot].cur = static_cast<int>(slots[slot].states.size()) - 1;
   }
+  bool begin(size_t slot) {
+    if (sessionSlot >= 0) return false;
+    sessionSlot = static_cast<int>(slot);
+    const RefSlot& s = slots[slot];
+    baseSeq = s.cur < 0 ? 0 : s.states[static_cast<size_t>(s.cur)].seq;
+    return true;
+  }
+  void end() {
+    if (sessionSlot < 0) return;
+    RefSlot& s = slots[static_cast<size_t>(sessionSlot)];
+    sessionSlot = -1;
+    dropAbove(s);
+    if (s.cur < 0 || s.states[static_cast<size_t>(s.cur)].seq <= baseSeq) return;
+    while (s.cur > 0 && s.states[static_cast<size_t>(s.cur - 1)].seq > baseSeq) {  // fold the session into its current
+      released.push_back(s.states[static_cast<size_t>(s.cur - 1)].m);
+      s.states.erase(s.states.begin() + (s.cur - 1));
+      --s.cur;
+    }
+  }
   bool undo(size_t slot) {
     RefSlot& s = slots[slot];
+    if (sessionSlot == static_cast<int>(slot) && s.cur >= 0 && s.states[static_cast<size_t>(s.cur)].seq <= baseSeq)
+      return false;
     if (s.cur > 0 || (s.cur == 0 && s.emptyBelow)) {
       --s.cur;
       return true;
@@ -249,8 +380,13 @@ static void randomAgainstReference(H& h, uint8_t slots, uint8_t depth, uint32_t 
   for (uint32_t step = 0; step < steps; ++step) {
     x = x * 1103515245u + 12345u;
     const uint8_t slot = static_cast<uint8_t>((x >> 8) % slots);
-    const uint32_t op = (x >> 20) % 10;
-    if (op < 4) {
+    const uint32_t op = (x >> 20) % 12;
+    if (op == 10) {
+      TEST_ASSERT_EQUAL(ref.begin(slot), h.beginSession(slot));
+    } else if (op == 11) {
+      ref.end();
+      h.endSession();
+    } else if (op < 4) {
       drainReclaim();
       const ManifestId m = take(slot);
       h.commit(slot, m);
@@ -261,6 +397,12 @@ static void randomAgainstReference(H& h, uint8_t slots, uint8_t depth, uint32_t 
       TEST_ASSERT_EQUAL(ref.redo(slot), h.redo(slot));
     }
     for (uint8_t k = 0; k < slots; ++k) TEST_ASSERT_EQUAL_UINT16(ref.current(k), h.current(k));
+    if (ref.sessionSlot >= 0) {
+      size_t n = 0;
+      const RefSlot& ss = ref.slots[static_cast<size_t>(ref.sessionSlot)];
+      for (int i = ss.cur; i >= 0 && ss.states[static_cast<size_t>(i)].seq > ref.baseSeq; --i) ++n;
+      TEST_ASSERT_EQUAL_UINT8(n, h.sessionDepth());
+    }
     TEST_ASSERT_EQUAL_UINT32(ref.held(), h.heldStates());
     for (const ManifestId m : ref.released) TEST_ASSERT_FALSE(gManifests.manifest(m).live);
     ref.released.clear();
@@ -307,6 +449,10 @@ int main(int, char**) {
   RUN_TEST(test_slots_are_independent);
   RUN_TEST(test_full_history_forgets_the_oldest_step);
   RUN_TEST(test_eviction_takes_the_oldest_step_across_slots);
+  RUN_TEST(test_session_undo_is_bounded_and_stop_makes_one_step);
+  RUN_TEST(test_session_fully_undone_leaves_no_step);
+  RUN_TEST(test_session_new_wrap_after_undo_and_other_slots);
+  RUN_TEST(test_long_session_shares_the_99);
   RUN_TEST(test_random_sequences_match_the_reference_model_small);
   RUN_TEST(test_random_sequences_match_the_reference_model_production);
   RUN_TEST(test_no_heap_after_init);

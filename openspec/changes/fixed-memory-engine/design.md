@@ -859,5 +859,23 @@ on 8 slots / depth 20 and 64 slots / depth 99 against an independent reference m
 released manifests, conservation); no heap. Mutations caught: evicting the newest, floor not raised, no redo drop on
 commit, a redo chain left with a hole, a dropped state not releasing its manifest.
 
-Not in this slice: overdub session undo while OVERDUBBING (DEC-038) and NOTE_EDIT session undo (32) — they land with
-the writer and edit-writer integration; history reconstruction on load (DEC-088) lands with persistence (E8).
+Not in this slice: NOTE_EDIT session undo (32), with the edit writer; history reconstruction on load (DEC-088), with
+persistence (E8).
+
+### E4.2 — overdub session undo (DEC-038, as built)
+
+Each non-empty wrap of an overdub session is an ordinary `commit`. `beginSession(slot)` records the session start as
+the commit seq of the slot's current state (an index could be evicted; a seq cannot dangle). While the session is open:
+- undo on its slot stops at the session start (`canUndo` refuses at a state with seq ≤ start); the O: level is
+  `sessionDepth()`, the session's states at or below current;
+- a new wrap after a session undo drops the session's redo (ordinary commit rule);
+- other slots undo and redo normally.
+`endSession()` (Stop) drops the session's redo and folds the session's states below current into it: one step, so U:
+undoes the whole session (DEC-038.7). With every wrap undone it leaves no step. Session states share the 99: a long
+session forgets its oldest wraps (and the pre-session state) like any oldest step, and undo stops at that floor.
+The writer integration calls `beginSession` at overdub start, `commit` at each non-empty wrap and `endSession` at Stop.
+
+Tests (`test_content_engine_history`, 11): bounded session undo and one step after Stop; fully undone session; new wrap
+after undo with another slot undoing meanwhile; a 150-wrap session against the 99; the reference model now opens and
+ends sessions at random (session depth compared every step). Mutations caught: no session bound, Stop keeping the
+session's redo, no fold, a start off by one. 1,584 B.

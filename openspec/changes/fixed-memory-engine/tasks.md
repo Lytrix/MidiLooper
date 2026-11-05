@@ -79,7 +79,7 @@ revision 3 is the baseline; no whole-plan revisions.
 ## E4 — history and edits
 
 - [x] E4.1 `History`: per-slot undo / redo, 99 states shared, commit drops redo, full table forgets the oldest step (owner decisions 2026-11-05); reference-model fuzz (`test_content_engine_history` 7, mutation-checked).
-- [ ] E4.2 Overdub session undo while OVERDUBBING (DEC-038) with the writer integration.
+- [x] E4.2 Overdub session undo (DEC-038): wraps are steps, undo bounded at the session start, Stop folds the session into one step; sessions in the reference-model fuzz (`test_content_engine_history` 11, mutation-checked). Writer wiring (begin / wrap commit / end) lands with integration.
 - [ ] E4.3 NOTE_EDIT selection and session undo (32) with the edit writer.
 - [ ] E4.4 History reconstruction on load (DEC-088), with persistence (E8).
 

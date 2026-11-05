@@ -1,3 +1,7 @@
+**2026-11-05 — Fixed-memory engine: E4.2 overdub session undo (DEC-038).**
+- While overdubbing, each wrap is an undo step that cannot go below the session start; Stop folds the session into one
+  step (none if every wrap was undone). Session steps share the 99. Reference model extended; 4 mutations caught.
+
 **2026-11-05 — Fixed-memory engine: E4.1 history (owner decisions: per-slot undo, 99 shared, oldest step forgotten).**
 - `ContentEngine::History`: O(1) undo / redo per slot; a commit drops its slot's redo and, when 99 states are held,
   forgets the oldest step in the set; recording is never refused. Dropped states release manifests into reclaim.

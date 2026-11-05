@@ -334,15 +334,15 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | − `RollingSuccessorProbe::gCounters` | −4,920 |
 | + RunTable 520 × 128 B | +66,560 |
 | + ManifestTable 256 × 148 B (`RevisionManifest` with 64 run ids, measured 148 B) | +37,888 |
-| + History (99 shared states, per-slot chains and currents; measured 1,576 B) | +1,576 |
+| + History (99 shared states, per-slot chains and currents, overdub session; measured 1,584 B) | +1,584 |
 | + SlotState 64 × 32 B | +2,048 |
 | + Writer 1 × 2,612 B (measured on ARM: open-note table 128 × 16 B, cursors, reservation counters, occupancy bits) | +2,612 |
 | + Edit writer selection 512 × 8 B | +4,096 |
 | + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
 | + Output FIFOs 3 × 512 × 4 B | +6,144 |
 | + Scheduler job table | +1,024 |
-| **Statics after cutover** | **209,673** [225,581] |
-| Heap left for libraries (USB host, SD, Serial) | **314,615** [298,707] (today: 337,568 arena, 172 KB free after boot) |
+| **Statics after cutover** | **209,681** [225,581] |
+| Heap left for libraries (USB host, SD, Serial) | **314,607** [298,707] (today: 337,568 arena, 172 KB free after boot) |
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -371,7 +371,7 @@ attributes them. Before E1 (milestone E0, § 10):
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
 - the budget closes iff `non-content PSRAM ≤ 847,184 B` on capture builds (≤ 1,895,760 B shipping) and
-  `non-content RAM2 heap ≤ 314,615 B`.
+  `non-content RAM2 heap ≤ 314,607 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
 
@@ -770,6 +770,9 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
   across the whole set; a commit drops its slot's redo branch and, when full, forgets the oldest step in the set (the
   oldest-committed state that is no slot's current — an undo state raises that slot's floor, a redo state takes its
   whole redo branch). Recording is never refused for history.
+- **Overdub session (DEC-038, E4.2):** each non-empty wrap is a step (O:); while overdubbing, undo on that slot stops
+  at the session start; Stop drops the session's redo and folds its steps into one (none if every wrap was undone), so
+  U: undoes the whole session. Session steps share the 99 and are forgotten like any oldest step.
 - Load rebuilds history from saved runs (DEC-088).
 
 ---
@@ -947,7 +950,7 @@ musical clauses they protected.
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 209,673 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 209,681 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
 | D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
 | D3 Owner chain | parity with reviewed fixtures for the same stimulus |
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |
