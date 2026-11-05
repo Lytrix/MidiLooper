@@ -400,4 +400,163 @@ class LoadJob {
   Status status_ = Status::Idle;
 };
 
+/// V1 import (E8.2; owner decision 2026-11-05: exact current content only). A V1 slot's current content — its resolved
+/// notes and events, as the old firmware plays them (LSV1 `LoopSnapshot`, or the legacy loader's resolution) — becomes
+/// one record take, one manifest and the slot's only history state; no undo history from before the import. Input
+/// comes in tick order (`addNote` by start, `addEvent` by tick, merged by the caller); a note whose end is before its
+/// start is held across the loop end. Rows: NoteOffs due at or before a NoteOn's tick first (DEC-244), held notes'
+/// NoteOffs in the wrap band. Notes get fresh ids. Admission and failure behave like `LoadJob`: every row is reserved
+/// at `start` or the import is refused by name; any failure releases everything. Within one take same-pitch overlaps do
+/// not occlude each other (Q-OVL-1), so the take composes back to exactly these notes.
+template <typename Pool, typename Runs, typename Manifests, typename HistoryT, uint16_t MaxHeld = 256>
+class ResolvedImport {
+ public:
+  enum class Status : uint8_t { Idle, Running, Done, DeniedCapacity, DeniedSlot, BadOrder, BadInput, TooManyHeld };
+  using Reservations = RowReservations<Pool, Runs>;
+
+  /// Admission for `notes` notes and `events` events into the empty `slot`.
+  Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
+               uint8_t slot, uint32_t loopLength, uint32_t notes, uint32_t events) {
+    cancel();
+    pool_ = &pool;
+    runs_ = &runs;
+    manifests_ = &manifests;
+    history_ = &history;
+    res_ = &res;
+    ids_ = &ids;
+    slot_ = slot;
+    loop_ = loopLength;
+    last_ = 0;
+    held_ = 0;
+    ManifestId probe[1];
+    int16_t cur;
+    bool below;
+    if (history.chain(slot, probe, 1, cur, below) != 0) return status_ = Status::DeniedSlot;
+    if (loopLength == 0 || manifests.freeCount() == 0) return status_ = Status::DeniedCapacity;
+    run_ = runs.allocate(slot, RunKind::kRecord);
+    if (run_ == kNoRun) return status_ = Status::DeniedCapacity;
+    if (res.reserve(run_, 2 * notes + events) != Admission::Ok) return fail(Status::DeniedCapacity);
+    return status_ = Status::Running;
+  }
+
+  Status addNote(uint32_t start, uint32_t end, uint8_t pitch, uint8_t velocity, uint8_t channel) {
+    if (status_ != Status::Running) return status_;
+    if (start >= loop_ || end >= loop_ || pitch > 127 || velocity == 0 || velocity > 127 || channel > 15)
+      return fail(Status::BadInput);
+    if (start < last_) return fail(Status::BadOrder);
+    if (held_ == MaxHeld) return fail(Status::TooManyHeld);
+    flushUpTo(start);
+    last_ = start;
+    const uint32_t id = ids_->peek();
+    ids_->advance();
+    write(row(start, id, static_cast<uint8_t>(0x90 | channel), pitch, velocity));
+    // Held across the loop end (end before start): the wrap band. A zero-length note keeps its NoteOff on its tick.
+    const uint32_t off = end >= start ? end : end + loop_;
+    push(Pending{off, id, static_cast<uint8_t>(0x80 | channel), pitch});
+    return status_;
+  }
+  Status addEvent(uint32_t tick, uint8_t status, uint8_t d1, uint8_t d2) {
+    if (status_ != Status::Running) return status_;
+    if (tick >= loop_ || (status & 0x80) == 0 || (status & 0xF0) == 0x80 || (status & 0xF0) == 0x90)
+      return fail(Status::BadInput);
+    if (tick < last_) return fail(Status::BadOrder);
+    flushUpTo(tick);
+    last_ = tick;
+    write(row(tick, 0, status, d1, d2));
+    return status_;
+  }
+
+  /// Writes the remaining NoteOffs, seals the take and publishes it as the slot's only state.
+  Status finish() {
+    if (status_ != Status::Running) return status_;
+    flushUpTo(0xFFFFFFFFu);
+    res_->forgive(run_);  // rows the admission counted but the content did not use
+    runs_->seal(run_);
+    const ManifestId m = manifests_->create(slot_, 1, loop_, &run_, 1, *runs_);
+    if (m == kNoManifest) return fail(Status::DeniedCapacity);
+    runs_->release(run_);  // the manifest holds the take
+    run_ = kNoRun;
+    history_->restoreSlot(slot_, &m, 1, 0, true);
+    return status_ = Status::Done;
+  }
+
+  void cancel() {
+    if (status_ == Status::Running) fail(Status::Idle);
+  }
+  Status status() const { return status_; }
+  uint16_t heldPeak() const { return heldPeak_; }
+
+ private:
+  struct Pending {
+    uint32_t tick, noteId;
+    uint8_t status, pitch;
+  };
+
+  static PassEvent row(uint32_t tick, uint32_t id, uint8_t status, uint8_t d1, uint8_t d2) {
+    PassEvent e{};
+    e.tick = tick;
+    e.noteId = id;
+    e.status = status;
+    e.data1 = d1;
+    e.data2 = d2;
+    return e;
+  }
+  void write(const PassEvent& e) { res_->writeOwed(run_, e); }
+
+  // A binary min-heap of pending NoteOffs by tick (then noteId, deterministic).
+  static bool before(const Pending& a, const Pending& b) { return a.tick < b.tick || (a.tick == b.tick && a.noteId < b.noteId); }
+  void push(const Pending& p) {
+    uint16_t i = held_++;
+    heap_[i] = p;
+    while (i > 0 && before(heap_[i], heap_[(i - 1) / 2])) {
+      const Pending t = heap_[i];
+      heap_[i] = heap_[(i - 1) / 2];
+      heap_[(i - 1) / 2] = t;
+      i = static_cast<uint16_t>((i - 1) / 2);
+    }
+    if (held_ > heldPeak_) heldPeak_ = held_;
+  }
+  void flushUpTo(uint32_t tick) {
+    while (held_ > 0 && heap_[0].tick <= tick) {
+      const Pending p = heap_[0];
+      heap_[0] = heap_[--held_];
+      for (uint16_t i = 0;;) {
+        const uint16_t l = static_cast<uint16_t>(2 * i + 1), r = static_cast<uint16_t>(l + 1);
+        uint16_t m = i;
+        if (l < held_ && before(heap_[l], heap_[m])) m = l;
+        if (r < held_ && before(heap_[r], heap_[m])) m = r;
+        if (m == i) break;
+        const Pending t = heap_[i];
+        heap_[i] = heap_[m];
+        heap_[m] = t;
+        i = m;
+      }
+      write(row(p.tick, p.noteId, p.status, p.pitch, 0));
+    }
+  }
+  Status fail(Status s) {
+    if (run_ != kNoRun) {
+      res_->forgive(run_);
+      runs_->seal(run_);
+      runs_->release(run_);
+      run_ = kNoRun;
+    }
+    held_ = 0;
+    return status_ = s;
+  }
+
+  Pool* pool_ = nullptr;
+  Runs* runs_ = nullptr;
+  Manifests* manifests_ = nullptr;
+  HistoryT* history_ = nullptr;
+  Reservations* res_ = nullptr;
+  NoteIdSource* ids_ = nullptr;
+  uint8_t slot_ = 0;
+  uint32_t loop_ = 0, last_ = 0;
+  RunId run_ = kNoRun;
+  Pending heap_[MaxHeld];
+  uint16_t held_ = 0, heldPeak_ = 0;
+  Status status_ = Status::Idle;
+};
+
 }  // namespace ContentEngine

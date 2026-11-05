@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E8.2a V1 import, exact current content only (owner decision).**
+- A V1 slot's resolved notes and events become one take and the slot's only history state; the take composes back
+  exactly (wrap note, zero length, same-pitch overlaps). History reconstruction from V1 (E4.4, DEC-088) is closed as
+  not needed. The card-side V1 reader (E8.2b) comes with the integration (E9).
+
 **2026-11-05 — Fixed-memory engine: E8.1 engine slot file (owner: new format, new folder).**
 - Save and load of a slot's runs and history in grains; a load reserves every row before reading or refuses by name,
   checks a CRC, and releases everything on any failure. Round trip keeps content, history, floor and note ids. V1 files

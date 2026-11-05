@@ -83,7 +83,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E4.3 NOTE_EDIT session undo (owner: limit 99, shared): E: steps, fold on leave, abandon, overdub + edit sessions at once; the session start is protected from eviction so abandon always restores it (`test_content_engine_history` 16, mutation-checked). Edit writer (selection ≤ 512, hide + replacement rows, seal grains) and focus / selection restore: E4.5 with integration.
 - [x] E4.5 Edit writer (owner: hear each edit, rewrite one run): selection admission, E: log (99), per-action edit-run reservation, rebuild in grains, one history state per session, leave / abandon (`test_content_engine_edit_writer` 9, mutation-checked). Focus / selection restore per E: step moves to the `EditManager` integration (E9).
 - [x] E4.5b Edit-writer grains within g: O(changes) acceptance, unit-bounded rebuild (gather / sift / write), writer in RAM2 + log in PSRAM. Device `cfb730eb…`: apply 532 µs, undo 453 µs, rebuild grain 158 µs (was 3,486 / 1,196 / 922). The seek / `begin` rise was PSRAM placement (back to 692 / 429 µs).
-- [ ] E4.4 History reconstruction on load (DEC-088), with persistence (E8).
+- [x] E4.4 History reconstruction on load (DEC-088) — closed as not needed: the owner chose "exact current only" for V1 import (2026-11-05, E8.2).
 
 ## E6 — playback and output
 
@@ -106,7 +106,8 @@ revision 3 is the baseline; no whole-plan revisions.
 ## E8 — persistence
 
 - [x] E8.1 Engine slot file (owner: new format, new folder): `SaveJob` / `LoadJob` in grains, writer-class admission, CRC, full release on failure, history chain restored (`test_content_engine_set_file` 4, mutation-checked).
-- [ ] E8.2 V1 import (read-only) and history reconstruction from V1 (E4.4, DEC-088).
+- [x] E8.2a V1 import into the engine (owner: exact current only): `ResolvedImport` writes a slot's resolved notes and events as one take and the slot's only state; refusals by name with full release (`test_content_engine_v1_import` 3, mutation-checked 12/12).
+- [ ] E8.2b Card-side V1 reader feeding `ResolvedImport` from a V1 slot as the old firmware resolves it; V1 files read-only, never overwritten (with E9).
 - [ ] E8.3 SD sink / source, save schedule and the owner's save-approval gate (with E9).
 
 ## CE-C1 — output

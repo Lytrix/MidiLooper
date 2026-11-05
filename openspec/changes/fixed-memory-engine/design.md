@@ -1272,5 +1272,36 @@ nothing held; a 70,000-row take round-trips with ≤ 4 KiB per grain (test chunk
 lost, CRC not checked, reservation kept on failure, floor not saved, shared runs stored twice, ids reused, run kind
 lost.
 
-Not yet: V1 import (E8.2) and history reconstruction from V1 (E4.4, DEC-088); the SD sink / source and the save
-schedule (autosave, approval gate) with the integration (E9).
+Not yet: the SD sink / source and the save schedule (autosave, approval gate) with the integration (E9). V1 import:
+E8.2 below.
+
+## E8.2 — V1 import, exact current content only (owner decision 2026-11-05; as built)
+
+The owner chose to import only what a V1 slot plays now: no history from before the import. So history
+reconstruction from V1 files (E4.4, DEC-088) is not needed and is closed by this decision.
+
+`ResolvedImport` (`include/ContentEngine/SetFile.h`) takes the slot's resolved notes (start, end, pitch, velocity,
+channel) and controller events, merged by tick, and writes them as one record take:
+- **Admission** (writer class, § 5.5): the slot must be empty (`DeniedSlot`); the caller's counts reserve
+  2 · notes + events rows against content quota, or the import is refused (`DeniedCapacity`). Rows the counts
+  over-state are given back at the end.
+- **Rows:** each NoteOn gets a fresh note id; its NoteOff waits in a fixed min-heap (`MaxHeld`, default 256) and is
+  written when the input passes its tick, so a NoteOff comes before a NoteOn on the same tick. A note whose end is
+  before its start is held across the loop end: its NoteOff goes in the wrap band (end + loop length). A zero-length
+  note keeps its NoteOff on its own tick. Same-pitch overlaps inside the take are kept (Q-OVL-1).
+- **Publish:** the take is sealed, one manifest is created and `History::restoreSlot` makes it the slot's only state
+  (Undo empties the slot).
+- **Refusals by name**, each releasing the run, reservation and manifest: `BadOrder` (input not in tick order),
+  `BadInput` (out-of-range tick, pitch, velocity or channel; a note status given as an event), `TooManyHeld`,
+  `DeniedCapacity`, `DeniedSlot`.
+
+Tests (`test_content_engine_v1_import`, 3): the take composes back to the input exactly — every note's start, end and
+pitch (same-pitch overlap, a note starting on the tick another ends, zero length, across bars, held across the loop
+end and sounding from bar 0 of the next cycle), every event; rows in tick order, NoteOff before another note's NoteOn
+on a tick, ids fresh and unique, a single history state; each refusal named with nothing held; an over-counted
+admission gives its rows back; no heap. Mutations caught (12): wrap band lost, tie order, order check, id reuse, held
+limit, forgive on failure, forgive on finish, occupied-slot check, admission, pitch range, a note given as an event,
+publish.
+
+Not yet (E8.2b, with E9): the card-side V1 reader that feeds `ResolvedImport` from a V1 slot as the old firmware
+resolves it (the legacy loader's snapshot of what plays).
