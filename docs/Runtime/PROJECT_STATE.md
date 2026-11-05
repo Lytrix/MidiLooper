@@ -1,3 +1,8 @@
+**2026-11-06 — Fixed-memory engine: E9.8c the engine draws the screen.**
+- The engine image now drives the OLED in the legacy layout: tracks, a paged 4-bar piano roll with grid and playhead,
+  the overview strip, status and sidebar (owner confirmed on the device). The panel needed one blocking SPI frame before
+  DMA frames. Controls (E9.8b) are next; until then serial commands drive it.
+
 **2026-11-06 — Fixed-memory engine: E9.8a the engine firmware boots.**
 - A new `teensy41-engine` image runs the engine alone (legacy untouched, owner: boot first, then delete): it boots
   clean, imports the card's 21 V1 slots in 1.1 s without writing anything, follows the internal or an external MIDI

@@ -12,6 +12,7 @@
 // 3. The jobs (`submitJobs`) and worker grains while the scheduler grants them.
 // 4. Each port's due messages to the wire.
 // 5. Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) until the surface is wired (E9.8b).
+// 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
@@ -27,6 +28,7 @@
 
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
+#include "EngineFirmware/EngineDisplay.h"
 #include "EngineFirmware/SdCardIo.h"
 
 using namespace ContentEngine;
@@ -38,6 +40,7 @@ DMAMEM EngineRam2 gRam2;
 EngineRoot gEngine;
 EngineClock gClock;
 EngineFirmware::SdCardIo gCard;
+EngineFirmware::EngineDisplay gDisplay;
 USBHost gHost;
 MIDIDevice_BigBuffer gHostMidi(gHost);
 
@@ -196,11 +199,16 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "bpm") == 0) {
     gClock.setTempo(static_cast<uint32_t>(a) * 100u);
     report(verb, 0);
+  } else if (std::strcmp(verb, "select") == 0) {  // select T: the track the screen and live input follow
+    c.selectTrack(static_cast<uint8_t>(a));
+    report(verb, 0);
   } else if (std::strcmp(verb, "launch") == 0) {  // launch T S: the track switches to the slot at its loop end
+    gDisplay.show(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
     report(verb, static_cast<uint8_t>(c.queueSwitch(static_cast<uint8_t>(a), static_cast<uint8_t>(b),
                                                     ProductionControl::Quantize::NextGrid, gLastTick)));
   } else if (std::strcmp(verb, "record") == 0) {  // record T S: from the next bar
     c.selectTrack(static_cast<uint8_t>(a));
+    gDisplay.show(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
     report(verb, static_cast<uint8_t>(c.queueRecord(static_cast<uint8_t>(a), static_cast<uint8_t>(b), gLastTick)));
   } else if (std::strcmp(verb, "overdub") == 0) {
     c.selectTrack(static_cast<uint8_t>(a));
@@ -211,12 +219,17 @@ void command(char* line, uint32_t nowUs) {
     report(verb, static_cast<uint8_t>(c.undo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
   } else if (std::strcmp(verb, "redo") == 0) {
     report(verb, static_cast<uint8_t>(c.redo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
+  } else if (std::strcmp(verb, "oled-test") == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes
+    gDisplay.selfTest(a != 0);
+    gDisplay.hold(millis(), 3000);
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
   } else if (std::strcmp(verb, "status") == 0) {
-    Serial.printf("#ENGINE,status,tick=%lu,running=%u,external=%u,us_per_tick=%lu,approved=%u\n",
+    Serial.printf("#ENGINE,status,tick=%lu,running=%u,external=%u,us_per_tick=%lu,approved=%u,frames=%lu,"
+                  "frame_draw_worst_us=%lu\n",
                   static_cast<unsigned long>(gLastTick), gClock.running(), gClock.external(),
-                  static_cast<unsigned long>(us), gEngine.persistence().approved());
+                  static_cast<unsigned long>(us), gEngine.persistence().approved(),
+                  static_cast<unsigned long>(gDisplay.frames()), static_cast<unsigned long>(gDisplay.worstDrawUs()));
   }
 }
 
@@ -232,6 +245,16 @@ void pollSerial(uint32_t nowUs) {
       gLine[gLineLength++] = ch;
     }
   }
+}
+
+// After boot load: each track shows its first slot with content (slots T x 8 .. T x 8 + 7).
+void showFirstSlots() {
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    for (uint8_t s = 0; s < 8; ++s)
+      if (gEngine.history().current(static_cast<uint8_t>(t * 8 + s)) != kNoManifest) {
+        gDisplay.show(t, static_cast<uint8_t>(t * 8 + s));
+        break;
+      }
 }
 
 void reportBootLoad() {
@@ -262,6 +285,7 @@ void setup() {
                   static_cast<unsigned>(bytes));
   });
   gClock.init(kDefaultTempo, kTicksPerBar);
+  gDisplay.begin();
   Serial8.begin(31250);
   gHost.begin();
   gBootStartUs = micros();
@@ -297,9 +321,11 @@ void loop() {
   if (!gBootReported && gCard.ready() && !gEngine.persistence().booting()) {
     gBootReported = true;
     reportBootLoad();
+    showFirstSlots();
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
+  gDisplay.service(gEngine, gClock, gLastTick, millis());
 }
 
 #endif  // ENGINE_FIRMWARE

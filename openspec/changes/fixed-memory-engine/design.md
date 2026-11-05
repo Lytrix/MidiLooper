@@ -1724,3 +1724,21 @@ Device (image `c58fb6ac…`, RAM1 304 KB free for locals, PSRAM 6,811,104 B): `b
 1.09 s with 21 V1 slots imported, saving not approved, nothing written; two V1 slots launched on the internal clock
 played over USB MIDI (338 messages in 8 s) and every note closed at stop. Output is on the recorded channel (V1 notes
 carry none, so channel 1) until per-track channels are set with the surface (E9.8b).
+
+## E9.8c — the screen (owner 2026-11-06: before the controls; as built)
+
+`src/EngineFirmware/EngineDisplay.h` on the `SSD1322_OLED` library (256 × 64, 4-bit), in the legacy layout:
+- track column (x 0–21): a state letter (P playing, R writing, - idle) and the number, the selected track bright;
+- detailed piano roll (x 22–225, rows 0–31) of the shown slot — the selected track's playing or writing slot, else the
+  last one launched or recorded on it (at boot: its first slot with content) — 4 bars paged with the playhead, beat
+  and bar lines, the notes from the engine's tiles and the live overlay (`EngineRoot::drawRollBand`, focus set with
+  `setDisplayFocus`), the playhead; pitch range auto-fitted from density tiles;
+- overview strip (rows 33–40) of the whole loop from density tiles with the view's range and the playhead — only when
+  the loop is longer than the detailed view;
+- status line (slot, transport, bars, undo depth, bar) and sidebar (tempo, clock source, run / stop, RO while saving is
+  not approved).
+A frame every 33 ms once the previous DMA transfer is done (the library copies the frame before sending, so drawing
+never races it); the first frame after `begin` goes over blocking SPI — measured on the device, the panel stayed blank
+when the first frame was a DMA one and drew once a blocking frame had been sent. The screen only reads the engine
+(tiles, transport, history). Device (image `ada72d97…`): the owner confirmed the screen; worst frame draw 733 µs (slot
+24, 641 notes), inside the main loop's 2 ms block.
