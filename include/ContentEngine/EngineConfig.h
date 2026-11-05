@@ -20,23 +20,38 @@ constexpr RunId kNoRun = 0xFFFFu;
 constexpr ManifestId kNoManifest = 0xFFFFu;
 
 namespace Config {
+// Writers (owner decision 2026-11-05): one track at a time records or overdubs, so one writer's holdings are reserved.
+constexpr uint8_t kWriterCount = 1;
+constexpr uint8_t kMaxOpenNotesPerWriter = 128;
+constexpr uint32_t kWriterReserveRows = kMaxOpenNotesPerWriter + 32;  // owed NoteOffs + controller closures
+constexpr uint32_t kEditReserveRows = 1536;                           // one NOTE_EDIT session
+constexpr uint32_t kCommittedRowLimit = 131072;                        // today's admission ceiling
+constexpr uint32_t kContentRows = kCommittedRowLimit + kWriterCount * kWriterReserveRows + kEditReserveRows;
+
+// Descriptors (plan § 5.2): committed and history runs <= 512, per writer <= 3 (active + closing + next), one edit
+// run, one compaction output. Manifests: slot currents 64, history 99, NOTE_EDIT states 32, writer commits 3 each,
+// pinned after replacement 24 windows + 18 cursors + 6 tiles + 3 workers.
+constexpr uint16_t kCommittedRunLimit = 512;
+constexpr uint16_t kRunCount = 520;
+static_assert(kCommittedRunLimit + kWriterCount * 3 + 1 + 1 <= kRunCount, "run descriptors cover W");
+constexpr uint16_t kManifestCount = 256;
+static_assert(64 + 99 + 32 + kWriterCount * 3 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
+
 constexpr uint16_t kRowsPerPage = 64;  // 64 x 16 B = 1 KiB pages
-constexpr uint16_t kPageCount = 4096;  // content quota 3,264 + compaction 256 + edit index 576
-constexpr uint16_t kContentQuotaPages = 3264;
+// Content quota (plan § 5.1): full pages for every row, a partial page per live run plus one hide partial per edit run
+// (capped at 500), and the directory pages of the full pages (16 inline pages per run, 512 ids per directory page).
+constexpr uint32_t kContentFullPages = (kContentRows + kRowsPerPage - 1) / kRowsPerPage;
+constexpr uint16_t kContentQuotaPages = static_cast<uint16_t>(kContentFullPages + kRunCount + 500 + kContentFullPages / 17 +
+                                                              (kContentFullPages + 511) / 512);
 constexpr uint16_t kCompactionReservePages = 256;
 constexpr uint16_t kIndexReservePages = 576;
-static_assert(kContentQuotaPages + kCompactionReservePages + kIndexReservePages == kPageCount,
-              "the page pool is exactly the three partitions");
+constexpr uint16_t kPageCount = kContentQuotaPages + kCompactionReservePages + kIndexReservePages;
+static_assert(kContentQuotaPages == 3222 && kPageCount == 4054, "plan § 5.1 figures (one writer)");
 
-constexpr uint16_t kRunCount = 544;
-constexpr uint16_t kCommittedRunLimit = 512;
-constexpr uint16_t kManifestCount = 288;
 constexpr uint8_t kRunsPerManifest = 63;  // 60 committed + 3 writer runs; fits the 6-bit merge key
 constexpr uint16_t kHistoryCapacity = 512;
 constexpr uint8_t kSlotCount = 64;
-constexpr uint8_t kWriterCount = 8;
 constexpr uint8_t kInlinePagesPerRun = 16;
-constexpr uint8_t kMaxOpenNotesPerWriter = 128;
 
 // OUT-POLY (owner decision 2026-11-04, ratified end-state constant): at most 16 simultaneously sounding MIDI output
 // note instances per track. It limits output only, never recording, storage, undo history or the piano roll.

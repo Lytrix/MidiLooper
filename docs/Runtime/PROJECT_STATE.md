@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: one writer at a time (owner); writer reserves released.**
+- `Config` now derives content rows (132,768), run descriptors (520), manifest slots (256) and pages (3,222 content,
+  4,054 pool) from `kWriterCount = 1`. ARM bench: RAM2 −6.8 KB, PSRAM −43 KB; plan budgets: RAM2 heap for libraries
+  298,707 → 312,095 B. Refusing a second Record / overdub is task E5.10b. Full native 4,173 passed.
+
 **2026-11-05 — Fixed-memory engine: E5.9 plan § 7 restated on measured bounds.**
 - g = 810 µs; a window is 47 grains spread / 100 clustered; index 58; cold start 190 grains with a checkpoint, 3,009
   without (OUT-2 warm-up); the checkpoint sweep is background, superseded by newer commits.

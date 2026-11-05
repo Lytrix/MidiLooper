@@ -804,3 +804,23 @@ overflow. Re-measured (image `4285a123…`): compose 710 µs; a mid-loop checkpo
 seek 358 µs), so cold start takes 3 grains instead of a 94-grain warm-up; worst grain still the clustered compose
 (782–800 µs), g = 810 µs unchanged. The clustered benches still exceed 48 open; their look-ahead runs before the
 overflow check and their open table stays full, so their grain costs remain an upper bound.
+
+## W — one writer at a time (owner decision 2026-11-05, as built)
+
+Only one track records or overdubs at a time; a second Record / overdub gesture while one is active is refused by
+name (to implement with the track admission, E5.10). The 8-writer reserves are released:
+
+| Capacity (`Config`, derived and asserted) | 8 writers | 1 writer |
+|---|---|---|
+| Reserved writer rows | 1,280 | 160 |
+| Content rows (W) | 133,888 | 132,768 |
+| Run descriptors | 544 | 520 (517 worst) |
+| Manifest slots | 288 | 256 (249 worst) |
+| Content quota pages | 3,264 | 3,222 |
+| Page pool | 4,096 pages | 4,054 pages |
+
+Measured (`teensy41-engine-bench` ARM build): RAM2 statics −6,752 B (run and manifest tables, reservation ledger),
+PSRAM −43,200 B (pool and free stack). Plan budgets: writers 20,896 → 2,612 B RAM2; RAM2 statics 225,581 → 212,193 B,
+heap for libraries 298,707 → 312,095 B; PSRAM allowance for non-content users +43,092 B (847,184 capture /
+1,895,760 shipping). Committed content (131,072 rows, 512 runs), the NOTE_EDIT reserve and the edit-index partition
+are unchanged. Device bench image `ab57a6d4…` unchanged in grains.

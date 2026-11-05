@@ -71,6 +71,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E5.7 Clustered look-ahead: run onset-pitch mask (RAM2); feasibility gate in `test_content_engine_scheduler` (adversarial window 100 grains, 8 tracks feasible at g = 786 µs, U_e = 50 % in simulation).
 - [x] E5.8 Device: re-measure grains with OUT-2 and the mask; confirm or re-open the gate. Done 2026-11-05: worst grain 800 µs (clustered compose), g = 810 µs; resume split into two grains (was 1.1 ms); gate met. Image `59c8a6f8…`.
 - [x] E5.9 Plan bounds: g = 810 µs and 44–100-grain windows into plan § 7 (owner). Done 2026-11-05: § 7.1–7.5 restated on measured figures (window 47 / 100 grains, index 58, cold start 190 / 3,009, sweep background). Owner: at most one track overdubs at a time, so clustered C2 = 42.7 % (within 50 %); clustered C1 needs B_max ≤ 136 ms.
+- [x] E5.10a W: one writer at a time (owner 2026-11-05). `Config` derives rows, descriptors, manifests and pages from `kWriterCount = 1`; plan § 2, § 4, § 5 budgets restated (RAM2 −13.4 KB budget, PSRAM −43 KB).
+- [ ] E5.10b Track admission refuses a second concurrent Record / overdub by name (with the writer integration).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output

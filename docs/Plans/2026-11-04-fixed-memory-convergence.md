@@ -18,7 +18,7 @@ allocation); both mechanisms are deleted by this plan. Not authority: approval r
 | 1 | Reservation proof altered accepted notes | § 6 | Overlap consequences are no longer stored rows. They are **derived at composition** from the later note's own span (occlusion), so an accepted note costs a fixed, fully reserved number of rows (NoteOn, NoteOff, ≤ 8 checkpoint carry rows) and is never closed early. Every MIDI class is accounted. |
 | 2 | Real scheduling envelope | § 7 | No assumed turn interval. Demand is stated per window period as CPU time; feasibility is an inequality over measured terms (other main-loop CPU, longest non-engine block, ISR load). EDF for playback, guaranteed display share and freshness bound, per-tick and per-port output bounds, storage density vs MIDI bandwidth. |
 | 3 | DEC-159 | § 8.3 | Record Stop creates the Record manifest at acceptance; an immediate overdub pins it as its base without waiting for any later Record work. |
-| 4 | Complete memory budget | § 4, § 5 | Joint workload (full committed content **and** 8 active writers **and** one NOTE_EDIT session **and** all consumers); partial-page and directory proof; descriptor, manifest and pin accounting; reserves that optional work cannot borrow; RAM2 initialization; the non-content allowance as a measured precondition. |
+| 4 | Complete memory budget | § 4, § 5 | Joint workload (full committed content **and** the active writer **and** one NOTE_EDIT session **and** all consumers); partial-page and directory proof; descriptor, manifest and pin accounting; reserves that optional work cannot borrow; RAM2 initialization; the non-content allowance as a measured precondition. |
 | 5 | E0 oracle | § 10 | Expected outcomes come from ratified contracts and reviewed fixtures, written independently of the legacy code. Legacy output is only a cross-check, and its disagreements are classified. Known defects are listed as historical incorrect behavior. |
 | 6 | Development model | § 10 | Unchanged: RED/unbootable branch, small commits, no transition-only abstractions. Milestones change only where items 1–5 change dependencies. |
 
@@ -215,20 +215,20 @@ because the work is allowed to wait, and under exhaustion it waits without end.
 | I9 | Budget fits the hardware under the worst **jointly** supported workload | § 4, § 5 |
 | I10 | Musical behavior equivalent to the ratified DEC contracts | § 10 E0, gate H1 |
 
-**Supported workload W.** All limits hold **at the same time**: full committed content *and* all writers *and* one
+**Supported workload W.** All limits hold **at the same time**: full committed content *and* the writer *and* one
 NOTE_EDIT session *and* all consumers. Anything beyond W gets a named capacity outcome at admission of *new* input, never
 a change to accepted content. The values are proposals for the owner (§ 12.3).
 
 | Parameter | W |
 |---|---|
 | Tracks × slots | 8 × 8 = 64 slots |
-| Concurrent writers (Record / overdub) | 8, one per track; **at most 1 overdubbing at a time** (owner 2026-11-05). Memory budgets (§ 4, § 5) still reserve for 8 writers |
+| Concurrent writers (Record / overdub) | **1**: one track records or overdubs at a time (owner 2026-11-05); a second Record / overdub gesture is refused by name while one is active. Budgets in § 4 and § 5 reserve one writer [8] |
 | Concurrent NOTE_EDIT sessions | 1, selection ≤ 512 notes |
 | Loop length | ≤ 64 bars (49,152 ticks) |
 | Tempo | ≤ 300 BPM: window period P = 2 bars = 1.6 s |
-| Content rows (committed + in flight + reserved), all slots and history | ≤ 133,888 |
+| Content rows (committed + in flight + reserved), all slots and history | ≤ 132,768 [133,888] |
 | Committed rows guaranteed alongside full writer reservations | ≤ 131,072 (today's admission ceiling) |
-| Live runs (committed, history, writer, edit, compaction) | ≤ 544 descriptors, of which ≤ 512 committed |
+| Live runs (committed, history, writer, edit, compaction) | ≤ 520 descriptors [544], of which ≤ 512 committed |
 | Runs per manifest | ≤ 60 committed + ≤ 3 writer runs |
 | Edit-hidden note ids per manifest | ≤ 4,096 |
 | Source rows per slot per 2-bar window | ≤ 2,816 (admission); window buffer 3,072 rows |
@@ -309,8 +309,8 @@ growing container.
 
 | Region | Bytes | Sizing |
 |---|---|---|
-| Page pool data | 4,194,304 | 4,096 pages × 1,024 B (64 rows × 16 B); split in § 5.1 |
-| Page free stack | 8,192 | 4,096 × 2 B |
+| Page pool data | 4,151,296 | 4,054 pages [4,096] × 1,024 B (64 rows × 16 B); split in § 5.1 |
+| Page free stack | 8,108 | 4,054 × 2 B |
 | Playback windows | 1,179,648 | 8 tracks × 3 windows × 3,072 rows × 16 B |
 | Compose carry state | 221,184 | 18 cursors × 12 KiB: 16 playback (2 per track: steady + transition) + 2 display. Each holds 128 sounding entries × 12 B, 128 pitch × 64 run occluder counters, 128 run masks |
 | Checkpoint tables | 262,144 | 64 slots × 8 checkpoints × 64 entries × 8 B |
@@ -318,9 +318,9 @@ growing container.
 | Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
 | Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
-| **Engine total** | **6,524,160** | |
+| **Engine total** | **6,481,068** [6,524,160] | |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **804,092** (capture build) / **1,852,668** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **847,184** (capture build) / **1,895,760** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
 Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
 tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
@@ -332,17 +332,17 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | Today's statics (`.bss.dma`, `3b95b40e…`) | 186,597 |
 | − `RevisionShadow` `gShadow` | −98,304 |
 | − `RollingSuccessorProbe::gCounters` | −4,920 |
-| + RunTable 544 × 128 B | +69,632 |
-| + ManifestTable 288 × 148 B (`RevisionManifest` with 64 run ids, measured 148 B) | +42,624 |
+| + RunTable 520 × 128 B | +66,560 |
+| + ManifestTable 256 × 148 B (`RevisionManifest` with 64 run ids, measured 148 B) | +37,888 |
 | + History ring 512 × 8 B | +4,096 |
 | + SlotState 64 × 32 B | +2,048 |
-| + Writers 8 × 1,024 B (open-note ledger 128 × 6 B, cursors, reservation counters, occupancy bits) | +8,192 |
+| + Writer 1 × 2,612 B (measured on ARM: open-note table 128 × 16 B, cursors, reservation counters, occupancy bits) | +2,612 |
 | + Edit writer selection 512 × 8 B | +4,096 |
 | + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
 | + Output FIFOs 3 × 512 × 4 B | +6,144 |
 | + Scheduler job table | +1,024 |
-| **Statics after cutover** | **225,581** |
-| Heap left for libraries (USB host, SD, Serial) | **298,707** (today: 337,568 arena, 172 KB free after boot) |
+| **Statics after cutover** | **212,193** [225,581] |
+| Heap left for libraries (USB host, SD, Serial) | **312,095** [298,707] (today: 337,568 arena, 172 KB free after boot) |
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -370,8 +370,8 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 804,092 B` on capture builds (≤ 1,852,668 B shipping) and
-  `non-content RAM2 heap ≤ 298,707 B`.
+- the budget closes iff `non-content PSRAM ≤ 847,184 B` on capture builds (≤ 1,895,760 B shipping) and
+  `non-content RAM2 heap ≤ 312,095 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
 
@@ -390,20 +390,20 @@ If it does not close, these levers apply, in order. Each is a W change for the o
 
 | Part | Pages | Derivation |
 |---|---|---|
-| Content quota | 3,264 | rows ≤ 133,888 → ≤ 2,092 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 544, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,044; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,092 / 17⌋ + ⌈2,092 / 512⌉ = 123 + 5 = 128. **Total ≤ 2,092 + 1,044 + 128 = 3,264** |
+| Content quota | 3,222 | rows ≤ 132,768 → ≤ 2,075 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 520, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,020; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,075 / 17⌋ + ⌈2,075 / 512⌉ = 122 + 5 = 127. **Total ≤ 2,075 + 1,020 + 127 = 3,222** (`Config::kContentQuotaPages`, derived and asserted) |
 | Compaction reserve | 256 | one history-closed range in flight with its directories (design D5c); used by compaction only |
 | Edit-index reserve | 576 | 18 index slots (one per compose cursor) × 32 pages (4,096 ids × 8 B); used only by index builds for those cursors |
 
-The **133,888 rows** are 131,072 committed rows plus the standing reservations of every writer at once:
-8 × (128 NoteOff + 32 controller closures) + 1,536 NOTE_EDIT rows = 2,816. So full committed content and all writers
+The **132,768 rows** are 131,072 committed rows plus the standing reservations of the one writer:
+1 × (128 NoteOff + 32 controller closures) + 1,536 NOTE_EDIT rows = 1,696. So full committed content and the writer
 coexist by construction.
 
 ### 5.2 Descriptors and manifest slots
 
 | Table | Capacity | Holders, worst case at once |
 |---|---|---|
-| RunTable | 544 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 8 × 3 = 24; edit run 1; compaction output 1 → **538 ≤ 544**. Committed runs are admitted against 512. |
-| ManifestTable | 288 | slot currents 64; history 99; NOTE_EDIT session states 32; writer pending commits (2 closing + next) 8 × 3 = 24; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **270 ≤ 288** |
+| RunTable | 520 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 1 × 3 = 3; edit run 1; compaction output 1 → **517 ≤ 520**. Committed runs are admitted against 512. |
+| ManifestTable | 256 | slot currents 64; history 99; NOTE_EDIT session states 32; writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **249 ≤ 256** |
 | History ring | 512 | depth ≤ 99 in W; the ring size matches `ABSOLUTE_MAX_UNDO_ENTRIES`, but depth above 99 needs a larger ManifestTable (§ 12.3) |
 
 ### 5.3 Reference counting, reclamation, retention
@@ -433,7 +433,7 @@ coexist by construction.
 
 | Reserve | Only for | Optional work that may *not* use it |
 |---|---|---|
-| Writer holdings: rows, its partial pages, 3 descriptors, 3 manifest slots | that writer's accepted notes, wrap and Stop | other writers' new input, compaction, persistence, display |
+| Writer holdings: rows, its partial pages, 3 descriptors, 3 manifest slots | that writer's accepted notes, wrap and Stop | NOTE_EDIT, compaction, persistence, display |
 | Edit holdings: 1,536 rows, 1 descriptor, slots | that session's selection | all others |
 | Compaction 256 pages | compaction | — (compaction is itself optional; it can never take content quota) |
 | Index 576 pages, 18 fixed slots | the compose cursor the slot belongs to | — |
@@ -515,7 +515,7 @@ Counters, all O(1), in `Reservations`:
 
 | Counter | Meaning |
 |---|---|
-| `Q` | content rows free = 133,888 − rows written − rows reserved |
+| `Q` | content rows free = 132,768 − rows written − rows reserved |
 | `ow` | open notes of writer w |
 | `kw` | controller closures reserved by writer w (≤ 32) |
 | `Hw` | rows writer w holds and has not written: 128 + `kw` while admitted |
@@ -523,7 +523,7 @@ Counters, all O(1), in `Reservations`:
 | `Mfree`, `Mres` | free and reserved manifest slots |
 
 Pages are derived from rows (§ 5.1), so row accounting is sufficient: the content quota in pages is proven to hold
-133,888 rows across ≤ 544 runs.
+132,768 rows across ≤ 520 runs.
 
 **Invariant R:** `Q ≥ 0`; for each writer `ow ≤ 128`, `Hw = 128 + 32` while admitted; `Dfree ≥ Dres`;
 `Mfree ≥ Mres`.
@@ -943,7 +943,7 @@ musical clauses they protected.
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 225,581 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 212,193 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
 | D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
 | D3 Owner chain | parity with reviewed fixtures for the same stimulus |
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |
@@ -1036,7 +1036,7 @@ Before E1:
    - 8-bar checkpoints of 64 entries;
    - ≤ 500 edit runs with hides (§ 5.1);
    - history depth ≤ 99 (a deeper history needs a larger ManifestTable);
-   - 8 writers + 1 NOTE_EDIT session jointly.
+   - 1 writer (one track records or overdubs at a time; owner 2026-11-05) + 1 NOTE_EDIT session jointly.
 2. **Capacity latch:** after the first refused new NoteOn, keep the pass open (accepted notes still close normally), or
    end it at the next wrap. Accepted content is unaffected either way.
 3. **Undo history under pressure:** keep 99 and refuse new input (default), or age history out, named.
