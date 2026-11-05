@@ -5,13 +5,15 @@
 //
 // * Session: `begin` admits a selection of at most `MaxSelection` notes of the slot's current manifest (their noteId
 //   and geometry) and opens the History NOTE_EDIT session, which protects that manifest as the restore point.
-// * Edits: `apply` changes the geometry of selected notes (tick, length, pitch, velocity, channel) or deletes them. It
-//   is one E: step. The E: steps live in this writer's log (at most `MaxSteps`, the oldest forgotten when full), not in
-//   History: each step records the values it replaced, and undo / redo swap them back.
+// * Edits: `apply` changes the geometry of selected notes (tick, length, pitch, velocity, channel) or deletes them,
+//   each note at most once per step. It is one E: step. The E: steps live in this writer's log (at most `MaxSteps`,
+//   the oldest forgotten when full; entries in caller-placed storage), not in History: each step records the values
+//   it replaced, and undo / redo swap them back.
 // * Audible at once: every apply / undo / redo is new input. At acceptance it reserves the rows of a fresh edit run
-//   (CE-A1: refused by name, nothing changed, only when content is full); the rebuild job (`step`) then writes the run
-//   in grains — HideNote rows for every edited or deleted note, then the replacement notes in tick order (NoteOff
-//   before NoteOn at a tick), keeping each note's noteId (DEC-245 lineage) — seals it, publishes base runs + edit run as
+//   (CE-A1: refused by name, nothing changed, only when content is full). Acceptance is O(changes of the action): the
+//   edited / live note counts are kept incrementally. The rebuild job (`step`) then works in bounded units — gather
+//   (an edited note's HideNote row), heapify and extract (one sift each), write (one replacement row; tick order,
+//   NoteOff before NoteOn at a tick, noteIds kept, DEC-245 lineage) — seals the run, publishes base runs + edit run as
 //   a new manifest, and makes it the session's one History state (the previous one is released to reclaim). With no
 //   note edited the session state is removed and the slot plays its start. A newer action supersedes a running
 //   rebuild (its reservation is forgiven, its run reclaimed).
@@ -69,8 +71,8 @@ template <typename Pool, typename Runs, typename Manifests, typename HistoryT,
 class EditWriter {
  public:
   using Reservations = RowReservations<Pool, Runs>;
-  static constexpr uint16_t kNoIndex = 0xFFFFu;
   static_assert(MaxLogEntries >= MaxSelection, "one step may change the whole selection");
+  static_assert(MaxSelection <= 1024, "sort keys hold a 10-bit selection index");
 
   struct Stats {
     uint32_t rebuilds;     // edit runs published
@@ -78,22 +80,26 @@ class EditWriter {
     uint32_t forgotSteps;  // oldest E: steps forgotten (log full)
   };
 
-  void init(Pool& pool, Runs& runs, Manifests& manifests, Reservations& res, HistoryT& history) {
+  /// `log`: storage for `MaxLogEntries` E: changes; the caller places it (PSRAM: it is touched only by the changed
+  /// notes of an action).
+  void init(Pool& pool, Runs& runs, Manifests& manifests, Reservations& res, HistoryT& history, EditChange* log) {
     pool_ = &pool;
     runs_ = &runs;
     manifests_ = &manifests;
     res_ = &res;
     history_ = &history;
+    log_ = log;
     open_ = false;
-    count_ = 0;
+    leaving_ = false;
+    count_ = edited_ = live_ = 0;
     stepHead_ = stepCount_ = cursor_ = 0;
     entryHead_ = entryCount_ = 0;
-    clearBuild();
-    leaving_ = false;
+    buildRun_ = kNoRun;
+    phase_ = Phase::Idle;
     stats_ = Stats{};
   }
 
-  /// Opens NOTE_EDIT on `slot` with `n` selected notes of its current manifest.
+  /// Opens NOTE_EDIT on `slot` with `n` selected notes of its current manifest. O(n).
   EditResult begin(uint8_t slot, const EditNote* selection, uint16_t n) {
     if (open_) return EditResult::Busy;
     if (n > MaxSelection) return EditResult::DeniedSelection;
@@ -105,39 +111,49 @@ class EditWriter {
       if (!valid(selection[i]) || selection[i].tick >= loop) return EditResult::DeniedSelection;
     if (!history_->beginSession(SessionKind::Edit, slot)) return EditResult::Busy;
     open_ = true;
+    leaving_ = false;
     slot_ = slot;
     base_ = base;
     loop_ = loop;
     count_ = n;
+    edited_ = live_ = 0;
     for (uint16_t i = 0; i < n; ++i) orig_[i] = cur_[i] = selection[i];
     stepHead_ = stepCount_ = cursor_ = 0;
     entryHead_ = entryCount_ = 0;
-    clearBuild();
-    leaving_ = false;
+    buildRun_ = kNoRun;
+    phase_ = Phase::Idle;
     return EditResult::Ok;
   }
 
-  /// One E: step: `n` changes, applied together. Refused by name, nothing changed, when the edit run does not fit.
+  /// One E: step: `n` changes, each note at most once. O(n). Refused by name, nothing changed, when the new edit run
+  /// does not fit.
   EditResult apply(const EditChange* changes, uint16_t n) {
     if (!open_ || leaving_) return EditResult::NotEditing;
     if (n == 0 || n > MaxSelection) return EditResult::DeniedSelection;
-    for (uint16_t k = 0; k < n; ++k)
-      if (changes[k].index >= count_ || !valid(changes[k].value) || changes[k].value.tick >= loop_ ||
-          changes[k].value.noteId != orig_[changes[k].index].noteId)
+    uint32_t seen[(MaxSelection + 31) / 32] = {};
+    int32_t dEdited = 0, dLive = 0;
+    for (uint16_t k = 0; k < n; ++k) {
+      const EditChange& c = changes[k];
+      if (c.index >= count_ || !valid(c.value) || c.value.tick >= loop_ || c.value.noteId != orig_[c.index].noteId ||
+          ((seen[c.index >> 5] >> (c.index & 31)) & 1u))
         return EditResult::DeniedSelection;
-    for (uint16_t k = 0; k < n; ++k) swapIn(changes[k].index, changes[k].value, scratchOld_[k]);
-    const EditResult r = rebuildAfterChange();
-    if (r != EditResult::Ok) {  // undo the trial
-      for (uint16_t k = n; k-- > 0;) cur_[changes[k].index] = scratchOld_[k];
-      return r;
+      seen[c.index >> 5] |= 1u << (c.index & 31);
+      delta(c.index, c.value, dEdited, dLive);
     }
-    // Record the step: drop redo, forget the oldest steps while the log is full.
+    const EditResult r = admit(dEdited, dLive);
+    if (r != EditResult::Ok) return r;
+    // Record the step: drop redo, forget the oldest steps while the log is full, then swap the values in.
     stepCount_ = cursor_;
     entryCount_ = 0;
-    for (uint8_t k = 0; k < stepCount_; ++k) entryCount_ = static_cast<uint16_t>(entryCount_ + steps_[(stepHead_ + k) % MaxSteps].count);
+    for (uint8_t s = 0; s < stepCount_; ++s) entryCount_ = static_cast<uint16_t>(entryCount_ + steps_[(stepHead_ + s) % MaxSteps].count);
     while (stepCount_ == MaxSteps || entryCount_ + n > MaxLogEntries) forgetOldest();
     const uint16_t first = static_cast<uint16_t>((entryHead_ + entryCount_) % MaxLogEntries);
-    for (uint16_t k = 0; k < n; ++k) log_[(first + k) % MaxLogEntries] = EditChange{changes[k].index, scratchOld_[k]};
+    for (uint16_t k = 0; k < n; ++k) {
+      EditChange& slot = log_[(first + k) % MaxLogEntries];
+      slot.index = changes[k].index;
+      slot.value = cur_[changes[k].index];
+      cur_[changes[k].index] = changes[k].value;
+    }
     steps_[(stepHead_ + stepCount_) % MaxSteps] = Step{first, n};
     ++stepCount_;
     entryCount_ = static_cast<uint16_t>(entryCount_ + n);
@@ -145,29 +161,20 @@ class EditWriter {
     return EditResult::Ok;
   }
 
+  /// O(changes of the step).
   EditResult undo() {
     if (!open_ || leaving_) return EditResult::NotEditing;
     if (cursor_ == 0) return EditResult::NothingToUndo;
-    swapStep(cursor_ - 1, true);
-    const EditResult r = rebuildAfterChange();
-    if (r != EditResult::Ok) {
-      swapStep(cursor_ - 1, false);
-      return r;
-    }
-    --cursor_;
-    return EditResult::Ok;
+    const EditResult r = swapStep(static_cast<uint8_t>(cursor_ - 1));
+    if (r == EditResult::Ok) --cursor_;
+    return r;
   }
   EditResult redo() {
     if (!open_ || leaving_) return EditResult::NotEditing;
     if (cursor_ == stepCount_) return EditResult::NothingToRedo;
-    swapStep(cursor_, false);
-    const EditResult r = rebuildAfterChange();
-    if (r != EditResult::Ok) {
-      swapStep(cursor_, true);
-      return r;
-    }
-    ++cursor_;
-    return EditResult::Ok;
+    const EditResult r = swapStep(cursor_);
+    if (r == EditResult::Ok) ++cursor_;
+    return r;
   }
 
   /// Leave NOTE_EDIT keeping the edits: one U: step. Completes after a running rebuild (`step`).
@@ -185,28 +192,55 @@ class EditWriter {
     leaving_ = false;
   }
 
-  /// One grain of the rebuild job: at most `maxRows` rows written. Returns true while work remains.
-  bool step(uint32_t maxRows) {
+  /// One grain of the rebuild job: at most `units` units — a selected note gathered (its hide row written), a heap
+  /// sift, or a replacement row written. Returns true while work remains.
+  bool step(uint32_t units) {
     if (!building()) return false;
-    uint32_t budget = maxRows;
-    while (budget > 0 && buildHide_ < buildHideCount_) {
-      res_->writeOwed(buildRun_, hideRow(cur_[buildHides_[buildHide_++]].noteId));
-      --budget;
+    while (units > 0) {
+      switch (phase_) {
+        case Phase::Gather:
+          if (gather_ == count_) {
+            heapEnd_ = events_;
+            heapNext_ = static_cast<uint16_t>(events_ / 2);
+            phase_ = Phase::Heapify;
+            break;
+          }
+          gatherOne(gather_++);
+          --units;
+          break;
+        case Phase::Heapify:
+          if (heapNext_ == 0) {
+            phase_ = Phase::Extract;
+            break;
+          }
+          sift(--heapNext_, heapEnd_);
+          --units;
+          break;
+        case Phase::Extract:
+          if (heapEnd_ <= 1) {
+            phase_ = Phase::Write;
+            write_ = 0;
+            break;
+          }
+          --heapEnd_;
+          swapKeys(0, heapEnd_);
+          sift(0, heapEnd_);
+          --units;
+          break;
+        case Phase::Write:
+          if (write_ == events_) {
+            publish();
+            if (leaving_) finishLeave();
+            return false;
+          }
+          res_->writeOwed(buildRun_, eventRow(keys_[write_++]));
+          --units;
+          break;
+        case Phase::Idle:
+          return false;
+      }
     }
-    if (buildHide_ < buildHideCount_) return true;
-    if (!sorted_) {
-      sortEvents();
-      sorted_ = true;
-      return true;  // sorting is this grain's work
-    }
-    while (budget > 0 && buildEvent_ < buildEventCount_) {
-      res_->writeOwed(buildRun_, eventRow(events_[buildEvent_++]));
-      --budget;
-    }
-    if (buildEvent_ < buildEventCount_) return true;
-    publish();
-    if (leaving_) finishLeave();
-    return false;
+    return true;
   }
 
   bool editing() const { return open_; }
@@ -218,28 +252,41 @@ class EditWriter {
   const Stats& stats() const { return stats_; }
 
  private:
+  enum class Phase : uint8_t { Idle, Gather, Heapify, Extract, Write };
   struct Step {
     uint16_t first;  // log position, already mod MaxLogEntries
     uint16_t count;
   };
 
-  static bool valid(const EditNote& e) { return e.length > 0 && e.pitch < 128 && e.velocity > 0 && e.velocity < 128 && e.channel < 16; }
-
-  void swapIn(uint16_t index, const EditNote& value, EditNote& old) {
-    old = cur_[index];
-    cur_[index] = value;
+  static bool valid(const EditNote& e) {
+    return e.length > 0 && e.length < (1u << 20) && e.pitch < 128 && e.velocity > 0 && e.velocity < 128 && e.channel < 16;
   }
-  /// Undo (newest change first) or redo (oldest first) of step `s`: swap each recorded value with the current one, so
-  /// the log then holds what the other direction restores. A step may change one note twice.
-  void swapStep(uint8_t s, bool undoing) {
+  bool isEdited(uint16_t i, const EditNote& v) const { return v != orig_[i]; }
+  /// The change of the edited / live counts if note `i` took `v`.
+  void delta(uint16_t i, const EditNote& v, int32_t& dEdited, int32_t& dLive) const {
+    const bool wasE = isEdited(i, cur_[i]), nowE = isEdited(i, v);
+    dEdited += static_cast<int32_t>(nowE) - static_cast<int32_t>(wasE);
+    dLive += static_cast<int32_t>(nowE && !v.deleted) - static_cast<int32_t>(wasE && !cur_[i].deleted);
+  }
+
+  /// Undo or redo of step `s`: admit the resulting state, then swap each recorded value with the current one (a step
+  /// changes each note once, so the order does not matter).
+  EditResult swapStep(uint8_t s) {
     const Step& st = steps_[(stepHead_ + s) % MaxSteps];
-    for (uint16_t j = 0; j < st.count; ++j) {
-      const uint16_t k = undoing ? static_cast<uint16_t>(st.count - 1 - j) : j;
+    int32_t dEdited = 0, dLive = 0;
+    for (uint16_t k = 0; k < st.count; ++k) {
+      const EditChange& c = log_[(st.first + k) % MaxLogEntries];
+      delta(c.index, c.value, dEdited, dLive);
+    }
+    const EditResult r = admit(dEdited, dLive);
+    if (r != EditResult::Ok) return r;
+    for (uint16_t k = 0; k < st.count; ++k) {
       EditChange& c = log_[(st.first + k) % MaxLogEntries];
       const EditNote t = cur_[c.index];
       cur_[c.index] = c.value;
       c.value = t;
     }
+    return EditResult::Ok;
   }
   void forgetOldest() {
     const Step& st = steps_[stepHead_];
@@ -250,67 +297,62 @@ class EditWriter {
     ++stats_.forgotSteps;
   }
 
-  /// Admission of a changed selection: cancel a running rebuild, then reserve a fresh edit run for the new state (or,
-  /// with nothing edited, return the slot to the session start at once).
-  EditResult rebuildAfterChange() {
-    uint16_t hides = 0, events = 0;
-    for (uint16_t i = 0; i < count_; ++i) {
-      if (cur_[i] == orig_[i]) continue;
-      ++hides;
-      if (!cur_[i].deleted) events = static_cast<uint16_t>(events + 2);
-    }
-    if (hides == 0) {
+  /// Admission of the state the action leads to (O(1)): with nothing edited the slot returns to the session start at
+  /// once; otherwise a fresh edit run is reserved and its rebuild starts (a running one is superseded). Nothing
+  /// changes when refused.
+  EditResult admit(int32_t dEdited, int32_t dLive) {
+    const uint16_t edited = static_cast<uint16_t>(static_cast<int32_t>(edited_) + dEdited);
+    const uint16_t live = static_cast<uint16_t>(static_cast<int32_t>(live_) + dLive);
+    if (edited == 0) {
       cancelBuild();
       history_->setSessionState(SessionKind::Edit, kNoManifest);
+      edited_ = live_ = 0;
       return EditResult::Ok;
     }
     const RunId run = runs_->allocate(slot_, RunKind::kEdit);
     if (run == kNoRun) return EditResult::DeniedRun;
-    const Admission a = res_->reserve(run, static_cast<uint16_t>(hides + events));
+    const Admission a = res_->reserve(run, static_cast<uint16_t>(edited + 2u * live));
     if (a != Admission::Ok) {
       runs_->seal(run);
       runs_->release(run);  // empty: reclaimed at once by the queue
       return a == Admission::DeniedRunFull ? EditResult::DeniedSelection : EditResult::DeniedCapacity;
     }
     cancelBuild();
+    edited_ = edited;
+    live_ = live;
     buildRun_ = run;
-    buildHideCount_ = 0;
-    buildEventCount_ = 0;
-    for (uint16_t i = 0; i < count_; ++i) {
-      if (cur_[i] == orig_[i]) continue;
-      buildHides_[buildHideCount_++] = i;
-      if (cur_[i].deleted) continue;
-      events_[buildEventCount_++] = key(cur_[i].tick, true, i);
-      events_[buildEventCount_++] = key(cur_[i].tick + cur_[i].length, false, i);
-    }
-    buildHide_ = buildEvent_ = 0;
-    sorted_ = false;
+    phase_ = Phase::Gather;
+    gather_ = 0;
+    events_ = 0;
     return EditResult::Ok;
   }
 
-  /// Event key: tick, then NoteOff before NoteOn, then selection index (deterministic).
-  static uint64_t key(uint32_t tick, bool on, uint16_t index) {
-    return (static_cast<uint64_t>(tick) << 17) | (static_cast<uint64_t>(on ? 1 : 0) << 16) | index;
+  /// Gather one selected note: an edited note gets its hide row now and, unless deleted, two sort keys.
+  void gatherOne(uint16_t i) {
+    const EditNote& n = cur_[i];
+    if (!isEdited(i, n)) return;
+    res_->writeOwed(buildRun_, hideRow(n.noteId));
+    if (n.deleted) return;
+    keys_[events_++] = key(n.tick, true, i);
+    keys_[events_++] = key(n.tick + n.length, false, i);
   }
-  void sortEvents() {  // heapsort, in place, O(E log E), E <= 2 x MaxSelection
-    const uint16_t n = buildEventCount_;
-    auto sift = [&](uint16_t root, uint16_t end) {
-      while (2u * root + 1u < end) {
-        uint16_t child = static_cast<uint16_t>(2u * root + 1u);
-        if (child + 1u < end && events_[child] < events_[child + 1]) ++child;
-        if (!(events_[root] < events_[child])) return;
-        const uint64_t t = events_[root];
-        events_[root] = events_[child];
-        events_[child] = t;
-        root = child;
-      }
-    };
-    for (uint16_t i = n / 2; i-- > 0;) sift(i, n);
-    for (uint16_t end = n; end > 1; --end) {
-      const uint64_t t = events_[0];
-      events_[0] = events_[end - 1];
-      events_[end - 1] = t;
-      sift(0, static_cast<uint16_t>(end - 1));
+  /// Sort key: tick (21 bits), then NoteOff before NoteOn, then selection index (10 bits): deterministic.
+  static uint32_t key(uint32_t tick, bool on, uint16_t index) {
+    return (tick << 11) | (static_cast<uint32_t>(on ? 1 : 0) << 10) | index;
+  }
+  void swapKeys(uint16_t a, uint16_t b) {
+    const uint32_t t = keys_[a];
+    keys_[a] = keys_[b];
+    keys_[b] = t;
+  }
+  /// Max-heap sift-down within [0, end): O(log n).
+  void sift(uint16_t root, uint16_t end) {
+    while (2u * root + 1u < end) {
+      uint16_t child = static_cast<uint16_t>(2u * root + 1u);
+      if (child + 1u < end && keys_[child] < keys_[child + 1]) ++child;
+      if (!(keys_[root] < keys_[child])) return;
+      swapKeys(root, child);
+      root = child;
     }
   }
 
@@ -320,12 +362,12 @@ class EditWriter {
     e.status = kHideNoteStatus;
     return e;
   }
-  PassEvent eventRow(uint64_t k) const {
-    const uint16_t i = static_cast<uint16_t>(k & 0xFFFFu);
-    const bool on = (k >> 16) & 1u;
+  PassEvent eventRow(uint32_t k) const {
+    const uint16_t i = static_cast<uint16_t>(k & 0x3FFu);
+    const bool on = (k >> 10) & 1u;
     const EditNote& n = cur_[i];
     PassEvent e{};
-    e.tick = static_cast<uint32_t>(k >> 17);
+    e.tick = k >> 11;
     e.noteId = n.noteId;
     e.status = static_cast<uint8_t>((on ? 0x90 : 0x80) | n.channel);
     e.data1 = n.pitch;
@@ -343,6 +385,7 @@ class EditWriter {
                                             static_cast<uint8_t>(base.runCount + 1), *runs_);
     runs_->release(buildRun_);  // the manifest holds the run now
     buildRun_ = kNoRun;
+    phase_ = Phase::Idle;
     if (m == kNoManifest) return;  // unreachable inside W (manifest slots cover it); the slot keeps its last state
     history_->setSessionState(SessionKind::Edit, m);
     ++stats_.rebuilds;
@@ -353,12 +396,8 @@ class EditWriter {
     runs_->seal(buildRun_);
     runs_->release(buildRun_);
     buildRun_ = kNoRun;
+    phase_ = Phase::Idle;
     ++stats_.superseded;
-  }
-  void clearBuild() {
-    buildRun_ = kNoRun;
-    buildHide_ = buildHideCount_ = buildEvent_ = buildEventCount_ = 0;
-    sorted_ = false;
   }
   void finishLeave() {
     history_->endSession(SessionKind::Edit);
@@ -371,25 +410,24 @@ class EditWriter {
   Manifests* manifests_ = nullptr;
   Reservations* res_ = nullptr;
   HistoryT* history_ = nullptr;
-  bool open_ = false, leaving_ = false, sorted_ = false;
+  EditChange* log_ = nullptr;
+  bool open_ = false, leaving_ = false;
   uint8_t slot_ = 0;
   ManifestId base_ = kNoManifest;
   uint32_t loop_ = 0;
   uint16_t count_ = 0;
+  uint16_t edited_ = 0, live_ = 0;  // notes differing from the admitted selection, and those not deleted
   EditNote orig_[MaxSelection];
   EditNote cur_[MaxSelection];
-  EditNote scratchOld_[MaxSelection];
-  // E: log
+  // E: log (entries in the caller's storage)
   Step steps_[MaxSteps];
   uint8_t stepHead_ = 0, stepCount_ = 0, cursor_ = 0;
-  EditChange log_[MaxLogEntries];
   uint16_t entryHead_ = 0, entryCount_ = 0;
   // Rebuild
   RunId buildRun_ = kNoRun;
-  uint16_t buildHides_[MaxSelection];
-  uint16_t buildHide_ = 0, buildHideCount_ = 0;
-  uint64_t events_[2 * MaxSelection];
-  uint16_t buildEvent_ = 0, buildEventCount_ = 0;
+  Phase phase_ = Phase::Idle;
+  uint16_t gather_ = 0, events_ = 0, heapNext_ = 0, heapEnd_ = 0, write_ = 0;
+  uint32_t keys_[2 * MaxSelection];
   Stats stats_{};
 };
 

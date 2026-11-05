@@ -59,9 +59,10 @@ using Hist = History<Manifests, Runs>;
 using Edits = EditWriter<Pool, Runs, Manifests, Hist>;
 BENCH_RAM2 static Hist gHist;
 BENCH_RAM2 static ProductionReservations gRes;
-BENCH_PSRAM static Edits gEdits;
+BENCH_RAM2 static Edits gEdits;
+BENCH_PSRAM static EditChange gEditLog[Config::kEditLogEntries];
 BENCH_PSRAM static EditNote gSel[Config::kEditSelection];
-BENCH_PSRAM static EditChange gChanges[Config::kEditSelection];
+BENCH_RAM2 static EditChange gChanges[Config::kEditSelection];  // an action is built in RAM by the UI
 
 constexpr uint32_t kLoop = 768 * 8, kWinTicks = 1536;
 constexpr uint8_t kPasses = 59;            // + 1 edit run = 60 committed runs
@@ -144,7 +145,8 @@ static void buildWorkload() {
 /// loop every pass starts notes on most pitches and the onset-pitch mask cannot skip it (adversarial worst case);
 /// otherwise each pass keeps its 6 pitches (the mask skips every pass without the NoteOn's pitch).
 /// Edit writer rebuild grains (E4.5), worst case: a 512-note selection, every note moved, then the session rebuilt
-/// (512 hides, a 1,024-event sort, 1,024 replacement rows) at 128 rows per grain; then an E: undo of that step.
+/// (512 notes gathered with their hides, a 1,024-key heapsort, 1,024 replacement rows) at 128 units per grain; then an
+/// E: undo of that step.
 static void editGrains() {
   gPool.init();
   gRuns.init();
@@ -152,7 +154,7 @@ static void editGrains() {
   TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
   gRes.init(gPool, gRuns, kLedgerFixedReservePages);
   gHist.init(gManifests, gRuns);
-  gEdits.init(gPool, gRuns, gManifests, gRes, gHist);
+  gEdits.init(gPool, gRuns, gManifests, gRes, gHist, gEditLog);
   const RunId r = gRuns.allocate(0, RunKind::kRecord);
   for (uint32_t i = 0; i < Config::kEditSelection; ++i) {  // tick order: NoteOn at 11i, its NoteOff at 11i + 8
     gSel[i] = EditNote{1000 + i, i * 11, 8, static_cast<uint8_t>(i & 0x7F), 90, 0, 0};
@@ -183,7 +185,7 @@ static void editGrains() {
   undo.add(cycles() - c0);
   gEdits.leave();
   report("edit_apply_512", apply);
-  report("edit_rebuild_128_rows", rebuild);
+  report("edit_rebuild_128_units", rebuild);
   report("edit_undo_512", undo);
 }
 

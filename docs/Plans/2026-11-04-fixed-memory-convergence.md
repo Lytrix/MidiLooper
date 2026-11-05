@@ -318,10 +318,10 @@ growing container.
 | Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
 | Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
-| Edit writer (E4.5) | 54,760 | selection 512 × 16 B as admitted and as edited, E: log 1,024 changes + 99 steps, rebuild scratch (1,024 sort keys) |
-| **Engine total** | **6,561,478** [6,524,160] | |
+| Edit writer E: log (E4.5) | 20,480 | 1,024 recorded changes × 20 B (touched only by an action's changed notes) |
+| **Engine total** | **6,527,198** [6,524,160] | |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **766,774** (capture build) / **1,815,350** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **801,054** (capture build) / **1,849,630** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
 Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
 tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
@@ -341,8 +341,9 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
 | + Output FIFOs 3 × 512 × 4 B | +6,144 |
 | + Scheduler job table | +1,024 |
-| **Statics after cutover** | **205,609** [225,581] |
-| Heap left for libraries (USB host, SD, Serial) | **318,679** [298,707] (today: 337,568 arena, 172 KB free after boot) |
+| + Edit writer (E4.5): selection 512 × 16 B as admitted and as edited, 1,024 sort keys, 99 steps (measured 20,984 B) | +20,984 |
+| **Statics after cutover** | **226,593** [225,581] |
+| Heap left for libraries (USB host, SD, Serial) | **297,695** [298,707] (today: 337,568 arena, 172 KB free after boot) |
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -370,8 +371,8 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 766,774 B` on capture builds (≤ 1,815,350 B shipping) and
-  `non-content RAM2 heap ≤ 318,679 B`.
+- the budget closes iff `non-content PSRAM ≤ 801,054 B` on capture builds (≤ 1,849,630 B shipping) and
+  `non-content RAM2 heap ≤ 297,695 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
 
@@ -604,7 +605,7 @@ are kept in brackets where they changed.
 | Class | Job | Grains per P, worst (spread / clustered) |
 |---|---|---|
 | Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 47 = **376** / 8 × 100 = **800** [184] |
-| Hard | NOTE_EDIT rebuild (one session) | ≤ ⌈1,536 / 128⌉ = 12 row grains + 1 sort grain + publish per E: action (host count 12; device not yet measured) |
+| Hard | NOTE_EDIT rebuild (one session) | 512 gather + ≤ 512 heapify + ≤ 1,024 extract + ≤ 1,024 write units, 128 per grain: ≤ 24 grains per E: action (device worst 158 µs per grain) |
 | Hard | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58) |
 | Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
 | Soft, bounded | density after any slot commit | ≤ 11 grains per bar of the committing slot; one overdub at a time commits at most once per loop → ≤ 11 × 2 = **22 per P** [176, 8 overdubs] (not yet measured). A Record's Stop is a one-off 704 per slot |
@@ -754,8 +755,8 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
   - *Acceptance:* record the tick, close input (DEC-233 — input closes independently), write closures from the
     reservation, commit the active run. All are bounded constants, so acceptance is constant-time.
   - *Completion:* closing runs seal as soon as their closures are written, which happens in acceptance. Publishes use
-    reserved slots. Leaving NOTE_EDIT waits only for a running rebuild: ≤ 13 grains.
-  - So a record or overdub Stop **completes inside acceptance plus ≤ 1 grain**, and leaving NOTE_EDIT within ≤ 13 grains,
+    reserved slots. Leaving NOTE_EDIT waits only for a running rebuild: ≤ 24 grains.
+  - So a record or overdub Stop **completes inside acceptance plus ≤ 1 grain**, and leaving NOTE_EDIT within ≤ 24 grains,
     from held resources only.
   - Gestures during completion follow DEC-096.
 
@@ -957,7 +958,7 @@ musical clauses they protected.
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 205,609 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 226,593 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
 | D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
 | D3 Owner chain | parity with reviewed fixtures for the same stimulus |
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |

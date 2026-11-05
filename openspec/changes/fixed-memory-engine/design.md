@@ -925,11 +925,11 @@ rather than hangs), abandon keeping the first step. 1,608 B.
   becomes the session state; the previous state's manifest is released, its edit run reclaimed. With nothing edited
   the session state is removed (the slot plays its start, no run). A newer action supersedes a running rebuild:
   `RowReservations::forgive` drops its owed rows and its run is reclaimed.
-- **Leave** keeps the state as one U: step (after a running rebuild, ≤ 13 grains); **abandon** forgives the rebuild and
+- **Leave** keeps the state as one U: step (after a running rebuild, ≤ 24 grains); **abandon** forgives the rebuild and
   returns to the protected start.
 - **Budget:** two edit runs (published + rebuilding) in W: content rows 134,304, content quota 3,247 pages, pool 4,079
-  pages; run descriptors 518 ≤ 520; manifests 154 ≤ 256. The writer object is 54,760 B and lives in PSRAM (the
-  planned 4 KB RAM2 selection is gone). Rapid actions faster than reclaim can be refused by name near full content.
+  pages; run descriptors 518 ≤ 520; manifests 154 ≤ 256. Writer 20,984 B (RAM2) + E: log 20,480 B (PSRAM), see
+  E4.5b. Rapid actions faster than reclaim can be refused by name near full content.
 
 Tests (`test_content_engine_edit_writer`, 9): effective content is checked by composing the slot's current manifest
 (production composer + edit index, 4 windows per loop) and every published edit run is checked for hides-first, tick
@@ -939,17 +939,20 @@ apply / undo / redo / delete actions against a reference model (selection, E: de
 heard content every 7th); no heap. Mutations caught: redo newest-first, no hides, unsorted replacements, a superseded
 rebuild not forgiven, no return to the start with nothing edited.
 
-Device grains (image `e7ea4134…`, worst case: 512 notes moved): **not within g yet.**
+Device grains, first image (`e7ea4134…`, 512 notes moved): apply 3,486 µs, rebuild grain 922 µs, E: undo 1,196 µs —
+above g. Acceptance did O(selection) work on PSRAM arrays and the sort was one grain.
 
-| Step | Worst | Average |
-|---|---|---|
-| `apply` of 512 changes (acceptance, blocking) | 3,486 µs | — |
-| rebuild grain, 128 rows or the sort | 922 µs | 210 µs (12 grains) |
-| E: undo of that step (acceptance) | 1,196 µs | — |
+### E4.5b — edit writer within g (as built)
 
-Acceptance does O(selection) work on PSRAM-resident arrays (validate, swap, compare with the admitted geometry, build
-the hide and event lists, copy the log), and the 1,024-key heapsort is one grain. Open (E4.5b): move the list building
-into the rebuild job, split the sort into grains, and keep the hot arrays in faster memory; then re-measure.
+- **Acceptance is O(changes of the action):** the edited and live note counts are kept incrementally, so the new
+  run's size is known without a scan; the counts' change is computed from the action's notes before anything is
+  written, then the replaced values go straight into the log (no scratch copy, no rollback). A step lists each note
+  once (a duplicate is refused by name).
+- **The rebuild is unit-bounded:** gather (one selected note, writing its hide row), heapify and extract (one sift
+  each), write (one row). Sort keys are 32-bit (tick 21 bits, NoteOff-first bit, 10-bit index).
+- **Placement:** selection, keys and steps stay in the writer (20,984 B, RAM2); the E: log (1,024 × 20 B) is
+  caller-placed storage in PSRAM.
 
-Also on this image: compose seek 865 µs (was 690) and `begin` 545 µs (was 420) — the bench now places 54 KB more in
-PSRAM; the cause is not yet confirmed. g = 810 µs is not met by these two until it is.
+Device (image `cfb730eb…`, 512 notes moved, the action built in RAM): apply 532 µs, E: undo 453 µs, rebuild grain 158 µs
+worst (24 grains at 128 units). Compose seek 692 µs and `begin` 429 µs again: the earlier rise was the 54 KB the first
+image placed in PSRAM. Every measured grain is within g = 810 µs (worst: clustered compose 790–800 µs).

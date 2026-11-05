@@ -54,6 +54,7 @@ static EditIndexStore<Pool, Runs> gIndex;
 static TestComposer gC;
 static SpanWindow<3072> gWin;
 static Writer gW;
+static EditChange gLog[64];
 
 constexpr uint32_t kLoop = 768 * 8;
 constexpr uint8_t kNotes = 12;  // <= 16 sounding at once whatever the edits do
@@ -69,7 +70,7 @@ void setUp() {
   gRes.init(gPool, gRuns, 0);  // the index store took its partition at init
   gH.init(gManifests, gRuns);
   gC.init(gPool, gRuns, &gIndex);
-  gW.init(gPool, gRuns, gManifests, gRes, gH);
+  gW.init(gPool, gRuns, gManifests, gRes, gH, gLog);
   // The take: 12 notes, distinct pitches, spread over the loop.
   const RunId r = gRuns.allocate(0, RunKind::kRecord);
   struct Ev {
@@ -188,7 +189,7 @@ void test_edit_is_heard_after_its_rebuild() {
   TEST_ASSERT_EQUAL(EditResult::Ok, gW.apply(&c, 1));
   TEST_ASSERT_EQUAL_UINT16(gBaseManifest, gH.current(0));  // not yet published
   const uint32_t grains = finish(2);
-  TEST_ASSERT_TRUE(grains <= 1 + 1 + 1 + 1 + 1);  // 1 hide + sort + 2 rows, 2 per grain, then publish
+  TEST_ASSERT_TRUE(grains <= 16);  // 12 notes gathered, 1 + 1 sifts, 2 rows: 2 units per grain
   TEST_ASSERT_NOT_EQUAL(gBaseManifest, gH.current(0));
   EditNote cur[kNotes];
   for (uint8_t i = 0; i < kNotes; ++i) cur[i] = gBase[i];
@@ -304,6 +305,16 @@ void test_full_content_refuses_the_action() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+// A step lists each note once; a duplicate is refused by name and nothing changes.
+void test_duplicate_note_in_one_step_is_refused() {
+  gW.begin(0, gBase, kNotes);
+  const EditChange two[] = {moved(2, 100, 20, 70, 50), moved(2, 200, 20, 70, 50)};
+  TEST_ASSERT_EQUAL(EditResult::DeniedSelection, gW.apply(two, 2));
+  TEST_ASSERT_TRUE(gW.note(2) == gBase[2]);
+  TEST_ASSERT_EQUAL_UINT8(0, gW.depth());
+  TEST_ASSERT_FALSE(gW.building());
+}
+
 // The oldest E: steps are forgotten when the log is full (here by entries: 64 single-note steps).
 void test_log_forgets_the_oldest_steps() {
   gW.begin(0, gBase, kNotes);
@@ -346,9 +357,10 @@ void test_random_sequences_match_the_reference_model() {
       const uint16_t n = static_cast<uint16_t>(1 + (x >> 8) % 4);
       EditChange ch[4];
       std::vector<EditNote> next = cur;
-      for (uint16_t k = 0; k < n; ++k) {
+      const uint16_t start = static_cast<uint16_t>((x >> 3) % kNotes);
+      for (uint16_t k = 0; k < n; ++k) {  // distinct notes: a step changes each note once
         x = x * 1103515245u + 12345u;
-        const uint16_t i = static_cast<uint16_t>((x >> 8) % kNotes);
+        const uint16_t i = static_cast<uint16_t>((start + k * 5) % kNotes);
         const bool del = ((x >> 4) % 7) == 0;
         ch[k] = moved(i, (x >> 12) % (kLoop - 300), 1 + (x >> 3) % 200, static_cast<uint8_t>(60 + i), static_cast<uint8_t>(1 + (x >> 5) % 126), del);
         next[i] = ch[k].value;
@@ -432,6 +444,7 @@ int main(int, char**) {
   RUN_TEST(test_leave_and_abandon_during_a_rebuild);
   RUN_TEST(test_newer_edit_supersedes_the_rebuild);
   RUN_TEST(test_full_content_refuses_the_action);
+  RUN_TEST(test_duplicate_note_in_one_step_is_refused);
   RUN_TEST(test_log_forgets_the_oldest_steps);
   RUN_TEST(test_random_sequences_match_the_reference_model);
   RUN_TEST(test_no_heap_and_production_size);
