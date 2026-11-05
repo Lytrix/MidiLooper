@@ -94,7 +94,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E6.2d Retained historical checkpoints (owner: keep them): two identity-keyed sets per slot, LRU among sets no sweep is writing, Undo / Redo reuse without rebuild; checkpoint open capacity 32 → 20 (owner ceiling) to fit ~416 KB (417,284 B). Tests: A→B→C + Undo/Redo/Undo/Undo, B↔C ×11 (mutation-checked).
 - [x] E6.2e § 7.3 transition targets ratified as approved targets (owner 2026-11-05, conditional): boundary counting, ratified bounds asserted in the REDs, checkpoint overflow as a named miss with safe reconstruction (`test_content_engine_source_transitions` 10).
 - [x] E6.2f Live occupancy while recording, compared with the composed next cycle (`test_content_engine_live_occupancy`, mutation-checked).
-- [ ] E0.4b Owner: accept live tolerances D1–D3 (shorten 1 tick later, equal start 0-tick blip, ≤ 8-tick blip) or require a playback delay.
+- [x] E0.4b Live tolerances D1–D3 accepted by the owner (2026-11-05): no playback delay; the stored runs give the composed result from the next cycle.
 - [ ] D7 Device qualification of the transition targets (E10): 8 dense tracks, cached / uncached Undo-Redo, 64-bar loops and worst checkpoint misses, continuous overdubbing with revision changes, display + USB/DIN + SD, clustered workload; boundary counts, hard misses, max grain, CPU capacity.
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 

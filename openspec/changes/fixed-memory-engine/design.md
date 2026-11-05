@@ -1193,5 +1193,5 @@ the stored runs. Per A note:
 
 D1–D3 are what live input cannot avoid: it cannot see B before B is played. From the next cycle the stored runs give the
 composed result. Making live equal would need delaying playback by up to 8 ticks (≈ 8 ms) to wait for possible live
-notes. Owner question (with E0.4): accept D1–D3 as the live tolerance, or require a delay. Mutations caught: a live
+notes. **Owner decision 2026-11-05: D1–D3 accepted as the live tolerance; no playback delay.** Mutations caught: a live
 NoteOn closing nothing, a release that never clears.

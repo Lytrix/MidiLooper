@@ -493,7 +493,10 @@ Undo needs nothing either: selecting an older manifest removes the later run, an
   pitch until B's NoteOff clears the bit.
 - This is O(1) per event and reproduces "occupy at hold" live. From the next cycle on, the composed windows produce the
   same result from the stored runs.
-- E0 must prove the live and composed results equal for every occupy fixture.
+- E0 must prove the live and composed results equal for every occupy fixture — except the three cases live input
+  cannot foresee, accepted by the owner (2026-11-05, E6.2f): D1 a shortened note ends on the live note's tick instead of
+  one tick before; D2 an equal-start note is sent and closed at once; D3 a note started ≤ 8 ticks before the live one
+  sounds until it. No playback delay.
 
 **Adequacy is an E0 exit criterion.** Any ratified overlap or ledger clause that is not a pure function of (spans,
 pitch, run order) must be expressed by a bounded per-note flag stored in the note's own rows. Such a flag adds 0 rows,
