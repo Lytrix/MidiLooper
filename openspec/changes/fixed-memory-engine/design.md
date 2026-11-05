@@ -1170,3 +1170,28 @@ audible within the uncached target, and its stream (overlaps and selections) equ
 uncached one by the 2nd (worst measured 2 boundaries, 2.7 s, in the sustained case); the overflow case at the 1st.
 Mutations caught: a missed boundary not counted; a checkpoint capacity above ~21 open instances fails the budget's
 `static_assert`. Device qualification is task E10 / gate D7.
+
+### E6.2f — live occupancy while recording (plan § 6.2 "live effect", as built)
+
+`PlaybackTrack::liveNoteOn(pitch, t)` / `liveNoteOff(pitch)` (through `WindowPlayer::liveOccupy / liveRelease` to the
+terminal scheduler): when the writer accepts a live NoteOn, the track's sounding notes on that pitch end now (any
+channel, DEC-033; their NoteOffs go out before the live NoteOn) and composed NoteOns on the pitch are suppressed until
+the live NoteOff (a count, so two held notes on one pitch release correctly). The integration calls these from the
+writer's accepted events; the writer keeps no extra state for it.
+
+**Live vs composed (the plan's E0 requirement), `test_content_engine_live_occupancy`:** A plays; in cycle 2 B is played
+live over it (each live event after that tick's playback, as input arrives between ticks); cycle 3 composes A + B from
+the stored runs. Per A note:
+
+| Case | Composed (cycle 3) | Live (cycle 2) |
+|---|---|---|
+| A starts while B is held | hidden | hidden — **equal** |
+| B before A, other pitch, after B's release | unchanged | unchanged — **equal** |
+| D1: A sounding when B starts | ends at B.on − 1 (OVL-1) | ends at B.on (1 tick later) |
+| D2: A and B start on the same tick | hidden (OVL-2) | A sent, closed at once (0 ticks) |
+| D3: B starts ≤ 8 ticks after A | hidden (OVL-6 minimum length) | A sounds until B (4 ticks here) |
+
+D1–D3 are what live input cannot avoid: it cannot see B before B is played. From the next cycle the stored runs give the
+composed result. Making live equal would need delaying playback by up to 8 ticks (≈ 8 ms) to wait for possible live
+notes. Owner question (with E0.4): accept D1–D3 as the live tolerance, or require a delay. Mutations caught: a live
+NoteOn closing nothing, a release that never clears.

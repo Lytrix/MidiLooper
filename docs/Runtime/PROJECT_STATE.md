@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E6.2f live occupancy while recording.**
+- A live NoteOn ends sounding playback notes on its pitch and suppresses them until its NoteOff. Compared per note with
+  the composed next cycle: equal except three cases live input cannot foresee (shorten 1 tick later; an equal-start
+  note sent for 0 ticks; a note started ≤ 8 ticks before the live one sounds until it). Owner question raised.
+
 **2026-11-05 — Fixed-memory engine: § 7.3 transition targets ratified (conditional) — host-qualified.**
 - Approved targets: audible by the 2nd eligible boundary with a valid checkpoint, by the 5th without; measured from
   acceptance to adoption in counted boundaries. All REDs assert them; worst on the host 2 boundaries.

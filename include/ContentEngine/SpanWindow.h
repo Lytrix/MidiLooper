@@ -172,6 +172,18 @@ class WindowPlayer {
     return n;
   }
 
+  /// Live input on this track (the writer accepted a NoteOn on `pitch`): every sounding instance on the pitch ends now
+  /// (returned in `out`, sent before the live NoteOn) and composed NoteOns on it are suppressed until `liveRelease`.
+  uint8_t liveOccupy(uint8_t pitch, uint32_t now, Emit* out, uint8_t max) {
+    typename Scheduler::Out offs[T];
+    const uint8_t closed = sched_->occupy(pitch, now, offs, static_cast<uint8_t>(T));
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < closed && n < max; ++i) out[n++] = fromOut(offs[i]);
+    return n;
+  }
+  /// The live note on `pitch` was released (the writer accepted its NoteOff).
+  void liveRelease(uint8_t pitch) { sched_->release(pitch); }
+
   /// The live writer's NoteOff for one of its notes that may be sounding here; it goes out at the next `tick`.
   void liveNoteOff(uint32_t noteId, uint16_t runId, uint32_t now) { sched_->liveNoteOff(noteId, runId, now); }
 

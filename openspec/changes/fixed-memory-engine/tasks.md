@@ -44,7 +44,7 @@ revision 3 is the baseline; no whole-plan revisions.
 
 - [x] E2.1 Fixed-page writer: NoteOn reservation, LIFO lane NoteOff into the owing run, closing runs, owed commit, FinalInterval, Stop closures (`test_content_engine_writer` 9, RED → GREEN).
 - [x] E2.2a Writer random-input fuzz (100 k steps, R + conservation, NoteOff never refused).
-- [ ] E2.2b Live occupancy signal from writer to scheduler; segment bound for owed-commit runs.
+- [x] E2.2b Live occupancy signal: `PlaybackTrack::liveNoteOn / liveNoteOff` (E6.2f); live vs composed compared per note, three named differences for the owner (D1–D3). The segment bound is moot since every wrap starts a new run (E3 slice 3).
 
 ## E3 — composer (slice 1)
 
@@ -93,6 +93,8 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E6.2c Source-transition liveness (owner ruling): Transition job class (≥ 1 grain in 2 while pending, slack permitting), late adoption with pins held, acceptance-to-audible latency, stop closes notes and releases pins; six REDs + a checkpointed Undo (`test_content_engine_source_transitions` 7, mutation-checked).
 - [x] E6.2d Retained historical checkpoints (owner: keep them): two identity-keyed sets per slot, LRU among sets no sweep is writing, Undo / Redo reuse without rebuild; checkpoint open capacity 32 → 20 (owner ceiling) to fit ~416 KB (417,284 B). Tests: A→B→C + Undo/Redo/Undo/Undo, B↔C ×11 (mutation-checked).
 - [x] E6.2e § 7.3 transition targets ratified as approved targets (owner 2026-11-05, conditional): boundary counting, ratified bounds asserted in the REDs, checkpoint overflow as a named miss with safe reconstruction (`test_content_engine_source_transitions` 10).
+- [x] E6.2f Live occupancy while recording, compared with the composed next cycle (`test_content_engine_live_occupancy`, mutation-checked).
+- [ ] E0.4b Owner: accept live tolerances D1–D3 (shorten 1 tick later, equal start 0-tick blip, ≤ 8-tick blip) or require a playback delay.
 - [ ] D7 Device qualification of the transition targets (E10): 8 dense tracks, cached / uncached Undo-Redo, 64-bar loops and worst checkpoint misses, continuous overdubbing with revision changes, display + USB/DIN + SD, clustered workload; boundary counts, hard misses, max grain, CPU capacity.
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 

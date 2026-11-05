@@ -173,6 +173,12 @@ class PlaybackTrack {
     return player_->stopAll(t, out, max);
   }
 
+  /// Live input recorded on this track (plan § 6.2 "live effect"): the writer accepted a NoteOn on `pitch` at `t`. The
+  /// track's sounding instances on the pitch end now (returned, to send before the live NoteOn) and composed NoteOns
+  /// on it are suppressed until `liveNoteOff`. From the next cycle the stored run produces the composed equivalent.
+  uint8_t liveNoteOn(uint8_t pitch, uint32_t t, Emit* out, uint8_t max) { return player_->liveOccupy(pitch, t, out, max); }
+  void liveNoteOff(uint8_t pitch) { player_->liveRelease(pitch); }
+
   /// The boundary a pending transition aims at (moves on when it is missed).
   uint32_t transitionTarget() const { return transTarget_; }
 
