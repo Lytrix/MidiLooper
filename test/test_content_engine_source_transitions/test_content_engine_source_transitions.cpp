@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <new>
+#include <utility>
 #include <vector>
 
 #include "ContentEngine/Composer.h"
@@ -482,6 +483,96 @@ void test_infeasible_load_names_misses_without_corruption() {
   TEST_ASSERT_EQUAL_UINT16(0, pins(b));
 }
 
+// ---- E6.2d: retained historical checkpoints (owner decision 2026-11-05) ------------------------------------------------
+
+/// A commit's checkpoint sweep, as the slot owner runs it after publishing a manifest. Returns the sweep's grains.
+static uint32_t sweepCommit(ManifestId m) {
+  using Sweep = CheckpointSweep<TestComposer, Table, Window, Manifests, Runs>;
+  static Sweep sweep;
+  static TestComposer composer;
+  static Window scratch;
+  composer.init(gPool, gRuns, &gIndex);
+  TEST_ASSERT_EQUAL(Sweep::Status::Running, sweep.start(composer, gTable, gManifests, gRuns, 0, m, kWin, 2 * kWin));
+  while (sweep.step(scratch, 128) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, sweep.status());
+  TEST_ASSERT_FALSE(sweep.pinned());
+  return sweep.grains();
+}
+
+/// Plays `selections` (tick, source index) under the 8-dense-track load and checks the stream against uninterrupted
+/// compositions; returns the adoption ticks.
+static std::vector<uint32_t> playSelections(const std::vector<ManifestId>& sources, uint8_t first,
+                                            const std::vector<std::pair<uint32_t, uint8_t>>& selections, uint32_t to) {
+  Sim sim;
+  gTrack.select(0, sources[first], kStart);
+  simulate(sim, kStart, to, [&](uint32_t t) {
+    for (const auto& sel : selections)
+      if (t == sel.first) gTrack.select(0, sources[sel.second], t);
+  });
+  TEST_ASSERT_EQUAL_UINT32(selections.size() + 1, sim.adoptions.size());
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().underruns);
+  TEST_ASSERT_EQUAL_UINT32(0, gS.report().missedDeadlines);
+  const auto adoptions = sim.adoptions;
+  expectStream(reference(sources, kLoop, to,
+                         [&](uint32_t t) {
+                           int idx = first;
+                           for (size_t k = 0; k < selections.size(); ++k)
+                             if (t >= adoptions[k + 1]) idx = selections[k].second;
+                           return idx;
+                         }),
+               sim.emits);
+  return sim.adoptions;
+}
+
+// A -> B -> C (three commits, each swept), then Undo, Redo, Undo, Undo: B and C resume from their retained sets without
+// rebuilding them; A's set was the least recently used when C was swept, so the last Undo warms up (bounded) while C's
+// and B's sets stay. Every switch keeps the previous source playing until the new window is ready.
+void test_undo_redo_reuse_retained_checkpoints() {
+  const ManifestId a = denseSource(21, 1), b = denseSource(22, 2), c = denseSource(23, 3);
+  for (const ManifestId m : {a, b, c}) sweepCommit(m);  // the slot's commits
+  const uint32_t ia = gManifests.manifest(a).identity, ib = gManifests.manifest(b).identity,
+                 ic = gManifests.manifest(c).identity;
+  TEST_ASSERT_FALSE(gTable.holds(0, ia));
+  TEST_ASSERT_TRUE(gTable.holds(0, ib) && gTable.holds(0, ic));
+  const uint32_t s0 = kLoop + kWin + 100;
+  playSelections({a, b, c}, 2,
+                 {{s0, 1}, {s0 + 2 * kWin, 2}, {s0 + 4 * kWin, 1}, {s0 + 6 * kWin, 0}},  // Undo, Redo, Undo, Undo
+                 6 * kLoop);
+  TEST_ASSERT_EQUAL_UINT32(4, gTrack.stats().checkpointStarts);  // C at start, then B, C, B
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().warmupStarts);      // the last Undo to A
+  TEST_ASSERT_TRUE(gTable.holds(0, ib) && gTable.holds(0, ic));  // Undo / Redo replaced nothing
+  TEST_ASSERT_FALSE(gTable.holds(0, ia));
+  TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(b).readerPins);  // retained sets pin nothing
+  TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(c).readerPins);
+  report("(E6.2d) A-B-C, Undo Redo Undo Undo", Sim{});
+}
+
+// Switching repeatedly between B and C: every switch resumes from a retained set, at the first boundary, and neither
+// set is ever rebuilt or replaced. Then a new commit D is swept: it replaces C, the less recently *used* set (B was
+// swept first but played last).
+void test_switching_between_two_revisions_never_rebuilds() {
+  const ManifestId b = denseSource(24, 1), c = denseSource(25, 2);
+  sweepCommit(b);
+  sweepCommit(c);
+  const uint32_t ib = gManifests.manifest(b).identity, ic = gManifests.manifest(c).identity;
+  std::vector<std::pair<uint32_t, uint8_t>> selections;
+  const uint32_t s0 = kLoop + kWin + 100;
+  for (uint8_t k = 0; k < 11; ++k) selections.push_back({s0 + 2 * kWin * k, static_cast<uint8_t>(k % 2 == 0 ? 0 : 1)});
+  const auto adoptions = playSelections({b, c}, 1, selections, s0 + 24 * kWin);
+  for (size_t k = 0; k < selections.size(); ++k)  // each at the first boundary after its acceptance
+    TEST_ASSERT_EQUAL_UINT32(selections[k].first - 100 + kWin, adoptions[k + 1]);
+  TEST_ASSERT_EQUAL_UINT32(12, gTrack.stats().checkpointStarts);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().warmupStarts);
+  TEST_ASSERT_TRUE(gTable.holds(0, ib) && gTable.holds(0, ic));
+  report("(E6.2d) B <-> C x11", Sim{});
+  const ManifestId d = denseSource(26, 3);
+  sweepCommit(d);
+  TEST_ASSERT_TRUE(gTable.holds(0, ib));
+  TEST_ASSERT_FALSE(gTable.holds(0, ic));
+  TEST_ASSERT_TRUE(gTable.holds(0, gManifests.manifest(d).identity));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_eight_dense_tracks_and_an_undo);
@@ -491,5 +582,7 @@ int main(int, char**) {
   RUN_TEST(test_stop_while_a_transition_is_pending);
   RUN_TEST(test_sustained_load_bounded_progress_for_the_latest_source);
   RUN_TEST(test_infeasible_load_names_misses_without_corruption);
+  RUN_TEST(test_undo_redo_reuse_retained_checkpoints);
+  RUN_TEST(test_switching_between_two_revisions_never_rebuilds);
   return UNITY_END();
 }

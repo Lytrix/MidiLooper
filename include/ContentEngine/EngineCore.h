@@ -98,7 +98,9 @@ static_assert(sizeof(ProductionEditIndex) <= 4096u, "the store object holds head
 constexpr uint32_t kLedgerFixedReservePages = Config::kCompactionReservePages;
 
 /// Restart checkpoints (E5): one table per slot, 8 checkpoints at 8-bar spacing (plan § 4.1: 262,144 B).
-using ProductionCheckpoints = CheckpointTable<ProductionComposer::Checkpoint, Config::kSlotCount, 8>;
-static_assert(sizeof(ProductionCheckpoints) <= 262144u, "checkpoint tables fit the plan's PSRAM budget");
+// Restart checkpoints (owner decision 2026-11-05, E6.2d): per slot the current source's set and one historical set
+// (least recently used), 8 checkpoints each; about 416 KB intended.
+using ProductionCheckpoints = CheckpointTable<ProductionComposer::Checkpoint, Config::kSlotCount, 8, 2>;
+static_assert(sizeof(ProductionCheckpoints) <= 425984u, "checkpoint sets fit the owner's ~416 KB PSRAM budget");
 
 }  // namespace ContentEngine

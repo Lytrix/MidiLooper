@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E6.2d retained historical checkpoints (owner).**
+- Two checkpoint sets per slot keyed by manifest identity (current + one historical, LRU); Undo / Redo reuse them
+  without rebuilding and never replace a set; completed sets pin nothing; a miss warms up with the previous source
+  playing. 417,284 B PSRAM (checkpoint open capacity 32 → 20, the owner's ceiling, to stay at ~416 KB).
+- A→B→C + Undo/Redo/Undo/Undo and B↔C ×11 under 8 dense tracks: hits at the first boundary, one bounded warm-up.
+
 **2026-11-05 — Fixed-memory engine: E6.2c source-transition liveness (owner ruling).**
 - Transition job class: priority over soft work and ≥ 1 grain in 2 while pending (slack permitting); late adoption
   keeps the previous source and its pins; acceptance-to-audible latency measured; stop closes notes and pins.

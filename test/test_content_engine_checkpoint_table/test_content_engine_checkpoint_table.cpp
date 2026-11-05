@@ -278,7 +278,7 @@ void test_cold_start_equals_uninterrupted_playback_random() {
       for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
         const uint32_t replayed = checkColdStart(m, ref, c, w);
         const uint8_t k = static_cast<uint8_t>(w * kWin / kSpacing);
-        if (gTable.state(0, k) == State::Usable) TEST_ASSERT_TRUE(replayed < kSpacing / kWin);
+        if (gTable.state(0, identityOf(m), k) == State::Usable) TEST_ASSERT_TRUE(replayed < kSpacing / kWin);
         ++starts;
       }
     TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m).readerPins);
@@ -296,16 +296,17 @@ void test_sweep_keeps_cold_checkpoints_out_until_steady() {
   const auto ref = reference(src, 1, identityOf(m));
   TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
   while (gSweep.windows() < kWindowsPerLoop) gSweep.step(gWin, kGrainRows);
-  TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, 0));  // position 0 of cycle 1: cycle-0 selections
-  TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, 1));  // 3072: cold, the held note is missing
-  TEST_ASSERT_EQUAL_UINT8(0, gTable.entry(0, 1).openCount);
+  const uint32_t id = identityOf(m);
+  TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, id, 0));  // position 0 of cycle 1: cycle-0 selections
+  TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, id, 1));  // 3072: cold, the held note is missing
+  TEST_ASSERT_EQUAL_UINT8(0, gTable.entry(0, id, 1).openCount);
   while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
   }
   TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
   TEST_ASSERT_TRUE(gSweep.periodic());
-  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, 1).openCount);     // steady: the held note sounds at 3072
+  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, id, 1).openCount);  // steady: the held note sounds at 3072
   TEST_ASSERT_EQUAL_UINT32(kWindowsPerLoop + 4, gSweep.windows());  // converged at 6144 (note ended at 4000)
-  for (uint8_t k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, k));
+  for (uint8_t k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, id, k));
   checkColdStart(m, ref, 2, 3);
 }
 
@@ -344,8 +345,9 @@ void test_convergence_within_two_cycles_per_mechanism() {
   }
 }
 
-// Revision transition: the slot commits B = A + an overdub while A's sweep runs. A's sweep is superseded and publishes
-// nothing; B's sweep converges within two loops and B's cold starts equal B's uninterrupted playback.
+// Revision transition: the slot commits B = A + an overdub while A's sweep runs. B's sweep takes the slot's other set
+// (E6.2d: a set being swept is not replaced); both converge within two loops, A's checkpoints stay as the historical
+// set (the Undo target), and both cold-start equal to uninterrupted playback.
 void test_revision_transition_sweeps_the_new_manifest() {
   const RunId a = makeRun(RunKind::kRecord, {}, {{1, 1, 60, kLoop - 400, kLoop + 3000}, {2, 1, 62, 100, 900}});
   const RunId b = makeRun(RunKind::kOverdub, {}, {{3, 1, 60, 1500, 1800}, {4, 1, 67, kLoop - 20, kLoop + 7000}});
@@ -353,23 +355,29 @@ void test_revision_transition_sweeps_the_new_manifest() {
   const SourceRun srcB[] = {{a, gRuns.run(a).rowCount}, {b, gRuns.run(b).rowCount}};
   const ManifestId mA = makeManifest(srcA, 1, 1);
   const ManifestId mB = makeManifest(srcB, 2, 2);
+  const auto refA = reference(srcA, 1, identityOf(mA));
   const auto refB = reference(srcB, 2, identityOf(mB));
   TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, mA, kWin, kSpacing));
   for (int i = 0; i < 5; ++i) gSweep.step(gWin, kGrainRows);
   Sweep sweepB;
   TEST_ASSERT_EQUAL(Sweep::Status::Running, sweepB.start(gCold, gTable, gManifests, gRuns, 0, mB, kWin, kSpacing));
-  TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));
-  TEST_ASSERT_FALSE(gSweep.pinned());
   while (sweepB.step(gScratch, kGrainRows) == Sweep::Status::Running) {
   }
+  while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
+  TEST_ASSERT_FALSE(gSweep.pinned());
   TEST_ASSERT_TRUE(sweepB.periodic());
   TEST_ASSERT_TRUE(sweepB.windows() <= 2 * kWindowsPerLoop);
-  TEST_ASSERT_NULL(gTable.nearest(0, identityOf(mA), 0));
-  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) checkColdStart(mB, refB, 2, w);
+  TEST_ASSERT_NOT_NULL(gTable.nearest(0, identityOf(mA), 0));
+  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
+    checkColdStart(mB, refB, 2, w);
+    checkColdStart(mA, refA, 2, w);
+  }
 }
 
-// A new sweep retires the slot's table at once; the old sweep ends Superseded, publishes nothing more and releases
-// its pin.
+// Two newer sweeps take both of the slot's sets: the oldest running sweep loses its set, ends Superseded, publishes
+// nothing more and releases its pin.
 void test_new_sweep_supersedes_the_old_one() {
   const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, kLoop - 100, kLoop + 4000}});  // converges late
   const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
@@ -378,11 +386,13 @@ void test_new_sweep_supersedes_the_old_one() {
   while (gSweep.windows() < kWindowsPerLoop + 2) gSweep.step(gWin, kGrainRows);  // 3072 of cycle 1 published
   TEST_ASSERT_NOT_NULL(gTable.nearest(0, identityOf(m), kSpacing));
   TEST_ASSERT_EQUAL_UINT16(1, gManifests.manifest(m).readerPins);
-  gTable.beginSweep(0, 999, kLoop, kSpacing);  // the slot committed another manifest
+  gTable.beginSweep(0, 999, kLoop, kSpacing);   // the slot committed another manifest: the empty set
+  TEST_ASSERT_TRUE(gTable.holds(0, identityOf(m)));  // (a lookup would count as a use)
+  gTable.beginSweep(0, 1000, kLoop, kSpacing);  // and another: both sets are being swept, the oldest goes
   TEST_ASSERT_NULL(gTable.nearest(0, identityOf(m), 0));
   TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));
-  for (uint8_t k = 0; k < 8; ++k) TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, k));
-  TEST_ASSERT_TRUE(gTable.current(0, 999));
+  for (uint8_t k = 0; k < 8; ++k) TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, 1000, k));
+  TEST_ASSERT_TRUE(gTable.holds(0, 999) && gTable.holds(0, 1000));
   TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m).readerPins);
 }
 
@@ -399,8 +409,9 @@ void test_replacement_between_grains_publishes_nothing() {
   for (int i = 0; i < 3; ++i) TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.step(gWin, 4));  // window 2 in progress
   TEST_ASSERT_TRUE(gSweepComposer.windowOpen());
   gTable.beginSweep(0, 4242, kLoop, kSpacing);
+  gTable.beginSweep(0, 4243, kLoop, kSpacing);  // both sets taken: this sweep's set is gone
   TEST_ASSERT_EQUAL(Sweep::Status::Superseded, gSweep.step(gWin, kGrainRows));  // would have completed 3072
-  TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, 1));
+  TEST_ASSERT_EQUAL(State::Empty, gTable.state(0, identityOf(m), 1));
   TEST_ASSERT_FALSE(gSweep.pinned());
 }
 
@@ -507,7 +518,7 @@ void test_jobs_build_the_edit_index_in_grains() {
   TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
   TEST_ASSERT_EQUAL_UINT32(0, gIndex.syncBuilds());
   TestComposer::Checkpoint swept[4];
-  for (uint8_t k = 0; k < 4; ++k) swept[k] = gTable.entry(0, k);
+  for (uint8_t k = 0; k < 4; ++k) swept[k] = gTable.entry(0, identityOf(m), k);
 
   Cold::Status st = gColdJob.start(gCold, gTable, gManifests, gRuns, 0, m, 5 * kWin, 2, kWin);
   while (st == Cold::Status::Running) st = gColdJob.step(gScratch, kGrainRows);
@@ -529,7 +540,7 @@ void test_jobs_build_the_edit_index_in_grains() {
   gRef.end();
   runSweep(m2);
   for (uint8_t k = 0; k < 4; ++k) {
-    warm = gTable.entry(0, k);
+    warm = gTable.entry(0, identityOf(m2), k);
     warm.identity = swept[k].identity;
     TEST_ASSERT_TRUE(sameState(warm, swept[k]));
   }
@@ -548,11 +559,11 @@ void test_table_lookup_and_unusable_entries() {
     cp.valid = k != 2;
     TEST_ASSERT_TRUE(gTable.store(0, 5, cp, State::Usable));
   }
-  TEST_ASSERT_EQUAL(State::Unusable, gTable.state(0, 2));
+  TEST_ASSERT_EQUAL(State::Unusable, gTable.state(0, 5, 2));
   TEST_ASSERT_EQUAL_UINT32(kSpacing, gTable.nearest(0, 5, 2 * kSpacing + 10)->position);  // 2 skipped
   TEST_ASSERT_EQUAL_UINT32(3 * kSpacing, gTable.nearest(0, 5, kLoop - 1)->position);
   TEST_ASSERT_NULL(gTable.nearest(0, 6, 0));   // wrong identity for slot 0
-  TEST_ASSERT_NULL(gTable.nearest(1, 6, 0));   // slot 1 is empty
+  TEST_ASSERT_NULL(gTable.nearest(1, 6, 0));   // slot 1's set has no usable entry
   cp.position = 100;                            // not a checkpoint position
   TEST_ASSERT_FALSE(gTable.store(0, 5, cp, State::Usable));
   TEST_ASSERT_FALSE(gTable.store(0, 4, cp, State::Usable));  // superseded identity
@@ -560,9 +571,35 @@ void test_table_lookup_and_unusable_entries() {
   TEST_ASSERT_NULL(gTable.nearest(0, 5, 0));
 }
 
-// Production table: 64 slots x 8 checkpoints within the 262,144 B budget (plan § 4.1); zero heap throughout.
+// E6.2d: a set that a sweep is writing is never replaced. X is being swept (older), P was swept and finished
+// (more recent): a new sweep takes P's set, not X's — and only because P's finished sweep released it.
+void test_a_set_being_swept_is_not_replaced() {
+  gTable.beginSweep(0, 10, kLoop, kSpacing);  // X: a sweep still writing it
+  const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 900}});
+  const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
+  const ManifestId p = makeManifest(src, 1);
+  runSweep(p);  // P: swept to the end, so its set is no longer being written
+  TEST_ASSERT_TRUE(gTable.holds(0, 10) && gTable.holds(0, identityOf(p)));
+  gTable.beginSweep(0, 30, kLoop, kSpacing);
+  TEST_ASSERT_TRUE(gTable.holds(0, 10));
+  TEST_ASSERT_FALSE(gTable.holds(0, identityOf(p)));
+  TEST_ASSERT_TRUE(gTable.holds(0, 30));
+}
+
+// E6.2d: sweeping a manifest again reuses its own set; the other set stays.
+void test_a_resweep_reuses_its_own_set() {
+  gTable.beginSweep(0, 10, kLoop, kSpacing);
+  gTable.endSweep(0, 10);
+  gTable.beginSweep(0, 20, kLoop, kSpacing);
+  gTable.endSweep(0, 20);
+  gTable.beginSweep(0, 20, kLoop, kSpacing);
+  TEST_ASSERT_TRUE(gTable.holds(0, 10));
+  TEST_ASSERT_TRUE(gTable.holds(0, 20));
+}
+
+// Production table: 64 slots x 2 sets x 8 checkpoints within the owner's ~416 KB (E6.2d); zero heap throughout.
 void test_production_table_within_budget() {
-  TEST_ASSERT_TRUE(sizeof(ProductionCheckpoints) <= 262144u);
+  TEST_ASSERT_TRUE(sizeof(ProductionCheckpoints) <= 425984u);
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations);
 }
 
@@ -578,6 +615,8 @@ int main(int, char**) {
   RUN_TEST(test_saturated_composition_is_periodic);
   RUN_TEST(test_jobs_build_the_edit_index_in_grains);
   RUN_TEST(test_table_lookup_and_unusable_entries);
+  RUN_TEST(test_a_set_being_swept_is_not_replaced);
+  RUN_TEST(test_a_resweep_reuses_its_own_set);
   RUN_TEST(test_production_table_within_budget);
   return UNITY_END();
 }

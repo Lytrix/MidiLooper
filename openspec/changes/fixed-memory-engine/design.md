@@ -1111,3 +1111,35 @@ per window under W's worst steady load; G = the transition's grains), i.e. ≤ 2
 bring Undo / Redo back to the checkpoint case: keep the previous manifest's checkpoints per slot as well (≈ 207 KB more
 PSRAM: 64 slots × 8 × 404 B, inside the 801 KB allowance), or sweep a history manifest on demand when it becomes the
 Undo / Redo target (no memory, latency unchanged).
+
+### E6.2d — retained historical checkpoints (owner decision 2026-11-05, as built)
+
+**Policy:** `CheckpointTable` keeps `Sets` = 2 checkpoint sets per slot, each keyed by (slot, manifest identity).
+- A sweep (`beginSweep`) reuses its own identity's set, else takes an empty set, else the least recently used set no
+  sweep is writing (else the least recently used, whose running sweep is then superseded). Use = a sweep start or a
+  cold-start hit (`nearest`).
+- A cold start looks up the set of its own manifest, so Undo / Redo to the current or the retained historical revision
+  resume from checkpoints without rebuilding; Undo / Redo themselves never replace a set (only sweeps do).
+- Completed sets are value snapshots with an identity stamp and pin nothing; a running sweep holds its source lease and
+  marks its set as being written until it ends (`endSweep` from the sweep's release).
+- A miss takes the existing bounded cold-start transition (warm-up); the previous source plays until the new window is
+  ready. No sets for all 99 undo steps; the 99-step history is unchanged.
+- `ColdStart::fromCheckpoint` and `PlaybackTrack::Stats::checkpointStarts / warmupStarts` report the path taken.
+
+**Budget:** a checkpoint was 500 B (OUT-2 added 32 open instances), so two sets would have been ≈ 515 KB, above the
+owner's ≈ 416 KB. The checkpoint's open-instance capacity follows the owner's 20-open-note ceiling (32 → 20): 404 B per
+checkpoint, 417,284 B for 64 slots × 2 sets × 8 (`static_assert` ≤ 416 KiB). A boundary with more than 20 open
+instances is captured unusable; a cold start there resumes from an earlier checkpoint or warms up. PSRAM allowance for
+non-content users: 645,914 B (capture) / 1,694,490 B (shipping).
+
+**Tests** (`test_content_engine_source_transitions`, under the 8-dense-track load; streams compared with uninterrupted
+compositions):
+- A → B → C committed and swept, then Undo, Redo, Undo, Undo: B, C, B resume from retained sets (≈ 93–183 grains, at the
+  first boundary); A's set was least recently used when C was swept, so the last Undo warms up (456 grains), bounded,
+  with the previous source playing; B's and C's sets remain and pin nothing.
+- B ↔ C eleven times: every switch resumes from a retained set at the first boundary, nothing rebuilt or replaced; a
+  following commit D replaces C (less recently used), not B (swept earlier, played last).
+`test_content_engine_checkpoint_table` (13): revision transition keeps A's set as historical (both cold-start equal);
+two newer sweeps supersede the oldest running one; a set being swept is not replaced; a re-sweep reuses its set.
+Mutations caught: the set being swept unprotected, most-recently-used replaced, a use not recorded, a lost set not
+noticed by its sweep, no reuse of the own set, a sweep that never releases its set.

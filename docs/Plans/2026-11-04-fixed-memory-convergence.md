@@ -234,7 +234,8 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Source rows per slot per 2-bar window | ≤ 2,816 (admission); window buffer 3,072 rows |
 | Open notes per writer | ≤ 128 (`ActiveNoteLedger::kMaxOpenNotes`) |
 | Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
-| Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 32 open instances (beyond that, the checkpoint is marked unusable; § 7.2) |
+| Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 20 open instances (the owner's 20-open-note ceiling; beyond that the checkpoint is marked unusable; § 7.2) |
+| Checkpoint sets per slot | 2: the current source's and one historical (least recently used), keyed by manifest identity (owner 2026-11-05, E6.2d) |
 | Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
 | Undo history | ≤ 99 states shared by all slots, including overdub session steps (owner 2026-11-05); a NOTE_EDIT session holds one history state and keeps its E: steps (≤ 99, owner limit [32]) in the edit writer's log |
 | Playing tracks | 8 (one slot each) |
@@ -313,15 +314,15 @@ growing container.
 | Page free stack | 8,158 | 4,079 × 2 B |
 | Playback windows | 1,179,648 | 8 tracks × 3 windows × 3,072 rows × 16 B |
 | Compose carry state | 221,184 | 18 cursors × 12 KiB: 16 playback (2 per track: steady + transition) + 2 display. Each holds 128 sounding entries × 12 B, 128 pitch × 64 run occluder counters, 128 run masks |
-| Checkpoint tables | 262,144 | 64 slots × 8 checkpoints × 64 entries × 8 B |
+| Checkpoint sets (E6.2d) | 417,284 | 64 slots × 2 sets × 8 checkpoints × 404 B (56 occluder pairs, 20 open instances), measured |
 | Display span tiles | 337,920 | (2 slots × 64 bars + 4 spares) × 2,560 B |
 | Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
 | Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
 | Edit writer E: log (E4.5) | 20,480 | 1,024 recorded changes × 20 B (touched only by an action's changed notes) |
-| **Engine total** | **6,527,198** [6,524,160] | |
+| **Engine total** | **6,682,338** [6,524,160] | |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **801,054** (capture build) / **1,849,630** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **645,914** (capture build) / **1,694,490** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
 Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
 tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
@@ -371,7 +372,7 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 801,054 B` on capture builds (≤ 1,849,630 B shipping) and
+- the budget closes iff `non-content PSRAM ≤ 645,914 B` on capture builds (≤ 1,694,490 B shipping) and
   `non-content RAM2 heap ≤ 297,695 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
@@ -381,7 +382,7 @@ If it does not close, these levers apply, in order. Each is a W change for the o
 | Capture ring 1 MiB → 512 KiB in capture builds | 524,288 B |
 | Windows 3,072 → 2,560 rows (source admission 2,304) | 196,608 B |
 | Detail tiles for the focused slot only, no successor | 163,840 B |
-| Checkpoint entries 64 → 32 | 131,072 B |
+| Historical checkpoint sets 2 → 1 per slot | 208,642 B (Undo / Redo warm up again) |
 
 ---
 
@@ -428,7 +429,9 @@ coexist by construction.
 | Writer | base manifest P (the interval's immutable source cut) | its last closing run seals |
 | Playback window | manifest + open-run serial and append ordinal | window retired |
 | Compose cursor | manifest + open-run prefix | cursor ends or is superseded |
-| Display tile / checkpoint table | manifest swept | replaced |
+| Display tile | manifest swept | replaced |
+| Running checkpoint sweep | its source manifest (lease) | the sweep ends or loses its set |
+| Completed checkpoint set | nothing: value snapshots with an identity stamp | — |
 | Worker job | its source manifest | job ends or is superseded |
 
 ### 5.5 Reserved resources are never borrowed
@@ -587,8 +590,11 @@ are kept in brackets where they changed.
   commit already equals the window of the committed manifest. The exception is a loop no longer than one window, which
   recomposes its single window (≤ 47 / 100 grains).
 - **Mid-loop cold starts** (undo, redo, edit commit, slot switch) begin from the nearest usable **checkpoint** at or
-  before the start position. Checkpoints sit every 8 bars (8 per slot); each holds ≤ 56 occluder pairs and ≤ 32 open
-  instances. The checkpoint sweep writes them (below).
+  before the start position, in the checkpoint set of the requested manifest. Checkpoints sit every 8 bars (8 per set);
+  each holds ≤ 56 occluder pairs and ≤ 20 open instances. The checkpoint sweep writes them (below). Each slot keeps two
+  sets keyed by manifest identity — the current source's and one historical, replaced least-recently-used when no sweep
+  is writing it — so Undo / Redo to a recently played revision reuse its set without rebuilding (owner 2026-11-05,
+  E6.2d); Undo / Redo never replace a set; a miss takes the warm-up path below.
   - With a usable checkpoint: 2 resume grains + ≤ 4 windows → **190 grains** spread, **402** clustered [89]. Measured
     on device: 3 grains when the start position is the checkpoint itself.
   - Without one (not yet swept, or overflowed): OUT-2 needs the carried-in set at the loop start, so the composer
@@ -1052,7 +1058,7 @@ E0 completes the classification of all 253 entries.
 Before E1:
 1. **W** (§ 2), including:
    - 3,072-row windows with 2,816 source rows admitted per window;
-   - 8-bar checkpoints of 64 entries;
+   - 8-bar checkpoints (56 occluder pairs, 20 open instances), two sets per slot;
    - ≤ 500 edit runs with hides (§ 5.1);
    - history depth ≤ 99 (a deeper history needs a larger ManifestTable);
    - 1 writer (one track records or overdubs at a time; owner 2026-11-05) + 1 NOTE_EDIT session jointly.

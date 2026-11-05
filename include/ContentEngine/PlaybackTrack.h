@@ -43,6 +43,8 @@ class PlaybackTrack {
     uint32_t lastLatencyTicks;    // acceptance to audible, the latest adopted selection
     uint32_t maxLatencyTicks;     // acceptance to audible, worst adopted selection
     uint32_t lastTransitionGrains;  // compose grains the latest adopted selection took (replay, window, catch-up)
+    uint32_t checkpointStarts;      // cold starts that resumed from a checkpoint set of their manifest
+    uint32_t warmupStarts;          // cold starts that found none and warmed up from the loop start
     uint32_t underruns;      // boundaries with no window to play
     uint32_t staleWindows;   // windows composed after their boundary had passed, discarded to catch up
     uint32_t refusedStarts;  // cold starts refused (e.g. index capacity): the old source keeps playing
@@ -122,6 +124,7 @@ class PlaybackTrack {
       const typename Cold::Status st = cold_[transComp_].step(*buf_[trans_].w, maxRows);
       if (st == Cold::Status::Done) {
         transComposing_ = true;
+        ++(cold_[transComp_].fromCheckpoint() ? stats_.checkpointStarts : stats_.warmupStarts);
       } else if (st == Cold::Status::Refused) {
         ++stats_.refusedStarts;
         cancelTransition();

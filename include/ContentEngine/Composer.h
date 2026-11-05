@@ -167,7 +167,7 @@ class Composer {
   IndexStore* indexStore() const { return index_; }
 
   static constexpr uint8_t kCheckpointActive = 56;
-  static constexpr uint8_t kCheckpointOpen = 32;
+  static constexpr uint8_t kCheckpointOpen = 20;  // the owner's realistic ceiling of open notes per track (2026-11-05)
 
   /// Carry state at a window boundary. Fixed size; stamped with the source it belongs to.
   struct Checkpoint {

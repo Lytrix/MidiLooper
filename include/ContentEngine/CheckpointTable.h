@@ -13,9 +13,13 @@
 // from that position on the cycle-0 captures are steady too and are promoted without composing further. Cost: one loop
 // plus the windows until the carried notes have ended (<= one more loop). Only usable checkpoints are ever resumed.
 //
-// Retirement: a new sweep for a slot replaces its table. The table holds no page references, only an identity stamp;
-// manifest identities are never reused, so a stale checkpoint can never match another manifest and needs no pin. A
-// sweep whose identity is no longer the slot's ends `Superseded` and writes nothing.
+// Retention (owner decision 2026-11-05, E6.2d): each slot keeps `Sets` checkpoint sets (2: the current source's and
+// one historical), each keyed by (slot, manifest identity). A cold start looks up the set of its own manifest, so Undo /
+// Redo to a recently played revision resume from its checkpoints without rebuilding them. A new sweep reuses its
+// identity's set or takes the least recently used set that no sweep is writing; Undo / Redo themselves never replace a
+// set. Completed checkpoints are value snapshots with an identity stamp and pin nothing (identities are never reused,
+// so a stale set never matches another manifest); a running sweep holds its source lease. A sweep whose set was taken
+// by a newer sweep ends `Superseded` and writes nothing.
 
 #pragma once
 
@@ -29,75 +33,135 @@
 
 namespace ContentEngine {
 
-template <typename Checkpoint, uint8_t Slots = 64, uint8_t PerSlot = 8>
+template <typename Checkpoint, uint8_t Slots = 64, uint8_t PerSlot = 8, uint8_t Sets = 2>
 class CheckpointTable {
  public:
   static constexpr uint8_t kSlots = Slots;
   static constexpr uint8_t kPerSlot = PerSlot;
+  static constexpr uint8_t kSets = Sets;
 
   enum class EntryState : uint8_t { Empty, Provisional, Usable, Unusable };
 
   void init() {
-    for (auto& s : slots_) {
-      s.identity = 0;
-      s.loopLength = 0;
-      s.spacing = 0;
-      for (auto& st : s.state) st = EntryState::Empty;
-    }
+    for (auto& slot : slots_)
+      for (auto& set : slot.sets) clear(set);
+    clock_ = 0;
   }
 
-  /// Starts a sweep for `identity` on `slot`: the previous table is retired at once.
+  /// Starts a sweep for `identity` on `slot`: its own set if the slot has one, else the least recently used set no
+  /// sweep is writing (else the least recently used, whose sweep is then superseded). The set is emptied and marked
+  /// as being swept until `endSweep`.
   void beginSweep(uint8_t slot, uint32_t identity, uint32_t loopLength, uint32_t spacing) {
-    Slot& s = slots_[slot];
-    s.identity = identity;
-    s.loopLength = loopLength;
-    s.spacing = spacing;
-    for (auto& st : s.state) st = EntryState::Empty;
+    Set* set = find(slot, identity);
+    if (set == nullptr) set = victim(slot);
+    clear(*set);
+    set->identity = identity;
+    set->loopLength = loopLength;
+    set->spacing = spacing;
+    set->sweeping = true;
+    set->lastUse = ++clock_;
   }
-  void retire(uint8_t slot) { beginSweep(slot, 0, 0, 0); }
+  void endSweep(uint8_t slot, uint32_t identity) {
+    if (Set* set = find(slot, identity)) set->sweeping = false;
+  }
+  /// Drops `identity`'s set on `slot` (all sets with identity 0).
+  void retire(uint8_t slot, uint32_t identity = 0) {
+    for (auto& set : slots_[slot].sets)
+      if (identity == 0 || set.identity == identity) clear(set);
+  }
 
-  bool current(uint8_t slot, uint32_t identity) const { return identity != 0 && slots_[slot].identity == identity; }
-  uint32_t spacing(uint8_t slot) const { return slots_[slot].spacing; }
+  /// The slot holds a set for `identity` (a sweep that lost its set is superseded).
+  bool holds(uint8_t slot, uint32_t identity) const { return identity != 0 && find(slot, identity) != nullptr; }
+  uint32_t spacing(uint8_t slot, uint32_t identity) const {
+    const Set* set = find(slot, identity);
+    return set == nullptr ? 0 : set->spacing;
+  }
 
-  /// Index of the checkpoint at `position`, or PerSlot when it is not a checkpoint position of this slot.
-  uint8_t indexOf(uint8_t slot, uint32_t position) const {
-    const Slot& s = slots_[slot];
-    if (s.spacing == 0 || position % s.spacing != 0 || position >= s.loopLength) return PerSlot;
-    const uint32_t k = position / s.spacing;
+  /// Index of the checkpoint at `position`, or PerSlot when it is not a checkpoint position of that set.
+  uint8_t indexOf(uint8_t slot, uint32_t identity, uint32_t position) const {
+    const Set* set = find(slot, identity);
+    if (set == nullptr || set->spacing == 0 || position % set->spacing != 0 || position >= set->loopLength) return PerSlot;
+    const uint32_t k = position / set->spacing;
     return k < PerSlot ? static_cast<uint8_t>(k) : PerSlot;
   }
 
-  /// Stores `cp` (state `st`) at its position. False when the sweep is superseded or the position is not a checkpoint.
+  /// Stores `cp` (state `st`) at its position in `identity`'s set. False when the set is gone (superseded) or the
+  /// position is not a checkpoint.
   bool store(uint8_t slot, uint32_t identity, const Checkpoint& cp, EntryState st) {
-    if (!current(slot, identity)) return false;
-    const uint8_t k = indexOf(slot, cp.position);
+    const uint8_t k = indexOf(slot, identity, cp.position);
     if (k == PerSlot) return false;
-    slots_[slot].entries[k] = cp;
-    slots_[slot].state[k] = cp.valid ? st : EntryState::Unusable;
+    Set& set = *find(slot, identity);
+    set.entries[k] = cp;
+    set.state[k] = cp.valid ? st : EntryState::Unusable;
     return true;
   }
-  void setState(uint8_t slot, uint8_t k, EntryState st) { slots_[slot].state[k] = st; }
-  EntryState state(uint8_t slot, uint8_t k) const { return slots_[slot].state[k]; }
-  const Checkpoint& entry(uint8_t slot, uint8_t k) const { return slots_[slot].entries[k]; }
+  void setState(uint8_t slot, uint32_t identity, uint8_t k, EntryState st) {
+    if (Set* set = find(slot, identity)) set->state[k] = st;
+  }
+  EntryState state(uint8_t slot, uint32_t identity, uint8_t k) const {
+    const Set* set = find(slot, identity);
+    return set == nullptr ? EntryState::Empty : set->state[k];
+  }
+  const Checkpoint& entry(uint8_t slot, uint32_t identity, uint8_t k) const { return find(slot, identity)->entries[k]; }
 
   /// The usable checkpoint of `identity` nearest at or before `position`; nullptr when none (replay from loop start).
+  /// A hit marks the set recently used.
   const Checkpoint* nearest(uint8_t slot, uint32_t identity, uint32_t position) const {
-    const Slot& s = slots_[slot];
-    if (!current(slot, identity) || s.spacing == 0) return nullptr;
-    uint32_t k = position / s.spacing;
+    const Set* set = find(slot, identity);
+    if (set == nullptr || set->spacing == 0) return nullptr;
+    uint32_t k = position / set->spacing;
     if (k >= PerSlot) k = PerSlot - 1;
     for (uint32_t i = k + 1; i-- > 0;)
-      if (s.state[i] == EntryState::Usable) return &s.entries[i];
+      if (set->state[i] == EntryState::Usable) {
+        set->lastUse = ++clock_;
+        return &set->entries[i];
+      }
     return nullptr;
   }
 
  private:
-  struct Slot {
+  struct Set {
     uint32_t identity, loopLength, spacing;
+    mutable uint32_t lastUse;
+    bool sweeping;
     EntryState state[PerSlot];
     Checkpoint entries[PerSlot];
   };
+  struct Slot {
+    Set sets[Sets];
+  };
+
+  static void clear(Set& set) {
+    set.identity = set.loopLength = set.spacing = 0;
+    set.lastUse = 0;
+    set.sweeping = false;
+    for (auto& st : set.state) st = EntryState::Empty;
+  }
+  Set* find(uint8_t slot, uint32_t identity) {
+    for (auto& set : slots_[slot].sets)
+      if (identity != 0 && set.identity == identity) return &set;
+    return nullptr;
+  }
+  const Set* find(uint8_t slot, uint32_t identity) const {
+    for (const auto& set : slots_[slot].sets)
+      if (identity != 0 && set.identity == identity) return &set;
+    return nullptr;
+  }
+  /// An empty set, else the least recently used one no sweep is writing, else the least recently used.
+  Set* victim(uint8_t slot) {
+    Set* best = nullptr;
+    for (auto& set : slots_[slot].sets) {
+      if (set.identity == 0) return &set;
+      if (!set.sweeping && (best == nullptr || set.lastUse < best->lastUse)) best = &set;
+    }
+    if (best != nullptr) return best;
+    for (auto& set : slots_[slot].sets)
+      if (best == nullptr || set.lastUse < best->lastUse) best = &set;
+    return best;
+  }
+
   Slot slots_[Slots];
+  mutable uint32_t clock_ = 0;
 };
 
 /// Same composer state, ignoring the cycle stamp (steady state is periodic from cycle 1).
@@ -204,7 +268,7 @@ class CheckpointSweep {
   using Checkpoint = typename Composer::Checkpoint;
   using State = typename Table::EntryState;
 
-  /// Pins `manifest` and retires the slot's previous table. The first grains build the manifest's edit index (if it
+  /// Pins `manifest` and takes a checkpoint set for it (CheckpointTable::beginSweep). The first grains build the manifest's edit index (if it
   /// has edit runs and it is not resident); composition begins once it is Ready. Refused (source released) when the
   /// index does not fit.
   Status start(Composer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
@@ -230,7 +294,7 @@ class CheckpointSweep {
   /// One grain: `maxRows` source rows of composition, or `kIndexGrain` index units while the index builds.
   Status step(Window& w, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
-    if (!table_->current(slot_, identity_)) {
+    if (!table_->holds(slot_, identity_)) {
       releaseSource();
       return status_ = Status::Superseded;
     }
@@ -268,7 +332,7 @@ class CheckpointSweep {
       table_->store(slot_, identity_, cp, State::Usable);
       return finish(composer_->stats().openOverflow == 0);
     }
-    const uint8_t k = table_->indexOf(slot_, position_);
+    const uint8_t k = table_->indexOf(slot_, identity_, position_);
     if (k == Table::kPerSlot) return status_;
     Checkpoint cp;
     composer_->capture(cp);
@@ -276,7 +340,7 @@ class CheckpointSweep {
       table_->store(slot_, identity_, cp, State::Provisional);
       return status_;
     }
-    if (table_->state(slot_, k) == State::Provisional && sameState(cp, table_->entry(slot_, k)))
+    if (table_->state(slot_, identity_, k) == State::Provisional && sameState(cp, table_->entry(slot_, identity_, k)))
       return finish(composer_->stats().openOverflow == 0);
     table_->store(slot_, identity_, cp, State::Usable);
     return status_;
@@ -301,13 +365,15 @@ class CheckpointSweep {
   Status finish(bool periodic) {
     periodic_ = periodic;
     for (uint8_t k = 0; k < Table::kPerSlot; ++k)
-      if (table_->state(slot_, k) == State::Provisional && periodic) table_->setState(slot_, k, State::Usable);
+      if (table_->state(slot_, identity_, k) == State::Provisional && periodic)
+        table_->setState(slot_, identity_, k, State::Usable);
     releaseSource();
     return status_ = Status::Done;
   }
   void releaseSource() {
     composer_->end();
     source_.close();
+    table_->endSweep(slot_, identity_);  // the set (if still ours) may be replaced by least-recently-used from now on
   }
 
   Composer* composer_ = nullptr;
@@ -391,12 +457,16 @@ class ColdStart {
   Status status() const { return status_; }
   bool pinned() const { return source_.pinned(); }
   uint32_t replayed() const { return replayed_; }
+  /// The cold start resumed from a checkpoint of its manifest (false: it warmed up from the loop start).
+  bool fromCheckpoint() const { return fromCheckpoint_; }
   uint32_t grains() const { return grains_; }
 
  private:
   /// Index Ready: resume from the nearest usable checkpoint, else warm up from the loop start.
   void begin() {
+    fromCheckpoint_ = false;
     if (const auto* cp = table_->nearest(slot_, source_.identity(), target_)) {
+      fromCheckpoint_ = true;
       if (!composer_->resumeBind(source_.source(), source_.count(), source_.loopLength(), source_.identity(), *cp)) {
         refuse();
         return;
@@ -431,7 +501,7 @@ class ColdStart {
   const Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
-  bool warmup_ = false, composing_ = false, seeking_ = false;
+  bool warmup_ = false, composing_ = false, seeking_ = false, fromCheckpoint_ = false;
   uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
   Status status_ = Status::Idle;
 };
