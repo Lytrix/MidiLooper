@@ -2,7 +2,8 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Reading a V1 slot file into the engine (fixed-memory-engine E9.7b / E9.7c; owner decisions 2026-11-05: exact current
-// content only; pass-stream files imported, E9.7c — those with edit passes skipped and reported until E9.7c-2).
+// content only; pass-stream files imported, E9.7c — their legacy note edits discarded, owner 2026-11-05: the import
+// only feeds the test setup).
 // Read-only: V1 files are never written.
 //
 // File (`/MidiLooper/current/slots/loop_TT_SS.bin`): an optional 10-byte epoch header (epoch u32, schema u16, CRC u32,
@@ -23,7 +24,7 @@
 // start, nextPassId, nextNoteId, nextMergeSequence, lastCommittedPassId, pass count (u32 each); per pass id u32,
 // mergeSequence u32, state u8 (0 = Active), type u8 (0 = record, 1 = overdub), sealedAtTick u32, event count u32 and
 // the raw `MidiEvent`s in capture order (ticks up to a bar past the loop end: wrapped); then nextPassId u32, "EPT3",
-// the edit-pass count u32 and the edit passes (not read). The epoch header is detected as the legacy loader detects it
+// the edit-pass count u32 and the edit passes (not read: discarded, reported by `editsDiscarded`). The epoch header is detected as the legacy loader detects it
 // (`fileStartsWithEpochHeader`: a first word other than the container version 6 and a schema major of 0).
 // * As the legacy materialisation (`collectActiveCommittedChunkLists`): only Active passes; the record pass first, then
 //   the overdubs by mergeSequence. Each pass with notes becomes its own run (`ResolvedImport::nextPass`), so later
@@ -40,10 +41,10 @@
 //   the file up to the end of its pass (pairing that pass's events again) and collects the notes starting in it.
 // * Named outcomes: `NoFile`; `StartOffset` (a loop start other than 0, from loop-start editing: skipped and reported
 //   rather than imported at an unconfirmed offset); `EmptySnapshot` (no notes or kept events: skipped — for LSV1 its
-//   passes may hold content); `Edited` (a pass stream with edit passes: skipped and reported until E9.7c-2);
+//   passes may hold content);
 //   `ManyPasses` (more Active passes than the importer's runs); `Dense` (one span holds more notes or events than the
 //   collect area, or a pass more than `kOpen` notes open, or NoteOffs waiting, at once); `BadFormat`; `ImportRefused` (the importer refused —
-//   everything released); `IoError`. `PassStream` is no longer returned (kept for the outcome numbering).
+//   everything released); `IoError`. `PassStream` and `Edited` are no longer returned (kept for the outcome numbering).
 // No allocation; each grain reads at most `kReadBytes`; the open-note table, the span histograms and the collect area
 // are the rest of the scratch.
 
@@ -107,6 +108,7 @@ class Lsv1Reader {
     notesDone_ = eventsDone_ = kept_ = 0;
     passDone_ = actives_ = 0;
     heldWhole_ = 0;
+    edited_ = false;
     if (!card.exists(path)) return status_ = Status::NoFile;
     if (!card.openRead(path)) return status_ = Status::IoError;
     phase_ = Phase::Probe;
@@ -145,6 +147,8 @@ class Lsv1Reader {
   uint32_t eventsRead() const { return eventsDone_; }
   /// Notes of the last pass stream with no NoteOff in their pass, imported held for the whole loop.
   uint32_t heldWhole() const { return heldWhole_; }
+  /// The last pass stream had legacy note edits, which were discarded: its passes are imported as recorded.
+  bool editsDiscarded() const { return edited_; }
   /// Why the import was refused (the importer's status), for the report.
   uint8_t importStatus() const { return static_cast<uint8_t>(import_->status()); }
 
@@ -504,7 +508,7 @@ class Lsv1Reader {
   Status tail() {
     if (!read(12)) return end(Status::BadFormat);
     if (u32(scratch_ + 4) != kTailMarker) return end(Status::BadFormat);
-    if (u32(scratch_ + 8) != 0) return end(Status::Edited);
+    edited_ = u32(scratch_ + 8) != 0;  // the legacy note edits are discarded (owner 2026-11-05), the slot reported
     // The Active passes in materialisation order (insertion sort, ≤ 16), those with notes only.
     noted_ = 0;
     uint32_t notes = 0;
@@ -583,7 +587,7 @@ class Lsv1Reader {
   // of the passes before).
   uint32_t passCount_ = 0, passDone_ = 0, evDone_ = 0, heldWhole_ = 0;
   uint16_t opens_ = 0, offs_ = 0;
-  bool active_ = false;
+  bool active_ = false, edited_ = false;
   uint8_t a_ = 0, actives_ = 0;
   uint8_t noted_ = 0, at_ = 0, pass_ = 0;
 };

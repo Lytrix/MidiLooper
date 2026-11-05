@@ -1,3 +1,8 @@
+**2026-11-06 — Fixed-memory engine: E9.7c-2 edited V1 slots imported, edits discarded.**
+- Owner: the V1 import only feeds the test setup, so the 9 slots with legacy note edits now import their passes as
+  recorded and drop the edits (named in the boot report). On the owner's card 21 of 22 slots with content import, 0
+  fail; only the slot with a shifted loop start is skipped.
+
 **2026-11-05 — Fixed-memory engine: E9.7c-1 pass-stream V1 slots.**
 - Pass-stream slot files (the older format, most of the card) now import at boot, read only: each Active pass becomes
   its own run in the old firmware's order, so the engine composes them as it composes overdubs. The card stores a

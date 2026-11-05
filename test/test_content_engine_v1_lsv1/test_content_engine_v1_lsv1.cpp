@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // fixed-memory-engine E9.7b / E9.7c: V1 slot files imported at boot (owner 2026-11-05: exact current content;
-// pass-stream files imported, those with edit passes skipped and reported until E9.7c-2), from LSV1 and pass-stream
+// pass-stream files imported, their legacy note edits discarded and reported), from LSV1 and pass-stream
 // bytes built here exactly as the old firmware writes them on the Teensy (the 10-byte epoch header; LSV1: LoopMetadata,
 // the PersistedLoopSnapshot oracle, LoopSnapshot; a pass stream: the header, the passes' raw events in capture order,
 // the EPT3 tail; then SAVE; `MidiEvent` 20 bytes, payload at 12).
@@ -11,7 +11,7 @@
 // overdubs by mergeSequence; an undone pass left out), its notes paired last-open-first and cyclically (a pass stored
 // in tick order: a held note's NoteOff before its NoteOn), a NoteOff sealed past the loop end wrapped, a NoteOn with no
 // NoteOff held for the whole loop and counted, a long pass imported in windows; a shifted loop start, an empty file, a
-// loop-0 placeholder and edit passes skipped and named; junk, a truncated file, an over-dense pass and too many passes
+// loop-0 placeholder skipped and named; a slot with edit passes imported as recorded, edits discarded and named; junk, a truncated file, an over-dense pass and too many passes
 // failing by name (every run released) while the other slots import; V1 files never written, the imported slot saved in the new format once approved; an engine file
 // taking precedence over the slot's V1 file; no allocation.
 
@@ -442,18 +442,23 @@ void test_pass_stream_skips_and_failures_are_named() {
   gE.attachCard(gCard);
   gE.startBootLoad();
   run(60);
-  TEST_ASSERT_EQUAL_UINT32(runsFree - 2, gE.runs().freeCount() + gE.runs().reclaimPendingRuns());  // slots 2 and 6
+  TEST_ASSERT_EQUAL_UINT32(runsFree - 3, gE.runs().freeCount() + gE.runs().reclaimPendingRuns());  // slots 0, 2, 6
   const auto& st = gE.persistence().stats();
-  TEST_ASSERT_EQUAL_UINT64((1ull << 0) | (1ull << 1) | (1ull << 3) | (1ull << 7), st.v1SkippedMask);
-  TEST_ASSERT_EQUAL_UINT64(1ull << 0, st.v1EditedMask);
+  TEST_ASSERT_EQUAL_UINT64((1ull << 1) | (1ull << 3) | (1ull << 7), st.v1SkippedMask);
+  TEST_ASSERT_EQUAL_UINT64(1ull << 0, st.v1EditedMask);  // imported as recorded, its two edit passes discarded
   TEST_ASSERT_EQUAL_UINT64(1ull << 1, st.v1OffsetMask);
   TEST_ASSERT_EQUAL_UINT64((1ull << 3) | (1ull << 7), st.v1EmptyMask);
   TEST_ASSERT_EQUAL_UINT64((1ull << 4) | (1ull << 5), st.v1FailedMask);  // Dense; 17 Active passes
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ProductionPersistence::Reader::Status::Dense), st.v1Outcome[4]);
   using R = ProductionPersistence::Reader::Status;
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(R::ManyPasses), st.v1Outcome[5]);
-  TEST_ASSERT_EQUAL_UINT32(2, st.v1Imported);  // slots 2 and 6
-  for (uint8_t s : {0, 1, 3, 4, 5, 7}) TEST_ASSERT_EQUAL(kNoManifest, gE.history().current(s));
+  TEST_ASSERT_EQUAL_UINT32(3, st.v1Imported);  // slots 0, 2 and 6
+  for (uint8_t s : {1, 3, 4, 5, 7}) TEST_ASSERT_EQUAL(kNoManifest, gE.history().current(s));
+  {
+    const auto& m0 = gE.manifests().manifest(gE.history().current(0));
+    TEST_ASSERT_EQUAL_UINT8(1, m0.runCount);
+    TEST_ASSERT_TRUE((std::vector<std::pair<uint32_t, uint8_t>>{{0, 60}}) == onsOf(m0.runs[0]));
+  }
   TEST_ASSERT_NOT_EQUAL(kNoManifest, gE.history().current(6));
   // Slot 2: 61 has no NoteOff in its pass — held for the whole loop (its NoteOff one tick before its start), counted.
   TEST_ASSERT_EQUAL_UINT32(1, st.v1HeldWhole);

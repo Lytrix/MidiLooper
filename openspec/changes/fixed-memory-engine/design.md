@@ -1685,5 +1685,16 @@ listed and released, epoch detection). Owner's card, read only (image `d71224a9�
 unedited pass-stream slots — e.g. 1,379 notes over 64 bars, 195 notes over 66 bars, 56 notes and 56 CCs over 5 passes —
 and the 2 LSV1 slots), 9 skipped for edit passes, 1 for a shifted loop start, 40 placeholders empty, 0 failed, 0.75 s.
 
-Open: the 9 edited slots (E9.7c-2: edit passes to engine edit runs, after a semantics check against EDIT-1); the slot
-with a shifted loop start (owner decision pending since E9.7b).
+## E9.7c-2 — edited pass-stream slots (owner 2026-11-06: discard the legacy edits)
+
+The V1 import only feeds the test setup, so the owner chose not to map legacy note edits to engine edit runs: a pass
+stream with edit passes is imported as recorded (its Active passes, as above), its edit rows discarded and the slot
+named (`v1EditedMask`). The survey made first (read only) found 9 edited slots, every row Active: Create 39 (one note
+each), Pitch 38, Length 182, Move (NoteRange) 107, Delete 136; no velocity or CC rows; every target present. Not built,
+by decision: the legacy materialisation inserts a Create's note into every Active pass, and a lengthened note trims
+same-pitch notes in its own pass — both would have needed explicit hides under EDIT-1.
+Owner's card, read only (image `0bbf94d9…`): 21 of the 22 slots with content imported (9 with their edits discarded),
+slot 2 skipped for its shifted loop start, 0 failed, 4 notes held for the whole loop (all in edited slots, whose
+edits had moved their NoteOffs), 0.89 s for the whole boot import.
+
+Open: the slot with a shifted loop start (owner decision pending since E9.7b).

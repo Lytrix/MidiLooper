@@ -16,8 +16,8 @@
 //   whose file fails stays empty and is counted by name (`Stats::loadFailed`); loading never writes. A slot without
 //   one whose V1 file (`/MidiLooper/current/slots/loop_TT_SS.bin`, slot = TT x 8 + SS) holds an LSV1 snapshot is
 //   imported from it (E9.7b, `Lsv1Reader`: exact current content), as is one holding a pass stream (E9.7c: its Active
-//   passes as runs); a loop-start-shifted, empty or edited (until E9.7c-2) V1 slot is skipped and named
-//   (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved in the new
+//   passes as runs, legacy note edits discarded and named: `v1EditedMask`); a loop-start-shifted or empty V1 slot is
+//   skipped and named (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved in the new
 //   format once approved; V1 files are never written.
 // `Card` (one file open for reading and one for writing at a time): exists(path), makeDir(path), openRead(path),
 // read(data, n), closeRead(), openWrite(path), write(data, n), closeWrite(), rename(from, to) — rename replaces `to`.
@@ -72,12 +72,12 @@ class Persistence {
     uint32_t loadFailed;     // engine files that failed to load (slot left empty)
     uint64_t loadFailedMask; // which slots
     uint32_t v1Imported;     // slots imported from V1 files
-    uint64_t v1SkippedMask;  // V1 slots skipped (owner: reported): a shifted loop start, empty, or edit passes
+    uint64_t v1SkippedMask;  // V1 slots skipped (owner: reported): a shifted loop start, or empty
     uint64_t v1OffsetMask;   // ... of them, skipped for a shifted loop start
     uint64_t v1EmptyMask;    // ... of them, without notes or kept events
-    uint64_t v1EditedMask;   // ... of them, a pass stream with edit passes (E9.7c-2)
     uint8_t v1Outcome[Slots];  // per slot: the reader's status (and the importer's in the high nibble when refused)
     uint64_t v1FailedMask;   // V1 slots that failed to read or import
+    uint64_t v1EditedMask;   // imported slots whose legacy note edits were discarded (owner 2026-11-05)
     uint32_t v1HeldWhole;    // imported notes that had no NoteOff in their pass: held for the whole loop
   };
   using Import = ResolvedImport<Pool, Runs, Manifests, HistoryT, /*held*/ 64>;
@@ -293,14 +293,13 @@ class Persistence {
     if (st == Reader::Status::Done) {
       ++stats_.v1Imported;
       stats_.v1HeldWhole += reader_.heldWhole();
+      if (reader_.editsDiscarded()) stats_.v1EditedMask |= 1ull << s;
       seen_[s] = fingerprint(s);  // saved in the new format once approved and settled; saved_ stays "nothing"
       changedUs_[s] = 0;
-    } else if (st == Reader::Status::StartOffset || st == Reader::Status::EmptySnapshot ||
-               st == Reader::Status::Edited) {
+    } else if (st == Reader::Status::StartOffset || st == Reader::Status::EmptySnapshot) {
       stats_.v1SkippedMask |= 1ull << s;
       if (st == Reader::Status::StartOffset) stats_.v1OffsetMask |= 1ull << s;
       if (st == Reader::Status::EmptySnapshot) stats_.v1EmptyMask |= 1ull << s;
-      if (st == Reader::Status::Edited) stats_.v1EditedMask |= 1ull << s;
     } else {
       stats_.v1FailedMask |= 1ull << s;
     }

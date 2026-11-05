@@ -4,8 +4,8 @@
 // fixed-memory-engine E9.7b / E9.7c, on the Teensy only: the card's V1 slot files read into the engine at boot — READ
 // ONLY. The card adapter refuses every write (makeDir, openWrite, write, rename return false) and saving is never
 // approved, so nothing on the card can change. Reports per slot: imported (with its runs, notes and kept events),
-// skipped (a shifted loop start, empty, or edit passes) or failed, and the time the whole boot import took. This
-// confirms the Teensy `MidiEvent` layout against the owner's real files.
+// skipped (a shifted loop start, or empty) or failed; the slots whose legacy note edits were discarded; and the time
+// the whole boot import took. This confirms the Teensy `MidiEvent` layout against the owner's real files.
 
 #include <unity.h>
 
@@ -62,7 +62,7 @@ void test_the_cards_v1_slots_import_read_only() {
   }
   const uint32_t us = micros() - t0;
   const auto& st = gE.persistence().stats();
-  char line[240];
+  char line[320];
   for (uint8_t s = 0; s < Config::kSlotCount; ++s) {
     const ManifestId m = gE.history().current(s);
     const bool skipped = (st.v1SkippedMask >> s) & 1, failed = (st.v1FailedMask >> s) & 1;
