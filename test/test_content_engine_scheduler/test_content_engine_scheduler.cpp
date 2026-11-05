@@ -119,9 +119,9 @@ void test_overrun_and_full_table_are_named() {
 // loop turn is one grain plus the other tasks (U_other = 40 %, U_isr = 10 % of each turn), and every 64th turn a
 // B_max block. Over 60 s: no window deadline missed, display >= 1/4 of grains, persistence >= 1/16, and the service
 // gap between grains never exceeds g + B_max.
-static Sched::Report simulateLoad(uint32_t otherUsPerTurn) {
+static Sched::Report simulateLoad(uint32_t otherUsPerTurn, uint32_t g = kG, uint32_t windowGrains = 23) {
   constexpr uint32_t kBlock = 50000;
-  gS.init(kG, kBlock);
+  gS.init(g, kBlock);
   Counter tracks[8], seal{0, 0}, bg{0, 0}, disp{0, 0}, pers{0, 0};
   uint8_t id;
   gS.submit({JobClass::Background, 0, 0xFFFFFFFF, forever, &bg}, id);
@@ -140,8 +140,8 @@ static Sched::Report simulateLoad(uint32_t otherUsPerTurn) {
     for (uint8_t k = 0; k < 8; ++k)
       if (static_cast<int32_t>(now - nextRelease[k]) >= 0) {
         if (trackJob[k] == Sched::kNoJob || !gS.live(trackJob[k])) {  // a late window keeps running (reported)
-          tracks[k] = Counter{23, 0};
-          gS.submit({JobClass::Hard, nextRelease[k] + kP, 23, countDown, &tracks[k]}, trackJob[k]);
+          tracks[k] = Counter{windowGrains, 0};
+          gS.submit({JobClass::Hard, nextRelease[k] + kP, windowGrains, countDown, &tracks[k]}, trackJob[k]);
         }
         nextRelease[k] += kP;
         ++windows;
@@ -153,13 +153,13 @@ static Sched::Report simulateLoad(uint32_t otherUsPerTurn) {
     }
     const uint32_t before = now;
     gS.runGrain(now);
-    now += kG;
+    now += g;
     now += otherUsPerTurn;  // other main-loop tasks and interrupts of this turn
     if (++turn % 64 == 0) now += kBlock;
     if (now - before > maxGap) maxGap = now - before;
   }
   TEST_ASSERT_TRUE(windows > 8 * 30);
-  TEST_ASSERT_TRUE(maxGap <= kG + otherUsPerTurn + kBlock);
+  TEST_ASSERT_TRUE(maxGap <= g + otherUsPerTurn + kBlock);
   return gS.report();
 }
 
@@ -169,6 +169,17 @@ void test_sustained_worst_load_meets_every_deadline() {
   TEST_ASSERT_EQUAL_UINT32(0, r.overruns);
   TEST_ASSERT_TRUE(r.displayGrains * 4 + 4 >= r.grains);
   TEST_ASSERT_TRUE(r.persistenceGrains * 16 + 16 >= r.grains);
+}
+
+// Device-measured figures (E5, teensy41-engine-bench): worst grain g = 786 µs (checkpoint resume), the densest
+// spread window 47 grains of <= 128 row units. At U_e = 50 % every deadline is still met with the shares kept. A window
+// whose later passes cluster inside the OVL-6 range takes up to 155 grains: 8 such tracks at once need U_e >= 63 %
+// (design.md E5 finding), so that case is not claimed here.
+void test_measured_grain_load_meets_every_deadline() {
+  const auto r = simulateLoad(800, 800, 47);
+  TEST_ASSERT_EQUAL_UINT32(0, r.missedDeadlines);
+  TEST_ASSERT_EQUAL_UINT32(0, r.overruns);
+  TEST_ASSERT_TRUE(r.displayGrains * 4 + 4 >= r.grains);
 }
 
 // The same demand with U_e = 5 % violates feasibility condition C1 (plan § 7.4): the scheduler reports the misses.
@@ -321,6 +332,7 @@ int main(int, char**) {
   RUN_TEST(test_slack_check_defers_soft_grains);
   RUN_TEST(test_overrun_and_full_table_are_named);
   RUN_TEST(test_sustained_worst_load_meets_every_deadline);
+  RUN_TEST(test_measured_grain_load_meets_every_deadline);
   RUN_TEST(test_infeasible_load_reports_missed_deadlines);
   RUN_TEST(test_real_compose_and_sweep_jobs_meet_window_deadlines);
   return UNITY_END();
