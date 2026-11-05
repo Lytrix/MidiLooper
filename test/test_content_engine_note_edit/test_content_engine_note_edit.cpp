@@ -192,6 +192,9 @@ void test_delete_and_abandon() {
   const int t = indexOf(64);
   EditNote gone = gE.noteEdit().note(static_cast<uint16_t>(t));
   gone.deleted = 1;
+  // One selection owner (owner 2026-11-05): no new selection while the session is open.
+  TEST_ASSERT_EQUAL(G::Refused, gE.noteEdit().request({0, 0, kLoop, 0, 127}, 0));
+  TEST_ASSERT_EQUAL_UINT16(5, gE.noteEdit().count());  // the session's selection is untouched
   const EditChange c{static_cast<uint16_t>(t), gone};
   TEST_ASSERT_EQUAL(EditResult::Ok, gE.noteEdit().apply(&c, 1, 0));
   const uint32_t at = gClock;

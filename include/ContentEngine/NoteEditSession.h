@@ -67,7 +67,9 @@ class NoteEditSession {
   }
 
   // ---- Selection ------------------------------------------------------------------------------------------------------
+  /// One selection owner (owner 2026-11-05): refused while a NOTE_EDIT session is open (leave or abandon it first).
   Gather request(const Query& q, uint32_t focusAtEntry) {
+    if (writer_->editing()) return Gather::Refused;
     cancelGather();
     const ManifestId m = history_->current(q.slot);
     if (m == kNoManifest || manifests_->manifest(m).runCount == 0 || q.from >= q.to) return status_ = Gather::Refused;

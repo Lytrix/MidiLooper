@@ -319,9 +319,11 @@ growing container.
 | Live overlay raster | 9,744 | 256 × 64 px × 4 bit + state, measured |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B (E9.7) |
 | Edit writer E: log (E4.5) | 20,480 | 1,024 recorded changes × 20 B (touched only by an action's changed notes) |
-| **Engine total** | **6,796,508** [6,682,338 before E9.2] | `EngineRoot.h` `kPsramBudget`; placed so far 6,682,968 on the Teensy (`#CAP,MEM_REGION`) |
+| NOTE_EDIT selection (E9.5) | 9,216 | 512 gathered notes × 16 B + their runs × 2 B; one selection owner (owner 2026-11-05) |
+| Persistence job state (E9.7) | 7,224 | save / load per-run tables (520 runs), 99 states, 64 slot fingerprints; persistence grains only (owner 2026-11-05) |
+| **Engine total** | **6,812,948** [6,796,508 before E9.7; 6,682,338 before E9.2] | `EngineRoot.h` `kPsramBudget`; placed so far 6,682,968 on the Teensy (`#CAP,MEM_REGION`) |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **531,744** (capture build) / **1,580,320** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **515,304** (capture build) / **1,563,880** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
 
 E9.2 restatement (owner 2026-11-05): the checkpoint and tile sweeps each need a scratch window, which § 4.1 did not
 budget (+98,616 B); the census also measured the pool's owner tags, window and tile headers and the overlay state
@@ -383,7 +385,7 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 531,744 B` on capture builds (≤ 1,580,320 B shipping; restated by E9.2) and
+- the budget closes iff `non-content PSRAM ≤ 515,304 B` on capture builds (≤ 1,563,880 B shipping; restated by E9.2, E9.7) and
   `non-content RAM2 heap ≤ 297,695 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.

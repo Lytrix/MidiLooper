@@ -32,6 +32,7 @@
 #include "ContentEngine/EngineCore.h"
 #include "ContentEngine/NoteEditSession.h"
 #include "ContentEngine/PianoRollRender.h"
+#include "ContentEngine/Persistence.h"
 #include "ContentEngine/History.h"
 #include "ContentEngine/OutputPort.h"
 #include "ContentEngine/PlaybackJobs.h"
@@ -70,6 +71,8 @@ using ProductionHub = OutputHub<>;
 using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
 using ProductionDisplayJobs = DisplayJobs<ProductionDisplayComposer, ProductionWindow, ProductionManifests,
                                           ProductionRuns, ProductionTiles, ProductionScheduler, /*workers*/ 1>;
+using ProductionPersistence = Persistence<CardIo, ProductionPool, ProductionRuns, ProductionManifests,
+                                          ProductionHistory, Config::kSlotCount>;
 using ProductionNoteEdit = NoteEditSession<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                            ProductionDisplayComposer, ProductionWindow, ProductionEditWriter>;
 using ProductionEmit = ProductionPlayer::Emit;
@@ -100,6 +103,11 @@ struct EnginePsram {
   ProductionWindow displayWindow;
   EditNote editGather[Config::kEditSelection];
   uint16_t editGatherRuns[Config::kEditSelection];
+  // E9.7: the worker scratch line — save, load and V1-import chunks, and the import's merge heap.
+  uint8_t persistScratch[3][ProductionPersistence::kChunk];
+  uint8_t mergeHeap[1024];
+  // E9.7 (owner 2026-11-05): the save / load jobs' state, touched only in persistence grains.
+  ProductionPersistence persistence;
 };
 
 /// DMAMEM.
@@ -130,13 +138,17 @@ struct EngineRam2 {
 // Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
 // windows budgeted, checkpoint and tile sweeps independent). PSRAM: pool with free stack and owner tags 4,193,216;
 // windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
-// tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480. RAM2: the engine's tables,
+// tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
+// (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05). RAM2: the
+// engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6796508u;
+constexpr size_t kPsramBudget = 6812948u;
 constexpr size_t kRam2Budget = 149432u;  // measured (E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
+static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
+              "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");
 #if defined(__arm__)
 static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit plan § 4.2 (ARM layout)");
 #endif
@@ -199,6 +211,8 @@ class EngineRoot {
     r_->displayJobs.init(dc, dw, p_->tiles, r_->manifests, r_->runs, r_->scheduler, kWindowTicks, kTicksPerBar);
     overlaySlot_ = ProductionTransport::kNoSlot;
     overlayUntil_ = 0;
+    card_ = nullptr;
+    persistLive_ = false;
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -221,6 +235,13 @@ class EngineRoot {
         r_->scheduler.submit(JobSpec{JobClass::Transition, nowUs, kEditGrains, &rebuildStep, this}, id))
       rebuildLive_ = true;
     serviceDisplay(clock);
+    if (card_ != nullptr) {
+      const uint8_t editing = r_->noteEdit.editing() ? r_->noteEdit.slot() : ProductionTransport::kNoSlot;
+      p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
+      if (!persistLive_ && p_->persistence.pending() &&
+          r_->scheduler.submit(JobSpec{JobClass::Persistence, nowUs, kPersistGrains, &persistStep, this}, id))
+        persistLive_ = true;
+    }
     uint8_t slot;
     if (r_->noteEdit.takePublished(slot)) {
       ProductionEmit buf[kGestureEmits];
@@ -274,6 +295,22 @@ class EngineRoot {
     r_->output.route(buf, n, nowUs, usPerTick);
     return r;
   }
+
+  // ---- Persistence (E9.7) -------------------------------------------------------------------------------------------
+  /// The card. Probes the remembered approval (the engine folder); nothing is written until `approveSaving`.
+  void attachCard(CardIo& card) {
+    card_ = &card;
+    p_->persistence.init(card, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
+                         p_->persistScratch[0], p_->persistScratch[1]);
+    p_->persistence.probe();
+  }
+  /// The owner approved saving on the device (owner 2026-11-05: once, remembered by the folder).
+  bool approveSaving() { return card_ != nullptr && p_->persistence.approve(); }
+  /// Loads every slot that has an engine file (before playing; nothing is written).
+  void startBootLoad() {
+    if (card_ != nullptr) p_->persistence.startBootLoad();
+  }
+  const ProductionPersistence& persistence() const { return p_->persistence; }
 
   // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
   /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).
@@ -338,6 +375,8 @@ class EngineRoot {
     out(Region::Psram, "edit_log", sizeof(EnginePsram::editLog));
     out(Region::Psram, "display_cursor", sizeof(ProductionDisplayComposer) + sizeof(ProductionWindow));
     out(Region::Psram, "edit_gather", sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns));
+    out(Region::Psram, "worker_scratch", sizeof(EnginePsram::persistScratch) + sizeof(EnginePsram::mergeHeap));
+    out(Region::Psram, "persistence", sizeof(ProductionPersistence));
     out(Region::Psram, "total", sizeof(EnginePsram));
     out(Region::Ram2, "runs", sizeof(ProductionRuns));
     out(Region::Ram2, "manifests", sizeof(ProductionManifests));
@@ -357,6 +396,7 @@ class EngineRoot {
     out(Region::Ram2, "control", sizeof(ProductionControl));
     out(Region::Ram2, "note_edit", sizeof(ProductionNoteEdit));
     out(Region::Ram2, "display_jobs", sizeof(ProductionDisplayJobs));
+
     out(Region::Ram2, "total", sizeof(EngineRam2));
   }
 
@@ -435,6 +475,12 @@ class EngineRoot {
     e.rebuildLive_ = false;
     return JobStep::Done;
   }
+  static JobStep persistStep(void* ctx) {
+    EngineRoot& e = *static_cast<EngineRoot*>(ctx);
+    if (e.p_->persistence.step()) return JobStep::Continue;
+    e.persistLive_ = false;
+    return JobStep::Done;
+  }
   static JobStep sweepStep(void* ctx) {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
     const ProductionSweep::Status st = e.r_->sweep.step(e.p_->sweepWindow, ProductionJobs::kRowsPerGrain);
@@ -452,7 +498,9 @@ class EngineRoot {
   EnginePsram* p_ = nullptr;
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
-  bool gatherLive_ = false, rebuildLive_ = false;
+  bool gatherLive_ = false, rebuildLive_ = false, persistLive_ = false;
+  CardIo* card_ = nullptr;
+  static constexpr uint32_t kPersistGrains = 2000;
   uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
   uint32_t overlayUntil_ = 0;    // cleared once the slot's tiles show this identity
   static constexpr uint32_t kEditGrains = 2000;  // a gather composes up to two loops; a rebuild <= 24 grains (§ 8.4)

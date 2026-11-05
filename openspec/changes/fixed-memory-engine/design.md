@@ -1577,3 +1577,36 @@ the shown slot and gives way to its tiles, Clear blanks the slot, a gather takes
 sweep (one grain a tick) and the sweep completes afterwards, a newly shown slot gets span tiles, no allocation.
 Mutations caught: 13 of 13. Teensy (`e6512efa…`): a frame drawn in four 8-row bands plus the overview 233 µs (a band
 ≤ 55 µs); longest grain 351 µs with sweeps running; RAM2 149,432 B.
+
+## E9.7a — saving and loading on the card (owner decisions 2026-11-05, as built)
+
+**Owner decisions:** approval once, remembered — the engine folder `/MidiLooper/engine` is created only when the owner
+approves saving on the device, and its existence is the approval from then on (until then the engine only reads);
+autosave when settled; V1 pass-stream files are skipped and reported (E9.7b); PSRAM lines for the NOTE_EDIT selection
+(9,216 B, one selection owner: a selection request is refused while a session is open) and the persistence job state
+(7,224 B) — engine PSRAM 6,812,948 B, non-content allowance 515,304 B (capture) / 1,563,880 B (shipping).
+
+`include/ContentEngine/Persistence.h`, on `SaveJob` / `LoadJob` (E8.1) and an abstract `CardIo` (exists, makeDir,
+openRead / read / closeRead, openWrite / write / closeWrite, rename that replaces):
+- **Change tracking:** per slot a fingerprint — the current state's identity, undo and redo depth (eviction of a slot's
+  oldest state changes only the depth) — compared each pass with the last saved one; a change restarts the slot's
+  settle time.
+- **Autosave:** with approval, not booting, one slot at a time: the first changed slot that has settled for 2 s and
+  that no take and no NOTE_EDIT session holds. `SaveJob` writes `slot_NN.tmp` in persistence grains (≤ 16 KiB a
+  write), then `rename` replaces `slot_NN.mle`, so an interrupted save leaves the previous file whole. A slot changed
+  during its save is saved again later. A slot with no history writes nothing.
+- **Boot load:** `startBootLoad` loads every slot with an engine file (`LoadJob`: admission, CRC, full release on any
+  failure); a failed slot stays empty and is named (`loadFailedMask`); loading writes nothing and leaves the slots
+  "saved".
+- **Placement:** the job state and the worker scratch (save, load, V1-import chunks of 16 KiB and a 1 KiB merge heap:
+  the 50,176 B line) in PSRAM — persistence grains only touch them.
+
+Tests (`test_content_engine_persistence`, 5, production root, fixed-memory fake card): no write at all — not even the
+folder — before approval, then the folder and the file; a save only after 2 s settled, none during an overdub or an
+open NOTE_EDIT, again after Undo and after leaving NOTE_EDIT; a second engine booting from the card is approved (the
+folder) and restores both slots' depth, loop, runs and rows, saving nothing back; a corrupt file fails by name while the
+other slot loads; a save failing part way keeps the previous file; no allocation. Mutations caught: 10 of 11 (approval
+gate, settle, busy slots, rename, in-place write, resave after load, redo, approval memory, failure mask, two selection
+owners); the undo-depth term guards eviction of a slot's oldest state, which the tests do not provoke.
+Teensy (`b5933b32…`): PSRAM 6,810,984 B, RAM2 149,432 B; the SD adapter and device writes come with E9.8, with the
+owner's permission for writing to the card.

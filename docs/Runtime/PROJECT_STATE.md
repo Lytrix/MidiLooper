@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E9.7a saving and loading (owner decisions).**
+- Nothing is written to the card until saving is approved once on the device (the new engine folder remembers it);
+  then a changed slot autosaves 2 s after its last change, never mid-take or mid-edit, via a temp file and rename; boot
+  loads every engine file, naming any that fail. PSRAM budget restated to 6,812,948 B (NOTE_EDIT selection and
+  persistence state lines). V1 import (LSV1) is E9.7b.
+
 **2026-11-05 — Fixed-memory engine: E9.6 piano roll from tiles.**
 - Tiles now follow every slot's state (commits, Undo / Redo, edits; Clear blanks), the shown slot gets span tiles, a
   take on it is painted live until its tiles show it, and `PianoRollRender` draws the note layer in bands from tiles at
