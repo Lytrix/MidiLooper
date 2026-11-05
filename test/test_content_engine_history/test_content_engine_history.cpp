@@ -249,11 +249,12 @@ void test_session_new_wrap_after_undo_and_other_slots() {
   TEST_ASSERT_EQUAL_UINT8(2, gH.redoDepth(1));
 }
 
-// A session longer than the history: its oldest wraps (and the start) are forgotten like any oldest step; undo stops
-// at the floor; Stop still folds what is left into one step.
+// A session longer than the history forgets its own oldest wraps, never its start: after Stop one U: still returns to
+// the pre-overdub state (owner 2026-11-05: the session start is the restore point).
 void test_long_session_shares_the_99() {
   setup();
-  gH.commit(0, take(0));
+  const ManifestId rec = take(0);
+  gH.commit(0, rec);
   gH.beginSession(SessionKind::Overdub, 0);
   ManifestId last = kNoManifest;
   for (uint32_t i = 0; i < 150; ++i) {
@@ -262,16 +263,17 @@ void test_long_session_shares_the_99() {
     gH.commit(0, last);
     TEST_ASSERT_TRUE(gH.heldStates() <= 99);
   }
-  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth(SessionKind::Overdub));
+  TEST_ASSERT_EQUAL_UINT8(98, gH.sessionDepth(SessionKind::Overdub));  // 99 held: the start + 98 wraps
   uint32_t undos = 0;
-  while (gH.undo(0)) ++undos;
-  TEST_ASSERT_EQUAL_UINT32(98, undos);  // the floor: the oldest kept wrap
-  while (gH.redo(0)) {
-  }
+  while (gH.undo(0)) TEST_ASSERT_TRUE(++undos < 200);
+  TEST_ASSERT_EQUAL_UINT32(98, undos);
+  TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));  // the oldest kept wrap steps straight back to the start
+  for (uint32_t k = 0; gH.redo(0); ++k) TEST_ASSERT_TRUE(k < 200);
   gH.endSession(SessionKind::Overdub);
   TEST_ASSERT_EQUAL_UINT16(last, gH.current(0));
-  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());
-  TEST_ASSERT_FALSE(gH.canUndo(0));  // the pre-session state was forgotten during the session
+  TEST_ASSERT_EQUAL_UINT8(2, gH.heldStates());
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
   drainReclaim();
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
 }
@@ -301,7 +303,7 @@ void test_edit_session_fold_and_abandon() {
   const ManifestId f1 = take(0), f2 = take(0);
   gH.commit(0, f1);
   gH.commit(0, f2);
-  TEST_ASSERT_TRUE(gH.abandonSession(SessionKind::Edit));
+  gH.abandonSession(SessionKind::Edit);
   TEST_ASSERT_FALSE(gH.inSession(SessionKind::Edit));
   TEST_ASSERT_EQUAL_UINT16(e2, gH.current(0));
   TEST_ASSERT_FALSE(gH.canRedo(0));
@@ -347,30 +349,51 @@ void test_session_leaves_earlier_redo_alone() {
   TEST_ASSERT_FALSE(gH.redo(0));
   TEST_ASSERT_FALSE(gH.undo(0));
   TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth(SessionKind::Edit));
-  TEST_ASSERT_TRUE(gH.abandonSession(SessionKind::Edit));
+  gH.abandonSession(SessionKind::Edit);
   TEST_ASSERT_EQUAL_UINT16(a, gH.current(0));
   TEST_ASSERT_TRUE(gH.redo(0));
   TEST_ASSERT_EQUAL_UINT16(b, gH.current(0));
 }
 
-// A NOTE_EDIT session reaches 99 steps (the shared limit); abandoning one that forgot its start keeps the floor.
-void test_edit_session_reaches_99_and_abandon_keeps_the_floor() {
+// A NOTE_EDIT session runs past 99 edits: it forgets its own oldest edits, never the pre-edit state, so abandon
+// always restores the loop as it was before NOTE_EDIT (owner 2026-11-05).
+void test_long_edit_session_abandon_restores_the_start() {
   setup();
-  const ManifestId rec = take(0);
-  const uint32_t recIdentity = gManifests.manifest(rec).identity;
-  gH.commit(0, rec);
-  gH.beginSession(SessionKind::Edit, 0);
+  const ManifestId before = take(0);
+  gH.commit(0, take(0));
+  gH.commit(0, before);
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Edit, 0));
   for (uint32_t i = 0; i < 120; ++i) {
     drainReclaim();
     gH.commit(0, take(0));
   }
-  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth(SessionKind::Edit));
-  TEST_ASSERT_TRUE(!gManifests.manifest(rec).live || gManifests.manifest(rec).identity != recIdentity);  // forgotten
-  TEST_ASSERT_FALSE(gH.abandonSession(SessionKind::Edit));
-  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());       // the floor: the oldest kept edit
+  TEST_ASSERT_TRUE(gManifests.manifest(before).live);
+  TEST_ASSERT_EQUAL_UINT8(98, gH.sessionDepth(SessionKind::Edit));  // 99 held: the protected start + 98 edits
+  gH.abandonSession(SessionKind::Edit);
+  TEST_ASSERT_EQUAL_UINT16(before, gH.current(0));
+  TEST_ASSERT_FALSE(gH.canRedo(0));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());  // the first take was the oldest unprotected step: forgotten first
   TEST_ASSERT_FALSE(gH.canUndo(0));
   drainReclaim();
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+// A session started on the empty slot keeps the empty slot reachable however long it runs.
+void test_session_on_empty_slot_keeps_empty_reachable() {
+  setup();
+  gH.beginSession(SessionKind::Overdub, 3);
+  for (uint32_t i = 0; i < 130; ++i) {
+    drainReclaim();
+    gH.commit(3, take(3));
+  }
+  uint32_t undos = 0;
+  while (gH.undo(3)) TEST_ASSERT_TRUE(++undos < 200);
+  TEST_ASSERT_EQUAL_UINT32(99, undos);
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(3));
+  for (uint32_t k = 0; gH.redo(3); ++k) TEST_ASSERT_TRUE(k < 200);
+  gH.abandonSession(SessionKind::Overdub);
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(3));
+  TEST_ASSERT_EQUAL_UINT8(0, gH.heldStates());
 }
 
 // ---- Independent reference model: per slot a list of (manifest, commit seq) and a cursor ------------------------------
@@ -390,6 +413,17 @@ struct Ref {
   std::vector<ManifestId> released;
   int sessSlot[2] = {-1, -1};
   uint32_t sessStart[2] = {0, 0};
+  ManifestId sessBase[2] = {kNoManifest, kNoManifest};  // the protected start state (kNoManifest: the empty slot)
+  bool isProtected(size_t slot, const RefState& st) const {
+    for (int k = 0; k < 2; ++k)
+      if (sessSlot[k] == static_cast<int>(slot) && sessBase[k] == st.m) return true;
+    return false;
+  }
+  bool emptyProtected(size_t slot) const {
+    for (int k = 0; k < 2; ++k)
+      if (sessSlot[k] == static_cast<int>(slot) && sessBase[k] == kNoManifest) return true;
+    return false;
+  }
   Ref(size_t s, size_t d) : slots(s), depth(d) {}
   size_t held() const {
     size_t n = 0;
@@ -409,7 +443,8 @@ struct Ref {
       bool found = false;
       for (size_t k = 0; k < slots.size(); ++k)
         for (size_t i = 0; i < slots[k].states.size(); ++i)
-          if (static_cast<int>(i) != slots[k].cur && (!found || slots[k].states[i].seq < slots[bs].states[bi].seq)) {
+          if (static_cast<int>(i) != slots[k].cur && !isProtected(k, slots[k].states[i]) &&
+              (!found || slots[k].states[i].seq < slots[bs].states[bi].seq)) {
             bs = k;
             bi = i;
             found = true;
@@ -420,7 +455,7 @@ struct Ref {
         released.push_back(s.states[bi].m);
         s.states.erase(s.states.begin() + static_cast<long>(bi));
         --s.cur;
-        s.emptyBelow = false;
+        if (bi == 0 && !emptyProtected(bs)) s.emptyBelow = false;
       } else {  // a redo state: the whole branch above current goes
         dropAbove(s);
       }
@@ -432,6 +467,7 @@ struct Ref {
     if (sessSlot[kind] >= 0 || sessSlot[1 - kind] == static_cast<int>(slot)) return false;
     sessSlot[kind] = static_cast<int>(slot);
     sessStart[kind] = seq;
+    sessBase[kind] = current(slot);
     return true;
   }
   void end(int kind) {
@@ -446,20 +482,19 @@ struct Ref {
       --s.cur;
     }
   }
-  bool abandon(int kind) {
-    if (sessSlot[kind] < 0) return true;
+  void abandon(int kind) {
+    if (sessSlot[kind] < 0) return;
     RefSlot& s = slots[static_cast<size_t>(sessSlot[kind])];
     sessSlot[kind] = -1;
     bool removed = false;
     while (!s.states.empty() && s.states.back().seq > sessStart[kind]) {
-      if (s.states.size() == 1 && !s.emptyBelow) break;  // keep the floor
       released.push_back(s.states.back().m);
       s.states.pop_back();
       removed = true;
     }
-    if (!removed) return s.cur < 0 || s.states[static_cast<size_t>(s.cur)].seq <= sessStart[kind];
+    if (!removed) return;
     s.cur = static_cast<int>(s.states.size()) - 1;
-    return s.cur < 0 || s.states.back().seq <= sessStart[kind];
+    TEST_ASSERT_EQUAL_UINT16(sessBase[kind], current(static_cast<size_t>(&s - &slots[0])));  // back at the start
   }
   bool bounded(size_t slot, int idx) const {  // state idx of slot is from before an open session on it
     for (int k = 0; k < 2; ++k)
@@ -507,7 +542,8 @@ static void randomAgainstReference(H& h, uint8_t slots, uint8_t depth, uint32_t 
       ref.end(kind);
       h.endSession(k);
     } else if (op == 12) {
-      TEST_ASSERT_EQUAL(ref.abandon(kind), h.abandonSession(k));
+      ref.abandon(kind);
+      h.abandonSession(k);
     } else if (op < 4) {
       drainReclaim();
       const ManifestId m = take(slot);
@@ -580,7 +616,8 @@ int main(int, char**) {
   RUN_TEST(test_edit_session_fold_and_abandon);
   RUN_TEST(test_overdub_and_edit_sessions_together);
   RUN_TEST(test_session_leaves_earlier_redo_alone);
-  RUN_TEST(test_edit_session_reaches_99_and_abandon_keeps_the_floor);
+  RUN_TEST(test_long_edit_session_abandon_restores_the_start);
+  RUN_TEST(test_session_on_empty_slot_keeps_empty_reachable);
   RUN_TEST(test_random_sequences_match_the_reference_model_small);
   RUN_TEST(test_random_sequences_match_the_reference_model_production);
   RUN_TEST(test_no_heap_after_init);

@@ -22,6 +22,10 @@
 //   same bound and fold apply when NOTE_EDIT is left, and `abandonSession` returns the slot to its session-start state.
 //   One overdub session and one NOTE_EDIT session may be open at once (W: one writer + one NOTE_EDIT), on different
 //   slots.
+// * Restore point (owner 2026-11-05): an open session protects its start state (or, for a session started on the empty
+//   slot, the empty slot) from eviction, so abandon always returns to the pre-session state and U: after the fold
+//   always reaches it. A session longer than the 99 forgets its own oldest steps instead; undo then steps from the
+//   oldest kept session state straight back to the start.
 // Every dropped state releases its manifest reference, so its runs reach the reclaim queue. No allocation.
 
 #pragma once
@@ -40,7 +44,8 @@ class History {
  public:
   static constexpr uint8_t kNone = 0xFF;
   static_assert(Depth < kNone, "entry indices fit uint8_t");
-  static_assert(Depth > Slots || Slots == 0, "a full table always holds an evictable state (currents <= slots)");
+  static_assert(Depth > Slots + 2 || Slots == 0,
+                "a full table always holds an evictable state (currents <= slots, protected session starts <= 2)");
 
   struct Stats {
     uint32_t evictedUndo;     // oldest undo states forgotten to make room
@@ -60,7 +65,7 @@ class History {
     seq_ = 0;
     for (auto& s : slots_) s = Slot{kNone, kNone, kNone, true};
     stats_ = Stats{};
-    for (auto& x : sessions_) x = Session{kNone, 0};
+    for (auto& x : sessions_) x = Session{kNone, 0, kNone};
   }
 
   /// Opens a session of `kind` on `slot` at its current state. False (nothing changes) while a session of that kind is
@@ -68,7 +73,7 @@ class History {
   bool beginSession(SessionKind kind, uint8_t slot) {
     Session& x = sessions_[static_cast<uint8_t>(kind)];
     if (slot >= Slots || x.slot != kNone || sessions_[1 - static_cast<uint8_t>(kind)].slot == slot) return false;
-    x = Session{slot, seq_};
+    x = Session{slot, seq_, slots_[slot].current};  // the start state is protected until the session ends
     return true;
   }
   bool inSession(SessionKind kind) const { return sessions_[static_cast<uint8_t>(kind)].slot != kNone; }
@@ -77,7 +82,8 @@ class History {
     const Session& x = sessions_[static_cast<uint8_t>(kind)];
     if (x.slot == kNone) return 0;
     uint8_t n = 0;
-    for (uint8_t e = slots_[x.slot].current; e != kNone && entries_[e].seq > x.baseSeq; e = entries_[e].older) ++n;
+    for (uint8_t e = slots_[x.slot].current; e != kNone && entries_[e].seq > x.baseSeq && n < Depth; e = entries_[e].older)
+      ++n;
     return n;
   }
   /// Stop / leave NOTE_EDIT: drops the session's redo and folds its states into one step (the current). No step when
@@ -87,7 +93,7 @@ class History {
     if (x.slot == kNone) return;
     const uint8_t slot = x.slot;
     const uint32_t base = x.baseSeq;
-    x = Session{kNone, 0};
+    x = Session{kNone, 0, kNone};
     dropRedo(slot);
     Slot& s = slots_[slot];
     const uint8_t c = s.current;
@@ -106,34 +112,32 @@ class History {
       entries_[e].newer = c;
   }
   /// Abandon (leave NOTE_EDIT without keeping it): every session state goes and the slot returns to its session-start
-  /// state. False when that state was forgotten during the session (the session outgrew the 99): the slot then keeps
-  /// its oldest remaining state, the floor.
-  bool abandonSession(SessionKind kind) {
+  /// state, which the session protected from eviction. O(session states).
+  void abandonSession(SessionKind kind) {
     Session& x = sessions_[static_cast<uint8_t>(kind)];
-    if (x.slot == kNone) return true;
+    if (x.slot == kNone) return;
     const uint8_t slot = x.slot;
     const uint32_t base = x.baseSeq;
-    x = Session{kNone, 0};
+    const uint8_t start = x.base;
+    x = Session{kNone, 0, kNone};
     Slot& s = slots_[slot];
     uint8_t e = s.newest;
     bool removed = false;
     while (e != kNone && entries_[e].seq > base) {
       const uint8_t older = entries_[e].older;
-      if (older == kNone && !s.emptyBelow) break;  // the start was forgotten: keep the floor
       freeEntry(e);
       ++stats_.droppedRedo;
       removed = true;
       e = older;
     }
-    if (!removed) return s.current == kNone || entries_[s.current].seq <= base;  // no step taken: current is the start
-    s.current = e;
-    if (e == kNone) {
+    if (!removed) return;  // no session step: the current is still the start
+    s.current = start;
+    if (start == kNone) {
       s.oldest = s.newest = kNone;
-      return true;
+      return;
     }
-    entries_[e].newer = kNone;
-    s.newest = e;
-    return entries_[e].seq <= base;
+    entries_[start].newer = kNone;
+    s.newest = start;
   }
 
   /// Makes `manifest` the slot's new current state. History takes over the caller's reference.
@@ -196,15 +200,17 @@ class History {
   uint8_t undoDepth(uint8_t slot) const {
     const Slot& s = slots_[slot];
     uint8_t n = 0;
-    for (uint8_t e = s.current; e != kNone; e = entries_[e].older) ++n;
+    for (uint8_t e = s.current; e != kNone && n < Depth; e = entries_[e].older) ++n;
     return s.emptyBelow ? n : static_cast<uint8_t>(n - (n > 0 ? 1 : 0));
   }
   uint8_t redoDepth(uint8_t slot) const {
     const Slot& s = slots_[slot];
     uint8_t n = 0;
     for (uint8_t e = s.current == kNone ? (s.emptyBelow ? s.oldest : kNone) : entries_[s.current].newer; e != kNone;
-         e = entries_[e].newer)
+         e = entries_[e].newer) {
+      if (n == Depth) break;  // never more states than the table holds
       ++n;
+    }
     return n;
   }
   uint8_t heldStates() const { return count_; }
@@ -220,6 +226,7 @@ class History {
   struct Session {
     uint8_t slot;      // kNone: not open
     uint32_t baseSeq;  // the commit counter at the session start: the session's states are the later commits
+    uint8_t base;      // the start state, protected from eviction (kNone: the session started on the empty slot)
   };
   struct Slot {
     uint8_t oldest, newest, current;  // current kNone: the empty slot (below `oldest`)
@@ -254,34 +261,47 @@ class History {
     }
   }
 
-  /// The oldest step in the set: per slot, its oldest state if that is not current (an undo state, or — when the slot
-  /// is at its empty base — the start of its redo chain), else the start of its redo chain. Lowest commit seq wins.
+  bool protectedStart(uint8_t e) const {
+    for (const Session& x : sessions_)
+      if (x.slot != kNone && x.base == e) return true;
+    return false;
+  }
+  bool emptyStartProtected(uint8_t slot) const {
+    for (const Session& x : sessions_)
+      if (x.slot == slot && x.base == kNone) return true;
+    return false;
+  }
+
+  /// The oldest step in the set: the oldest-committed state that is no slot's current and no open session's protected
+  /// start. Per slot that is its oldest state (skipping a protected start) if it lies below current, else the start of
+  /// its redo chain. Lowest commit seq wins.
   void evictOldest() {
-    uint8_t bestSlot = kNone;
-    uint32_t bestSeq = 0;
+    uint8_t bestSlot = kNone, best = kNone;
     for (uint8_t i = 0; i < Slots; ++i) {
       const Slot& s = slots_[i];
-      uint8_t cand = kNone;
-      if (s.oldest != kNone && s.oldest != s.current)
-        cand = s.oldest;
-      else if (s.current != kNone)
-        cand = entries_[s.current].newer;
-      if (cand != kNone && (bestSlot == kNone || entries_[cand].seq < bestSeq)) {
+      uint8_t cand = s.oldest;
+      if (cand != kNone && protectedStart(cand)) cand = entries_[cand].newer;
+      if (cand == s.current) cand = s.current == kNone ? kNone : entries_[s.current].newer;
+      if (cand != kNone && (best == kNone || entries_[cand].seq < entries_[best].seq)) {
         bestSlot = i;
-        bestSeq = entries_[cand].seq;
+        best = cand;
       }
     }
     Slot& s = slots_[bestSlot];
-    const bool undoSide = s.current != kNone && s.oldest != s.current;
+    const bool undoSide = s.current != kNone && entries_[best].seq < entries_[s.current].seq;
     if (!undoSide) {
       dropRedo(bestSlot);  // a redo chain cannot have a hole
       return;
     }
-    const uint8_t e = s.oldest;
-    s.oldest = entries_[e].newer;
-    entries_[s.oldest].older = kNone;
-    s.emptyBelow = false;
-    freeEntry(e);
+    const uint8_t older = entries_[best].older, newer = entries_[best].newer;
+    entries_[newer].older = older;
+    if (older == kNone) {
+      s.oldest = newer;
+      if (!emptyStartProtected(bestSlot)) s.emptyBelow = false;  // the floor moves up
+    } else {
+      entries_[older].newer = newer;  // a session's oldest step above its protected start
+    }
+    freeEntry(best);
     ++stats_.evictedUndo;
   }
 

@@ -888,15 +888,21 @@ session; both may be open at once on different slots (W: one writer + one NOTE_E
 - **E: level** (`sessionDepth(Edit)`): each edit action is an ordinary commit; undo stops at the session start and redo
   never steps into pre-session redo.
 - **Leave NOTE_EDIT** (`endSession(Edit)`): the same fold as Stop, one step (none if every edit was undone).
-- **Abandon** (`abandonSession(Edit)`): every session state goes and the slot returns to its session-start state;
-  false when the session outgrew the 99 and forgot that state, in which case the slot keeps its floor.
+- **Abandon** (`abandonSession(Edit)`): every session state goes and the slot returns to its session-start state.
+- **Restore point (owner 2026-11-05):** an open session (either kind) protects its start state — or the empty slot, if
+  it started empty — from eviction. Eviction takes the oldest state that is no slot's current and no protected start,
+  so a session longer than the 99 forgets its own oldest steps (undo then steps from the oldest kept one straight back
+  to the start). Abandon therefore always restores the pre-session loop, and after Stop / leaving NOTE_EDIT one U:
+  always reaches it. At most two starts are protected, so a full table still holds an evictable state (99 > 64 + 2).
 - **Limit 99:** session steps share the 99 history states (the owner's limit), so no separate session reserve exists.
   Manifest worst case drops from 249 to 153 of 256 (slot currents and session steps are history states).
 
 Not here: the edit writer itself (selection ≤ 512 notes, hide + replacement rows, seal in 18 grains) and restoring
 focus / selection per step, which belong to the edit writer and `EditManager` integration.
 
-Tests (`test_content_engine_history`, 15): edit fold and abandon; overdub + edit together; earlier redo left alone; an
-edit session reaching 99 with abandon keeping the floor; the reference model opens, ends and abandons both kinds at
+Tests (`test_content_engine_history`, 16): edit fold and abandon; overdub + edit together; earlier redo left alone; a
+120-edit session whose abandon restores the pre-edit state; a 130-wrap session started on the empty slot; the reference model opens, ends and abandons both kinds at
 random. Mutations caught: abandon below the floor, abandon moving current without a session step, two sessions on one
-slot, redo into pre-session redo, the start taken from the current state's seq. 1,600 B.
+slot, redo into pre-session redo, the start taken from the current state's seq; for the restore point: start not
+protected, empty start not protected, a broken relink around the protected start (walks are bounded, so it fails
+rather than hangs), abandon keeping the first step. 1,608 B.

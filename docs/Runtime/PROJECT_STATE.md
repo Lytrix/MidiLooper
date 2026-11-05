@@ -1,7 +1,8 @@
 **2026-11-05 — Fixed-memory engine: E4.3 NOTE_EDIT session undo (owner: limit 99, shared).**
 - Edit actions are E: steps (99, shared with all history); leaving NOTE_EDIT folds them into one step; abandon returns
-  to the session start. An overdub and a NOTE_EDIT session can be open at once on different slots. Manifest worst case
-  153 of 256. 5 mutations caught.
+  to the session start, which the session protects from eviction (owner: the pre-session state is the restore point;
+  long sessions forget their own oldest steps). An overdub and a NOTE_EDIT session can be open at once on different
+  slots. Manifest worst case 153 of 256. 9 mutations caught.
 
 **2026-11-05 — Fixed-memory engine: E4.2 overdub session undo (DEC-038).**
 - While overdubbing, each wrap is an undo step that cannot go below the session start; Stop folds the session into one
