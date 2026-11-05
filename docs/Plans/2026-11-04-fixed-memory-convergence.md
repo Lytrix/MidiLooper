@@ -222,7 +222,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Parameter | W |
 |---|---|
 | Tracks × slots | 8 × 8 = 64 slots |
-| Concurrent writers (Record / overdub) | 8, one per track |
+| Concurrent writers (Record / overdub) | 8, one per track; **at most 1 overdubbing at a time** (owner 2026-11-05). Memory budgets (§ 4, § 5) still reserve for 8 writers |
 | Concurrent NOTE_EDIT sessions | 1, selection ≤ 512 notes |
 | Loop length | ≤ 64 bars (49,152 ticks) |
 | Tempo | ≤ 300 BPM: window period P = 2 bars = 1.6 s |
@@ -606,14 +606,16 @@ are kept in brackets where they changed.
 | Hard | edit-run seal (one session) | ≤ ⌈512 × 9 / 256⌉ = 18 per edit commit (not yet measured) |
 | Hard | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58) |
 | Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
-| Soft, bounded | density after any slot commit | ≤ 11 grains per bar per writing slot → ≤ 8 × 11 × 2 = **176 per P** (not yet measured) |
+| Soft, bounded | density after any slot commit | ≤ 11 grains per bar of the committing slot; one overdub at a time commits at most once per loop → ≤ 11 × 2 = **22 per P** [176, 8 overdubs] (not yet measured). A Record's Stop is a one-off 704 per slot |
 | Background | checkpoint sweep | 3,008 + 58 per committed manifest, superseded by the next commit |
 | Soft | persistence save | ≤ 4 MiB / 16 KiB = 256 per save (autosave every 300 s) |
 | Soft | reclaim, compaction | ≤ released pages / 64; range size / 256 |
 
-Sustained worst (8 writers on 2-bar loops, focused slot committing every P; 22 = the focused slot's 2 visible bars):
-- spread: 376 + 176 + 22 = **574 grains per P = 465 ms per 1.6 s = 29 % CPU** [12 %];
-- clustered on all 8 tracks: 800 + 176 + 22 = **998 grains per P = 808 ms = 50.5 % CPU**.
+Sustained worst (all 8 tracks playing, the one overdubbing track on a 2-bar loop and focused, committing every P;
+22 = its density, 22 = its 2 visible bars):
+- spread: 376 + 22 + 22 = **420 grains per P = 340 ms per 1.6 s = 21 % CPU** [12 %];
+- clustered on all 8 tracks: 800 + 22 + 22 = **844 grains per P = 684 ms = 42.7 % CPU**.
+(Revision 3 assumed 8 overdubs at once: 176 density grains, which made the clustered case 50.5 %.)
 
 Burst (scene switch of 8 tracks with usable checkpoints): 8 × (190 + 58) = 1,984 grains = 1.6 s of CPU [420 ms].
 Without usable checkpoints: 8 × 3,067 = 24,536 grains = 19.9 s [2.9 s], spread over the following periods (clustered:
@@ -635,14 +637,14 @@ The engine gets `U_e = 1 − U_isr − U_other`. With W = grains per window per 
 | Condition | Meaning |
 |---|---|
 | C1: `(8 × W + 18) × g ≤ U_e × P − B_max − g` | every playing track's next window is ready by its boundary, even if the composer is blocked once for B_max and one grain is in flight |
-| C2: `(8 × W + 176 + 22) × g ≤ U_e × P` | sustained work does not accumulate |
+| C2: `(8 × W + 22 + 22) × g ≤ U_e × P` | sustained work does not accumulate (one overdub at a time) |
 | C3: `B_max ≤ P / 4` (400 ms at 300 BPM) | a single blocking task cannot eat a window's lead |
 
 At g = 810 µs:
-- spread: C1 needs `U_e ≥ 20 % + B_max / P`; C2 needs `U_e ≥ 29 %`;
+- spread: C1 needs `U_e ≥ 20 % + B_max / P`; C2 needs `U_e ≥ 21 %`;
 - clustered on all 8 tracks: C1 needs `U_e ≥ 41.5 % + B_max / P`, so at U_e = 50 % **B_max ≤ 136 ms** (tighter than
-  C3); C2 needs `U_e ≥ 50.5 %`, **0.5 points over the 50 % engine budget** when every track is also being overdubbed
-  on a 2-bar loop. The density term (176) is the plan's estimate, not a measurement; E6 measures it.
+  C3); C2 needs `U_e ≥ 42.7 %`, within the 50 % engine budget. The density term (22) is the plan's estimate, not a
+  measurement; E6 measures it.
 - The E5 feasibility gate (`test_feasibility_gate_clustered_eight_tracks`) simulates C1 for the clustered case at
   g = 810 µs and U_e = 50 % with the scheduler's shares: 0 missed deadlines.
 

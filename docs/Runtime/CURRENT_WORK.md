@@ -9,8 +9,8 @@ recording writer waits for CE-A1 acknowledgement; the playback consumer waits fo
 **2026-11-05 — fixed-memory engine progress (owner-authorized E3.3 and E5.2/E5.3, no further architecture revision).**
 E1–E3 and E5 (checkpoint ownership, job leases, worker scheduler, grain-sliced jobs, edit index in its reserved pages)
 are built and host-tested. OUT-2 (Q-OUT-2 — source-ordered refusal) is built. E5.8 device re-measurement: worst grain
-800 µs (g = 810 µs), feasibility gate met. E5.9: plan § 7 restated on the measured bounds (clustered C2 50.5 %
-pending the density measurement). Open: the remaining E0 / CE-C1 items in
+800 µs (g = 810 µs), feasibility gate met. E5.9: plan § 7 restated on the measured bounds (one overdub at a time;
+clustered C2 42.7 %). Open: the remaining E0 / CE-C1 items in
 `openspec/changes/fixed-memory-engine/tasks.md`.
 
 **2026-11-04 — DEC-250: the C3.4 wrap deadline is off the Clock.** The wrap hands its interval to a bounded obligation

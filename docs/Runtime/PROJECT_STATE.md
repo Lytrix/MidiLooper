@@ -1,8 +1,8 @@
 **2026-11-05 — Fixed-memory engine: E5.9 plan § 7 restated on measured bounds.**
 - g = 810 µs; a window is 47 grains spread / 100 clustered; index 58; cold start 190 grains with a checkpoint, 3,009
   without (OUT-2 warm-up); the checkpoint sweep is background, superseded by newer commits.
-- Spread: C1 U_e ≥ 20 % + B_max/P, C2 29 %. Clustered on all 8 tracks: C1 needs B_max ≤ 136 ms at U_e = 50 %, and C2 is
-  50.5 % (density term unmeasured). [Plan § 7](../Plans/2026-11-04-fixed-memory-convergence.md)
+- Owner: at most one track overdubs at a time. Spread: C1 U_e ≥ 20 % + B_max/P, C2 21 %. Clustered on all 8 tracks:
+  C1 needs B_max ≤ 136 ms at U_e = 50 %, C2 42.7 % (density term unmeasured). [Plan § 7](../Plans/2026-11-04-fixed-memory-convergence.md)
 
 **2026-11-05 — Fixed-memory engine: E5.8 device re-measurement; feasibility gate met.**
 - Device bench with OUT-2 and the onset-pitch mask (image `59c8a6f8…`): worst grain 800 µs (clustered compose), so
