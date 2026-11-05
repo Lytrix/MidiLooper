@@ -7,7 +7,8 @@
 // refused for history. Dropped states release their manifests, so their runs reach the reclaim queue. Overdub session
 // (DEC-038, E4.2): wraps are commits, undo on the session slot stops at the session start, and Stop folds the session
 // into one step. A random sequence (with sessions) is checked against an independent reference model written from
-// those rules.
+// those rules. NOTE_EDIT session (E4.3; owner: limit 99, shared): the same bound and fold, plus abandon; an overdub and a
+// NOTE_EDIT session can be open at once on different slots.
 
 #include <unity.h>
 
@@ -176,23 +177,23 @@ void test_session_undo_is_bounded_and_stop_makes_one_step() {
   setup();
   const ManifestId rec = take(0);
   gH.commit(0, rec);
-  TEST_ASSERT_TRUE(gH.beginSession(0));
-  TEST_ASSERT_FALSE(gH.beginSession(1));  // one writer
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Overdub, 0));
+  TEST_ASSERT_FALSE(gH.beginSession(SessionKind::Overdub, 1));  // one writer
   const ManifestId w1 = take(0), w2 = take(0), w3 = take(0);
   gH.commit(0, w1);
   gH.commit(0, w2);
   gH.commit(0, w3);
-  TEST_ASSERT_EQUAL_UINT8(3, gH.sessionDepth());
+  TEST_ASSERT_EQUAL_UINT8(3, gH.sessionDepth(SessionKind::Overdub));
   TEST_ASSERT_TRUE(gH.undo(0));
   TEST_ASSERT_TRUE(gH.undo(0));
   TEST_ASSERT_TRUE(gH.undo(0));
   TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
   TEST_ASSERT_FALSE(gH.undo(0));  // not below the session start
-  TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth());
+  TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth(SessionKind::Overdub));
   TEST_ASSERT_TRUE(gH.redo(0));
   TEST_ASSERT_TRUE(gH.redo(0));  // w2 current, w3 redo
-  gH.endSession();
-  TEST_ASSERT_FALSE(gH.inSession(0));
+  gH.endSession(SessionKind::Overdub);
+  TEST_ASSERT_FALSE(gH.inSession(SessionKind::Overdub));
   TEST_ASSERT_EQUAL_UINT16(w2, gH.current(0));
   TEST_ASSERT_FALSE(gManifests.manifest(w1).live);  // folded
   TEST_ASSERT_FALSE(gManifests.manifest(w3).live);  // session redo dropped
@@ -210,13 +211,13 @@ void test_session_fully_undone_leaves_no_step() {
   setup();
   const ManifestId rec = take(0);
   gH.commit(0, rec);
-  gH.beginSession(0);
+  gH.beginSession(SessionKind::Overdub, 0);
   const ManifestId w1 = take(0), w2 = take(0);
   gH.commit(0, w1);
   gH.commit(0, w2);
   gH.undo(0);
   gH.undo(0);
-  gH.endSession();
+  gH.endSession(SessionKind::Overdub);
   TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
   TEST_ASSERT_FALSE(gH.canRedo(0));
   TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());
@@ -231,18 +232,18 @@ void test_session_new_wrap_after_undo_and_other_slots() {
   const ManifestId o1 = take(1), o2 = take(1);
   gH.commit(1, o1);
   gH.commit(1, o2);
-  gH.beginSession(0);
+  gH.beginSession(SessionKind::Overdub, 0);
   const ManifestId w1 = take(0), w2 = take(0), w3 = take(0);
   gH.commit(0, w1);
   gH.commit(0, w2);
   gH.undo(0);
   gH.commit(0, w3);  // drops w2
   TEST_ASSERT_FALSE(gManifests.manifest(w2).live);
-  TEST_ASSERT_EQUAL_UINT8(2, gH.sessionDepth());
+  TEST_ASSERT_EQUAL_UINT8(2, gH.sessionDepth(SessionKind::Overdub));
   TEST_ASSERT_TRUE(gH.undo(1));  // slot 1 is not in the session
   TEST_ASSERT_TRUE(gH.undo(1));
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(1));
-  gH.endSession();
+  gH.endSession(SessionKind::Overdub);
   TEST_ASSERT_EQUAL_UINT16(w3, gH.current(0));
   TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));
   TEST_ASSERT_EQUAL_UINT8(2, gH.redoDepth(1));
@@ -253,7 +254,7 @@ void test_session_new_wrap_after_undo_and_other_slots() {
 void test_long_session_shares_the_99() {
   setup();
   gH.commit(0, take(0));
-  gH.beginSession(0);
+  gH.beginSession(SessionKind::Overdub, 0);
   ManifestId last = kNoManifest;
   for (uint32_t i = 0; i < 150; ++i) {
     drainReclaim();
@@ -261,16 +262,113 @@ void test_long_session_shares_the_99() {
     gH.commit(0, last);
     TEST_ASSERT_TRUE(gH.heldStates() <= 99);
   }
-  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth());
+  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth(SessionKind::Overdub));
   uint32_t undos = 0;
   while (gH.undo(0)) ++undos;
   TEST_ASSERT_EQUAL_UINT32(98, undos);  // the floor: the oldest kept wrap
   while (gH.redo(0)) {
   }
-  gH.endSession();
+  gH.endSession(SessionKind::Overdub);
   TEST_ASSERT_EQUAL_UINT16(last, gH.current(0));
   TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());
   TEST_ASSERT_FALSE(gH.canUndo(0));  // the pre-session state was forgotten during the session
+  drainReclaim();
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+// ---- E4.3 NOTE_EDIT session ---------------------------------------------------------------------------------------------
+
+// Edit actions are E: steps; leaving NOTE_EDIT folds them into one step; abandoning returns to the session start.
+void test_edit_session_fold_and_abandon() {
+  setup();
+  const ManifestId rec = take(0);
+  gH.commit(0, rec);
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Edit, 0));
+  const ManifestId e1 = take(0), e2 = take(0), e3 = take(0);
+  gH.commit(0, e1);
+  gH.commit(0, e2);
+  gH.commit(0, e3);
+  TEST_ASSERT_EQUAL_UINT8(3, gH.sessionDepth(SessionKind::Edit));
+  TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth(SessionKind::Overdub));
+  TEST_ASSERT_TRUE(gH.undo(0));
+  gH.endSession(SessionKind::Edit);
+  TEST_ASSERT_EQUAL_UINT16(e2, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));  // record, the edit session
+  TEST_ASSERT_FALSE(gManifests.manifest(e1).live);
+  TEST_ASSERT_FALSE(gManifests.manifest(e3).live);
+  // A second session, abandoned: back to e2, both edits released.
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Edit, 0));
+  const ManifestId f1 = take(0), f2 = take(0);
+  gH.commit(0, f1);
+  gH.commit(0, f2);
+  TEST_ASSERT_TRUE(gH.abandonSession(SessionKind::Edit));
+  TEST_ASSERT_FALSE(gH.inSession(SessionKind::Edit));
+  TEST_ASSERT_EQUAL_UINT16(e2, gH.current(0));
+  TEST_ASSERT_FALSE(gH.canRedo(0));
+  TEST_ASSERT_FALSE(gManifests.manifest(f1).live);
+  TEST_ASSERT_FALSE(gManifests.manifest(f2).live);
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+// One overdub and one NOTE_EDIT session at once, on different slots; never two sessions on one slot.
+void test_overdub_and_edit_sessions_together() {
+  setup();
+  gH.commit(0, take(0));
+  gH.commit(1, take(1));
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Overdub, 0));
+  TEST_ASSERT_FALSE(gH.beginSession(SessionKind::Edit, 0));  // same slot
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Edit, 1));
+  TEST_ASSERT_FALSE(gH.beginSession(SessionKind::Edit, 2));  // one NOTE_EDIT session
+  gH.commit(0, take(0));
+  gH.commit(1, take(1));
+  gH.commit(1, take(1));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.sessionDepth(SessionKind::Overdub));
+  TEST_ASSERT_EQUAL_UINT8(2, gH.sessionDepth(SessionKind::Edit));
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_FALSE(gH.undo(0));  // overdub start
+  TEST_ASSERT_TRUE(gH.undo(1));
+  TEST_ASSERT_TRUE(gH.undo(1));
+  TEST_ASSERT_FALSE(gH.undo(1));  // edit start
+  gH.endSession(SessionKind::Overdub);
+  gH.endSession(SessionKind::Edit);
+  TEST_ASSERT_EQUAL_UINT8(1, gH.undoDepth(0));  // both sessions fully undone: no step left
+  TEST_ASSERT_EQUAL_UINT8(1, gH.undoDepth(1));
+  TEST_ASSERT_EQUAL_UINT8(2, gH.heldStates());
+}
+
+// Redo from before a session is not a session step: unreachable while it is open, kept by an empty abandon.
+void test_session_leaves_earlier_redo_alone() {
+  setup();
+  const ManifestId a = take(0), b = take(0);
+  gH.commit(0, a);
+  gH.commit(0, b);
+  gH.undo(0);
+  TEST_ASSERT_TRUE(gH.beginSession(SessionKind::Edit, 0));
+  TEST_ASSERT_FALSE(gH.redo(0));
+  TEST_ASSERT_FALSE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth(SessionKind::Edit));
+  TEST_ASSERT_TRUE(gH.abandonSession(SessionKind::Edit));
+  TEST_ASSERT_EQUAL_UINT16(a, gH.current(0));
+  TEST_ASSERT_TRUE(gH.redo(0));
+  TEST_ASSERT_EQUAL_UINT16(b, gH.current(0));
+}
+
+// A NOTE_EDIT session reaches 99 steps (the shared limit); abandoning one that forgot its start keeps the floor.
+void test_edit_session_reaches_99_and_abandon_keeps_the_floor() {
+  setup();
+  const ManifestId rec = take(0);
+  const uint32_t recIdentity = gManifests.manifest(rec).identity;
+  gH.commit(0, rec);
+  gH.beginSession(SessionKind::Edit, 0);
+  for (uint32_t i = 0; i < 120; ++i) {
+    drainReclaim();
+    gH.commit(0, take(0));
+  }
+  TEST_ASSERT_EQUAL_UINT8(99, gH.sessionDepth(SessionKind::Edit));
+  TEST_ASSERT_TRUE(!gManifests.manifest(rec).live || gManifests.manifest(rec).identity != recIdentity);  // forgotten
+  TEST_ASSERT_FALSE(gH.abandonSession(SessionKind::Edit));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.heldStates());       // the floor: the oldest kept edit
+  TEST_ASSERT_FALSE(gH.canUndo(0));
   drainReclaim();
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
 }
@@ -290,8 +388,8 @@ struct Ref {
   uint32_t seq = 0;
   size_t depth;
   std::vector<ManifestId> released;
-  int sessionSlot = -1;
-  uint32_t baseSeq = 0;
+  int sessSlot[2] = {-1, -1};
+  uint32_t sessStart[2] = {0, 0};
   Ref(size_t s, size_t d) : slots(s), depth(d) {}
   size_t held() const {
     size_t n = 0;
@@ -330,29 +428,49 @@ struct Ref {
     slots[slot].states.push_back({m, ++seq});
     slots[slot].cur = static_cast<int>(slots[slot].states.size()) - 1;
   }
-  bool begin(size_t slot) {
-    if (sessionSlot >= 0) return false;
-    sessionSlot = static_cast<int>(slot);
-    const RefSlot& s = slots[slot];
-    baseSeq = s.cur < 0 ? 0 : s.states[static_cast<size_t>(s.cur)].seq;
+  bool begin(int kind, size_t slot) {
+    if (sessSlot[kind] >= 0 || sessSlot[1 - kind] == static_cast<int>(slot)) return false;
+    sessSlot[kind] = static_cast<int>(slot);
+    sessStart[kind] = seq;
     return true;
   }
-  void end() {
-    if (sessionSlot < 0) return;
-    RefSlot& s = slots[static_cast<size_t>(sessionSlot)];
-    sessionSlot = -1;
+  void end(int kind) {
+    if (sessSlot[kind] < 0) return;
+    RefSlot& s = slots[static_cast<size_t>(sessSlot[kind])];
+    sessSlot[kind] = -1;
     dropAbove(s);
-    if (s.cur < 0 || s.states[static_cast<size_t>(s.cur)].seq <= baseSeq) return;
-    while (s.cur > 0 && s.states[static_cast<size_t>(s.cur - 1)].seq > baseSeq) {  // fold the session into its current
+    if (s.cur < 0 || s.states[static_cast<size_t>(s.cur)].seq <= sessStart[kind]) return;
+    while (s.cur > 0 && s.states[static_cast<size_t>(s.cur - 1)].seq > sessStart[kind]) {  // fold into its current
       released.push_back(s.states[static_cast<size_t>(s.cur - 1)].m);
       s.states.erase(s.states.begin() + (s.cur - 1));
       --s.cur;
     }
   }
+  bool abandon(int kind) {
+    if (sessSlot[kind] < 0) return true;
+    RefSlot& s = slots[static_cast<size_t>(sessSlot[kind])];
+    sessSlot[kind] = -1;
+    bool removed = false;
+    while (!s.states.empty() && s.states.back().seq > sessStart[kind]) {
+      if (s.states.size() == 1 && !s.emptyBelow) break;  // keep the floor
+      released.push_back(s.states.back().m);
+      s.states.pop_back();
+      removed = true;
+    }
+    if (!removed) return s.cur < 0 || s.states[static_cast<size_t>(s.cur)].seq <= sessStart[kind];
+    s.cur = static_cast<int>(s.states.size()) - 1;
+    return s.cur < 0 || s.states.back().seq <= sessStart[kind];
+  }
+  bool bounded(size_t slot, int idx) const {  // state idx of slot is from before an open session on it
+    for (int k = 0; k < 2; ++k)
+      if (sessSlot[k] == static_cast<int>(slot) && idx >= 0 &&
+          slots[slot].states[static_cast<size_t>(idx)].seq <= sessStart[k])
+        return true;
+    return false;
+  }
   bool undo(size_t slot) {
     RefSlot& s = slots[slot];
-    if (sessionSlot == static_cast<int>(slot) && s.cur >= 0 && s.states[static_cast<size_t>(s.cur)].seq <= baseSeq)
-      return false;
+    if (bounded(slot, s.cur)) return false;
     if (s.cur > 0 || (s.cur == 0 && s.emptyBelow)) {
       --s.cur;
       return true;
@@ -361,7 +479,7 @@ struct Ref {
   }
   bool redo(size_t slot) {
     RefSlot& s = slots[slot];
-    if (s.cur + 1 < static_cast<int>(s.states.size())) {
+    if (s.cur + 1 < static_cast<int>(s.states.size()) && !bounded(slot, s.cur + 1)) {
       ++s.cur;
       return true;
     }
@@ -380,12 +498,16 @@ static void randomAgainstReference(H& h, uint8_t slots, uint8_t depth, uint32_t 
   for (uint32_t step = 0; step < steps; ++step) {
     x = x * 1103515245u + 12345u;
     const uint8_t slot = static_cast<uint8_t>((x >> 8) % slots);
-    const uint32_t op = (x >> 20) % 12;
+    const uint32_t op = (x >> 20) % 13;
+    const int kind = static_cast<int>((x >> 4) & 1);
+    const SessionKind k = kind == 0 ? SessionKind::Overdub : SessionKind::Edit;
     if (op == 10) {
-      TEST_ASSERT_EQUAL(ref.begin(slot), h.beginSession(slot));
+      TEST_ASSERT_EQUAL(ref.begin(kind, slot), h.beginSession(k, slot));
     } else if (op == 11) {
-      ref.end();
-      h.endSession();
+      ref.end(kind);
+      h.endSession(k);
+    } else if (op == 12) {
+      TEST_ASSERT_EQUAL(ref.abandon(kind), h.abandonSession(k));
     } else if (op < 4) {
       drainReclaim();
       const ManifestId m = take(slot);
@@ -397,11 +519,13 @@ static void randomAgainstReference(H& h, uint8_t slots, uint8_t depth, uint32_t 
       TEST_ASSERT_EQUAL(ref.redo(slot), h.redo(slot));
     }
     for (uint8_t k = 0; k < slots; ++k) TEST_ASSERT_EQUAL_UINT16(ref.current(k), h.current(k));
-    if (ref.sessionSlot >= 0) {
+    for (int kk = 0; kk < 2; ++kk) {
       size_t n = 0;
-      const RefSlot& ss = ref.slots[static_cast<size_t>(ref.sessionSlot)];
-      for (int i = ss.cur; i >= 0 && ss.states[static_cast<size_t>(i)].seq > ref.baseSeq; --i) ++n;
-      TEST_ASSERT_EQUAL_UINT8(n, h.sessionDepth());
+      if (ref.sessSlot[kk] >= 0) {
+        const RefSlot& ss = ref.slots[static_cast<size_t>(ref.sessSlot[kk])];
+        for (int i = ss.cur; i >= 0 && ss.states[static_cast<size_t>(i)].seq > ref.sessStart[kk]; --i) ++n;
+      }
+      TEST_ASSERT_EQUAL_UINT8(n, h.sessionDepth(kk == 0 ? SessionKind::Overdub : SessionKind::Edit));
     }
     TEST_ASSERT_EQUAL_UINT32(ref.held(), h.heldStates());
     for (const ManifestId m : ref.released) TEST_ASSERT_FALSE(gManifests.manifest(m).live);
@@ -453,6 +577,10 @@ int main(int, char**) {
   RUN_TEST(test_session_fully_undone_leaves_no_step);
   RUN_TEST(test_session_new_wrap_after_undo_and_other_slots);
   RUN_TEST(test_long_session_shares_the_99);
+  RUN_TEST(test_edit_session_fold_and_abandon);
+  RUN_TEST(test_overdub_and_edit_sessions_together);
+  RUN_TEST(test_session_leaves_earlier_redo_alone);
+  RUN_TEST(test_edit_session_reaches_99_and_abandon_keeps_the_floor);
   RUN_TEST(test_random_sequences_match_the_reference_model_small);
   RUN_TEST(test_random_sequences_match_the_reference_model_production);
   RUN_TEST(test_no_heap_after_init);

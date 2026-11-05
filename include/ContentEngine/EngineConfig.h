@@ -29,13 +29,13 @@ constexpr uint32_t kCommittedRowLimit = 131072;                        // today'
 constexpr uint32_t kContentRows = kCommittedRowLimit + kWriterCount * kWriterReserveRows + kEditReserveRows;
 
 // Descriptors (plan § 5.2): committed and history runs <= 512, per writer <= 3 (active + closing + next), one edit
-// run, one compaction output. Manifests: slot currents 64, history 99, NOTE_EDIT states 32, writer commits 3 each,
-// pinned after replacement 24 windows + 18 cursors + 6 tiles + 3 workers.
+// run, one compaction output. Manifests: history 99 (slot currents and overdub / NOTE_EDIT session steps are history
+// states), writer commits 3 each, pinned after replacement 24 windows + 18 cursors + 6 tiles + 3 workers.
 constexpr uint16_t kCommittedRunLimit = 512;
 constexpr uint16_t kRunCount = 520;
 static_assert(kCommittedRunLimit + kWriterCount * 3 + 1 + 1 <= kRunCount, "run descriptors cover W");
 constexpr uint16_t kManifestCount = 256;
-static_assert(64 + 99 + 32 + kWriterCount * 3 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
+static_assert(99 + kWriterCount * 3 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
 
 constexpr uint16_t kRowsPerPage = 64;  // 64 x 16 B = 1 KiB pages
 // Content quota (plan § 5.1): full pages for every row, a partial page per live run plus one hide partial per edit run

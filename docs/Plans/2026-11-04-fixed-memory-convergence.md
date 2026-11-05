@@ -236,7 +236,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
 | Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 32 open instances (beyond that, the checkpoint is marked unusable; § 7.2) |
 | Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
-| Undo history | ≤ 99 global entries; 32 per NOTE_EDIT session |
+| Undo history | ≤ 99 states shared by all slots, including overdub and NOTE_EDIT session steps (owner 2026-11-05; NOTE_EDIT session limit 99 [32]) |
 | Playing tracks | 8 (one slot each) |
 | Display | 1 focused slot + 1 successor in detail; density for all 64 slots |
 | MIDI outputs | DIN (Serial8, 31,250 baud), USB device, USB host |
@@ -334,15 +334,15 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | − `RollingSuccessorProbe::gCounters` | −4,920 |
 | + RunTable 520 × 128 B | +66,560 |
 | + ManifestTable 256 × 148 B (`RevisionManifest` with 64 run ids, measured 148 B) | +37,888 |
-| + History (99 shared states, per-slot chains and currents, overdub session; measured 1,584 B) | +1,584 |
+| + History (99 shared states, per-slot chains and currents, overdub and NOTE_EDIT sessions; measured 1,600 B) | +1,600 |
 | + SlotState 64 × 32 B | +2,048 |
 | + Writer 1 × 2,612 B (measured on ARM: open-note table 128 × 16 B, cursors, reservation counters, occupancy bits) | +2,612 |
 | + Edit writer selection 512 × 8 B | +4,096 |
 | + Headers: 24 windows, 18 cursors, 132 span tiles, 18 index slots | +4,352 |
 | + Output FIFOs 3 × 512 × 4 B | +6,144 |
 | + Scheduler job table | +1,024 |
-| **Statics after cutover** | **209,681** [225,581] |
-| Heap left for libraries (USB host, SD, Serial) | **314,607** [298,707] (today: 337,568 arena, 172 KB free after boot) |
+| **Statics after cutover** | **209,697** [225,581] |
+| Heap left for libraries (USB host, SD, Serial) | **314,591** [298,707] (today: 337,568 arena, 172 KB free after boot) |
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -371,7 +371,7 @@ attributes them. Before E1 (milestone E0, § 10):
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
 - the budget closes iff `non-content PSRAM ≤ 847,184 B` on capture builds (≤ 1,895,760 B shipping) and
-  `non-content RAM2 heap ≤ 314,607 B`.
+  `non-content RAM2 heap ≤ 314,591 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.
 
@@ -403,7 +403,7 @@ coexist by construction.
 | Table | Capacity | Holders, worst case at once |
 |---|---|---|
 | RunTable | 520 | committed and history runs ≤ 512; per writer ≤ 3 descriptors at once (active + closing + next-wrap reservation: a wrap turns the reservation into the active run, so a writer with 2 closing runs holds no separate reservation and its wrap is owed, § 8.4) → 1 × 3 = 3; edit run 1; compaction output 1 → **517 ≤ 520**. Committed runs are admitted against 512. |
-| ManifestTable | 256 | slot currents 64; history 99; NOTE_EDIT session states 32; writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **249 ≤ 256** |
+| ManifestTable | 256 | history 99 (slot currents, overdub and NOTE_EDIT session steps are history states); writer pending commits (2 closing + next) 1 × 3 = 3; manifests kept alive only by pins after replacement: windows 24, compose cursors 18, display tiles 6, workers 3 → **153 ≤ 256** |
 | History | 99 states | shared across all slots (owner 2026-11-05); a full table evicts the oldest step in the set, never refuses a commit (§ 8.5) |
 
 ### 5.3 Reference counting, reclamation, retention
@@ -765,7 +765,7 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
 - Audible at the first window boundary after the new source's window is ready: ≤ 105 grains with a usable checkpoint,
   ≤ 721 worst.
 - A commit after undo drops the redo branch to reclaim.
-- NOTE_EDIT session undo (32) selects among the session's manifests.
+- NOTE_EDIT session undo (E:, limit 99 shared — owner 2026-11-05 [32]) selects among the session's manifests.
 - **Owner decisions 2026-11-05 (E4, `ContentEngine::History`):** undo / redo act per slot; at most 99 states are held
   across the whole set; a commit drops its slot's redo branch and, when full, forgets the oldest step in the set (the
   oldest-committed state that is no slot's current — an undo state raises that slot's floor, a redo state takes its
@@ -773,6 +773,10 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
 - **Overdub session (DEC-038, E4.2):** each non-empty wrap is a step (O:); while overdubbing, undo on that slot stops
   at the session start; Stop drops the session's redo and folds its steps into one (none if every wrap was undone), so
   U: undoes the whole session. Session steps share the 99 and are forgotten like any oldest step.
+- **NOTE_EDIT session (E4.3):** each edit action is a step (E:), with the same bound and fold when NOTE_EDIT is left;
+  abandon returns the slot to its session-start state (or its floor, if the session outgrew the 99). One overdub and
+  one NOTE_EDIT session may be open at once, on different slots; redo from before a session is out of reach while it
+  is open and kept by an empty abandon.
 - Load rebuilds history from saved runs (DEC-088).
 
 ---
@@ -950,7 +954,7 @@ musical clauses they protected.
 
 | Gate | Pass condition |
 |---|---|
-| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 209,681 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
+| D1 Build | DTCM ≤ 96,224 B; ITCM padding ≥ 840 B; locals ≥ 34,848 B; RAM2 statics ≤ 209,697 B; PSRAM census equals § 4.1 per region; non-content within the § 4.4 allowance |
 | D2 Boot | `boot_reset,crash=0`, `BOOT,load,ok`; the card's slots import and play; no file written before the owner's save decision |
 | D3 Owner chain | parity with reviewed fixtures for the same stimulus |
 | D4 Intense | lane-cadence intense at 300 BPM to W: 0 allocation rows; PSRAM flat after boot; Stop complete inside acceptance + 1 grain; piano roll 0 blank frames and visible bars fresh within F_vis; `tick_playback_miss` = 0; spill and FIFO counters reported; measured g, U_isr, U_other, B_max satisfy C1–C3 |

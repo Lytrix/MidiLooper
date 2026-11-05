@@ -859,8 +859,7 @@ on 8 slots / depth 20 and 64 slots / depth 99 against an independent reference m
 released manifests, conservation); no heap. Mutations caught: evicting the newest, floor not raised, no redo drop on
 commit, a redo chain left with a hole, a dropped state not releasing its manifest.
 
-Not in this slice: NOTE_EDIT session undo (32), with the edit writer; history reconstruction on load (DEC-088), with
-persistence (E8).
+Not in this slice: history reconstruction on load (DEC-088), with persistence (E8).
 
 ### E4.2 — overdub session undo (DEC-038, as built)
 
@@ -879,3 +878,25 @@ Tests (`test_content_engine_history`, 11): bounded session undo and one step aft
 after undo with another slot undoing meanwhile; a 150-wrap session against the 99; the reference model now opens and
 ends sessions at random (session depth compared every step). Mutations caught: no session bound, Stop keeping the
 session's redo, no fold, a start off by one. 1,584 B.
+
+### E4.3 — NOTE_EDIT session undo (owner 2026-11-05: limit 99, shared; as built)
+
+The session layer now has two kinds, `SessionKind::Overdub` and `SessionKind::Edit`, each with at most one open
+session; both may be open at once on different slots (W: one writer + one NOTE_EDIT), never two on one slot.
+- **Start** is the commit counter at `beginSession` (not the current state's seq), so redo left on the slot from before
+  the session is not a session step, cannot be reached while the session is open, and survives an empty abandon.
+- **E: level** (`sessionDepth(Edit)`): each edit action is an ordinary commit; undo stops at the session start and redo
+  never steps into pre-session redo.
+- **Leave NOTE_EDIT** (`endSession(Edit)`): the same fold as Stop, one step (none if every edit was undone).
+- **Abandon** (`abandonSession(Edit)`): every session state goes and the slot returns to its session-start state;
+  false when the session outgrew the 99 and forgot that state, in which case the slot keeps its floor.
+- **Limit 99:** session steps share the 99 history states (the owner's limit), so no separate session reserve exists.
+  Manifest worst case drops from 249 to 153 of 256 (slot currents and session steps are history states).
+
+Not here: the edit writer itself (selection ≤ 512 notes, hide + replacement rows, seal in 18 grains) and restoring
+focus / selection per step, which belong to the edit writer and `EditManager` integration.
+
+Tests (`test_content_engine_history`, 15): edit fold and abandon; overdub + edit together; earlier redo left alone; an
+edit session reaching 99 with abandon keeping the floor; the reference model opens, ends and abandons both kinds at
+random. Mutations caught: abandon below the floor, abandon moving current without a session step, two sessions on one
+slot, redo into pre-session redo, the start taken from the current state's seq. 1,600 B.
