@@ -19,6 +19,7 @@
 #include "ContentEngine/ReclaimJob.h"
 #include "ContentEngine/EditWriter.h"
 #include "ContentEngine/History.h"
+#include "ContentEngine/OutputPort.h"
 #include "ContentEngine/SpanWindow.h"
 #include "ContentEngine/WorkerScheduler.h"
 
@@ -63,6 +64,10 @@ BENCH_RAM2 static Edits gEdits;
 BENCH_PSRAM static EditChange gEditLog[Config::kEditLogEntries];
 BENCH_PSRAM static EditNote gSel[Config::kEditSelection];
 BENCH_RAM2 static EditChange gChanges[Config::kEditSelection];  // an action is built in RAM by the UI
+using TickPlayer = WindowPlayer<Config::kMaxSoundingPerTrack>;
+BENCH_RAM2 static TerminalScheduler<Config::kMaxSoundingPerTrack> gTickSched;
+BENCH_RAM2 static TickPlayer gTickPlayer;
+BENCH_RAM2 static OutputHub<> gHub;
 
 constexpr uint32_t kLoop = 768 * 8, kWinTicks = 1536;
 constexpr uint8_t kPasses = 59;            // + 1 edit run = 60 committed runs
@@ -144,6 +149,102 @@ static void buildWorkload() {
 /// 64 ticks), each pass on 6 pitches of its own per cluster. `rotating`: the pitches move every cluster, so over the
 /// loop every pass starts notes on most pitches and the onset-pitch mask cannot skip it (adversarial worst case);
 /// otherwise each pass keeps its 6 pitches (the mask skips every pass without the NoteOn's pitch).
+enum class TickLoad : uint8_t { Spread, Clustered, CcBurst };
+
+/// The Clock tick path (E6.2, measure first): one track's windows for a whole loop, played tick by tick through the
+/// player, the terminal scheduler and the output hub (every emit queued on 3 ports; ports drained outside the timed
+/// region). Per tick: window rows processed, emits, time. Workloads: the spread window; 59 passes starting chords in
+/// the same 9 ticks (OUT-2 selects 16); and the admitted maximum of controller rows on one tick (59 x 47 CC rows).
+static void tickPath(TickLoad load, const char* name) {
+  if (load == TickLoad::Spread) {
+    buildWorkload();
+  } else {
+    gPool.init();
+    TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
+    gRuns.init();
+    gManifests.init();
+    RunId ids[kPasses];
+    uint32_t id = 1;
+    for (uint8_t p = 0; p < kPasses; ++p) {
+      const RunId r = gRuns.allocate(0, p == 0 ? RunKind::kRecord : RunKind::kOverdub);
+      if (load == TickLoad::Clustered) {
+        for (uint32_t c = 0; c < 8; ++c) {
+          for (uint32_t k = 0; k < 6; ++k)
+            gRuns.append(r, row(c * 64 + k + (p % 3), id + k, 0x90, static_cast<uint8_t>(30 + (p * 6 + k + c * 7) % 90)), gPool);
+          for (uint32_t k = 0; k < 6; ++k)
+            gRuns.append(r, row(c * 64 + k + (p % 3) + 40, id + k, 0x80, static_cast<uint8_t>(30 + (p * 6 + k + c * 7) % 90)), gPool);
+          id += 6;
+        }
+      } else {
+        for (uint32_t k = 0; k < kNotesPerPass; ++k) gRuns.append(r, row(100, id++, 0xB0, static_cast<uint8_t>(k)), gPool);
+      }
+      gRuns.seal(r);
+      ids[p] = r;
+    }
+    gManifest = gManifests.create(0, 1, kLoop, ids, kPasses, gRuns);
+  }
+  const auto& m = gManifests.manifest(gManifest);
+  SourceRun src[Manifests::kMaxRuns];
+  for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], gRuns.run(m.runs[i]).rowCount};
+  gComp.init(gPool, gRuns, &gIndex);
+  TEST_ASSERT_TRUE(gComp.begin(src, m.runCount, kLoop, m.identity));
+  gTickSched.init();
+  gTickPlayer.init(gTickSched);
+  gHub.init();
+  gHub.configure(0, kDinMessageMicros);
+  gHub.configure(1, kUsbMessageMicros);
+  gHub.configure(2, kUsbMessageMicros);
+  TickPlayer::Emit out[255];
+  OutputHub<>::Sent sent[32];
+  Stat tick;
+  uint32_t maxRows = 0, maxEmits = 0, rowsAtWorst = 0, totalRows = 0, lostEmits = 0;
+  uint64_t totalCycles = 0;
+  while (gComp.composeNext(gWin, kWinTicks)) {
+    uint16_t k = 0;
+    uint8_t n = gTickPlayer.beginWindow(gWin, out, 255);
+    for (uint32_t pos = gWin.start; pos < gWin.end; ++pos) {
+      const uint32_t t = gWin.cycleBase + pos;
+      uint32_t rows = 0;
+      while (k < gWin.count && gWin.entries[k].tick <= pos) {
+        ++rows;
+        ++k;
+      }
+      const uint32_t now = t * 1040;  // ~1.04 ms per tick at 300 BPM, 192 PPQN
+      const uint32_t c0 = cycles();
+      n = static_cast<uint8_t>(n + gTickPlayer.tick(t, out + n, static_cast<uint8_t>(255 - n)));
+      for (uint8_t i = 0; i < n; ++i)
+        for (uint8_t p = 0; p < 3; ++p) {
+          auto port = gHub.port(p);
+          if (out[i].cls == 1)
+            port.noteOn(now, static_cast<uint8_t>(0x90 | (out[i].channel - 1)), out[i].pitch, 100, out[i].noteId);
+          else if (out[i].cls == 0)
+            port.noteOff(now, out[i].noteId);
+          else
+            port.control(now, static_cast<uint8_t>(0xB0 | (out[i].channel - 1)), out[i].pitch, 0);
+        }
+      const uint32_t dt = cycles() - c0;
+      tick.add(dt);
+      totalCycles += dt;
+      totalRows += rows;
+      if (n == 255) ++lostEmits;  // the player's out buffer was full: emits beyond it are lost today
+      if (rows > maxRows) maxRows = rows;
+      if (n > maxEmits) maxEmits = n;
+      if (dt == tick.max) rowsAtWorst = rows;
+      for (uint8_t p = 0; p < 3; ++p) gHub.port(p).transmit(now, sent, 32);  // the port drivers (not timed)
+      n = 0;
+    }
+  }
+  gComp.end();
+  report(name, tick);
+  char line[200];
+  snprintf(line, sizeof(line), "GRAIN,%s_rows_max=%lu,emits_max=%lu,rows_at_worst=%lu,us_per_row=%.2f,full_buffers=%lu",
+           name, static_cast<unsigned long>(maxRows), static_cast<unsigned long>(maxEmits),
+           static_cast<unsigned long>(rowsAtWorst),
+           totalRows ? toMicros(static_cast<uint32_t>(totalCycles / totalRows)) : 0.0,
+           static_cast<unsigned long>(lostEmits));
+  TEST_MESSAGE(line);
+}
+
 /// Edit writer rebuild grains (E4.5), worst case: a 512-note selection, every note moved, then the session rebuilt
 /// (512 notes gathered with their hides, a 1,024-key heapsort, 1,024 replacement rows) at 128 units per grain; then an
 /// E: undo of that step.
@@ -407,6 +508,9 @@ void test_grain_durations() {
   clusteredWindow(true, "compose_128_rows_clustered_rotating");
   reclaimGrains();
   editGrains();
+  tickPath(TickLoad::Spread, "tick_spread");
+  tickPath(TickLoad::Clustered, "tick_clustered");
+  tickPath(TickLoad::CcBurst, "tick_cc_burst");
 }
 
 #if defined(__IMXRT1062__)

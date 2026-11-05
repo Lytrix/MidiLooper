@@ -986,3 +986,30 @@ be unreachable (freeing a stale complete window; resetting the steady target at 
 
 Not yet: the tick path (E_tick = 32 rows per tick, occupancy mask, port FIFOs), the scheduler wiring with boundary
 deadlines, loop-length changes on a source switch, and the device measurement of `tick` cost.
+
+## E6.2 — tick path, measured first (owner 2026-11-05: E_tick = 32 had no basis; measure)
+
+`E_tick = 32` came into plan revision 3 without a derivation. The owner's point: the rows due between two ticks are not
+bounded by the sounding notes — controller streams, several passes and generated NoteOffs all land there. Bench
+`tick_*` (image `0629864c…`): one track's windows for a whole loop played tick by tick through `WindowPlayer`, the
+terminal scheduler and `OutputHub` (each emit queued on 3 ports; port drains not timed). A tick is ~1.04 ms at 300 BPM,
+192 PPQN.
+
+| Workload | Most window rows in one tick | Emits | Worst tick |
+|---|---|---|---|
+| spread (2,773 NoteOns staggered) | 2 | 4 | 9.0 µs |
+| clustered (59 passes start chords within 9 ticks; OUT-2 selects 16) | 10 | 10 | 20.3 µs |
+| controller burst (admitted maximum: 2,773 CC rows on one tick) | 2,773 | 255 (buffer full) | 416.8 µs |
+
+- Each emitted message costs ~2 µs (three port enqueues); consuming a row the emit buffer can no longer hold costs
+  ~0.08 µs.
+- **Defect found:** `WindowPlayer::tick` consumes every due row but emits only as many as its out buffer holds; in the
+  burst 2,518 controller messages were lost. A NoteOn consumed this way would start in the terminal scheduler with no
+  emit. The tick must stop consuming when it cannot emit and leave the rest for the next tick (`tick_spill`) — this
+  is the mechanism E_tick bounds.
+- Note rows stay small (≤ 10 per tick here: OUT-2 bounds what a tick starts), but controller rows do not: the burst
+  needs ~2,773 × 2 µs ≈ 5.5 ms of enqueue, five ticks' time on one track.
+
+E_tick follows from the tick time the owner gives the playback path: per-track cap ≈ (budget per tick ÷ 8 tracks) ÷
+~2 µs per emit. For example 25 % of a tick (260 µs) gives ~16 emits per track per tick; a burst then spills over
+~170 ticks (≈ 0.2 s late), with NoteOffs first.
