@@ -234,7 +234,7 @@ a change to accepted content. The values are proposals for the owner (§ 12.3).
 | Source rows per slot per 2-bar window | ≤ 2,816 (admission); window buffer 3,072 rows |
 | Open notes per writer | ≤ 128 (`ActiveNoteLedger::kMaxOpenNotes`) |
 | Effective sounding notes per playing track | ≤ 128 (the same ledger capacity as today) |
-| Checkpoint entries per slot per 8-bar checkpoint | 64 (beyond that, the checkpoint is marked unusable; § 7.2) |
+| Checkpoint entries per slot per 8-bar checkpoint | 56 occluder pairs + 32 open instances (beyond that, the checkpoint is marked unusable; § 7.2) |
 | Controller closures per writer | ≤ 32 (tracked set fixed by E0) |
 | Undo history | ≤ 99 global entries; 32 per NOTE_EDIT session |
 | Playing tracks | 8 (one slot each) |
@@ -558,51 +558,67 @@ against the reference model.
 
 ## 7. Realtime scheduling envelope
 
+**Measured bounds (E5.9, 2026-11-05).** The figures below are the device measurements of E5 / E5.8
+(`teensy41-engine-bench`, production placement, image `4285a123…`;
+[design.md E5.8](../../openspec/changes/fixed-memory-engine/design.md)). They replace revision 3's estimates, which
+are kept in brackets where they changed.
+
 ### 7.1 Units of work
 
-- **Grain g:** the non-preemptible engine work unit (the Clock ISR still preempts): 128 source rows, or 256 index
-  entries, or 256 seal swaps, or 64 reclaimed pages, or one 16 KiB persistence step. Target ≤ 500 µs, from B.4b/B.5d
-  measurements (2,048-row compaction step ≤ 5.4 ms; 256 index entries 1.12 ms). E4 measures it per job type on the
-  device, and the worst measured value replaces 500 µs in every bound below.
-- **Window compose:** ≤ 2,816 source rows → ⌈2,816 / 128⌉ = 22 grains + 1 seek grain (≤ 63 runs × 8 segments ×
-  17 comparisons) = **23 grains**. Occlusion costs O(1) per row (run-mask test, counter update) and edit hides one index
-  probe (≤ 12 comparisons).
+- **Grain g = 810 µs** [500 µs]: the non-preemptible engine work unit (the Clock ISR still preempts). One grain is 128
+  row units of composition (8 look-ahead reads = 1 unit), 256 index units, one cursor seek, one checkpoint-resume half,
+  or one persistence / reclaim step. Worst measured: clustered compose 782–800 µs; every other job type ≤ 719 µs
+  (sweep 684, seek 689, resume bind 418 + seek 358, index 446, `begin` 420, capture 70, scheduler decision 4.8 µs).
+- **Window compose** (2 bars, ≤ 2,816 source NoteOns): composition merges NoteOffs and counts look-ahead reads, so a
+  window is **47 grains** when its rows are spread [23], and up to **100 grains** in the adversarial clustered case
+  (59 passes starting 6 notes each inside every 9-tick OVL-6 range, pitches rotating so the onset-pitch mask cannot
+  skip a pass). Steady composition carries state and needs no seek; a fresh `begin` is one grain.
+- **Edit index:** ≤ 4,096 hides → **58 grains** [16]: gather, heap, sort and collapse phases, 256 units each.
+- Test ceiling for open notes per track: 20 (owner 2026-11-05). The composer's open-instance table holds 48.
 
 ### 7.2 Cold start and checkpoints
 
-- Steady playback composes windows in sequence, carrying state (sounding notes, occluder counters) from window k into
-  k+1, so steady composition never replays.
+- Steady playback composes windows in sequence, carrying state (sounding notes, occluder counters, OUT-2 open
+  instances) from window k into k+1, so steady composition never replays.
 - A wrap commit needs no replay either. The next cycle's first windows are composed during the current cycle over
   (M + the writer's open-run prefix). Their rows were appended a full loop earlier, so the window composed before the
   commit already equals the window of the committed manifest. The exception is a loop no longer than one window, which
-  recomposes its single window (23 grains).
-- **Mid-loop cold starts** (undo, redo, edit commit, slot switch) begin from the nearest **checkpoint** at or before
-  the start position. Checkpoints sit every 8 bars. Each holds ≤ 64 entries: occluders active from later runs, and
-  effective sounding notes. The sweep worker writes them as a by-product.
-  - Replay with a usable checkpoint: ≤ 3 windows → ≤ 3 × 22 + 23 = **89 grains**.
-  - If a checkpoint overflowed 64 entries or is not yet built for that manifest, replay starts at the previous usable
-    one, at worst the loop start: ≤ 31 × 22 + 23 = **705 grains**.
-  - Both paths are the same algorithm with a bounded cost. This is not a fallback reader.
-- Edit index for a manifest with edit hides: ≤ 4,096 / 256 = 16 grains, before its first window.
+  recomposes its single window (≤ 47 / 100 grains).
+- **Mid-loop cold starts** (undo, redo, edit commit, slot switch) begin from the nearest usable **checkpoint** at or
+  before the start position. Checkpoints sit every 8 bars (8 per slot); each holds ≤ 56 occluder pairs and ≤ 32 open
+  instances. The checkpoint sweep writes them (below).
+  - With a usable checkpoint: 2 resume grains + ≤ 4 windows → **190 grains** spread, **402** clustered [89]. Measured
+    on device: 3 grains when the start position is the checkpoint itself.
+  - Without one (not yet swept, or overflowed): OUT-2 needs the carried-in set at the loop start, so the composer
+    warms up one whole cycle and then replays to the position: 1 + 64 windows (64-bar loop) → **3,009 grains** spread,
+    **6,401** clustered [705]. Same algorithm, bounded cost; not a fallback reader.
+  - Plus the edit index (58 grains) when the manifest has edit hides and its index is not resident.
+- **Checkpoint sweep** (per committed manifest; owner-approved E3.3): composes two loops, publishing only the steady
+  second-cycle checkpoints: ≤ 2 × 32 windows → **3,008 grains** spread (+ 58 index). It is background work under a
+  source lease; a newer commit cancels and supersedes it, so a slot overdubbed every cycle never completes a sweep and
+  its cold starts warm up instead. It is therefore not part of the sustained sum below.
 
 ### 7.3 Demand per window period (P = 1.6 s at 300 BPM), all 8 tracks
 
-| Class | Job | Grains per P, worst |
+| Class | Job | Grains per P, worst (spread / clustered) |
 |---|---|---|
-| Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 23 = **184** |
-| Hard | edit-run seal (one session) | ≤ ⌈512 × 9 / 256⌉ = 18 per edit commit |
-| Hard | one cold start (gesture), checkpoint usable / worst | 89 + 16 / 705 + 16 |
-| Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 |
-| Soft, bounded | density + checkpoints after any slot commit | ≤ 64 bars × 11 = 704 per committed slot, amortized: a slot commits at most once per loop length, so ≤ 11 grains per 0.8 s per writing slot → ≤ 8 × 11 × 2 = **176 per P** |
+| Hard (deadline: next window boundary) | steady compose, 8 tracks | 8 × 47 = **376** / 8 × 100 = **800** [184] |
+| Hard | edit-run seal (one session) | ≤ ⌈512 × 9 / 256⌉ = 18 per edit commit (not yet measured) |
+| Hard | one cold start (gesture), checkpoint usable / worst | 190 + 58 / 3,009 + 58 (clustered 402 + 58 / 6,401 + 58) |
+| Soft, bounded | display: focused slot, visible-first after its commit | 24 bars × ⌈1,408/128⌉ = 264, then 40 bars × 11 = 440 (not yet measured) |
+| Soft, bounded | density after any slot commit | ≤ 11 grains per bar per writing slot → ≤ 8 × 11 × 2 = **176 per P** (not yet measured) |
+| Background | checkpoint sweep | 3,008 + 58 per committed manifest, superseded by the next commit |
 | Soft | persistence save | ≤ 4 MiB / 16 KiB = 256 per save (autosave every 300 s) |
 | Soft | reclaim, compaction | ≤ released pages / 64; range size / 256 |
 
-Sustained worst (8 writers on 2-bar loops, focused slot committing every P): 184 + 176 + 22 ≈ **382 grains per P ≈
-191 ms per 1.6 s = 12 % CPU** at 500 µs grains.
+Sustained worst (8 writers on 2-bar loops, focused slot committing every P; 22 = the focused slot's 2 visible bars):
+- spread: 376 + 176 + 22 = **574 grains per P = 465 ms per 1.6 s = 29 % CPU** [12 %];
+- clustered on all 8 tracks: 800 + 176 + 22 = **998 grains per P = 808 ms = 50.5 % CPU**.
 
-Burst (scene switch of 8 tracks with usable checkpoints): 8 × (89 + 16) = 840 extra grains = 420 ms. Without usable
-checkpoints: 8 × 721 = 5,768 grains = 2.9 s of CPU, spread over the following periods. The switching tracks keep playing
-their previous source until the new windows are complete, so nothing goes silent.
+Burst (scene switch of 8 tracks with usable checkpoints): 8 × (190 + 58) = 1,984 grains = 1.6 s of CPU [420 ms].
+Without usable checkpoints: 8 × 3,067 = 24,536 grains = 19.9 s [2.9 s], spread over the following periods (clustered:
+42 s). The switching tracks keep playing their previous source until the new windows are complete, so nothing goes
+silent; the cost is switch latency.
 
 ### 7.4 Feasibility condition (no assumed loop-turn interval)
 
@@ -614,23 +630,29 @@ must satisfy:
   display draw (banded, § 9.3), DMA setup, USB host, SD, telemetry flush.
 - **B_max:** the longest single non-engine block in the main loop.
 
-The engine gets `U_e = 1 − U_isr − U_other`.
+The engine gets `U_e = 1 − U_isr − U_other`. With W = grains per window per track (47 spread, 100 clustered):
 
 | Condition | Meaning |
 |---|---|
-| C1: `184 × g + 18 × g ≤ U_e × P − B_max − g` | every playing track's next window is ready by its boundary, even if the composer is blocked once for B_max and one grain is in flight |
-| C2: `(184 + 176 + 22) × g ≤ U_e × P` | sustained work does not accumulate |
+| C1: `(8 × W + 18) × g ≤ U_e × P − B_max − g` | every playing track's next window is ready by its boundary, even if the composer is blocked once for B_max and one grain is in flight |
+| C2: `(8 × W + 176 + 22) × g ≤ U_e × P` | sustained work does not accumulate |
 | C3: `B_max ≤ P / 4` (400 ms at 300 BPM) | a single blocking task cannot eat a window's lead |
 
-With g = 500 µs, C1 needs `U_e ≥ 6.3 % + B_max / P`, and C2 needs `U_e ≥ 12 %`.
+At g = 810 µs:
+- spread: C1 needs `U_e ≥ 20 % + B_max / P`; C2 needs `U_e ≥ 29 %`;
+- clustered on all 8 tracks: C1 needs `U_e ≥ 41.5 % + B_max / P`, so at U_e = 50 % **B_max ≤ 136 ms** (tighter than
+  C3); C2 needs `U_e ≥ 50.5 %`, **0.5 points over the 50 % engine budget** when every track is also being overdubbed
+  on a 2-bar loop. The density term (176) is the plan's estimate, not a measurement; E6 measures it.
+- The E5 feasibility gate (`test_feasibility_gate_clustered_eight_tracks`) simulates C1 for the clustered case at
+  g = 810 µs and U_e = 50 % with the scheduler's shares: 0 missed deadlines.
 
 Today's evidence shows the blocking terms are the risk, not compute:
 - `disp_frame_slow` measured a 6.4 ms draw and 20 ms resolve. Resolve disappears with tiles, but draw must be banded:
   ≤ 8 bands of ≤ 1 ms each.
 - SD write latency on a busy card is unmeasured.
 
-E7 and E9 must measure SD worst-case latency. If it breaks C3, persistence moves to a non-blocking (DMA / multi-turn)
-write path; it does not get an exception.
+E7 and E9 must measure SD worst-case latency. If it breaks C3 (or 136 ms for the clustered case), persistence moves to
+a non-blocking (DMA / multi-turn) write path; it does not get an exception.
 
 ### 7.5 Scheduler
 
@@ -639,12 +661,12 @@ write path; it does not get an exception.
 - **Display share:** while display work is pending, at least every fourth grain goes to display, unless the slack check
   above fails.
 - **Persistence share:** at least 1 in 16.
-- **Reclaim and compaction:** take the rest.
+- **Background (checkpoint sweeps, reclaim, compaction):** take the rest.
 - **Display freshness bound:** with grain rate `r = U_e / g`:
   - visible bars of the focused slot reflect a new manifest within `F_vis = 264 / (r / 4)`;
   - the whole slot reflects it within `704 / (r / 4)`.
-  - At U_e = 50 %, r = 1,000 grains/s: **F_vis ≤ 1.06 s**, whole slot ≤ 2.8 s.
-  - Non-focused density: ≤ 2.8 s per committed slot, queued; worst 8 pending → ≤ 22.5 s for the last.
+  - At U_e = 50 %, r = 617 grains/s: **F_vis ≤ 1.71 s** [1.06 s], whole slot ≤ 4.6 s [2.8 s].
+  - Non-focused density: ≤ 4.6 s per committed slot, queued; worst 8 pending → ≤ 36.5 s for the last [22.5 s].
   - Until then the previous tiles show, so the roll never blanks.
 - **Progress:** every job has a declared worst-case grain count (above). It either completes within it or ends named
   (`CapacityDenied`, `Superseded`). The scheduler reports any job exceeding its count.
@@ -712,7 +734,7 @@ acceptance, and all later Record work is derived and stamped. Overdub therefore 
 **Playback across the handoff:**
 - For a take longer than one window, window 0 of M_A was composed during recording over the open R0 prefix, so it is
   ready at Stop.
-- A take of one window or less composes it at Stop: 23 grains.
+- A take of one window or less composes it at Stop: ≤ 47 grains (100 clustered; § 7.1).
 
 ### 8.4 Overdub, wrap and Stop
 
