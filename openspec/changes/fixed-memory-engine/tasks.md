@@ -36,7 +36,7 @@ revision 3 is the baseline; no whole-plan revisions.
       random interleaving; mutation check.
 - [x] E1.3 Allocation witness (0 after init) and the heap gate script.
 - [x] E1.4 Production-capacity init over poisoned memory; budget `static_assert`s; measured region sizes.
-- [ ] E1.5 History ring and `SlotTable` (moved to E4 with undo/redo semantics).
+- [x] E1.5 History and slot currents: built as E4.1.
 - [x] E1.6 `PassEvent` owned by `ContentEngine` (`include/ContentEngine/PassEvent.h`); the prototype store aliases it.
 - [ ] E1.7 Device placement: EXTMEM pool and DMAMEM tables, with census rows (lands with integration, E9).
 
@@ -75,6 +75,13 @@ revision 3 is the baseline; no whole-plan revisions.
 - [ ] E5.10b Track admission refuses a second concurrent Record / overdub by name (with the writer integration).
 - [x] E5.11 Reclaim worker: release-order queue in `RunTable`, unit-bounded `reclaim`, `ReclaimJob` background job of 64 units per grain (`test_content_engine_reclaim` 5, mutation-checked; device grain 29 µs).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
+
+## E4 — history and edits
+
+- [x] E4.1 `History`: per-slot undo / redo, 99 states shared, commit drops redo, full table forgets the oldest step (owner decisions 2026-11-05); reference-model fuzz (`test_content_engine_history` 7, mutation-checked).
+- [ ] E4.2 Overdub session undo while OVERDUBBING (DEC-038) with the writer integration.
+- [ ] E4.3 NOTE_EDIT selection and session undo (32) with the edit writer.
+- [ ] E4.4 History reconstruction on load (DEC-088), with persistence (E8).
 
 ## CE-C1 — output
 

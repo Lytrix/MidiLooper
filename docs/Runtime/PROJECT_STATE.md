@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E4.1 history (owner decisions: per-slot undo, 99 shared, oldest step forgotten).**
+- `ContentEngine::History`: O(1) undo / redo per slot; a commit drops its slot's redo and, when 99 states are held,
+  forgets the oldest step in the set; recording is never refused. Dropped states release manifests into reclaim.
+- Checked against an independent reference model (2 × 60,000 random steps); 5 mutations caught. 1,576 B RAM2.
+
 **2026-11-05 — Fixed-memory engine: reclaim worker (E5.11).**
 - Released runs queue in release order and return to the pool through a background job, 64 units per grain (device
   worst 29 µs); it never overruns its declared grains. Pins and shared runs hold reclamation. Full native passed.

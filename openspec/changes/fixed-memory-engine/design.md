@@ -28,7 +28,7 @@ whole-plan revisions (owner, 2026-11-04).
   the pool (each directory page holds 512 page ids). Refcounts, free list, page reclamation in bounded grains.
 - `ContentEngine::ManifestTable<Manifests, MaxRuns>`: global manifests with monotonic identity, refcounts, and reader
   pins as a subset of refs. Releasing the last ref releases each run once.
-- `HistoryRing` and `SlotTable`: not built yet; they land with undo/redo semantics (E4).
+- `History` (undo states and slot currents): built in E4, see "E4 — history" below.
 - `ContentEngine::RowReservations`: the CE-A1 ledger.
 - Every table has an explicit `init()`. RAM2 and EXTMEM are not zeroed at reset, and the core tests run `init()` over
   poisoned storage.
@@ -839,3 +839,25 @@ Device grain (image `3fb399d1…`): 64 units worst 29 µs, average 14 µs (60 re
 Tests: `test_content_engine_reclaim` (5): order and unit budget, pins and shared runs, scheduler job beside display
 with a mid-job release, 20,000 random allocate/release/reclaim steps with conservation, no heap. Mutations caught:
 budget + 1, LIFO queue, descriptor not counted, job running past its declared grains.
+
+## E4 — history: per-slot undo, shared depth, oldest step forgotten (owner decisions 2026-11-05, as built)
+
+`ContentEngine::History` owns the undo states and slot currents.
+- **Per slot.** A slot's history is a chain of committed states (one manifest reference each) and a current pointer;
+  undo / redo move the pointer in O(1) and act on that slot only. Below the first state lies the empty slot.
+- **Shared depth 99.** At most 99 states are held across all slots (`Config::kHistoryDepth`).
+- **Commit.** Drops the slot's redo branch, then, when full, forgets the oldest step in the set: the oldest-committed
+  state that is no slot's current. An undo state raises its slot's floor (the empty slot is no longer reachable); a
+  redo state takes its slot's whole redo branch (a redo chain has no holes). A commit is never refused for history.
+  Since 99 > 64 slots, a full table always holds such a state.
+- **Memory.** Each dropped state releases its manifest; runs no longer listed reach the reclaim queue (E5.11). The
+  object is 1,576 B (RAM2), replacing the planned 512 × 8 B ring.
+
+Tests (`test_content_engine_history`, 7): undo to the empty slot and redo; redo drop on commit with manifest release;
+slot independence; the 100th state forgets the oldest; cross-slot eviction of a redo branch; 60,000 random steps each
+on 8 slots / depth 20 and 64 slots / depth 99 against an independent reference model (currents, depths, held count,
+released manifests, conservation); no heap. Mutations caught: evicting the newest, floor not raised, no redo drop on
+commit, a redo chain left with a hole, a dropped state not releasing its manifest.
+
+Not in this slice: overdub session undo while OVERDUBBING (DEC-038) and NOTE_EDIT session undo (32) — they land with
+the writer and edit-writer integration; history reconstruction on load (DEC-088) lands with persistence (E8).

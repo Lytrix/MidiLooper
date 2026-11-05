@@ -49,7 +49,7 @@ constexpr uint16_t kPageCount = kContentQuotaPages + kCompactionReservePages + k
 static_assert(kContentQuotaPages == 3222 && kPageCount == 4054, "plan § 5.1 figures (one writer)");
 
 constexpr uint8_t kRunsPerManifest = 63;  // 60 committed + 3 writer runs; fits the 6-bit merge key
-constexpr uint16_t kHistoryCapacity = 512;
+constexpr uint8_t kHistoryDepth = 99;  // undo states held across all slots (owner 2026-11-05: shared, oldest evicted)
 constexpr uint8_t kSlotCount = 64;
 constexpr uint8_t kInlinePagesPerRun = 16;
 
