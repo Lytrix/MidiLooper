@@ -57,6 +57,8 @@ class PlaybackTrack {
             Player& player, uint32_t windowTicks) {
     comp_[0] = &a;
     comp_[1] = &b;
+    cold_[0] = Cold{};  // RAM2 is not zeroed at reset: a poisoned lease would be "closed" by the first start
+    cold_[1] = Cold{};
     for (uint8_t i = 0; i < 3; ++i) buf_[i] = Buffer{buffers[i], State::Free, 0, 0};
     table_ = &table;
     manifests_ = &manifests;
@@ -110,20 +112,21 @@ class PlaybackTrack {
   }
 
   /// E9.1b, a Record take: window 0 of the take's cycle 1, composed ahead while recording from a provisional source
-  /// (the take's prefix, under a loop longer than any of its rows). Only on a track that plays nothing; the track keeps
-  /// no loop grid until `handoff`.
+  /// (the take's prefix, under a loop longer than any of its rows). A single pass carries nothing across its loop end
+  /// that is known before Stop, so the provisional source's window 0 of cycle 0 is that window, composed without the
+  /// cold start's warm-up (which would replay the whole provisional loop first). Only on a track that plays nothing; the
+  /// track keeps no loop grid until `handoff`.
   void prepare(uint8_t slot, ManifestId provisional) {
     if (steady_ != kNone || playing_ != kNone) return;
     cancelTransition();
-    const auto& m = manifests_->manifest(provisional);
     trans_ = freeBuffer();
     buf_[trans_].state = State::Filling;
     transComp_ = 0;
     transActive_ = true;
-    transTarget_ = m.loopLengthTicks;  // cycle 1, position 0
+    transTarget_ = 0;  // cycle 0, position 0 (moved to the Stop tick by `handoff`)
     transComposing_ = false;
     prepared_ = true;
-    if (cold_[0].start(*comp_[0], *table_, *manifests_, *runs_, slot, provisional, 0, 1, window_) ==
+    if (cold_[0].start(*comp_[0], *table_, *manifests_, *runs_, slot, provisional, 0, 0, window_, false) ==
         Cold::Status::Refused) {
       ++stats_.refusedStarts;
       cancelTransition();

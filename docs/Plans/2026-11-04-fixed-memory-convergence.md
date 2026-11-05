@@ -310,19 +310,22 @@ growing container.
 
 | Region | Bytes | Sizing |
 |---|---|---|
-| Page pool data | 4,176,896 | 4,079 pages [4,096] × 1,024 B (64 rows × 16 B); split in § 5.1 |
-| Page free stack | 8,158 | 4,079 × 2 B |
-| Playback windows | 1,179,648 | 8 tracks × 3 windows × 3,072 rows × 16 B |
-| Compose carry state | 221,184 | 18 cursors × 12 KiB: 16 playback (2 per track: steady + transition) + 2 display. Each holds 128 sounding entries × 12 B, 128 pitch × 64 run occluder counters, 128 run masks |
+| Page pool | 4,193,216 | 4,079 pages [4,096] × 1,024 B (64 rows × 16 B; split in § 5.1) + free stack 4,079 × 2 B + owner tags 4,079 × 2 B (measured, E9.2) |
+| Playback windows | 1,183,392 | 8 tracks × 3 windows × (3,072 rows × 16 B + header), measured |
+| Compose carry state | 221,184 | 18 cursors × ≤ 12 KiB: 16 playback (2 per track: steady + transition), the checkpoint sweep's, the tile sweep's (E9.6) |
+| Sweep scratch windows | 98,616 | 2 × 49,308 B: the checkpoint sweep's and the tile sweep's (owner 2026-11-05, E9.2: budgeted, sweeps independent) |
 | Checkpoint sets (E6.2d) | 417,284 | 64 slots × 2 sets × 8 checkpoints × 404 B (56 occluder pairs, 20 open instances), measured |
-| Display span tiles | 337,920 | (2 slots × 64 bars + 4 spares) × 2,560 B |
-| Display density tiles | 262,400 | 64 slots × 64 bars × 64 B + 4 spares |
-| Live overlay raster | 8,192 | 256 × 64 px × 4 bit |
-| Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B |
+| Display tiles | 602,416 | span (2 slots × 64 bars + 4 spares) × 2,560 B + density 64 slots × 64 bars × 64 B + 4 spares + headers, measured |
+| Live overlay raster | 9,744 | 256 × 64 px × 4 bit + state, measured |
+| Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B (E9.7) |
 | Edit writer E: log (E4.5) | 20,480 | 1,024 recorded changes × 20 B (touched only by an action's changed notes) |
-| **Engine total** | **6,682,338** [6,524,160] | |
+| **Engine total** | **6,796,508** [6,682,338 before E9.2] | `EngineRoot.h` `kPsramBudget`; placed so far 6,682,968 on the Teensy (`#CAP,MEM_REGION`) |
 | Session capture ring (capture builds only) | 1,048,576 | existing |
-| **Allowance left for non-content PSRAM users** | **645,914** (capture build) / **1,694,490** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+| **Allowance left for non-content PSRAM users** | **531,744** (capture build) / **1,580,320** (shipping) | must cover the E0-measured non-content census (§ 4.4) |
+
+E9.2 restatement (owner 2026-11-05): the checkpoint and tile sweeps each need a scratch window, which § 4.1 did not
+budget (+98,616 B); the census also measured the pool's owner tags, window and tile headers and the overlay state
+(+15,554 B). Together +114,170 B, taken from the non-content allowance.
 
 Revision 2 → 3: windows shrink from 4,096 to 3,072 rows (source admission 2,816 + 256 generated NoteOffs). Checkpoint
 tables and compose carry state are new. Pages are 4,096 for the joint workload (§ 5.1).
@@ -345,6 +348,11 @@ tables and compose carry state are new. Pages are 4,096 for the joint workload (
 | + Edit writer (E4.5): selection 512 × 16 B as admitted and as edited, 1,024 sort keys, 99 steps (measured 20,984 B) | +20,984 |
 | **Statics after cutover** | **226,593** [225,581] |
 | Heap left for libraries (USB host, SD, Serial) | **297,695** [298,707] (today: 337,568 arena, 172 KB free after boot) |
+
+E9.2 measurement on the Teensy: the engine's RAM2 regions (`EngineRam2`: tables, writer, edit writer, 8 playback
+tracks with their terminal schedulers, scheduler and jobs, transport, output hub) are 143,360 B (`kRam2Budget`) against
+the 143,220 B of additions above (+140 B: the playback tracks and transport, which the list did not itemise, net of a
+smaller run table). The D1 gate (statics after cutover) is checked when the legacy owners go (E9.8).
 
 **Initialization:** Teensy `startup.c` zeroes only DTCM `.bss`; `.bss.dma` (RAM2) and `.bss.extram` are **not**
 cleared. C++ constructors still run, but plain arrays keep garbage (DEC-183 records the same trap). Every engine table
@@ -372,7 +380,7 @@ attributes them. Before E1 (milestone E0, § 10):
 - one heap-owner attribution run of the current image at boot (no stimulus), classifying every live PSRAM and RAM2
   block by allocating caller into *content* (retired by this plan) and *non-content* (stays: SD library, USB host,
   storage buffers, telemetry);
-- the budget closes iff `non-content PSRAM ≤ 645,914 B` on capture builds (≤ 1,694,490 B shipping) and
+- the budget closes iff `non-content PSRAM ≤ 531,744 B` on capture builds (≤ 1,580,320 B shipping; restated by E9.2) and
   `non-content RAM2 heap ≤ 297,695 B`.
 
 If it does not close, these levers apply, in order. Each is a W change for the owner, not a hidden borrow.

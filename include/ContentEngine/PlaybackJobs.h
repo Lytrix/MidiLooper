@@ -25,6 +25,7 @@ class PlaybackJobs {
   static constexpr uint32_t kRowsPerGrain = 128;
   static constexpr uint32_t kSteadyGrains = 100;       // measured worst window (clustered, E5.8)
   static constexpr uint32_t kTransitionGrains = 3200;  // warm-up cycle + replay + window, plan § 7.2 (spread)
+  static constexpr uint32_t kMaxLeadTicks = 1u << 16;  // a deadline at most ~68 s ahead at 300 BPM
 
   struct Stats {
     uint32_t submitted;
@@ -34,34 +35,49 @@ class PlaybackJobs {
   void init(Track* const* tracks, Scheduler& scheduler) {
     scheduler_ = &scheduler;
     for (uint8_t i = 0; i < Tracks; ++i) {
-      steady_[i] = Job{tracks[i], true, false};
-      transition_[i] = Job{tracks[i], false, false};
+      steady_[i] = Job{tracks[i], true, false, 0};
+      transition_[i] = Job{tracks[i], false, false, 0};
     }
     stats_ = Stats{};
   }
 
   /// Submits the jobs the tracks need at Clock tick `nowTick` (timeline) = `nowUs`, at `usPerTick`.
   void service(uint32_t nowTick, uint32_t nowUs, uint32_t usPerTick) {
+    uint32_t now[Tracks];
+    for (auto& n : now) n = nowTick;
+    service(now, nowUs, usPerTick);
+  }
+  /// The same with each track's own timeline tick (tracks keep their own loop origin, E9.1).
+  void service(const uint32_t* trackTicks, uint32_t nowUs, uint32_t usPerTick) {
     for (uint8_t i = 0; i < Tracks; ++i) {
+      const uint32_t nowTick = trackTicks[i];
       Job& s = steady_[i];
       if (!s.live && s.track->steadyPending()) {
         const uint32_t boundary = s.track->boundaryAfter(nowTick);
+        s.target = boundary;
         submit(s, JobSpec{JobClass::Hard, nowUs + (boundary - nowTick) * usPerTick, kSteadyGrains, &step, &s});
       }
       Job& t = transition_[i];
-      if (!t.live && t.track->transitionWorkPending())
-        submit(t, JobSpec{JobClass::Transition,
-                          nowUs + (t.track->transitionTarget() - nowTick) * usPerTick, kTransitionGrains, &step, &t});
+      if (!t.live && t.track->transitionWorkPending()) {
+        // A prepared Record window aims at a provisional boundary far ahead (E9.1b): bound the lead so the deadline
+        // stays representable.
+        const uint32_t lead = t.track->transitionTarget() - nowTick;
+        submit(t, JobSpec{JobClass::Transition, nowUs + (lead < kMaxLeadTicks ? lead : kMaxLeadTicks) * usPerTick,
+                          kTransitionGrains, &step, &t});
+      }
     }
   }
 
   const Stats& stats() const { return stats_; }
+  /// The track-timeline boundary track `t`'s live steady job must finish by (0: none live).
+  uint32_t steadyTarget(uint8_t t) const { return steady_[t].live ? steady_[t].target : 0; }
 
  private:
   struct Job {
     Track* track;
     bool steady;
     bool live;
+    uint32_t target;  // steady: its boundary on the track's timeline
   };
 
   void submit(Job& j, const JobSpec& spec) {

@@ -1379,3 +1379,47 @@ stopped, every live manifest is a history state (provisional sources and the pre
 Mutations caught (28, E9.1 and E9.1b together): the 15 of E9.1 plus no provisional source, wrap before playback, no
 Record prepare, no handoff, provisional / prepared references kept, Record prefix one tick short, lead too short,
 gesture target, no cycle-base move, no follow-on selection, stale provisional cursor kept, fallback target.
+
+## E9.2 — the engine root at production capacity (owner decision 2026-11-05: two sweep scratch windows; as built)
+
+`include/ContentEngine/EngineRoot.h`:
+- **Regions:** `EnginePsram` (EXTMEM: page pool, 24 playback windows, 17 compose cursors, the checkpoint sweep's
+  scratch window, checkpoint sets, tiles, overlay, E: log) and `EngineRam2` (DMAMEM: run and manifest tables, history,
+  ledger, writer, edit index, edit writer, 8 terminal schedulers, players and playback tracks, scheduler, playback
+  jobs, reclaim, the checkpoint sweep, transport, output hub). The integration defines one of each.
+- **`init(psram, ram2, blockUs)`:** every component in the E5.3 order (pool, tables, edit-index partition, ledger with
+  the compaction reserve, history, ids, writer, edit writer, checkpoints, tiles, overlay, hub, per track composers /
+  terminals / player / track, sweep cursor, scheduler g = 810 µs, jobs, reclaim, sweep, transport). Neither region is
+  zeroed at reset; the test poisons both with 0xA5 first (gate H2b). Teensy: 1.9 ms.
+- **Main loop:** `submitJobs(clock, nowUs, usPerTick)` once per pass — playback steady / transition jobs per track on
+  its own timeline (`PlaybackJobs::service` with per-track ticks: tracks keep their own origin since E9.1), the reclaim
+  job, and one checkpoint sweep — then `runGrain(nowUs)` while the pass has time.
+- **Checkpoint sweeps:** background, one at a time, round robin over the tracks: the playing slot's history current,
+  once, when the table holds no set for its identity and every run it lists has sealed. A provisional source (E9.1b) is
+  never a history current, and a state waiting for its completion (E9.1) is skipped, so no set is ever built for an
+  identity whose rows may still grow.
+- **Census:** `census(out)` gives every member's bytes; the device prints `#CAP,MEM_REGION,<region>,<name>,<bytes>`.
+- **Budgets (owner 2026-11-05):** the checkpoint and tile sweeps each need a scratch window (49,308 B) that plan § 4.1
+  did not list; both are budgeted so the sweeps stay independent. With the measured corrections (owner tags, window
+  and tile headers, overlay state) PSRAM is 6,796,508 B (`kPsramBudget`, +114,170 B; the non-content allowance drops to
+  531,744 B on capture builds, 1,580,320 B shipping). RAM2 measured 143,360 B (`kRam2Budget`, ARM-only
+  `static_assert`). Placed now on the Teensy: PSRAM 6,682,968 B (the tile sweep's window and cursor and the worker
+  scratch come with E9.6 / E9.7).
+
+**Defects found:**
+- `PlaybackTrack::init` did not reset its two cold-start cursors; over poisoned RAM2 their first `start()` closed a
+  garbage source lease (host crash at a 0xA5A5… address). `init` now resets them.
+- The Record prepare (E9.1b) aimed at cycle 1 of the 2^30-tick provisional loop, so the cold start first warmed up
+  the whole cycle 0 — unnoticed with unlimited host grains, never finishing under the scheduler. A single-pass prefix
+  carries nothing across its loop end before Stop, so the prepare now composes window 0 of cycle 0 without warm-up
+  (`ColdStart::start(..., warmUp = false)`); the handoff moves its cycle base to the Stop tick.
+- `PlaybackJobs` bounds a transition's deadline lead (the prepared window aims far ahead).
+
+Tests (`test_content_engine_engine_root`, 2; host and Teensy, image `aa985803…`): census and init over poison, the
+placed-but-unwired components idle; two tracks under the scheduler at 300 BPM (a Clock tick every 1,040 µs, grains
+for the rest of each tick) — an 8-bar take, a 4-bar take recorded while it plays, an overdub with a note held across
+its wrap — every steady cycle's notes equal what was played, every steady job aims at its own track's next boundary,
+no state awaiting completion is ever swept, a set for each playing current, the reclaim queue drained, no missed
+deadline or underrun, no allocation after `init()` (host). Teensy: longest grain 342 µs, 3 / 3 sweeps. Mutations
+caught (12): cold-start reset, prepare warm-up, unsealed sweep, repeated sweep, shared timeline, sweep reset, no
+reclaim, no sweeps, sweep never ending, edit-writer / tile / hub init.

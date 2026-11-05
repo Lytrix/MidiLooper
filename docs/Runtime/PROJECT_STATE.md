@@ -1,3 +1,10 @@
+**2026-11-05 — Fixed-memory engine: E9.2 engine root, placed and measured on the Teensy (owner: two sweep windows).**
+- The whole engine now lives in two placed regions with one `init()` (1.9 ms on the Teensy over unzeroed memory), a
+  memory census and budget checks, and a main-loop job service: two tracks record, overdub and play exactly under the
+  scheduler on the device (longest grain 342 µs, no missed deadline, checkpoint sets swept). PSRAM budget restated to
+  6,796,508 B (two sweep scratch windows); RAM2 143,360 B. Two defects found and fixed: poisoned cold-start leases at
+  init, and the Record prepare replaying a 2^30-tick provisional loop.
+
 **2026-11-05 — Fixed-memory engine: E9.1b handoff without a gap.**
 - After Record Stop the take plays whole from its first tick, and after an overdub wrap the cycle's new notes play
   from window 0 of the next cycle: window 0 is composed ahead (from the recording so far) and handed over at the

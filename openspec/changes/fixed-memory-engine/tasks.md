@@ -38,7 +38,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E1.4 Production-capacity init over poisoned memory; budget `static_assert`s; measured region sizes.
 - [x] E1.5 History and slot currents: built as E4.1.
 - [x] E1.6 `PassEvent` owned by `ContentEngine` (`include/ContentEngine/PassEvent.h`); the prototype store aliases it.
-- [ ] E1.7 Device placement: EXTMEM pool and DMAMEM tables, with census rows (lands with integration, E9).
+- [x] E1.7 Device placement: `EnginePsram` (EXTMEM) and `EngineRam2` (DMAMEM) with `#CAP,MEM_REGION` census rows and budget `static_assert`s; measured on the Teensy in `teensy41-engine-bench` (E9.2). The firmware image places them when the legacy owners go (E9.8).
 
 ## E2 — writer
 
@@ -114,7 +114,7 @@ revision 3 is the baseline; no whole-plan revisions.
 
 - [x] E9.1 `SlotTransport`: Record / overdub / Stop / Undo / Redo on a Clock timeline → writer, manifests, history, playback tracks. One writer (`Busy`); wrap publishes `current + wrapped run` as a session step, a closing run included (owner 2026-11-05: publish at the wrap), completed in place under a new identity when it seals; Stop folds the session; empty wraps and empty takes leave no state; a full run list ends the take at a wrap (named); live occupancy released at Stop (`test_content_engine_slot_transport` 6, mutation-checked 15/15).
 - [x] E9.1b Handoff without a gap (plan § 8.3): overdub takes a provisional source (current + the run being written) 384 ticks before each wrap, so window 0 of the next cycle is ready at the wrap; Record composes window 0 of cycle 1 from the prefix once the take passes it, and Stop hands it over through ordinary succession; gestures aim at their own tick (`test_content_engine_slot_transport` 8, mutation-checked).
-- [ ] E9.2 Device placement (E1.7): production instances in EXTMEM / DMAMEM, one `init()` at boot, census rows, RAM1 / RAM2 gates; worker service loop (scheduler, playback jobs, reclaim, checkpoint and tile sweeps).
+- [x] E9.2 `EngineRoot`: production instances in two placed regions, one `init()` over unzeroed memory (1.9 ms on the Teensy), census, budgets (owner: two sweep scratch windows budgeted; PSRAM 6,796,508, RAM2 143,360); main-loop `submitJobs` / `runGrain` with per-track timelines, reclaim and one checkpoint sweep at a time for sealed playing currents (`test_content_engine_engine_root` 2, host + device `aa985803…`, mutation-checked 12/12). Tile sweeps are wired with E9.6. Found: poisoned cold-start leases (init), Record prepare replaying a 2^30-tick provisional loop.
 - [ ] E9.3 Clock path: `ClockManager` tick → `SlotTransport::tick` per track → `OutputHub` → DIN / USB ports.
 - [ ] E9.4 Gestures and input: `MidiHandler` ingress and `TrackManager` / `Track` transport, slot switching and clear → `SlotTransport`.
 - [ ] E9.5 NOTE_EDIT: `EditManager` / `NoteEditFocus` → `EditWriter`; focus / selection restore per E: step.

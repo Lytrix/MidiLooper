@@ -401,9 +401,12 @@ class ColdStart {
   enum class Status : uint8_t { Idle, Running, Done, Refused, Cancelled };
   static constexpr uint32_t kIndexGrain = 256;
 
+  /// `warmUp` false (E9.1b, a Record prefix: nothing crosses its loop end yet): with no checkpoint, compose from the
+  /// loop start in cycle `cycle` without replaying cycle 0 first.
   Status start(Composer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
-               ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks) {
+               ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks, bool warmUp = true) {
     cancel();
+    warm_ = warmUp;
     composer_ = &composer;
     table_ = &table;
     slot_ = slot;
@@ -485,7 +488,7 @@ class ColdStart {
         refuse();
         return;
       }
-      warmup_ = true;  // cycle 0 from the loop start, then replay to the position
+      warmup_ = warm_;  // cycle 0 from the loop start, then replay to the position
       at_ = 0;
     }
     source_.dropIndexLease();
@@ -506,7 +509,7 @@ class ColdStart {
   const Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
-  bool warmup_ = false, composing_ = false, seeking_ = false, fromCheckpoint_ = false;
+  bool warmup_ = false, composing_ = false, seeking_ = false, fromCheckpoint_ = false, warm_ = true;
   uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
   Status status_ = Status::Idle;
 };
