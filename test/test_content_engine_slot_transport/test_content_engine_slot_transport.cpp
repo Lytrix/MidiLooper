@@ -74,6 +74,8 @@ static Transport gX;
 static std::vector<Emit> gOut;  // track 0's emits, ticks track-local
 static uint32_t gClock = 0;
 static uint32_t gAccepted = 0;  // live NoteOns the transport accepted
+static uint32_t gGrains = 0;    // compose grains per track per tick (0: as many as pending)
+static uint32_t gGrainRows = 256;
 
 void setUp() {
   gPool.init();
@@ -98,6 +100,8 @@ void setUp() {
   gOut.clear();
   gClock = 0;
   gAccepted = 0;
+  gGrains = 0;
+  gGrainRows = 256;
 }
 void tearDown() {}
 
@@ -113,7 +117,7 @@ static void run(uint32_t to, const std::vector<Live>& live = {}, bool strict = t
   Emit buf[64];
   for (; gClock < to; ++gClock) {
     for (auto& t : gTrack)
-      while (t.work(256)) {
+      for (uint32_t g = 0; (gGrains == 0 || g < gGrains) && t.work(gGrainRows); ++g) {
       }
     uint8_t n = gX.tick(0, gClock, buf, 64);
     gOut.insert(gOut.end(), buf, buf + n);
@@ -181,9 +185,15 @@ static bool allSealed(ManifestId m) {
 }
 
 // The take: A notes in both windows (positions relative to the Record start).
-static const std::vector<Live> kTake = {
-    {kS + 100, kS + 400, 60}, {kS + 1600, kS + 1700, 62}, {kS + 2000, kS + 2900, 64}, {kS + 3000, kS + 3060, 65}};
-static const std::map<uint8_t, Played> kA = {{60, {100, 400}}, {62, {1600, 1700}}, {64, {2000, 2900}}, {65, {3000, 3060}}};
+// 59 on the downbeat; 67 starts in window 0 and is still held when window 0 is composed ahead (take tick 1536); 58 at
+// the last tick of window 0; 69 is held at Stop.
+static const std::vector<Live> kTake = {{kS, kS + 50, 59},          {kS + 1535, kS + 1540, 58},
+                                        {kS + 100, kS + 400, 60},   {kS + 1000, kS + 2500, 67},
+                                        {kS + 1600, kS + 1700, 62}, {kS + 2000, kS + 2900, 64},
+                                        {kS + 3000, kS + 3060, 65}, {kS + 3050, 0, 69}};
+static const std::map<uint8_t, Played> kA = {{59, {0, 50}},      {58, {1535, 1540}},
+                                             {60, {100, 400}},   {67, {1000, 2500}}, {62, {1600, 1700}},
+                                             {64, {2000, 2900}}, {65, {3000, 3060}}, {69, {3050, kLoop}}};
 
 static void recordTake() {
   gClock = kS;
@@ -195,14 +205,19 @@ static void recordTake() {
 // ---- Tests -------------------------------------------------------------------------------------------------------------
 void test_record_then_the_take_plays() {
   recordTake();
+  run(kS + kLoop + 10);  // inside cycle 1's window 0: the provisional Record source is already released
+  TEST_ASSERT_EQUAL_UINT16(Manifests::kManifestCount - gH.heldStates(), gManifests.freeCount());
   TEST_ASSERT_EQUAL_UINT8(0, gX.playingSlot(0));
   TEST_ASSERT_EQUAL_UINT32(kS, gX.origin(0));
   TEST_ASSERT_EQUAL_UINT8(1, gH.undoDepth(0));
-  run(kS + 4 * kLoop);
-  // Cycle 1: the take's first window is not ready at the Stop tick (E9.1b moves its composition before Stop), so it
-  // plays from the next window boundary (window 1 starts at 1536).
-  expectCycle(1, {{62, {1600, 1700}}, {64, {2000, 2900}}, {65, {3000, 3060}}});
+  run(kS + 4 * kLoop + 1);  // cycle 3's held note ends on cycle 4's first tick
+  // Cycle 1 is whole: window 0 was composed ahead during recording and plays from the Stop tick (E9.1b); the note
+  // still held when it was composed keeps sounding into window 1 and ends where the take says.
+  TEST_ASSERT_EQUAL_UINT32(1, gX.stats().recordPrepares);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack[0].stats().preparedHandoffs);
+  expectCycle(1, kA);
   expectCycle(2, kA);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack[0].stats().underruns);  // no boundary without a window
   expectCycle(3, kA);
   TEST_ASSERT_TRUE(gRes.check());
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
@@ -214,7 +229,11 @@ void test_overdub_publishes_at_the_wrap_and_completes_the_held_note() {
   TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
   const uint32_t c2 = kS + 2 * kLoop, c3 = kS + 3 * kLoop;
   // Cycle 2: 70 in window 1; 72 held across the loop end, released in cycle 3; 74 in cycle 3.
-  const std::vector<Live> live = {{c2 + 1700, c2 + 1800, 70}, {c2 + 3000, c3 + 200, 72}, {c3 + 2000, c3 + 2100, 74}};
+  // 76 in window 0 after the overdub starts: heard in window 0 of cycle 3, right after the wrap (E9.1b).
+  const std::vector<Live> live = {{c2 + 200, c2 + 300, 76},
+                                  {c2 + 1700, c2 + 1800, 70},
+                                  {c2 + 3000, c3 + 200, 72},
+                                  {c3 + 2000, c3 + 2100, 74}};
   run(c3 + 1, live);  // the wrap at c3
   TEST_ASSERT_EQUAL_UINT32(1, gX.stats().publishedWraps);
   TEST_ASSERT_EQUAL_UINT32(1, gX.stats().closingPublished);
@@ -231,8 +250,13 @@ void test_overdub_publishes_at_the_wrap_and_completes_the_held_note() {
   stop();
   TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));  // the take, the folded session
   run(kS + 7 * kLoop + 300);  // cycle 6's held note ends in cycle 7
-  // Cycle 3: the wrap's state plays from window 1 (70 heard the cycle after it was played); 72 sounded live.
+  // Cycle 3, right after the wrap: window 0 from the provisional source (76), window 1 from the published state (70);
+  // 72 sounded live.
+  TEST_ASSERT_EQUAL_UINT32(1, gX.stats().provisionalSelections);
   auto c3n = cycleNotes(3);
+  TEST_ASSERT_EQUAL_UINT32(1, c3n[76].size());
+  TEST_ASSERT_EQUAL_UINT32(200, c3n[76][0].on);
+  TEST_ASSERT_EQUAL_UINT32(300, c3n[76][0].off);
   TEST_ASSERT_EQUAL_UINT32(1, c3n[70].size());
   TEST_ASSERT_EQUAL_UINT32(1700, c3n[70][0].on);
   // Steady: A + B, the held note from 3000 to 200 of the next cycle.
@@ -240,6 +264,7 @@ void test_overdub_publishes_at_the_wrap_and_completes_the_held_note() {
   ab[70] = {1700, 1800};
   ab[72] = {3000, kLoop + 200};
   ab[74] = {2000, 2100};
+  ab[76] = {200, 300};
   expectCycle(5, ab);
   expectCycle(6, ab);
   TEST_ASSERT_TRUE(gRes.check());
@@ -251,9 +276,11 @@ void test_undo_redo_and_undo_to_empty_follow_on_the_track() {
   run(kS + kLoop + 10);
   TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
   const uint32_t c1 = kS + kLoop;
-  run(c1 + 2500, {{c1 + 1700, c1 + 1800, 70}, {c1 + 2400, 0, 90}});  // 90 still held at Stop: closed by it
+  // Across a wrap (a provisional source is taken and adopted), 90 still held at Stop: closed by it.
+  run(c1 + kLoop + 2500, {{c1 + 1700, c1 + 1800, 70}, {c1 + kLoop + 2400, 0, 90}});
+  TEST_ASSERT_EQUAL_UINT32(1, gX.stats().provisionalSelections);  // cycle 2 stops before its lead
   stop();
-  run(kS + 4 * kLoop);
+  run(kS + 4 * kLoop + 1);  // cycle 3's held note ends on cycle 4's first tick
   std::map<uint8_t, Played> ab = kA;
   ab[70] = {1700, 1800};
   ab[90] = {2400, 2500};  // plays: Stop released its live occupancy
@@ -261,10 +288,10 @@ void test_undo_redo_and_undo_to_empty_follow_on_the_track() {
   Emit buf[kT];
   uint8_t n;
   TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
-  run(kS + 6 * kLoop);
+  run(kS + 6 * kLoop + 1);
   expectCycle(5, kA);
   TEST_ASSERT_EQUAL(R::Ok, gX.redo(0, gClock, buf, kT, n));
-  run(kS + 8 * kLoop);
+  run(kS + 8 * kLoop + 1);
   expectCycle(7, ab);
   TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
   TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock + 1, buf, kT, n));  // to the empty slot: the track stops
@@ -276,8 +303,25 @@ void test_undo_redo_and_undo_to_empty_follow_on_the_track() {
   for (const Emit& e : gOut) open[e.noteId] += e.cls == 1 ? 1 : e.cls == 0 ? -1 : 0;
   for (const auto& o : open) TEST_ASSERT_EQUAL_INT(0, o.second);
   TEST_ASSERT_EQUAL(R::NoChange, gX.undo(0, gClock, buf, kT, n));
+  // Nothing outlives its holder: with the track stopped, every live manifest is a history state (provisional sources
+  // and the prepared Record window released theirs).
+  TEST_ASSERT_EQUAL_UINT16(Manifests::kManifestCount - gH.heldStates(), gManifests.freeCount());
   TEST_ASSERT_TRUE(gRes.check());
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+void test_an_undo_on_a_boundary_is_heard_from_that_boundary() {
+  recordTake();
+  run(kS + kLoop + 10);
+  TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
+  run(kS + kLoop + 2500, {{kS + kLoop + 200, kS + kLoop + 300, 76}});  // in window 0
+  stop();
+  run(kS + 4 * kLoop);  // tick 4L (cycle 4, position 0) not played yet
+  Emit buf[kT];
+  uint8_t n;
+  TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
+  run(kS + 5 * kLoop + 1);
+  expectCycle(4, kA);  // the whole of cycle 4, window 0 included
 }
 
 void test_one_writer_and_named_refusals() {
@@ -329,6 +373,41 @@ void test_a_full_run_list_ends_the_take_at_a_wrap() {
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
 }
 
+void test_the_lead_covers_window_composition_under_a_grain_budget() {
+  recordTake();
+  run(kS + 2 * kLoop);
+  gGrains = 1;  // one grain of 8 row units per track per tick: a window takes many ticks to compose
+  gGrainRows = 8;
+  TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
+  const uint32_t c2 = kS + 2 * kLoop, c3 = kS + 3 * kLoop;
+  run(c3 + 600, {{c2 + 200, c2 + 300, 76}});
+  TEST_ASSERT_EQUAL_UINT32(1, gX.stats().provisionalSelections);
+  auto n = cycleNotes(3);  // right after the wrap: the provisional window 0 was ready in time
+  TEST_ASSERT_EQUAL_UINT32(1, n[76].size());
+  TEST_ASSERT_EQUAL_UINT32(200, n[76][0].on);
+  TEST_ASSERT_EQUAL_UINT32(1, n[59].size());  // and the take's downbeat
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack[0].stats().underruns);
+}
+
+void test_a_short_take_composes_at_stop() {
+  gClock = kS;
+  startRecord(0);
+  const uint32_t loop = 1200;  // Stop before window 0 can be composed ahead
+  run(kS + loop, {{kS + 100, kS + 300, 60}, {kS + 900, kS + 1000, 62}});
+  stop();
+  TEST_ASSERT_EQUAL_UINT32(0, gX.stats().recordPrepares);
+  run(kS + 4 * loop);
+  // Composed at Stop, aimed at the Stop tick: with ample worker time it is ready there, so it plays every cycle.
+  uint32_t ons60 = 0;
+  for (const Emit& e : gOut)
+    if (e.cls == 1 && e.pitch == 60) {
+      TEST_ASSERT_EQUAL_UINT32(100, e.tick % loop);
+      ++ons60;
+    }
+  TEST_ASSERT_EQUAL_UINT32(3, ons60);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack[0].stats().underruns);
+}
+
 void test_no_heap() {
   gTrap = true;
   const unsigned long before = gHeapAllocations;
@@ -358,8 +437,11 @@ int main(int, char**) {
   RUN_TEST(test_record_then_the_take_plays);
   RUN_TEST(test_overdub_publishes_at_the_wrap_and_completes_the_held_note);
   RUN_TEST(test_undo_redo_and_undo_to_empty_follow_on_the_track);
+  RUN_TEST(test_an_undo_on_a_boundary_is_heard_from_that_boundary);
   RUN_TEST(test_one_writer_and_named_refusals);
   RUN_TEST(test_a_full_run_list_ends_the_take_at_a_wrap);
+  RUN_TEST(test_the_lead_covers_window_composition_under_a_grain_budget);
+  RUN_TEST(test_a_short_take_composes_at_stop);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

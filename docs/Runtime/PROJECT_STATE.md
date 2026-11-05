@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E9.1b handoff without a gap.**
+- After Record Stop the take plays whole from its first tick, and after an overdub wrap the cycle's new notes play
+  from window 0 of the next cycle: window 0 is composed ahead (from the recording so far) and handed over at the
+  boundary. A freed-buffer defect in the first version of the handoff was found by the tests and fixed.
+
 **2026-11-05 — Fixed-memory engine: E9.1 slot transport (owner: publish at the wrap).**
 - Record / overdub / Stop / Undo / Redo now drive the writer, manifests, history and playback tracks end to end on a
   Clock timeline; one writer at a time (`Busy`). A wrap with a note held across the loop end publishes at once and is

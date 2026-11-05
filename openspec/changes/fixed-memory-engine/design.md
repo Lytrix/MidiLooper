@@ -1342,7 +1342,40 @@ Mutations caught (15): waiting for the seal, no completion, completion watermark
 reference kept, live occupancy kept at Stop, Busy, DeniedSlot, empty wrap, no fold, Undo not selected, empty slot not
 stopped, run-list room, cycle base, empty take.
 
-**Measured gap, next slice (E9.1b):** the new state is selected at the Stop / wrap tick, so its first window cannot be
-ready for that boundary and is adopted at the next one (window 1). After Record Stop window 0 of cycle 1 is silent;
-after an overdub wrap, window 0 plays the previous state (the cycle's new notes are heard from window 1). Plan § 8.3 composes window 0 during recording from the
-open prefix so it is ready at Stop; E9.1b does that for Record Stop and overdub wraps.
+**Gap closed by E9.1b** (below): window 0 after Record Stop and after a wrap is composed before its boundary.
+
+## E9.1b — handoff without a gap (plan § 8.3, as built)
+
+**Timing convention:** input at Clock tick `c` arrives after tick `c` was played; a gesture at `c` (Stop, Undo, Redo)
+takes effect before tick `c` is played, so its selection aims at the first boundary at or after `c`. A wrap is
+handled inside tick `c` after playback, so that tick's input lands in the next run.
+
+- **Overdub:** at `prepPosition()` in each cycle (384 ticks before the loop end, half the loop for a shorter one) the
+  writing track selects a **provisional source**: the slot's current runs + the run being written, as recorded so far.
+  Its window 0 for the next cycle composes during the lead and is adopted at the wrap; the committed state is selected
+  at the wrap for window 1. The provisional source is never a history state and is never checkpointed or tiled (its
+  run is still writing, so its rows grow under its identity; nothing keyed on identity may be built for it). Rows
+  recorded after it was taken reach window 0 only as live effects — a held note occupies its pitch — which is the
+  accepted live tolerance. Taken earlier in the cycle it is adopted at an earlier boundary, which is harmless: the run
+  being written has no rows yet in the windows after the snapshot. The lead covers a window's composition under load
+  (≤ 100 grains of 810 µs at ≥ 1 grain in 2 ≈ 160 ms ≈ 160 ticks at 300 BPM), doubled.
+- **Record:** once the take passes window 0, a track that plays nothing composes window 0 of the take's cycle 1 from
+  the prefix under a provisional loop of 2^30 ticks (`PlaybackTrack::prepare`). A take is one pass and no overlap rule
+  reaches across passes, so window 0 depends only on its own rows; a note still held then is open and ends where the
+  take says, carried by the take's next window (the transition keeps carried instances). At Stop
+  (`PlaybackTrack::handoff`) the prepared window becomes the transition for the Stop tick with its cycle base moved
+  there; when it is adopted, the take is selected for the next boundary and the provisional cursor ends, so until the
+  take is adopted there is no steady window. A shorter take, or one on a track that already plays, composes window 0
+  at Stop, aimed at the Stop tick, and plays from the first boundary it is ready for.
+- **Defect found and fixed while testing:** the first handoff adopted the prepared window directly; the boundary tick
+  that followed ran succession, freed that buffer and counted an underrun while the player still read it. The handoff
+  now goes through ordinary succession.
+
+Tests (`test_content_engine_slot_transport`, 8): cycle 1 after Record Stop is whole — downbeat, a note at the last tick
+of window 0, a note held when window 0 was composed, a note held at Stop — with no underrun; an overdub note in window
+0 plays right after the wrap; under a budget of one 8-unit grain per tick the lead is enough (no underrun); a short
+take composed at Stop; an Undo on a boundary tick is heard from that boundary; right after Stop and with the track
+stopped, every live manifest is a history state (provisional sources and the prepared window released theirs).
+Mutations caught (28, E9.1 and E9.1b together): the 15 of E9.1 plus no provisional source, wrap before playback, no
+Record prepare, no handoff, provisional / prepared references kept, Record prefix one tick short, lead too short,
+gesture target, no cycle-base move, no follow-on selection, stale provisional cursor kept, fallback target.

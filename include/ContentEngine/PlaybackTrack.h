@@ -50,6 +50,7 @@ class PlaybackTrack {
     uint32_t underruns;      // boundaries with no window to play
     uint32_t staleWindows;   // windows composed after their boundary had passed, discarded to catch up
     uint32_t refusedStarts;  // cold starts refused (e.g. index capacity): the old source keeps playing
+    uint32_t preparedHandoffs;  // Record Stops that played a window composed ahead (E9.1b)
   };
 
   void init(Composer& a, Composer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
@@ -70,6 +71,8 @@ class PlaybackTrack {
     wantedIdentity_ = 0;
     transActive_ = false;
     transComposing_ = false;
+    prepared_ = false;
+    handoffFinal_ = kNoManifest;
     transComp_ = 0;
     transTarget_ = steadyTarget_ = 0;
     stats_ = Stats{};
@@ -105,6 +108,49 @@ class PlaybackTrack {
       cancelTransition();
     }
   }
+
+  /// E9.1b, a Record take: window 0 of the take's cycle 1, composed ahead while recording from a provisional source
+  /// (the take's prefix, under a loop longer than any of its rows). Only on a track that plays nothing; the track keeps
+  /// no loop grid until `handoff`.
+  void prepare(uint8_t slot, ManifestId provisional) {
+    if (steady_ != kNone || playing_ != kNone) return;
+    cancelTransition();
+    const auto& m = manifests_->manifest(provisional);
+    trans_ = freeBuffer();
+    buf_[trans_].state = State::Filling;
+    transComp_ = 0;
+    transActive_ = true;
+    transTarget_ = m.loopLengthTicks;  // cycle 1, position 0
+    transComposing_ = false;
+    prepared_ = true;
+    if (cold_[0].start(*comp_[0], *table_, *manifests_, *runs_, slot, provisional, 0, 1, window_) ==
+        Cold::Status::Refused) {
+      ++stats_.refusedStarts;
+      cancelTransition();
+    }
+  }
+
+  /// E9.1b, Record Stop before timeline tick `t` is played (`t`: cycle 1, position 0 of `final`, whose loop is now
+  /// known): a complete prepared window becomes the transition for boundary `t`; when it is adopted there, `final` is
+  /// selected for the next boundary and the prepared window's cursor ends (its loop was provisional), so until `final`
+  /// is adopted there is no steady window. Without a complete prepared window: `final` is selected for `t`.
+  void handoff(uint8_t slot, ManifestId final, uint32_t t) {
+    if (!prepared_ || !transActive_ || buf_[trans_].state != State::Complete) {
+      select(slot, final, t == 0 ? 0 : t - 1);
+      return;
+    }
+    Buffer& b = buf_[trans_];
+    b.w->cycleBase = t - b.w->start;  // positions stay; this cycle starts at t
+    b.start = t;
+    transTarget_ = t;
+    loop_ = manifests_->manifest(final).loopLengthTicks;
+    prepared_ = false;
+    handoffSlot_ = slot;
+    handoffFinal_ = final;
+    ++stats_.preparedHandoffs;
+  }
+
+  uint32_t windowTicks() const { return window_; }
 
   /// One grain of compose work (`maxRows` row units): the steady window first, then the transition. False when there
   /// is nothing to do.
@@ -236,6 +282,8 @@ class PlaybackTrack {
     buf_[trans_].state = State::Free;
     trans_ = kNone;
     transActive_ = false;
+    prepared_ = false;
+    handoffFinal_ = kNoManifest;
   }
 
   uint8_t succession(uint32_t t, Emit* out, uint8_t max) {
@@ -279,7 +327,15 @@ class PlaybackTrack {
     playing_ = take;
     buf_[take].state = State::Playing;
     playingIdentity_ = buf_[take].identity;
-    return player_->beginWindow(*buf_[take].w, out, max);
+    const uint8_t n = player_->beginWindow(*buf_[take].w, out, max);
+    if (transition && handoffFinal_ != kNoManifest) {  // a prepared Record window: the take follows at the next boundary
+      cold_[steady_].release();
+      steady_ = kNone;
+      const ManifestId f = handoffFinal_;
+      handoffFinal_ = kNoManifest;
+      select(handoffSlot_, f, t);
+    }
+    return n;
   }
 
   Composer* comp_[2];
@@ -295,7 +351,9 @@ class PlaybackTrack {
   uint32_t playingIdentity_ = 0;
   ManifestId wanted_ = kNoManifest;
   uint32_t wantedIdentity_ = 0;
-  bool transActive_ = false, transComposing_ = false;
+  bool transActive_ = false, transComposing_ = false, prepared_ = false;
+  uint8_t handoffSlot_ = 0;
+  ManifestId handoffFinal_ = kNoManifest;  // selected once the prepared window it follows is adopted
   uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0, transBoundaries_ = 0;
   Stats stats_{};
 };
