@@ -45,7 +45,7 @@ class RowReservations {
   }
 
   uint32_t reservedPages() const { return reservedPages_; }
-  uint16_t outstanding(RunId run) const { return outstanding_[run]; }
+  uint32_t outstanding(RunId run) const { return outstanding_[run]; }
 
   /// New input: write `row` now into `run` and take on `newObligations` owed rows for the same run.
   /// Refused (nothing written, nothing reserved) unless the row and every row now owed by `run` still fit.
@@ -61,14 +61,14 @@ class RowReservations {
     if (contentFreePages() < others + after) return Admission::DeniedCapacity;
     // Guaranteed by the check above: the append cannot fail.
     runs_->append(run, row, *pool_);
-    outstanding_[run] = static_cast<uint16_t>(outstanding_[run] + newObligations);
+    outstanding_[run] += newObligations;
     reservedPages_ = others + need(runs_->run(run), outstanding_[run]);
     return Admission::Ok;
   }
 
   /// New input that writes nothing yet: `run` takes on `rows` owed rows (a NOTE_EDIT action reserving the edit run it
   /// will write in grains). Refused (nothing reserved) unless they and every row the run already owes fit.
-  Admission reserve(RunId run, uint16_t rows) {
+  Admission reserve(RunId run, uint32_t rows) {
     const auto& r = runs_->run(run);
     if (r.state != RunState::Writing) return Admission::DeniedNotWriting;
     const uint32_t before = need(r, outstanding_[run]);
@@ -78,7 +78,7 @@ class RowReservations {
     const uint32_t after = need(r, total);
     const uint32_t others = reservedPages_ - before;
     if (contentFreePages() < others + after) return Admission::DeniedCapacity;
-    outstanding_[run] = static_cast<uint16_t>(total);
+    outstanding_[run] = total;
     reservedPages_ = others + after;
     return Admission::Ok;
   }
@@ -120,7 +120,7 @@ class RowReservations {
   Runs* runs_ = nullptr;
   uint32_t fixedReservePages_ = 0;
   uint32_t reservedPages_ = 0;
-  uint16_t outstanding_[Runs::kRunCount];
+  uint32_t outstanding_[Runs::kRunCount];  // a loaded take may owe more than 65,535 rows
 };
 
 }  // namespace ContentEngine

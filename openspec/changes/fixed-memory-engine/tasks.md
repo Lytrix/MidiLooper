@@ -103,6 +103,12 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E7.1 `TileStore` + `TileSweep`: span / density tiles, atomic swap with spares, draw rule never blank, steady-cycle display composition with every effective note, dense state (`test_content_engine_display_tiles` 5, mutation-checked; 602,416 B).
 - [x] E7.2 Freshness (cycle-0 publishing past the wrap reach: one loop instead of two), `DisplayJobs` (focus first, newest request wins, display class), `LiveOverlay` (`test_content_engine_display_tiles` 8, mutation-checked). Banded drawing moves to the integration (E9).
 
+## E8 — persistence
+
+- [x] E8.1 Engine slot file (owner: new format, new folder): `SaveJob` / `LoadJob` in grains, writer-class admission, CRC, full release on failure, history chain restored (`test_content_engine_set_file` 4, mutation-checked).
+- [ ] E8.2 V1 import (read-only) and history reconstruction from V1 (E4.4, DEC-088).
+- [ ] E8.3 SD sink / source, save schedule and the owner's save-approval gate (with E9).
+
 ## CE-C1 — output
 
 - [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).

@@ -1074,8 +1074,10 @@ Before E1:
 2. **Capacity latch:** after the first refused new NoteOn, keep the pass open (accepted notes still close normally), or
    end it at the next wrap. Accepted content is unaffected either way.
 3. **Undo history under pressure:** ~~keep 99 and refuse new input~~ — **decided 2026-11-05: age the oldest step out** (shared 99, per-slot undo; § 8.5).
-4. **Save format:** new run/manifest format (older firmware can no longer read saved slots; V1 import stays) or keep
-   writing V1. The first device boots import read-only until you approve saving.
+4. **Save format:** ~~new run/manifest format or keep writing V1~~ — **decided 2026-11-05: the new engine format in a
+   new folder** (E8.1). V1 files are imported read-only and never overwritten, so older firmware still finds its sets;
+   older firmware cannot read the new saves. Nothing is written to the card until the owner approves saving on the
+   device.
 5. **Dense bars** beyond 256 notes: raster style.
 6. **Output overload:** send late (default) or drop NoteOns later than a threshold; NoteOffs never dropped.
 7. **Cold-start audibility:** undo / redo / switch become audible at the first boundary after their window is ready

@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E8.1 engine slot file (owner: new format, new folder).**
+- Save and load of a slot's runs and history in grains; a load reserves every row before reading or refuses by name,
+  checks a CRC, and releases everything on any failure. Round trip keeps content, history, floor and note ids. V1 files
+  stay untouched; V1 import is E8.2.
+
 **2026-11-05 — Fixed-memory engine: E7.2 display freshness, display jobs, live overlay.**
 - Tile sweeps publish in cycle 0 past the wrap reach (one loop instead of two); they run as display jobs (focus first,
   newest request wins); the live overlay paints recorded notes at bounded cost. Banded drawing moves to E9.

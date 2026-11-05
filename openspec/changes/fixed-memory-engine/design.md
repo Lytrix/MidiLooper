@@ -1248,3 +1248,29 @@ Tests (`test_content_engine_display_tiles`, 8): one-loop sweep unless the wrap r
 growth, release, out of view, loop-end wrap); display jobs beside always-pending hard work (focus first, every slot
 ends on its newest manifest after a mid-sweep supersession, display ≥ 1 in 4). Mutations caught: focus ignored, wrap
 reach ignored, everything deferred, release painting nothing, wrap not painted.
+
+## E8.1 — the engine's slot file (owner decision 2026-11-05: new format, new folder; as built)
+
+`include/ContentEngine/SetFile.h`. One file per slot: header (magic "MLE1", version, slot, floor flag, loop length,
+run count, state count, current state index, total rows, note-id high-water mark), run directory (kind, row count),
+rows (16 B, every field), the history states oldest to newest (revision, loop length, run indices), CRC-32 trailer.
+Runs shared by several states are stored once; nothing derived is stored. V1 files stay untouched (import: E8.2).
+- **`SaveJob`** (persistence grains, one sink write of ≤ 16 KiB each): pins the slot's manifests until it ends.
+- **`LoadJob`** (writer-class admission, § 5.5): after the directory every row is reserved against content quota or the
+  load is refused by name (`DeniedCapacity`); rows are appended in grains of ≤ 16 KiB from owed reservations (never
+  refused); manifests are created; the CRC is checked; only then is the slot's history restored
+  (`History::restoreSlot`: chain, current state, floor) and the note-id source advanced past the file's ids. Any
+  failure — I/O, format, CRC, capacity, an occupied slot — releases every run, reservation and manifest it took.
+- The row ledger counts owed rows per run in 32 bits now: a saved take can exceed 65,535 rows.
+- `History::chain` / `restoreSlot` read and rebuild a slot's states for persistence.
+
+Tests (`test_content_engine_set_file`, 4): a record / overdub / edit / overdub history, current one step back after an
+Undo, saved, the engine re-initialised and loaded — every state composes identically, every row field and run kind is
+equal, the chain / current / floor are the same, Redo and Undo to the empty slot work, shared runs stored once, note
+ids not reused; corrupted, truncated, bad-magic, I/O-error, over-capacity and occupied-slot loads refused by name with
+nothing held; a 70,000-row take round-trips with ≤ 4 KiB per grain (test chunk size); no heap. Mutations caught: origin
+lost, CRC not checked, reservation kept on failure, floor not saved, shared runs stored twice, ids reused, run kind
+lost.
+
+Not yet: V1 import (E8.2) and history reconstruction from V1 (E4.4, DEC-088); the SD sink / source and the save
+schedule (autosave, approval gate) with the integration (E9).

@@ -238,6 +238,35 @@ class History {
     return n;
   }
   uint8_t heldStates() const { return count_; }
+
+  /// Persistence (E8): the slot's states oldest to newest (at most `max`), the current one's index in that list (-1:
+  /// the empty slot) and whether the empty slot lies below the oldest. O(states).
+  uint8_t chain(uint8_t slot, ManifestId* out, uint8_t max, int16_t& currentIndex, bool& emptyBelow) const {
+    const Slot& s = slots_[slot];
+    uint8_t n = 0;
+    currentIndex = -1;
+    for (uint8_t e = s.oldest; e != kNone && n < max; e = entries_[e].newer) {
+      if (e == s.current) currentIndex = n;
+      out[n++] = entries_[e].manifest;
+    }
+    emptyBelow = s.emptyBelow;
+    return n;
+  }
+  /// Load (E8): rebuilds an empty slot's chain from saved states (oldest to newest; History takes their references),
+  /// then steps back to the saved current state and floor. Commits follow the ordinary rules (the shared 99 may
+  /// forget older steps elsewhere). False when the slot is not empty or the input is inconsistent.
+  bool restoreSlot(uint8_t slot, const ManifestId* states, uint8_t n, int16_t currentIndex, bool emptyBelow) {
+    if (slot >= Slots || slots_[slot].oldest != kNone || currentIndex >= static_cast<int16_t>(n) || currentIndex < -1 ||
+        (currentIndex == -1 && n > 0 && !emptyBelow))
+      return false;
+    for (uint8_t i = 0; i < n; ++i) commit(slot, states[i]);
+    Slot& s = slots_[slot];
+    s.emptyBelow = emptyBelow;
+    uint8_t e = s.newest;
+    for (int16_t i = static_cast<int16_t>(n) - 1; i > currentIndex && e != kNone; --i) e = entries_[e].older;
+    s.current = currentIndex < 0 ? kNone : e;
+    return true;
+  }
   const Stats& stats() const { return stats_; }
 
  private:
