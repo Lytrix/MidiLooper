@@ -73,6 +73,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E5.9 Plan bounds: g = 810 µs and 44–100-grain windows into plan § 7 (owner). Done 2026-11-05: § 7.1–7.5 restated on measured figures (window 47 / 100 grains, index 58, cold start 190 / 3,009, sweep background). Owner: at most one track overdubs at a time, so clustered C2 = 42.7 % (within 50 %); clustered C1 needs B_max ≤ 136 ms.
 - [x] E5.10a W: one writer at a time (owner 2026-11-05). `Config` derives rows, descriptors, manifests and pages from `kWriterCount = 1`; plan § 2, § 4, § 5 budgets restated (RAM2 −13.4 KB budget, PSRAM −43 KB).
 - [ ] E5.10b Track admission refuses a second concurrent Record / overdub by name (with the writer integration).
+- [x] E5.11 Reclaim worker: release-order queue in `RunTable`, unit-bounded `reclaim`, `ReclaimJob` background job of 64 units per grain (`test_content_engine_reclaim` 5, mutation-checked; device grain 29 µs).
 - [x] E3.3 Composer NoteOff matching by (noteId, run): same-id-across-runs case added; the mutation is now caught.
 
 ## CE-C1 — output

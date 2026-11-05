@@ -16,6 +16,7 @@
 #include "ContentEngine/CheckpointTable.h"
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/EngineCore.h"
+#include "ContentEngine/ReclaimJob.h"
 #include "ContentEngine/SpanWindow.h"
 #include "ContentEngine/WorkerScheduler.h"
 
@@ -133,6 +134,29 @@ static void buildWorkload() {
 /// 64 ticks), each pass on 6 pitches of its own per cluster. `rotating`: the pitches move every cluster, so over the
 /// loop every pass starts notes on most pitches and the onset-pitch mask cannot skip it (adversarial worst case);
 /// otherwise each pass keeps its 6 pitches (the mask skips every pass without the NoteOn's pitch).
+/// Reclaim worker grains: 60 released runs of 40 pages each (24 directory-listed), returned 64 units per grain.
+static void reclaimGrains() {
+  gPool.init();
+  gRuns.init();
+  gManifests.init();
+  uint32_t id = 1;
+  for (uint8_t p = 0; p < 60; ++p) {
+    const RunId r = gRuns.allocate(0, RunKind::kOverdub);
+    for (uint32_t k = 0; k < 40u * Config::kRowsPerPage; ++k)
+      TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, row(k, id++, 0x90, static_cast<uint8_t>(k & 0x7F)), gPool));
+    gRuns.seal(r);
+    gRuns.release(r);
+  }
+  Stat st;
+  while (gRuns.reclaimPendingRuns() != 0) {
+    const uint32_t c0 = cycles();
+    gRuns.reclaim(gPool, ReclaimJob<Runs, Pool>::kUnitsPerGrain);
+    st.add(cycles() - c0);
+  }
+  TEST_ASSERT_EQUAL_UINT16(Pool::kPageCount, gPool.freeCount());
+  report("reclaim_64_units", st);
+}
+
 static void clusteredWindow(bool rotating, const char* name) {
   gPool.init();
   TEST_ASSERT_TRUE(gIndex.init(gPool, gRuns));
@@ -326,6 +350,7 @@ void test_grain_durations() {
 
   clusteredWindow(false, "compose_128_rows_clustered");
   clusteredWindow(true, "compose_128_rows_clustered_rotating");
+  reclaimGrains();
 }
 
 #if defined(__IMXRT1062__)

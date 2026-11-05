@@ -4,7 +4,8 @@
 // Global run descriptors of the content engine. A run is an append-only sequence of 16-byte rows on pool pages: the
 // first `kInlinePagesPerRun` page ids live in the descriptor, later ones in directory pages drawn from the same pool
 // (one directory page lists `kIdsPerDirPage` data pages). Descriptors are pooled across all slots and refcounted by the
-// manifests that list them; a released run returns its pages through bounded reclaim steps, never in one call.
+// manifests that list them; a released run joins the reclaim queue (release order) and returns its pages through
+// bounded `reclaim` calls, never in one call.
 
 #pragma once
 
@@ -66,6 +67,9 @@ class RunTable {
     freeHead_ = RunCount ? 0 : kNoRun;
     freeCount_ = RunCount;
     nextSerial_ = 1;
+    reclaimHead_ = reclaimTail_ = kNoRun;
+    reclaimRuns_ = 0;
+    reclaimUnits_ = 0;
   }
 
   /// O(1). A new run in `Writing` state with one reference (its writer). `kNoRun` when the table is full; the
@@ -139,39 +143,53 @@ class RunTable {
 
   void addRef(RunId id) { ++runs_[id].refs; }
 
-  /// Drops one reference. At zero the run enters `Reclaiming`; its pages return through `reclaimStep`.
-  /// Returns true when this call started reclamation.
+  /// Drops one reference. At zero the run enters `Reclaiming` and joins the reclaim queue (its `nextFree_` link is the
+  /// queue link: a reclaiming descriptor is not free). Returns true when this call started reclamation.
   bool release(RunId id) {
     Run& r = runs_[id];
     if (r.refs == 0 || r.state == RunState::Free || r.state == RunState::Reclaiming) return false;
     if (--r.refs != 0) return false;
     r.state = RunState::Reclaiming;
+    nextFree_[id] = kNoRun;
+    if (reclaimTail_ == kNoRun)
+      reclaimHead_ = id;
+    else
+      nextFree_[reclaimTail_] = id;
+    reclaimTail_ = id;
+    ++reclaimRuns_;
+    reclaimUnits_ += heldPages(id) + 1;
     return true;
   }
 
-  /// Returns at most `maxPages` pages of a `Reclaiming` run to `pool`: data pages from the end, then directory pages.
-  /// When nothing is left the descriptor is freed and true is returned. Bounded: O(maxPages).
-  bool reclaimStep(RunId id, Pool& pool, uint16_t maxPages) {
-    Run& r = runs_[id];
-    if (r.state != RunState::Reclaiming) return false;
-    uint16_t budget = maxPages;
-    while (budget > 0 && r.pageCount > 0) {
-      const PageId page = pageAt(id, static_cast<uint32_t>(r.pageCount - 1), pool);
-      pool.release(page, id);
-      --r.pageCount;
-      --budget;
+  /// Reclaims at most `maxUnits` units from the queue, oldest release first. A unit is one page returned to `pool` (data
+  /// pages from the end, then directory pages) or one emptied descriptor freed. Returns the units used. O(maxUnits).
+  uint32_t reclaim(Pool& pool, uint32_t maxUnits) {
+    uint32_t used = 0;
+    while (used < maxUnits && reclaimHead_ != kNoRun) {
+      const RunId id = reclaimHead_;
+      Run& r = runs_[id];
+      if (r.pageCount > 0) {
+        pool.release(pageAt(id, static_cast<uint32_t>(r.pageCount - 1), pool), id);
+        --r.pageCount;
+      } else if (r.dirPageCount > 0) {
+        pool.release(r.dirPages[--r.dirPageCount], id);
+      } else {
+        reclaimHead_ = nextFree_[id];
+        if (reclaimHead_ == kNoRun) reclaimTail_ = kNoRun;
+        --reclaimRuns_;
+        clear(r);
+        nextFree_[id] = freeHead_;
+        freeHead_ = id;
+        ++freeCount_;
+      }
+      ++used;
+      --reclaimUnits_;
     }
-    while (budget > 0 && r.pageCount == 0 && r.dirPageCount > 0) {
-      pool.release(r.dirPages[--r.dirPageCount], id);
-      --budget;
-    }
-    if (r.pageCount != 0 || r.dirPageCount != 0) return false;
-    clear(r);
-    nextFree_[id] = freeHead_;
-    freeHead_ = id;
-    ++freeCount_;
-    return true;
+    return used;
   }
+  /// Released runs not yet freed, and the units (`reclaim`) they still need.
+  uint16_t reclaimPendingRuns() const { return reclaimRuns_; }
+  uint32_t reclaimPendingUnits() const { return reclaimUnits_; }
 
   const Run& run(RunId id) const { return runs_[id]; }
   uint16_t freeCount() const { return freeCount_; }
@@ -179,7 +197,7 @@ class RunTable {
   /// Pages this run holds (data + directory). Must equal the pool's owner-tag count for the run.
   uint32_t heldPages(RunId id) const { return runs_[id].pageCount + runs_[id].dirPageCount; }
 
-  static constexpr size_t tableBytes() { return sizeof(Run) * RunCount + sizeof(RunId) * RunCount + 8; }
+  static constexpr size_t tableBytes() { return sizeof(Run) * RunCount + sizeof(RunId) * RunCount + 16; }
 
  private:
   static void clear(Run& r) {
@@ -197,10 +215,13 @@ class RunTable {
   }
 
   Run runs_[RunCount];
-  RunId nextFree_[RunCount];
+  RunId nextFree_[RunCount];  // free list, or reclaim queue for `Reclaiming` runs
   RunId freeHead_;
   uint16_t freeCount_;
   uint32_t nextSerial_;
+  RunId reclaimHead_, reclaimTail_;
+  uint16_t reclaimRuns_;
+  uint32_t reclaimUnits_;
 };
 
 }  // namespace ContentEngine

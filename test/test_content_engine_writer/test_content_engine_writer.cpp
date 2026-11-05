@@ -272,7 +272,7 @@ void test_writer_random_input_fuzz() {
     while (gW.takeSealed(sealed)) finished[finishedCount++] = sealed;
     if (finishedCount > 12) {
       gRuns.release(finished[0]);
-      while (!gRuns.reclaimStep(finished[0], gPool, 8)) {}
+      while (gRuns.reclaimPendingRuns() != 0) gRuns.reclaim(gPool, 8);
       for (uint16_t i = 1; i < finishedCount; ++i) finished[i - 1] = finished[i];
       --finishedCount;
     }

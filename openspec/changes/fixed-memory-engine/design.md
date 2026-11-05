@@ -824,3 +824,18 @@ PSRAM −43,200 B (pool and free stack). Plan budgets: writers 20,896 → 2,612 
 heap for libraries 298,707 → 312,095 B; PSRAM allowance for non-content users +43,092 B (847,184 capture /
 1,895,760 shipping). Committed content (131,072 rows, 512 runs), the NOTE_EDIT reserve and the edit-index partition
 are unchanged. Device bench image `ab57a6d4…` unchanged in grains.
+
+## E5 — reclaim worker (as built)
+
+A run whose last reference drops (`RunTable::release`) joins the run table's reclaim queue in release order; the queue
+links reuse the free-list array, because a reclaiming descriptor is not free. `reclaim(pool, maxUnits)` returns at
+most `maxUnits` units, oldest release first: one data page (from the end), one directory page, or one emptied
+descriptor freed. `reclaimPendingUnits()` is exact, so `ReclaimJob` (background class) declares
+⌈units / 64⌉ grains for the queue as it stands and ends after them; runs released meanwhile go to the next
+submission, so the scheduler never sees an overrun. Pinned manifests keep their runs out of the queue, and a run listed
+by two manifests waits for both. The per-run `reclaimStep` API is gone (callers use the queue).
+
+Device grain (image `3fb399d1…`): 64 units worst 29 µs, average 14 µs (60 released runs of 40 pages, directory-listed).
+Tests: `test_content_engine_reclaim` (5): order and unit budget, pins and shared runs, scheduler job beside display
+with a mid-job release, 20,000 random allocate/release/reclaim steps with conservation, no heap. Mutations caught:
+budget + 1, LIFO queue, descriptor not counted, job running past its declared grains.

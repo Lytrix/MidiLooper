@@ -145,13 +145,17 @@ void test_run_directory_readback_and_bounded_reclaim() {
   TEST_ASSERT_TRUE(conserved());
   TEST_ASSERT_TRUE(gRuns.seal(run));
   TEST_ASSERT_TRUE(gRuns.release(run));
-  // Reclaim in grains of 5 pages; conservation holds after every grain and the descriptor is freed at the end.
+  // Reclaim in grains of 5 units; conservation holds after every grain and the descriptor is freed at the end.
+  TEST_ASSERT_EQUAL_UINT16(1, gRuns.reclaimPendingRuns());
+  TEST_ASSERT_EQUAL_UINT32(gRuns.heldPages(run) + 1, gRuns.reclaimPendingUnits());
   uint32_t steps = 0;
-  while (!gRuns.reclaimStep(run, gPool, 5)) {
+  while (gRuns.reclaimPendingRuns() != 0) {
+    TEST_ASSERT_TRUE(gRuns.reclaim(gPool, 5) <= 5);
     TEST_ASSERT_TRUE(conserved());
     ++steps;
     TEST_ASSERT_TRUE(steps < 100);
   }
+  TEST_ASSERT_EQUAL_UINT32(0, gRuns.reclaimPendingUnits());
   TEST_ASSERT_EQUAL_UINT16(SmallPool::kPageCount, gPool.freeCount());
   TEST_ASSERT_EQUAL_UINT16(SmallRuns::kRunCount, gRuns.freeCount());
   TEST_ASSERT_TRUE(conserved());
@@ -188,8 +192,8 @@ void test_manifest_release_releases_runs_once() {
   TEST_ASSERT_EQUAL(RunState::Sealed, gRuns.run(a).state);  // still listed by m1
   TEST_ASSERT_TRUE(gManifests.release(m1, gRuns));
   TEST_ASSERT_EQUAL(RunState::Reclaiming, gRuns.run(a).state);
-  while (!gRuns.reclaimStep(a, gPool, 64)) {}
-  while (!gRuns.reclaimStep(b, gPool, 64)) {}
+  TEST_ASSERT_EQUAL_UINT16(2, gRuns.reclaimPendingRuns());
+  while (gRuns.reclaimPendingRuns() != 0) gRuns.reclaim(gPool, 64);
   TEST_ASSERT_EQUAL_UINT16(SmallPool::kPageCount, gPool.freeCount());
   TEST_ASSERT_EQUAL_UINT16(SmallManifests::kManifestCount, gManifests.freeCount());
   TEST_ASSERT_TRUE(conserved());
@@ -319,8 +323,6 @@ void test_reservations_random_interleaving() {
     RunId committed[SmallRuns::kRunCount];  // sealed runs of the current take (content until the take is dropped)
     uint8_t committedCount;
   } writers[3] = {};
-  RunId reclaiming[SmallRuns::kRunCount];
-  uint32_t reclaimingCount = 0;
   uint32_t refusals = 0, owedWrites = 0, accepted = 0;
   gSeed = 0xC0FFEEu;
   for (uint32_t step = 0; step < 200000; ++step) {
@@ -370,11 +372,11 @@ void test_reservations_random_interleaving() {
           ++owedWrites;
         }
         TEST_ASSERT_TRUE(gRuns.seal(r));
-        if (gRuns.release(r)) reclaiming[reclaimingCount++] = r;
+        gRuns.release(r);
       }
       w.runCount = 0;
       for (uint8_t i = 0; i < w.committedCount; ++i)
-        if (gRuns.release(w.committed[i])) reclaiming[reclaimingCount++] = w.committed[i];
+        gRuns.release(w.committed[i]);
       w.committedCount = 0;
     }
     // Closing runs that owe nothing seal (their manifests would publish here).
@@ -389,7 +391,7 @@ void test_reservations_random_interleaving() {
       }
     }
     // The reclaim worker: one bounded grain per step.
-    if (reclaimingCount > 0 && gRuns.reclaimStep(reclaiming[reclaimingCount - 1], gPool, 4)) --reclaimingCount;
+    gRuns.reclaim(gPool, 4);
     if (step % 997 == 0) {
       TEST_ASSERT_TRUE(gRes.check());
       TEST_ASSERT_TRUE(conserved());

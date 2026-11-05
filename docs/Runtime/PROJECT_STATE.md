@@ -1,3 +1,7 @@
+**2026-11-05 — Fixed-memory engine: reclaim worker (E5.11).**
+- Released runs queue in release order and return to the pool through a background job, 64 units per grain (device
+  worst 29 µs); it never overruns its declared grains. Pins and shared runs hold reclamation. Full native passed.
+
 **2026-11-05 — Fixed-memory engine: one writer at a time (owner); writer reserves released.**
 - `Config` now derives content rows (132,768), run descriptors (520), manifest slots (256) and pages (3,222 content,
   4,054 pool) from `kWriterCount = 1`. ARM bench: RAM2 −6.8 KB, PSRAM −43 KB; plan budgets: RAM2 heap for libraries
