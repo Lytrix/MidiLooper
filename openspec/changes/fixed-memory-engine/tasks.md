@@ -98,6 +98,11 @@ revision 3 is the baseline; no whole-plan revisions.
 - [ ] D7 Device qualification of the transition targets (E10): 8 dense tracks, cached / uncached Undo-Redo, 64-bar loops and worst checkpoint misses, continuous overdubbing with revision changes, display + USB/DIN + SD, clustered workload; boundary counts, hard misses, max grain, CPU capacity.
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 
+## E7 — display
+
+- [x] E7.1 `TileStore` + `TileSweep`: span / density tiles, atomic swap with spares, draw rule never blank, steady-cycle display composition with every effective note, dense state (`test_content_engine_display_tiles` 5, mutation-checked; 602,416 B).
+- [ ] E7.2 Visible-bars-first sweep order (F_vis), live overlay, banded draw, tile sweeps as display jobs.
+
 ## CE-C1 — output
 
 - [x] C.1 `OutputPort` with protected NoteOff capacity; DIN saturation 10 s (`test_content_engine_output` 3).

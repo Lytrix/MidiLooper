@@ -1,3 +1,8 @@
+**2026-11-05 — Fixed-memory engine: E7.1 piano-roll tiles.**
+- Span tiles (detail slots) and density tiles (all slots) swept from the steady cycle with every effective note; a bar
+  draws its span tile, else its density tile, and never goes blank on a starved sweep, Undo, focus switch or exhausted
+  spares. 602,416 B, within plan. A dense-bar note loss found and fixed. Next: visible-first order, overlay, banded draw.
+
 **2026-11-05 — Fixed-memory engine: E6.2f live occupancy while recording.**
 - A live NoteOn ends sounding playback notes on its pitch and suppresses them until its NoteOff. Compared per note with
   the composed next cycle: equal except three cases live input cannot foresee (shorten 1 tick later; an equal-start

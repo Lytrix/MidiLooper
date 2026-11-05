@@ -1195,3 +1195,36 @@ D1–D3 are what live input cannot avoid: it cannot see B before B is played. Fr
 composed result. Making live equal would need delaying playback by up to 8 ticks (≈ 8 ms) to wait for possible live
 notes. **Owner decision 2026-11-05: D1–D3 accepted as the live tolerance; no playback delay.** Mutations caught: a live
 NoteOn closing nothing, a release that never clears.
+
+## E7.1 — piano-roll tiles (plan § 9.3, invariant I6, as built)
+
+`include/ContentEngine/DisplayTiles.h`:
+- **`TileStore`:** span tiles (2,560 B: 256 note segments of 8 B + a 32 × 128 one-bit raster) for the detail slots
+  (focus + successor) with spares, stamped (manifest identity, slot); density tiles (64 B: 128 pitches × 4-bit count)
+  for every slot, with one identity per slot and a swept bit per bar. Production size 602,416 B (plan: 600,320 B of
+  tiles + 4,352 B of headers).
+- **Draw rule (`drawSource`):** a bar draws its span tile when the slot has detail tiles and the tile was swept for that
+  slot, else its density tile, else Empty (a bar never swept: an empty slot, or one not loaded yet). A span tile is
+  written into a spare and swapped in whole; the replaced one becomes a spare. A starved sweep, an Undo, a focus switch,
+  a superseded sweep or exhausted spares therefore show previous or density content, never a blank bar.
+- **`TileSweep`** (a display job, soft): composes the slot's manifest with a display composer that selects every
+  effective note (`Composer<…, T = 48>`: the piano roll shows stored effective content; OUT-POLY limits only output),
+  follows notes through cycle 0 and tiles the steady cycle 1, so notes held across the loop end appear from bar 0.
+  Notes ending inside the current bar are drawn as they arrive; bar-crossing notes stay open (≤ 48, the composer's
+  bound; beyond it `overflow()` names the loss). Each bar is published when complete. A newer wanted manifest for the
+  slot stops the sweep (`Superseded`), returning its spare and its source lease. The bar length is a parameter (the
+  firmware's runtime `ticksPerBar`).
+- **Deviation from § 9.3:** the plan has the checkpoint sweep write density tiles too. The checkpoint sweep composes with
+  OUT-POLY selection (T = 16) and the display must not, so the tile sweep is its own job.
+
+Tests (`test_content_engine_display_tiles`, 5): exact segments per bar (a note inside a bar, one crossing a bar line,
+one held across the loop end drawn from bar 0, an OVL-1 shortened note, 20 simultaneous notes all drawn); density for a
+slot without detail tiles; a 300-note bar in the named dense state with its raster complete; the draw rule never
+blanking (Undo with a starved sweep, every grain of the following sweep, a superseded sweep, a focus switch, no
+spares); no heap. Defect found while testing: notes ending inside a bar were held open until the bar finished, so a
+dense bar overflowed the sweep's open table and lost notes silently; they are now drawn on arrival. Mutations caught:
+held notes not carried into cycle 1, a replaced tile not freed, the slot stamp ignored, supersession ignored, the dense
+state never named.
+
+Not yet (E7.2): visible-bars-first ordering (§ 7.5 freshness), the live overlay, banded drawing, and scheduling tile
+sweeps as display jobs.
