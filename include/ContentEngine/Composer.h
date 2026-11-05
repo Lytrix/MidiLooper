@@ -102,48 +102,7 @@ class Composer {
   /// False (named, `indexResult()`) when the source has edit runs and their index cannot be pinned: no store, every slot
   /// pinned by other identities (`Busy`), or more hides than a slot holds (`CapacityExceeded`). Nothing is composed.
   bool begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
-    end();
-    count_ = count > MaxRuns ? MaxRuns : count;
-    loop_ = loopLength;
-    for (auto& p : active_)
-      for (auto& c : p) c = 0;
-    for (auto& z : zeroOnsetLast_) z = -1;
-    stats_ = Stats{};
-    for (uint8_t r = 0; r < count_; ++r) {
-      src_[r] = source[r];
-      edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
-      wrapStart_[r] = firstRowAtOrAfter(r, loop_);
-      band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
-      hideEnd_[r] = edit_[r] ? leadingHideRows(r) : 0;
-      cursor_[r] = hideEnd_[r];
-      wrapCursor_[r] = wrapStart_[r];
-      band2Cursor_[r] = band2Start_[r];
-      refreshHeads(r);
-      if (edit_[r]) continue;  // EDIT-1: an edit run is not counted as a source occluder
-      for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
-        const PassEvent& e = row(r, i);
-        if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
-      }
-      for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
-        if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
-    }
-    if (index_ != nullptr) {
-      indexResult_ = index_->acquire(identity, source, count_, lease_);
-    } else {
-      indexResult_ = IndexResult::NotNeeded;
-      for (uint8_t r = 0; r < count_; ++r)
-        if (edit_[r]) indexResult_ = IndexResult::Busy;  // edit runs need the shared index
-    }
-    if (indexResult_ != IndexResult::Ready && indexResult_ != IndexResult::NotNeeded) {
-      count_ = 0;
-      return false;
-    }
-    openCount_ = 0;
-    windowStart_ = 0;
-    windowOpen_ = false;
-    cycle_ = 0;
-    identity_ = identity;
-    return true;
+    return bind(source, count, loopLength, identity, true);
   }
 
   /// Composes the next window of `windowTicks` ticks into `w`. False at the end of the loop cycle.
@@ -255,10 +214,16 @@ class Composer {
   /// Rebuilds the composer at `cp` for the same source. False when `cp` is not valid for this source (identity, loop
   /// length, run count) or the source's hides do not fit.
   bool resume(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, const Checkpoint& cp) {
+    if (!resumeBind(source, count, loopLength, identity, cp)) return false;
+    resumeSeek();
+    return true;
+  }
+  /// `resume` as two grains (each fits g on the device; together they do not): `resumeBind` binds the source and
+  /// restores the checkpoint's state, `resumeSeek` positions every stream cursor. Nothing composes in between.
+  bool resumeBind(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity,
+                  const Checkpoint& cp) {
     if (!cp.valid || cp.identity != identity || cp.loopLength != loopLength || cp.runCount != count) return false;
-    if (!begin(source, count, loopLength, identity)) return false;
-    for (auto& p : active_)
-      for (auto& c : p) c = 0;
+    if (!bind(source, count, loopLength, identity, false)) return false;
     for (uint8_t i = 0; i < cp.activeCount; ++i) active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
     openCount_ = cp.openCount;
     for (uint8_t i = 0; i < cp.openCount; ++i)
@@ -267,8 +232,11 @@ class Composer {
                       (cp.open[i].channel & 0x40) != 0};
     windowStart_ = cp.position;
     cycle_ = cp.cycle;
+    return true;
+  }
+  void resumeSeek() {
+    const uint32_t p = windowStart_;
     for (uint8_t r = 0; r < count_; ++r) {
-      const uint32_t p = cp.position;
       cursor_[r] = firstRowAtOrAfter(r, p);
       if (cursor_[r] < hideEnd_[r]) cursor_[r] = hideEnd_[r];
       if (cursor_[r] > wrapStart_[r]) cursor_[r] = wrapStart_[r];
@@ -278,7 +246,6 @@ class Composer {
       band2Cursor_[r] = b2 < band2Start_[r] ? band2Start_[r] : b2;
       refreshHeads(r);
     }
-    return true;
   }
 
   /// Renumbers the current cycle (window `cycleBase`) without changing the carried state. Valid for steady state,
@@ -377,6 +344,58 @@ class Composer {
         }
       }
     return bestKey != kNoHead && (bestKey >> 2) < limit;
+  }
+
+  /// `begin` from tick 0 (`fromStart`: cursors, heads and the wrap-held occluders set here), or the source binding
+  /// alone for `resume`, which seeks the cursors and restores the occluders from its checkpoint. The tick-0 onset
+  /// order comes from the source and is needed at every later cycle start, so both paths set it.
+  bool bind(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool fromStart) {
+    end();
+    count_ = count > MaxRuns ? MaxRuns : count;
+    loop_ = loopLength;
+    for (auto& p : active_)
+      for (auto& c : p) c = 0;
+    for (auto& z : zeroOnsetLast_) z = -1;
+    stats_ = Stats{};
+    for (uint8_t r = 0; r < count_; ++r) {
+      src_[r] = source[r];
+      edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
+      wrapStart_[r] = firstRowAtOrAfter(r, loop_);
+      band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
+      hideEnd_[r] = edit_[r] ? leadingHideRows(r) : 0;
+      if (fromStart) {
+        cursor_[r] = hideEnd_[r];
+        wrapCursor_[r] = wrapStart_[r];
+        band2Cursor_[r] = band2Start_[r];
+        refreshHeads(r);
+      }
+      if (edit_[r]) continue;  // EDIT-1: an edit run is not counted as a source occluder
+      if (fromStart) {
+        for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
+          const PassEvent& e = row(r, i);
+          if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
+        }
+      }
+      for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
+        if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
+    }
+    if (index_ != nullptr) {
+      indexResult_ = index_->acquire(identity, source, count_, lease_);
+    } else {
+      indexResult_ = IndexResult::NotNeeded;
+      for (uint8_t r = 0; r < count_; ++r)
+        if (edit_[r]) indexResult_ = IndexResult::Busy;  // edit runs need the shared index
+    }
+    if (indexResult_ != IndexResult::Ready && indexResult_ != IndexResult::NotNeeded) {
+      count_ = 0;
+      return false;
+    }
+    openCount_ = 0;
+    windowStart_ = 0;
+    windowOpen_ = false;
+    cycle_ = 0;
+    identity_ = identity;
+    return true;
   }
 
   /// Head key of a stream: position << 2 | class (DEC-244 order: position, then class), or kNoHead when exhausted.

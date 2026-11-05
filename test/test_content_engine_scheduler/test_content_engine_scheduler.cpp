@@ -172,12 +172,12 @@ void test_sustained_worst_load_meets_every_deadline() {
   TEST_ASSERT_TRUE(r.persistenceGrains * 16 + 16 >= r.grains);
 }
 
-// Device-measured figures (E5, teensy41-engine-bench): worst grain g = 786 µs (checkpoint resume), the densest
-// spread window 47 grains of <= 128 row units. At U_e = 50 % every deadline is still met with the shares kept. A window
-// whose later passes cluster inside the OVL-6 range takes up to 155 grains: 8 such tracks at once need U_e >= 63 %
-// (design.md E5 finding), so that case is not claimed here.
+// Device-measured figures (E5.8, teensy41-engine-bench, OUT-2 + onset-pitch mask): worst grain 800.3 µs (clustered
+// compose; run-to-run 785-800), taken as g = 810 µs; the densest spread window 47 grains of <= 128 row units. At
+// U_e = 50 % every deadline is still met with the shares kept. The clustered case is the feasibility gate below.
+constexpr uint32_t kMeasuredG = 810;
 void test_measured_grain_load_meets_every_deadline() {
-  const auto r = simulateLoad(800, 800, 47);
+  const auto r = simulateLoad(kMeasuredG, kMeasuredG, 47);
   TEST_ASSERT_EQUAL_UINT32(0, r.missedDeadlines);
   TEST_ASSERT_EQUAL_UINT32(0, r.overruns);
   TEST_ASSERT_TRUE(r.displayGrains * 4 + 4 >= r.grains);
@@ -328,7 +328,7 @@ void test_real_compose_and_sweep_jobs_meet_window_deadlines() {
 
 // E5 FEASIBILITY GATE (owner 2026-11-05: keep RED until met; no budget increase). Eight tracks each composing the
 // adversarial clustered window (59 passes, 6 NoteOns per pass in every 9-tick cluster, pitches rotating so the
-// onset-pitch mask cannot skip a pass) must meet every window deadline at the measured worst grain g = 786 us and
+// onset-pitch mask cannot skip a pass) must meet every window deadline at the measured worst grain g = 810 us and
 // U_e = 50 %. The window's grain count is measured here with the production composer (work units, deterministic),
 // so the gate follows every optimization. While infeasible it is reported RED and ignored, not hidden.
 void test_feasibility_gate_clustered_eight_tracks() {
@@ -358,10 +358,10 @@ void test_feasibility_gate_clustered_eight_tracks() {
   TEST_ASSERT_TRUE(c.openWindow(gWin[0], kWin));
   uint32_t grains = 1;
   while (!c.composeRows(gWin[0], 128)) ++grains;
-  const auto r = simulateLoad(800, 786, grains);
+  const auto r = simulateLoad(kMeasuredG, kMeasuredG, grains);
   char msg[160];
-  snprintf(msg, sizeof(msg), "clustered window %u grains; 8 tracks at g=786 us, U_e=50 %%: %u missed deadlines",
-           static_cast<unsigned>(grains), static_cast<unsigned>(r.missedDeadlines));
+  snprintf(msg, sizeof(msg), "clustered window %u grains; 8 tracks at g=%u us, U_e=50 %%: %u missed deadlines",
+           static_cast<unsigned>(grains), static_cast<unsigned>(kMeasuredG), static_cast<unsigned>(r.missedDeadlines));
   TEST_MESSAGE(msg);
   if (r.missedDeadlines != 0) TEST_IGNORE_MESSAGE("FEASIBILITY GATE RED (E5): clustered eight-track case misses deadlines");
 }

@@ -242,28 +242,49 @@ void test_grain_durations() {
   TEST_MESSAGE(line);
 
   // Checkpoint capture and resume.
-  Stat cap, res;
+  Stat cap, res, seek;
   TestComposer::Checkpoint cp;
   {
     const auto& m = gManifests.manifest(gManifest);
     SourceRun src[Manifests::kMaxRuns];
     for (uint8_t i = 0; i < m.runCount; ++i) src[i] = {m.runs[i], gRuns.run(m.runs[i]).rowCount};
     TEST_ASSERT_TRUE(gComp.begin(src, m.runCount, kLoop, m.identity));
+    // Window 0 opens more instances than the open table holds (OUT-2: overflow is counted and makes every later
+    // checkpoint unusable, so cold start warms up a cycle instead). Resume cost is begin plus the per-run cursor
+    // seeks and does not depend on the open set, so it is timed from the position-0 boundary, which is capturable.
     TEST_ASSERT_TRUE(gComp.composeNext(gWin, kWinTicks));
+    snprintf(line, sizeof(line), "GRAIN,window0_open_overflow=%lu", static_cast<unsigned long>(gComp.stats().openOverflow));
+    TEST_MESSAGE(line);
+    Stat beg;
     for (int k = 0; k < 8; ++k) {
       uint32_t c0 = cycles();
-      gComp.capture(cp);
+      const bool ok = gComp.begin(src, m.runCount, kLoop, m.identity);
+      beg.add(cycles() - c0);
+      TEST_ASSERT_TRUE(ok);
+    }
+    report("composer_begin", beg);
+    snprintf(line, sizeof(line), "GRAIN,index_sync_builds=%lu", static_cast<unsigned long>(gIndex.syncBuilds()));
+    TEST_MESSAGE(line);
+    for (int k = 0; k < 8; ++k) {
+      uint32_t c0 = cycles();
+      const bool ok = gComp.capture(cp);
       cap.add(cycles() - c0);
+      TEST_ASSERT_TRUE_MESSAGE(ok, "capture refused: resume would not be measured");
     }
     for (int k = 0; k < 8; ++k) {
       uint32_t c0 = cycles();
-      gComp.resume(src, m.runCount, kLoop, m.identity, cp);
+      const bool ok = gComp.resumeBind(src, m.runCount, kLoop, m.identity, cp);
       res.add(cycles() - c0);
+      TEST_ASSERT_TRUE(ok);
+      c0 = cycles();
+      gComp.resumeSeek();
+      seek.add(cycles() - c0);
     }
     gComp.end();
   }
   report("checkpoint_capture", cap);
-  report("checkpoint_resume", res);
+  report("checkpoint_resume_bind", res);
+  report("checkpoint_resume_seek", seek);
 
   // Sweep job grains (index resident) and a cold start replay.
   Stat sweep, cold;

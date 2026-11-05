@@ -343,6 +343,7 @@ class ColdStart {
     grains_ = 0;
     warmup_ = false;
     composing_ = false;
+    seeking_ = false;
     source_.open(manifests, runs, composer, manifest);
     return status_ = Status::Running;
   }
@@ -351,6 +352,13 @@ class ColdStart {
   Status step(Window& scratch, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     ++grains_;
+    if (seeking_) {  // the second resume grain
+      composer_->resumeSeek();
+      seeking_ = false;
+      composing_ = true;
+      settle();
+      return status_;
+    }
     if (!composing_) {
       if (source_.prepare(kIndexGrain) == IndexResult::CapacityExceeded) return refuse();
       if (source_.prepared()) begin();
@@ -389,11 +397,14 @@ class ColdStart {
   /// Index Ready: resume from the nearest usable checkpoint, else warm up from the loop start.
   void begin() {
     if (const auto* cp = table_->nearest(slot_, source_.identity(), target_)) {
-      if (!composer_->resume(source_.source(), source_.count(), source_.loopLength(), source_.identity(), *cp)) {
+      if (!composer_->resumeBind(source_.source(), source_.count(), source_.loopLength(), source_.identity(), *cp)) {
         refuse();
         return;
       }
       at_ = cp->position;
+      source_.dropIndexLease();
+      seeking_ = true;  // cursors are positioned on the next grain
+      return;
     } else {
       if (!composer_->begin(source_.source(), source_.count(), source_.loopLength(), source_.identity())) {
         refuse();
@@ -420,7 +431,7 @@ class ColdStart {
   const Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
-  bool warmup_ = false, composing_ = false;
+  bool warmup_ = false, composing_ = false, seeking_ = false;
   uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
   Status status_ = Status::Idle;
 };
