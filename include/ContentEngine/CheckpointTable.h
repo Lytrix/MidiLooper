@@ -104,15 +104,15 @@ class CheckpointTable {
 template <typename Checkpoint>
 bool sameState(const Checkpoint& a, const Checkpoint& b) {
   if (!a.valid || !b.valid || a.identity != b.identity || a.loopLength != b.loopLength || a.position != b.position ||
-      a.runCount != b.runCount || a.activeCount != b.activeCount || a.admittedCount != b.admittedCount)
+      a.runCount != b.runCount || a.activeCount != b.activeCount || a.openCount != b.openCount)
     return false;
   for (uint8_t i = 0; i < a.activeCount; ++i)
     if (a.active[i].pitch != b.active[i].pitch || a.active[i].run != b.active[i].run ||
         a.active[i].count != b.active[i].count)
       return false;
-  for (uint8_t i = 0; i < a.admittedCount; ++i)
-    if (a.admitted[i].noteId != b.admitted[i].noteId || a.admitted[i].runKey != b.admitted[i].runKey ||
-        a.admitted[i].pitch != b.admitted[i].pitch || a.admitted[i].channel != b.admitted[i].channel)
+  for (uint8_t i = 0; i < a.openCount; ++i)
+    if (a.open[i].noteId != b.open[i].noteId || a.open[i].runKey != b.open[i].runKey ||
+        a.open[i].pitch != b.open[i].pitch || a.open[i].channel != b.open[i].channel)
       return false;
   return true;
 }
@@ -193,10 +193,9 @@ class SourceLease {
 ///
 /// Work bound: the sweep composes at most two loops (cycle 0, then cycle 1 up to convergence), i.e. at most
 /// `2 x ceil(rows per loop / maxRows) + 2 x windows per loop` grains, however long the loop plays; it never waits for
-/// playback. `periodic()` (when Done) reports that state at the end of cycle 1 equals state at the end of cycle 0,
-/// i.e. that the composition is periodic from cycle 1 and every published checkpoint equals uninterrupted playback in
-/// any later cycle. It is proved by convergence (equal state at one position implies equal state from there on) or by
-/// comparing the position-0 states; see design.md E5 for when it holds.
+/// playback. `periodic()` (when Done) reports that the composition is periodic from cycle 1, so every published
+/// checkpoint equals uninterrupted playback in any later cycle. It holds whenever no effective instance overflowed the composer's open table (Q-OUT-2 proof,
+/// design.md); convergence (equal state at one position implies equal state from there on) ends the sweep early.
 template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs>
 class CheckpointSweep {
  public:
@@ -259,14 +258,15 @@ class CheckpointSweep {
       position_ = 0;
       Checkpoint cp;
       composer_->capture(cp);
-      if (cycle_ == 0) {  // end of cycle 0: the position-0 checkpoint carries the steady state
+      if (cycle_ == 0) {  // end of cycle 0: its selections were made without carried-in instances, so provisional
         cycle_ = 1;
-        table_->store(slot_, identity_, cp, State::Usable);
+        table_->store(slot_, identity_, cp, State::Provisional);
         composer_->nextCycle();
         return status_;
       }
-      // A whole cycle 1 without convergence: periodic iff the cycle ends in the state it began with.
-      return finish(table_->state(slot_, 0) == State::Usable && sameState(cp, table_->entry(slot_, 0)));
+      // A whole steady cycle 1 without convergence: its end is the steady position-0 state (Q-OUT-2 proof).
+      table_->store(slot_, identity_, cp, State::Usable);
+      return finish(composer_->stats().openOverflow == 0);
     }
     const uint8_t k = table_->indexOf(slot_, position_);
     if (k == Table::kPerSlot) return status_;
@@ -276,7 +276,8 @@ class CheckpointSweep {
       table_->store(slot_, identity_, cp, State::Provisional);
       return status_;
     }
-    if (table_->state(slot_, k) == State::Provisional && sameState(cp, table_->entry(slot_, k))) return finish(true);
+    if (table_->state(slot_, k) == State::Provisional && sameState(cp, table_->entry(slot_, k)))
+      return finish(composer_->stats().openOverflow == 0);
     table_->store(slot_, identity_, cp, State::Usable);
     return status_;
   }
@@ -295,12 +296,12 @@ class CheckpointSweep {
   uint32_t grains() const { return grains_; }
 
  private:
-  /// Promotes the remaining provisional captures only when they are proved equal to their steady counterparts.
+  /// Converged (equal state at one position, so equal from there on) or cycle 1 complete: what is still provisional is
+  /// promoted only on convergence. `periodic`: no instance overflowed the composer's open table (Q-OUT-2 proof holds).
   Status finish(bool periodic) {
     periodic_ = periodic;
-    if (periodic)
-      for (uint8_t k = 0; k < Table::kPerSlot; ++k)
-        if (table_->state(slot_, k) == State::Provisional) table_->setState(slot_, k, State::Usable);
+    for (uint8_t k = 0; k < Table::kPerSlot; ++k)
+      if (table_->state(slot_, k) == State::Provisional && periodic) table_->setState(slot_, k, State::Usable);
     releaseSource();
     return status_ = Status::Done;
   }

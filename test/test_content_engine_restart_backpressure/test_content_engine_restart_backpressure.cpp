@@ -18,6 +18,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <map>
+#include <tuple>
 #include <set>
 #include <utility>
 #include <vector>
@@ -119,6 +120,19 @@ static void playWindow(const Window& w) {
   }
 }
 
+/// Source decisions of a window (Q-OUT-2): the instances that begin sounding, with refusals.
+using Decisions = std::set<std::tuple<uint32_t, uint32_t, uint16_t>>;
+static Decisions decisions(const Window& w) {
+  Decisions d;
+  for (uint16_t i = 0; i < w.count; ++i)
+    if (!w.entries[i].terminal && (w.entries[i].status & 0xF0) == 0x90)
+      d.insert({w.cycleBase + w.entries[i].tick, w.entries[i].noteId, w.entries[i].runKey});
+  return d;
+}
+static std::vector<Decisions> gLog;  // decisions of the adopted composer, window by window
+static uint32_t gRefused = 0;
+static bool gLogging = false;
+
 /// Plays `composer` from its current position until (cycle, position) is reached.
 static void playUntil(TestComposer& c, uint32_t& cycle, uint32_t& pos, uint32_t untilCycle, uint32_t untilPos) {
   while (cycle < untilCycle || (cycle == untilCycle && pos < untilPos)) {
@@ -127,6 +141,10 @@ static void playUntil(TestComposer& c, uint32_t& cycle, uint32_t& pos, uint32_t 
       ++cycle;
       pos = 0;
       continue;
+    }
+    if (gLogging) {
+      gLog.push_back(decisions(gWin));
+      gRefused += gWin.refusedCount;
     }
     playWindow(gWin);
     pos = gWin.end;
@@ -267,9 +285,13 @@ void test_restart_and_adoption_under_port_backpressure() {
   TEST_ASSERT_EQUAL(Cold::Status::Done, st);
   TEST_ASSERT_TRUE(adopt.composeNext(gWin, kWin));
   const uint32_t neverSentAtAdoption = carriedButNeverOnDin(gWin);
+  gLog.push_back(decisions(gWin));
+  gRefused += gWin.refusedCount;
   playWindow(gWin);
   uint32_t aCycle = 2, aPos = gWin.end;
+  gLogging = true;
   playUntil(adopt, aCycle, aPos, 4, 0);
+  gLogging = false;
 
   // Stop: every sounding instance closes; drain both ports.
   const uint32_t stopTick = 4 * kLoop;
@@ -301,6 +323,24 @@ void test_restart_and_adoption_under_port_backpressure() {
   TEST_ASSERT_TRUE(neverSentAtRestart > 0);
   TEST_ASSERT_TRUE(neverSentAtAdoption > 0);
   TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(m3).readerPins);
+
+  // Q-OUT-2: the adoption and the saturated DIN port changed nothing in the source's later eligibility. An isolated
+  // cold start of M3 at the same place, with no player or port, decides every following window identically.
+  TEST_ASSERT_TRUE(gRefused > 0);  // the source exceeded T: selection was exercised
+  static TestComposer isolated;
+  isolated.init(gPool, gRuns, &gIndex);
+  Cold iso;
+  Cold::Status s2 = iso.start(isolated, gTable, gManifests, gRuns, 0, m3, 4608, 2, kWin);
+  while (s2 == Cold::Status::Running) s2 = iso.step(gScratch, 128);
+  TEST_ASSERT_EQUAL(Cold::Status::Done, s2);
+  for (size_t i = 0; i < gLog.size(); ++i) {
+    if (!isolated.composeNext(gWin, kWin)) {
+      isolated.nextCycle();
+      TEST_ASSERT_TRUE(isolated.composeNext(gWin, kWin));
+    }
+    TEST_ASSERT_TRUE_MESSAGE(decisions(gWin) == gLog[i], "port congestion or adoption changed source eligibility");
+  }
+  iso.release();
 }
 
 int main(int, char**) {

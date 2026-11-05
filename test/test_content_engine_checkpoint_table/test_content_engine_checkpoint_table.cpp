@@ -296,14 +296,14 @@ void test_sweep_keeps_cold_checkpoints_out_until_steady() {
   const auto ref = reference(src, 1, identityOf(m));
   TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
   while (gSweep.windows() < kWindowsPerLoop) gSweep.step(gWin, kGrainRows);
-  TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, 0));       // position 0 of cycle 1
+  TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, 0));  // position 0 of cycle 1: cycle-0 selections
   TEST_ASSERT_EQUAL(State::Provisional, gTable.state(0, 1));  // 3072: cold, the held note is missing
-  TEST_ASSERT_EQUAL_UINT8(0, gTable.entry(0, 1).admittedCount);
+  TEST_ASSERT_EQUAL_UINT8(0, gTable.entry(0, 1).openCount);
   while (gSweep.step(gWin, kGrainRows) == Sweep::Status::Running) {
   }
   TEST_ASSERT_EQUAL(Sweep::Status::Done, gSweep.status());
   TEST_ASSERT_TRUE(gSweep.periodic());
-  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, 1).admittedCount);     // steady: the held note sounds at 3072
+  TEST_ASSERT_EQUAL_UINT8(1, gTable.entry(0, 1).openCount);     // steady: the held note sounds at 3072
   TEST_ASSERT_EQUAL_UINT32(kWindowsPerLoop + 4, gSweep.windows());  // converged at 6144 (note ended at 4000)
   for (uint8_t k = 0; k < 4; ++k) TEST_ASSERT_EQUAL(State::Usable, gTable.state(0, k));
   checkColdStart(m, ref, 2, 3);
@@ -371,12 +371,12 @@ void test_revision_transition_sweeps_the_new_manifest() {
 // A new sweep retires the slot's table at once; the old sweep ends Superseded, publishes nothing more and releases
 // its pin.
 void test_new_sweep_supersedes_the_old_one() {
-  const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, 100, 2000}});
+  const RunId r = makeRun(RunKind::kRecord, {}, {{1, 1, 60, kLoop - 100, kLoop + 4000}});  // converges late
   const SourceRun src[] = {{r, gRuns.run(r).rowCount}};
   const ManifestId m = makeManifest(src, 1);
   TEST_ASSERT_EQUAL(Sweep::Status::Running, gSweep.start(gSweepComposer, gTable, gManifests, gRuns, 0, m, kWin, kSpacing));
-  while (gSweep.windows() < kWindowsPerLoop) gSweep.step(gWin, kGrainRows);
-  TEST_ASSERT_NOT_NULL(gTable.nearest(0, identityOf(m), 0));
+  while (gSweep.windows() < kWindowsPerLoop + 2) gSweep.step(gWin, kGrainRows);  // 3072 of cycle 1 published
+  TEST_ASSERT_NOT_NULL(gTable.nearest(0, identityOf(m), kSpacing));
   TEST_ASSERT_EQUAL_UINT16(1, gManifests.manifest(m).readerPins);
   gTable.beginSweep(0, 999, kLoop, kSpacing);  // the slot committed another manifest
   TEST_ASSERT_NULL(gTable.nearest(0, identityOf(m), 0));
@@ -442,11 +442,10 @@ void test_pin_keeps_source_alive_until_the_sweep_ends() {
   TEST_ASSERT_FALSE(gIndex.holds(identityOf(m2)) && gIndex.pins(0) != 0);
 }
 
-// OUT-POLY saturation (more than T notes sounding): admission is first come, so which notes a cycle drops depends on
-// the notes carried in, and uninterrupted playback itself settles only after a few cycles. The sweep detects it
-// (`periodic()` false) and never promotes cold captures; a cold start then reconstructs the cycle-1 state
-// deterministically, within T. Open owner question Q-OUT-2 (design.md E5).
-void test_saturated_composition_is_flagged_aperiodic() {
+// OUT-POLY saturation (more than T notes sounding), Q-OUT-2 source-ordered refusal (owner 2026-11-05): selection no
+// longer depends on the notes carried in, so uninterrupted playback repeats from cycle 1, the sweep proves it, and a
+// cold start from the checkpoints equals uninterrupted playback window for window (carry lists included).
+void test_saturated_composition_is_periodic() {
   uint32_t seed = 77;
   auto rnd = [&seed]() {
     seed ^= seed << 13;
@@ -470,28 +469,18 @@ void test_saturated_composition_is_flagged_aperiodic() {
   const SourceRun src[] = {{a, gRuns.run(a).rowCount}, {b, gRuns.run(b).rowCount}};
   const ManifestId m = makeManifest(src, 2);
   const auto ref = reference(src, 2, identityOf(m));
-  bool cycleDiffers = false;
-  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
-    Snapshot one = ref[1][w];
-    one.cycleBase = ref[3][w].cycleBase;
-    cycleDiffers |= !same(one, ref[3][w]);
-  }
-  TEST_ASSERT_TRUE(cycleDiffers);  // the fixture saturates: uninterrupted playback is not periodic from cycle 1
+  uint32_t refused = 0;
+  for (uint32_t c = 1; c < kCycles; ++c)
+    for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {
+      Snapshot one = ref[1][w];
+      one.cycleBase = ref[c][w].cycleBase;
+      TEST_ASSERT_TRUE_MESSAGE(same(one, ref[c][w]), "saturated playback differs between steady cycles");
+    }
   runSweep(m);
-  TEST_ASSERT_FALSE(gSweep.periodic());
+  TEST_ASSERT_TRUE(gSweep.periodic());
   TEST_ASSERT_TRUE(gSweep.windows() <= 2 * kWindowsPerLoop);
-  for (uint8_t k = 0; k < 4; ++k)  // a provisional (cold) capture is never resumed
-    if (gTable.state(0, k) == State::Provisional)
-      TEST_ASSERT_TRUE(gTable.nearest(0, identityOf(m), k * kSpacing) != &gTable.entry(0, k));
-  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) {  // cold starts equal cycle 1 of uninterrupted playback
-    Cold::Status st = gColdJob.start(gCold, gTable, gManifests, gRuns, 0, m, w * kWin, 1, kWin);
-    while (st == Cold::Status::Running) st = gColdJob.step(gScratch, kGrainRows);
-    TEST_ASSERT_EQUAL(Cold::Status::Done, st);
-    TEST_ASSERT_TRUE(gCold.composeNext(gWin, kWin));
-    TEST_ASSERT_TRUE(same(snap(gWin), ref[1][w]));
-    TEST_ASSERT_TRUE(gWin.carryCount <= 16);
-    gColdJob.release();
-  }
+  for (uint32_t w = 0; w < kWindowsPerLoop; ++w) checkColdStart(m, ref, 2, w);
+  (void)refused;
 }
 
 // The jobs build a non-resident edit index in grains before composing: no composer `begin` builds synchronously, and
@@ -586,7 +575,7 @@ int main(int, char**) {
   RUN_TEST(test_new_sweep_supersedes_the_old_one);
   RUN_TEST(test_replacement_between_grains_publishes_nothing);
   RUN_TEST(test_pin_keeps_source_alive_until_the_sweep_ends);
-  RUN_TEST(test_saturated_composition_is_flagged_aperiodic);
+  RUN_TEST(test_saturated_composition_is_periodic);
   RUN_TEST(test_jobs_build_the_edit_index_in_grains);
   RUN_TEST(test_table_lookup_and_unusable_entries);
   RUN_TEST(test_production_table_within_budget);

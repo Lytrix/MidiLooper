@@ -13,15 +13,25 @@
 //   * a later-pass NoteOn shortens every admitted earlier-pass note sounding on its pitch to one tick before it (OVL-1;
 //     at a window's first tick the end goes into the previous window, by looking one tick past each window's end);
 //   * channel never matters for overlap (OVL-5); sources are counted per (pitch, pass) whether effective or not (OVL-8).
-// Output admission (OUT-POLY): at most T admitted notes sound; a NoteOn beyond them is counted, not written. So every
-// window holds <= START rows + T entries (CE-B1). The composer never predicts port admission or live occupancy; the
-// track's TerminalScheduler decides what actually sounds.
+// Output admission (OUT-POLY, Q-OUT-2 source-ordered refusal, owner decision 2026-11-05): the composer keeps every
+// *effective* source instance that is open (started, not hidden, not yet ended by its NoteOff, an OVL-1 shortening, a
+// Q-LEN-1 re-strike or the window look-ahead), selected for output or not, and marks those carried in from the previous
+// loop cycle. A NoteOn is selected iff, when the DEC-244 merge reaches it, fewer than T instances are open that were
+// either selected in this cycle or carried in (selected or not). Whether an instance is effective and when it ends never
+// depends on a selection, and every effective span is shorter than the loop (Q-LEN-1), so the carried-in set is the
+// source's effective instances open at the loop end: the in-cycle decisions start from a source-determined state and
+// repeat identically every loop from the first steady cycle (design.md, Q-OUT-2 proof). At most T selected instances
+// sound (the latest one selected this cycle counted every other), none is cut or restarted to make room, and every
+// window holds <= START rows + T entries (CE-B1). Up to kMaxOpen instances are tracked; beyond that an instance is
+// refused untracked (counted: `Stats::openOverflow`) and periodicity is no longer guaranteed, while the bound holds.
+// The composer never predicts port admission or live occupancy; the track's TerminalScheduler decides what sounds.
 //
 // Row timeline per run: ticks are monotonic; rows of one loop cycle have ticks < loop length, and a run's NoteOffs for
 // notes held across the loop end carry `loop length + position` (the closing run's wrap section). Each run is read as two
 // streams: the main stream (ticks < loop) and the wrap stream (ticks >= loop, played at `tick - loop` in the next cycle).
 // A cold `begin` counts the wrap-held source notes as sounding at tick 0 (so occlusion at the loop start is exact) but
-// admits none of them (DEC-148: never sounded); `nextCycle` continues with everything carried.
+// opens none of them, so its cycle 0 is not the steady selection: a production cold start resumes from a checkpoint or
+// warms up one cycle (`ColdStart`), and the player ignores carried instances it never sent (DEC-148).
 //
 // Q-LEN-1 (owner decision 2026-11-04, re-strike once per loop): a note held for at least one loop length (its NoteOff
 // flagged `kOriginHeldLoop` by the writer) is replayed with effective end min(recorded end, start + loop - 1): its NoteOn
@@ -33,11 +43,11 @@
 // `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (ratified): an edit run is not a derived occluder; NOTE_EDIT writes its own
 // overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
 // by an edit still counts as a source occluder (OVL-8).
-// Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 64 entries,
-// admitted notes <= T, stamps); `resume` rebuilds the composer there (cursors by binary search on tick), so a mid-loop
+// Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 56 entries,
+// open instances <= 32 with their selection, stamps); `resume` rebuilds the composer there (cursors by binary search on tick), so a mid-loop
 // start (undo, redo, slot switch, adoption warm-up) replays at most from the nearest earlier checkpoint instead of the
 // loop start. A sounding set that does not fit is refused by name (`capture` false); the caller uses an earlier one.
-// Scratch is fixed: 128 x 64 source counters, T admitted notes, three cursors per run.
+// Scratch is fixed: 128 x 64 source counters, kMaxOpen open instances, three cursors per run.
 
 #pragma once
 
@@ -64,7 +74,9 @@ class Composer {
   struct Stats {
     uint32_t maxLookaheadRowsPerNoteOn;
     uint32_t lookaheadRowsLastWindow;
+    uint32_t openOverflow;  // effective instances refused untracked: more than kMaxOpen open at once
   };
+  static constexpr uint8_t kMaxOpen = 48;
   const Stats& stats() const { return stats_; }
 
   /// `index` is the shared edit-hide index; required only for sources with edit runs.
@@ -81,7 +93,7 @@ class Composer {
     windowOpen_ = false;
     identity_ = 0;
     cycle_ = 0;
-    admittedCount_ = 0;
+    openCount_ = 0;
     stats_ = Stats{};
     lookaheadRows_ = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
@@ -126,7 +138,7 @@ class Composer {
       count_ = 0;
       return false;
     }
-    admittedCount_ = 0;
+    openCount_ = 0;
     windowStart_ = 0;
     windowOpen_ = false;
     cycle_ = 0;
@@ -154,9 +166,9 @@ class Composer {
     w.reset(identity_, a, windowEnd_);
     w.cycleBase = cycle_ * loop_;
     stats_.lookaheadRowsLastWindow = 0;
-    for (uint8_t i = 0; i < admittedCount_; ++i) {
-      w.carry[w.carryCount++] = {admitted_[i].noteId, admitted_[i].runKey};
-      admitted_[i].entry = kNoEntry;
+    for (uint8_t i = 0; i < openCount_; ++i) {
+      if (open_[i].selected) w.carry[w.carryCount++] = {open_[i].noteId, open_[i].runKey};
+      open_[i].entry = kNoEntry;
     }
     windowOpen_ = true;
     return true;
@@ -192,7 +204,8 @@ class Composer {
   IndexResult indexResult() const { return indexResult_; }
   IndexStore* indexStore() const { return index_; }
 
-  static constexpr uint8_t kCheckpointActive = 64;
+  static constexpr uint8_t kCheckpointActive = 56;
+  static constexpr uint8_t kCheckpointOpen = 32;
 
   /// Carry state at a window boundary. Fixed size; stamped with the source it belongs to.
   struct Checkpoint {
@@ -202,17 +215,17 @@ class Composer {
     struct Note {
       uint32_t noteId;
       uint16_t runKey;
-      uint8_t pitch, channel;
+      uint8_t pitch, channel;  // channel 1..16; bit 7: selected for output; bit 6: carried in
     };
     uint32_t identity, loopLength, position, cycle;
-    uint8_t runCount, activeCount, admittedCount;
+    uint8_t runCount, activeCount, openCount;
     bool valid;
     Active active[kCheckpointActive];
-    Note admitted[T];
+    Note open[kCheckpointOpen];
   };
 
-  /// Stores the state at the current window boundary. False (named) when more than 64 (pitch, pass) source counters are
-  /// nonzero; `cp.valid` is then false.
+  /// Stores the state at the current window boundary. False (named) when more than 56 (pitch, pass) source counters are
+  /// nonzero or more than 32 instances are open; `cp.valid` is then false.
   bool capture(Checkpoint& cp) const {
     cp.valid = false;
     if (windowOpen_) return false;  // only at a window boundary
@@ -228,9 +241,13 @@ class Composer {
         if (cp.activeCount >= kCheckpointActive) return false;
         cp.active[cp.activeCount++] = {p, r, active_[p][r], 0};
       }
-    cp.admittedCount = admittedCount_;
-    for (uint8_t i = 0; i < admittedCount_; ++i)
-      cp.admitted[i] = {admitted_[i].noteId, admitted_[i].runKey, admitted_[i].pitch, admitted_[i].channel};
+    if (openCount_ > kCheckpointOpen || stats_.openOverflow != 0) return false;
+    cp.openCount = openCount_;
+    const bool loopEnd = windowStart_ >= loop_;  // the state of the next cycle's start: everything open is carried in
+    for (uint8_t i = 0; i < openCount_; ++i)
+      cp.open[i] = {open_[i].noteId, open_[i].runKey, open_[i].pitch,
+                    static_cast<uint8_t>(open_[i].channel | (open_[i].selected ? 0x80 : 0) |
+                                         (open_[i].carried || loopEnd ? 0x40 : 0))};
     cp.valid = true;
     return true;
   }
@@ -243,10 +260,11 @@ class Composer {
     for (auto& p : active_)
       for (auto& c : p) c = 0;
     for (uint8_t i = 0; i < cp.activeCount; ++i) active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
-    admittedCount_ = cp.admittedCount;
-    for (uint8_t i = 0; i < cp.admittedCount; ++i)
-      admitted_[i] = Admitted{cp.admitted[i].noteId, cp.admitted[i].runKey, cp.admitted[i].pitch, cp.admitted[i].channel,
-                              kNoEntry};
+    openCount_ = cp.openCount;
+    for (uint8_t i = 0; i < cp.openCount; ++i)
+      open_[i] = Open{cp.open[i].noteId, cp.open[i].runKey, cp.open[i].pitch,
+                      static_cast<uint8_t>(cp.open[i].channel & 0x3F), kNoEntry, (cp.open[i].channel & 0x80) != 0,
+                      (cp.open[i].channel & 0x40) != 0};
     windowStart_ = cp.position;
     cycle_ = cp.cycle;
     for (uint8_t r = 0; r < count_; ++r) {
@@ -267,11 +285,12 @@ class Composer {
   /// which is periodic from cycle 1 on (cold start at any later playback cycle, `coldStart`).
   void rebaseCycle(uint32_t cycle) { cycle_ = cycle; }
 
-  /// Continues into the next loop cycle with every carried state (admitted notes, source counters).
+  /// Continues into the next loop cycle with every carried state (open instances, source counters).
   bool nextCycle() {
     if (windowStart_ < loop_ || windowOpen_) return false;
     ++cycle_;
     windowStart_ = 0;
+    for (uint8_t i = 0; i < openCount_; ++i) open_[i].carried = true;
     for (uint8_t r = 0; r < count_; ++r) {
       cursor_[r] = hideEnd_[r];
       wrapCursor_[r] = wrapStart_[r];
@@ -284,13 +303,22 @@ class Composer {
  private:
   static constexpr uint16_t kNoEntry = 0xFFFF;
 
-  struct Admitted {
+  /// An open effective source instance (Q-OUT-2). `selected`: it sounds (START written); otherwise it only counts.
+  struct Open {
     uint32_t noteId;
     uint16_t runKey;
     uint8_t pitch;
     uint8_t channel;
     uint16_t entry;  // index of its START in the current window, or kNoEntry when carried in
+    bool selected;
+    bool carried;  // started in an earlier loop cycle
   };
+  /// Instances that occupy an output voice for admission: selected this cycle, or carried in (selected or not).
+  uint8_t occupied() const {
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < openCount_; ++i) n += (open_[i].selected || open_[i].carried) ? 1 : 0;
+    return n;
+  }
   struct Stream {
     uint8_t run;
     uint8_t band;  // 0 main (< loop), 1 wrap (< 2 x loop), 2 beyond a second wrap (always a held-loop NoteOff)
@@ -404,7 +432,8 @@ class Composer {
     uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
     if (off > on + loop_ - 1) off = on + loop_ - 1;  // Q-LEN-1 effective end
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j) {
-      if (edit_[j]) continue;  // EDIT-1
+      if (edit_[j]) continue;                                   // EDIT-1
+      if (!runs_->startsPitch(src_[j].run, pitch)) continue;  // no NoteOn on this pitch in that pass: nothing to read
       // From the cached head (the pass's next unprocessed row, at or after `on`) and the next row's tick: most passes
       // are decided without reading PSRAM; only a second row inside [on, to] continues from the source.
       const uint32_t k = headKey_[j][0];
@@ -455,31 +484,32 @@ class Composer {
     return false;
   }
 
+  /// Ends open instance `i` at `endPos`: a selected one gets its end (inline, or a TERMINAL when carried in).
   template <uint16_t Cap>
-  void endAdmitted(SpanWindow<Cap>& w, uint8_t i, uint32_t endPos) {
-    Admitted& a = admitted_[i];
-    if (a.entry != kNoEntry) {
+  void endOpen(SpanWindow<Cap>& w, uint8_t i, uint32_t endPos) {
+    const Open& a = open_[i];
+    if (a.selected && a.entry != kNoEntry) {
       w.entries[a.entry].length = static_cast<uint16_t>(endPos - w.entries[a.entry].tick);
-    } else if (w.count < Cap) {
+    } else if (a.selected && w.count < Cap) {
       w.entries[w.count++] = SpanEntry{endPos, a.noteId, 0, a.runKey,
                                        static_cast<uint8_t>(0x80 | ((a.channel - 1) & 0x0F)), a.pitch, 0, 1};
       ++w.terminalCount;
     }
     // Order-preserving removal: the list stays in admission order, so the carried state (and the carry list) is a
     // function of the position in a steady cycle, not of how many cycles were composed (checkpoint convergence).
-    for (uint8_t k = i; k + 1 < admittedCount_; ++k) admitted_[k] = admitted_[k + 1];
-    --admittedCount_;
+    for (uint8_t k = i; k + 1 < openCount_; ++k) open_[k] = open_[k + 1];
+    --openCount_;
   }
 
-  /// A later-pass NoteOn on `pitch` at position `pos` > 0 shortens every admitted earlier-pass note on that pitch to
+  /// A later-pass NoteOn on `pitch` at position `pos` > 0 shortens every open earlier-pass instance on that pitch to
   /// `pos - 1`. At position 0 the only earlier notes sounding are wrap-held ones, which the ratified rule hides outright
   /// (decided at their NoteOn).
   template <uint16_t Cap>
   void shorten(SpanWindow<Cap>& w, uint8_t order, uint8_t pitch, uint32_t pos) {
     if (pos == 0) return;
-    for (uint8_t i = 0; i < admittedCount_;) {
-      if (admitted_[i].pitch == pitch && orderOf(admitted_[i].runKey) < order)
-        endAdmitted(w, i, pos - 1);  // compacts: re-check index i
+    for (uint8_t i = 0; i < openCount_;) {
+      if (open_[i].pitch == pitch && orderOf(open_[i].runKey) < order)
+        endOpen(w, i, pos - 1);  // compacts: re-check index i
       else
         ++i;
     }
@@ -505,9 +535,9 @@ class Composer {
     if (c == 0) {
       if (e.origin & kOriginHeldLoop) return;  // Q-LEN-1: the re-strike ends it; its count drops at the sweep end
       if (!edit_[r] && active_[e.data1 & 0x7F][r] > 0) --active_[e.data1 & 0x7F][r];
-      for (uint8_t i = 0; i < admittedCount_; ++i)
-        if (admitted_[i].noteId == e.noteId && admitted_[i].runKey == runKey) {
-          endAdmitted(w, i, pos);
+      for (uint8_t i = 0; i < openCount_; ++i)
+        if (open_[i].noteId == e.noteId && open_[i].runKey == runKey) {
+          endOpen(w, i, pos);
           break;
         }
       return;
@@ -520,9 +550,9 @@ class Composer {
       return;
     }
     const uint8_t pitch = e.data1 & 0x7F;
-    for (uint8_t i = 0; i < admittedCount_; ++i)  // Q-LEN-1: the previous iteration ends one tick before this one
-      if (admitted_[i].noteId == e.noteId && admitted_[i].runKey == runKey) {
-        endAdmitted(w, i, pos == 0 ? 0 : pos - 1);  // at a window's first tick `endLookahead` already ended it
+    for (uint8_t i = 0; i < openCount_; ++i)  // Q-LEN-1: the previous iteration ends one tick before this one
+      if (open_[i].noteId == e.noteId && open_[i].runKey == runKey) {
+        endOpen(w, i, pos == 0 ? 0 : pos - 1);  // at a window's first tick `endLookahead` already ended it
         break;
       }
     lookaheadRows_ = 0;
@@ -535,11 +565,17 @@ class Composer {
       if (active_[pitch][r] < 0xFF) ++active_[pitch][r];
     }
     if (hidden) return;
-    if (admittedCount_ >= T || w.count >= Cap) {
+    // Q-OUT-2: selected iff fewer than T voices are occupied here (selected this cycle, or carried in).
+    if (openCount_ >= kMaxOpen) {  // refused and untracked
       ++w.refusedCount;
+      ++stats_.openOverflow;
       return;
     }
-    admitted_[admittedCount_++] = Admitted{e.noteId, runKey, pitch, static_cast<uint8_t>((e.status & 0x0F) + 1), w.count};
+    const bool selected = occupied() < T && w.count < Cap;
+    if (!selected) ++w.refusedCount;
+    open_[openCount_++] = Open{e.noteId, runKey, pitch, static_cast<uint8_t>((e.status & 0x0F) + 1),
+                               selected ? w.count : kNoEntry, selected, false};
+    if (!selected) return;
     w.entries[w.count++] = SpanEntry{pos, e.noteId, kOpenLength, runKey, e.status, e.data1, e.data2, 0};
     ++w.startCount;
   }
@@ -557,9 +593,9 @@ class Composer {
         const PassEvent& e = row(j, i);
         if (e.tick != at) break;
         if (cls(e) != 1) continue;
-        for (uint8_t k = 0; k < admittedCount_; ++k)
-          if (admitted_[k].noteId == e.noteId && admitted_[k].runKey == runKey) {
-            endAdmitted(w, k, b - 1);
+        for (uint8_t k = 0; k < openCount_; ++k)
+          if (open_[k].noteId == e.noteId && open_[k].runKey == runKey) {
+            endOpen(w, k, b - 1);
             break;
           }
         if (!loopEnd && !edit_[j]) shorten(w, j, e.data1 & 0x7F, b);
@@ -593,8 +629,8 @@ class Composer {
   IndexLease lease_;
   IndexResult indexResult_;
   uint8_t active_[128][MaxRuns];  // source notes sounding per (pitch, pass), effective or not (OVL-8)
-  Admitted admitted_[T];
-  uint8_t admittedCount_;
+  Open open_[kMaxOpen];  // effective instances open, in admission order (Q-OUT-2)
+  uint8_t openCount_;
   uint32_t loop_;
   uint32_t windowStart_;
   uint32_t windowEnd_;
