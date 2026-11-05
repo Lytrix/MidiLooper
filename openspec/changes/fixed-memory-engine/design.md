@@ -939,5 +939,17 @@ apply / undo / redo / delete actions against a reference model (selection, E: de
 heard content every 7th); no heap. Mutations caught: redo newest-first, no hides, unsorted replacements, a superseded
 rebuild not forgiven, no return to the start with nothing edited.
 
-Device grains: the bench measures the worst rebuild (512 notes moved: 512 hides, 1,024-event sort, 1,024 rows at 128
-per grain; 12 grains on host). Not yet measured on the device: the board dropped off USB (image `e7ea4134…` built).
+Device grains (image `e7ea4134…`, worst case: 512 notes moved): **not within g yet.**
+
+| Step | Worst | Average |
+|---|---|---|
+| `apply` of 512 changes (acceptance, blocking) | 3,486 µs | — |
+| rebuild grain, 128 rows or the sort | 922 µs | 210 µs (12 grains) |
+| E: undo of that step (acceptance) | 1,196 µs | — |
+
+Acceptance does O(selection) work on PSRAM-resident arrays (validate, swap, compare with the admitted geometry, build
+the hide and event lists, copy the log), and the 1,024-key heapsort is one grain. Open (E4.5b): move the list building
+into the rebuild job, split the sort into grains, and keep the hot arrays in faster memory; then re-measure.
+
+Also on this image: compose seek 865 µs (was 690) and `begin` 545 µs (was 420) — the bench now places 54 KB more in
+PSRAM; the cause is not yet confirmed. g = 810 µs is not met by these two until it is.

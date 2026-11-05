@@ -82,7 +82,7 @@ revision 3 is the baseline; no whole-plan revisions.
 - [x] E4.2 Overdub session undo (DEC-038): wraps are steps, undo bounded at the session start, Stop folds the session into one step; sessions in the reference-model fuzz (`test_content_engine_history` 11, mutation-checked). Writer wiring (begin / wrap commit / end) lands with integration.
 - [x] E4.3 NOTE_EDIT session undo (owner: limit 99, shared): E: steps, fold on leave, abandon, overdub + edit sessions at once; the session start is protected from eviction so abandon always restores it (`test_content_engine_history` 16, mutation-checked). Edit writer (selection ≤ 512, hide + replacement rows, seal grains) and focus / selection restore: E4.5 with integration.
 - [x] E4.5 Edit writer (owner: hear each edit, rewrite one run): selection admission, E: log (99), per-action edit-run reservation, rebuild in grains, one history state per session, leave / abandon (`test_content_engine_edit_writer` 9, mutation-checked). Focus / selection restore per E: step moves to the `EditManager` integration (E9).
-- [ ] E4.5b Device: measure edit-writer grains (bench `edit_*`; board offline 2026-11-05).
+- [ ] E4.5b Edit-writer grains within g: measured 2026-11-05 (apply 3,486 µs, rebuild grain 922 µs, undo 1,196 µs); grain the acceptance work and the sort, re-measure. Also explain seek 865 µs / `begin` 545 µs on that image.
 - [ ] E4.4 History reconstruction on load (DEC-088), with persistence (E8).
 
 ## CE-C1 — output
