@@ -3487,6 +3487,118 @@ void test_engine_lsv1_reader_matches_the_legacy_writer() {
   }
 }
 
+// fixed-memory-engine E9.7c parity: the legacy pass-stream writer's bytes (behind the epoch header, as on the card),
+// read by the engine's reader: the Active passes as runs in materialisation order, the undone pass left out, each note
+// paired last-open-first, a NoteOff sealed past the loop end wrapped, the CC in the event run.
+static CommittedChunkIdList passChunks(std::initializer_list<MidiEvent> events) {
+  LoopEventStore capture;
+  for (const MidiEvent& e : events) TEST_ASSERT_TRUE(capture.append(e));
+  CommittedChunkIdList ids;
+  TEST_ASSERT_TRUE(transferCaptureStoreToCommittedChunkIds(capture, ids));
+  return ids;
+}
+
+void test_engine_pass_stream_reader_matches_the_legacy_writer() {
+  LoopEventStore::initPool();
+  PersistedLoopSnapshot snapshot{};
+  snapshot.loopId = 3;
+  snapshot.loopLengthTicks = 3072;
+  snapshot.passes.recordPass.id = 1;
+  snapshot.passes.recordPass.state = CapturePassState::Active;
+  snapshot.passes.recordPass.committedChunkIds =
+      passChunks({MidiEvent::NoteOn(0, 1, 60, 100), MidiEvent::ControlChange(40, 1, 7, 99),
+                  MidiEvent::NoteOn(100, 1, 64, 90), MidiEvent::NoteOff(300, 1, 60), MidiEvent::NoteOff(500, 1, 64),
+                  MidiEvent::NoteOn(3000, 1, 67, 80), MidiEvent::NoteOff(3072 + 50, 1, 67)});
+  OverdubPass later{};
+  later.id = 2;
+  later.mergeSequence = 2;
+  later.state = CapturePassState::Active;
+  later.committedChunkIds = passChunks({MidiEvent::NoteOn(10, 1, 72, 70), MidiEvent::NoteOff(20, 1, 72)});
+  OverdubPass undone{};
+  undone.id = 3;
+  undone.mergeSequence = 3;
+  undone.state = CapturePassState::Disabled;
+  undone.committedChunkIds = passChunks({MidiEvent::NoteOn(0, 1, 80, 70), MidiEvent::NoteOff(5, 1, 80)});
+  OverdubPass earlier{};
+  earlier.id = 4;
+  earlier.mergeSequence = 1;
+  earlier.state = CapturePassState::Active;
+  earlier.committedChunkIds = passChunks({MidiEvent::NoteOn(30, 1, 74, 60), MidiEvent::NoteOff(90, 1, 74)});
+  snapshot.passes.overdubPasses.push_back(std::move(later));
+  snapshot.passes.overdubPasses.push_back(std::move(undone));
+  snapshot.passes.overdubPasses.push_back(std::move(earlier));
+  std::vector<uint8_t> buffer = {0x42, 0x11, 0, 0, 0x01, 0x00, 0x06, 0xE9, 0xBD, 0x83};  // epoch, schema 1, CRC
+  MemoryStorageIo mem(&buffer);
+  TEST_ASSERT_TRUE(writePersistedLoopSnapshot(mem.io(), snapshot));
+
+  using Pool = ContentEngine::PagePool<512, 64>;
+  using Runs = ContentEngine::RunTable<16, Pool>;
+  using Manifests = ContentEngine::ManifestTable<8, 8>;
+  using Hist = ContentEngine::History<Manifests, Runs, 4, 20>;
+  using Res = ContentEngine::RowReservations<Pool, Runs>;
+  using Import = ContentEngine::ResolvedImport<Pool, Runs, Manifests, Hist, 64>;
+  static Pool pool;
+  static Runs runs;
+  static Manifests manifests;
+  static Hist history;
+  static Res res;
+  static ContentEngine::NoteIdSource ids;
+  static Import import;
+  static uint8_t scratch[16384];
+  pool.init();
+  runs.init();
+  manifests.init();
+  res.init(pool, runs, 0);
+  history.init(manifests, runs);
+  ids.init(1);
+  MemoryCard card;
+  card.bytes = &buffer;
+  ContentEngine::Lsv1Reader<MemoryCard, Import> reader;
+  const ContentEngine::MidiEventLayout layout{static_cast<uint8_t>(sizeof(MidiEvent)),
+                                              static_cast<uint8_t>(offsetof(MidiEvent, data))};
+  auto st = reader.start(card, "x", import, pool, runs, manifests, history, res, ids, 0, scratch, sizeof scratch, layout);
+  while (st == decltype(st)::Running) st = reader.step();
+  TEST_ASSERT_EQUAL(decltype(st)::Done, st);
+  const auto& m = manifests.manifest(history.current(0));
+  TEST_ASSERT_EQUAL_UINT32(3072, m.loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(4, m.runCount);  // the event run, the record pass, merge 1, merge 2
+  struct Row { uint32_t tick; uint8_t status, d1, d2; };
+  auto rowsOf = [&](uint8_t k) {
+    std::vector<Row> v;
+    const ContentEngine::RunId r = m.runs[k];
+    for (uint32_t i = 0; i < runs.run(r).rowCount; ++i) {
+      const ContentEngine::PassEvent& e = runs.rowAt(r, i, pool);
+      v.push_back({e.tick, static_cast<uint8_t>(e.status & 0xF0), e.data1,
+                   static_cast<uint8_t>((e.status & 0xF0) == 0x80 ? 0 : e.data2)});
+    }
+    return v;
+  };
+  auto same = [](const std::vector<Row>& a, std::initializer_list<Row> b) {
+    if (a.size() != b.size()) return false;
+    size_t i = 0;
+    for (const Row& w : b) {
+      if (a[i].tick != w.tick || a[i].status != w.status || a[i].d1 != w.d1 || a[i].d2 != w.d2) return false;
+      ++i;
+    }
+    return true;
+  };
+  TEST_ASSERT_TRUE(same(rowsOf(0), {{40, 0xB0, 7, 99}}));
+  // The record pass; 67 is held across the loop end (its NoteOff sealed at 3122, wrapped to 50, in the wrap band).
+  const std::vector<Row> record = rowsOf(1);
+  TEST_ASSERT_EQUAL_UINT32(6, record.size());
+  uint8_t ons = 0;
+  bool held = false;
+  for (const Row& r : record) {
+    ons += r.status == 0x90;
+    held |= r.status == 0x80 && r.d1 == 67 && r.tick == 3072 + 50;  // the wrap band
+  }
+  TEST_ASSERT_EQUAL_UINT8(3, ons);
+  TEST_ASSERT_TRUE(held);
+  TEST_ASSERT_TRUE(same(rowsOf(2), {{30, 0x90, 74, 60}, {90, 0x80, 74, 0}}));
+  TEST_ASSERT_TRUE(same(rowsOf(3), {{10, 0x90, 72, 70}, {20, 0x80, 72, 0}}));
+  releasePersistedLoopSnapshotChunks(snapshot);
+}
+
 int main(int argc, char** argv) {
   if (argc == 3 && std::strcmp(argv[1], "--decode-slot-body") == 0)
     return decodeSlotBodyFile(argv[2]);
@@ -3536,6 +3648,7 @@ int main(int argc, char** argv) {
   RUN_TEST(test_publication_owed_for_the_committed_state_is_waited_for);
   RUN_TEST(test_lsv1_body_format_roundtrip_dual_write);
   RUN_TEST(test_engine_lsv1_reader_matches_the_legacy_writer);
+  RUN_TEST(test_engine_pass_stream_reader_matches_the_legacy_writer);
   RUN_TEST(test_lsv1_stepped_parse_matches_full_read);
   RUN_TEST(test_lsv1_payload_byte_slice_quota_and_io_boundaries);
   RUN_TEST(test_lsv1_stepped_save_tail_matches_monolithic);

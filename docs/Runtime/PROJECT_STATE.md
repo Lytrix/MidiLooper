@@ -1,3 +1,10 @@
+**2026-11-05 — Fixed-memory engine: E9.7c-1 pass-stream V1 slots.**
+- Pass-stream slot files (the older format, most of the card) now import at boot, read only: each Active pass becomes
+  its own run in the old firmware's order, so the engine composes them as it composes overdubs. The card stores a
+  pass's events in tick order, so notes held across the loop end are paired round the wrap. On the owner's card 12
+  slots import (all 10 without edits and the 2 LSV1 slots), 0 fail; the 9 slots with note edits are skipped and named
+  until E9.7c-2; 0.75 s for the whole boot import.
+
 **2026-11-05 — Fixed-memory engine: E9.7b V1 import from the card.**
 - LSV1 slot files import at boot (read only) as exactly what the old firmware plays: their notes (stored by id, so read
   in sorted windows) and events. On the owner's card 2 slots imported; 20 pass-stream slots with content are skipped by

@@ -419,16 +419,30 @@ class ResolvedImport {
   Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
                uint8_t slot, uint32_t loopLength, uint32_t notes, uint32_t events) {
     cancel();
+    bind(pool, runs, manifests, history, res, ids);
+    return begin(slot, loopLength, notes, events);
+  }
+  /// `start` in two steps: the engine's tables (a reader binds them when it starts), then the admission once it has
+  /// counted the rows.
+  void bind(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids) {
     pool_ = &pool;
     runs_ = &runs;
     manifests_ = &manifests;
     history_ = &history;
     res_ = &res;
     ids_ = &ids;
+  }
+  Status begin(uint8_t slot, uint32_t loopLength, uint32_t notes, uint32_t events) {
+    cancel();
+    Manifests& manifests = *manifests_;
+    HistoryT& history = *history_;
+    Runs& runs = *runs_;
+    Reservations& res = *res_;
     slot_ = slot;
     loop_ = loopLength;
     last_ = lastEvent_ = 0;
     eventRun_ = kNoRun;
+    passes_ = 0;
     held_ = 0;
     ManifestId probe[1];
     int16_t cur;
@@ -471,25 +485,45 @@ class ResolvedImport {
     return status_;
   }
 
+  static constexpr uint8_t kMaxPassRuns = 16;  // runs a pass stream's passes may take
+
+  /// E9.7c: the next recorded pass of a pass-stream V1 slot, with `notes` notes, as a run of its own — later passes
+  /// occlude earlier ones at composition, exactly as an overdub does. The previous pass's NoteOffs are written first.
+  Status nextPass(uint32_t notes) {
+    if (status_ != Status::Running) return status_;
+    if (passes_ == kMaxPasses) return fail(Status::BadInput);
+    flushUpTo(0xFFFFFFFFu);
+    res_->forgive(run_);
+    runs_->seal(run_);
+    passRuns_[passes_++] = run_;
+    run_ = runs_->allocate(slot_, RunKind::kOverdub);
+    if (run_ == kNoRun || res_->reserve(run_, 2 * notes) != Admission::Ok) return fail(Status::DeniedCapacity);
+    last_ = 0;
+    return status_;
+  }
+
   /// Writes the remaining NoteOffs, seals the take and publishes it as the slot's only state.
   Status finish() {
     if (status_ != Status::Running) return status_;
     flushUpTo(0xFFFFFFFFu);
     res_->forgive(run_);  // rows the admission counted but the content did not use
     runs_->seal(run_);
-    RunId list[2];
+    RunId list[kMaxPasses + 2];
     uint8_t n = 0;
     if (eventRun_ != kNoRun) {  // events first: a program change on a note's tick comes before it (pass order)
       res_->forgive(eventRun_);
       runs_->seal(eventRun_);
       list[n++] = eventRun_;  // admitted only with events to write (the reader counts the kept ones)
     }
+    for (uint8_t k = 0; k < passes_; ++k) list[n++] = passRuns_[k];  // pass order: record, then overdubs
     list[n++] = run_;
     const ManifestId m = manifests_->create(slot_, 1, loop_, list, n, *runs_);
     if (m == kNoManifest) return fail(Status::DeniedCapacity);
     runs_->release(run_);  // the manifest holds the take
     run_ = kNoRun;
     if (eventRun_ != kNoRun) runs_->release(eventRun_);
+    for (uint8_t k = 0; k < passes_; ++k) runs_->release(passRuns_[k]);
+    passes_ = 0;
     eventRun_ = kNoRun;
     history_->restoreSlot(slot_, &m, 1, 0, true);
     return status_ = Status::Done;
@@ -557,6 +591,8 @@ class ResolvedImport {
       runs_->release(*r);
       *r = kNoRun;
     }
+    for (uint8_t k = 0; k < passes_; ++k) runs_->release(passRuns_[k]);  // sealed, nothing owed
+    passes_ = 0;
     held_ = 0;
     return status_ = s;
   }
@@ -568,8 +604,11 @@ class ResolvedImport {
   Reservations* res_ = nullptr;
   NoteIdSource* ids_ = nullptr;
   uint8_t slot_ = 0;
+  static constexpr uint8_t kMaxPasses = kMaxPassRuns - 1;  // the runs before the current one
   uint32_t loop_ = 0, last_ = 0, lastEvent_ = 0;
   RunId run_ = kNoRun, eventRun_ = kNoRun;
+  RunId passRuns_[kMaxPasses] = {};
+  uint8_t passes_ = 0;
   Pending heap_[MaxHeld];
   uint16_t held_ = 0, heldPeak_ = 0;
   Status status_ = Status::Idle;

@@ -1647,5 +1647,43 @@ dropped, channel remap, V1 import off). Owner's card, read only (image `1ab15b47
 bars, 177 notes / 16 bars), 20 pass-stream slots with content and 1 empty snapshot skipped, 40 empty placeholders,
 0.58 s for the whole boot import.
 
-Open (owner): 20 of the 22 slots with content on the card are pass-stream files, skipped by the decision; importing
-them would compose their passes with the engine (E9.7c).
+Superseded by E9.7c-1 (owner 2026-11-05: add E9.7c): pass-stream files are now imported, below.
+
+## E9.7c-1 — pass-stream V1 slots (owner 2026-11-05; as built)
+
+The same reader (`Lsv1Reader`, V1Import.h) reads a body without LSV1 magic as the legacy pass stream
+(`writeLegacyLoopPersisted`): 8 header words and the pass count; per pass id, mergeSequence, state, type, sealed tick,
+event count and the raw `MidiEvent`s; then the `EPT3` tail with the edit-pass count. The epoch header is detected as the
+legacy loader does (`fileStartsWithEpochHeader`).
+- **Composition as the legacy materialisation** (`collectActiveCommittedChunkLists`): Active passes only (undone ones
+  left out); the record pass first, then the overdubs by mergeSequence. Each pass with notes becomes its own run, so a
+  later pass occludes an earlier one at composition exactly as a live overdub does; kept events of all passes go to the
+  event run. `ResolvedImport` gained `bind` / `begin` (the reader binds the tables at start and is admitted once it has
+  counted) and `nextPass` (≤ 16 runs; every run released on any failure).
+- **Pairing, cyclic** (measured on the card: a pass is stored in tick order, so a note held across the loop end has its
+  NoteOff near the start of the pass and its NoteOn near the end): a NoteOff closes the last open note of its channel
+  and pitch; NoteOffs with nothing open wait, and at the pass end close the notes still open in order — the stream
+  wrapped round; a NoteOff sealed up to a bar past the loop end is wrapped. A NoteOn with no NoteOff anywhere in its pass
+  is held for the whole loop (its NoteOff one tick before its start) and counted (`v1HeldWhole`) rather than refusing
+  the slot — on the owner's card there are none among the imported slots.
+- **Windows per pass:** the counting pass builds one start histogram per Active pass; each window re-reads the file up
+  to the end of its pass. The per-pass tables, the open-note and waiting-NoteOff tables (128 each) sit in the import
+  scratch, so the persistence state stays within its line (7,224 B + the 1 KiB merge heap) on ARM.
+- **Named outcomes added:** `Edited` (edit passes: skipped, `v1EditedMask`, until E9.7c-2), `ManyPasses` (> 16 Active
+  passes: failed); a loop-0 placeholder with no passes is empty. `PassStream` is no longer returned.
+
+Tests: `test_content_engine_v1_lsv1` (8): a pass stream's runs in materialisation order with an undone pass left out,
+last-open-first pairing, a NoteOn of velocity 0 as a NoteOff, a stray NoteOff dropped, a tick-ordered held note paired
+round the wrap, a NoteOff sealed past the loop end, CC and bend in the event run, geometry as NOTE_EDIT gathers it,
+read-only and saved in the new format after approval; 1,200 + 700 notes out of order in windows; edited, shifted,
+empty and placeholder skipped by name, a note with no NoteOff held whole and counted, an over-dense second pass failing
+with every run released, 17 Active passes failing; no allocation. Legacy parity (`test_storage_loop_io`): the legacy
+pass-stream writer's bytes (record, two overdubs out of merge order, one undone) import as exactly those passes.
+Mutations: all caught (pairing order, cyclic close, held-whole close and count, undone passes, merge order, wrap,
+edited / shifted / placeholder outcomes, pass-count guard, pass walk reset, window end, nextPass flush, pass runs
+listed and released, epoch detection). Owner's card, read only (image `d71224a9…`): 12 slots imported (the 10
+unedited pass-stream slots — e.g. 1,379 notes over 64 bars, 195 notes over 66 bars, 56 notes and 56 CCs over 5 passes —
+and the 2 LSV1 slots), 9 skipped for edit passes, 1 for a shifted loop start, 40 placeholders empty, 0 failed, 0.75 s.
+
+Open: the 9 edited slots (E9.7c-2: edit passes to engine edit runs, after a semantics check against EDIT-1); the slot
+with a shifted loop start (owner decision pending since E9.7b).

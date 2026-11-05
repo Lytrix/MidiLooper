@@ -1,13 +1,19 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// fixed-memory-engine E9.7b: V1 slot files imported at boot (owner 2026-11-05: exact current content; pass-stream files
-// skipped and reported), from LSV1 bytes built here exactly as the old firmware writes them on the Teensy (the 10-byte
-// epoch header, LoopMetadata, the PersistedLoopSnapshot oracle, LoopSnapshot, SAVE; `MidiEvent` 20 bytes, payload at 12).
+// fixed-memory-engine E9.7b / E9.7c: V1 slot files imported at boot (owner 2026-11-05: exact current content;
+// pass-stream files imported, those with edit passes skipped and reported until E9.7c-2), from LSV1 and pass-stream
+// bytes built here exactly as the old firmware writes them on the Teensy (the 10-byte epoch header; LSV1: LoopMetadata,
+// the PersistedLoopSnapshot oracle, LoopSnapshot; a pass stream: the header, the passes' raw events in capture order,
+// the EPT3 tail; then SAVE; `MidiEvent` 20 bytes, payload at 12).
 // Checked: notes with their stored geometry (one held across the loop end stored wrapped, one stored unwrapped), CC,
-// program change and pitch bend; a pass-stream file and a shifted loop start skipped and named; a truncated file
-// failing by name while the other slots import; V1 files never written, the imported slot saved in the new format
-// once approved; an engine file taking precedence over the slot's V1 file; no allocation.
+// program change and pitch bend; a pass stream's Active passes as runs in materialisation order (record, then
+// overdubs by mergeSequence; an undone pass left out), its notes paired last-open-first and cyclically (a pass stored
+// in tick order: a held note's NoteOff before its NoteOn), a NoteOff sealed past the loop end wrapped, a NoteOn with no
+// NoteOff held for the whole loop and counted, a long pass imported in windows; a shifted loop start, an empty file, a
+// loop-0 placeholder and edit passes skipped and named; junk, a truncated file, an over-dense pass and too many passes
+// failing by name (every run released) while the other slots import; V1 files never written, the imported slot saved in the new format once approved; an engine file
+// taking precedence over the slot's V1 file; no allocation.
 
 #include <unity.h>
 
@@ -173,6 +179,32 @@ static std::vector<uint8_t> lsv1(uint32_t loop, uint32_t loopStart, const std::v
   f.u8('S'); f.u8('A'); f.u8('V'); f.u8('E');
   return f.b;
 }
+// ---- Pass-stream bytes, as the old firmware writes them (`writeLegacyLoopPersisted`) -------------------------------------
+struct Ev { uint32_t tick; uint8_t type, channel, d0, d1; };
+struct Pass { uint32_t id, merge; uint8_t state, type; std::vector<Ev> ev; };
+static Ev on(uint32_t t, uint8_t p, uint8_t v = 100) { return {t, 0x90, 1, p, v}; }
+static Ev off(uint32_t t, uint8_t p) { return {t, 0x80, 1, p, 0}; }
+static std::vector<uint8_t> passStream(uint32_t loop, uint32_t loopStart, const std::vector<Pass>& passes,
+                                       uint32_t edits = 0) {
+  Bytes f;
+  f.u32(0x1142); f.u16(1); f.u32(0x83BDE906);  // the epoch header
+  for (uint32_t w : {5u, 0u, loop, loopStart, 9u, 100u, 7u, 4u}) f.u32(w);
+  f.u32(static_cast<uint32_t>(passes.size()));
+  for (const Pass& p : passes) {
+    f.u32(p.id); f.u32(p.merge); f.u8(p.state); f.u8(p.type); f.u32(loop); f.u32(static_cast<uint32_t>(p.ev.size()));
+    for (const Ev& e : p.ev) {
+      f.u32(e.tick); f.u8(e.type); f.u8(e.channel); f.u16(0); f.u32(e.type == 0x90 ? 77 : 0);
+      if (e.type == 0xE0) f.u16(static_cast<uint16_t>(e.d0 | (e.d1 << 8))); else { f.u8(e.d0); f.u8(e.d1); }
+      f.u16(0); f.u32(0);
+    }
+  }
+  f.u32(9); f.u32(0x45505433u); f.u32(edits);
+  for (uint32_t k = 0; k < edits * 40; ++k) f.u8(0x5A);  // edit passes: not read
+  f.u32(0x314F4547u); f.u32(0); f.u32(0x3149534Fu); f.u32(0);  // GEO1, OSI1
+  f.u8('S'); f.u8('A'); f.u8('V'); f.u8('E');
+  return f.b;
+}
+
 static void put(const char* path, const std::vector<uint8_t>& bytes) {
   gCard.openWrite(path);
   gCard.write(bytes.data(), static_cast<uint32_t>(bytes.size()));
@@ -280,14 +312,159 @@ void test_skipped_and_failed_v1_slots_are_named() {
   gE.attachCard(gCard);
   gE.startBootLoad();
   run(40);
-  TEST_ASSERT_EQUAL_UINT64((1ull << 0) | (1ull << 1) | (1ull << 6), gE.persistence().stats().v1SkippedMask);
+  TEST_ASSERT_EQUAL_UINT64((1ull << 1) | (1ull << 6), gE.persistence().stats().v1SkippedMask);
   TEST_ASSERT_EQUAL_UINT64(1ull << 1, gE.persistence().stats().v1OffsetMask);
   TEST_ASSERT_EQUAL_UINT64(1ull << 6, gE.persistence().stats().v1EmptyMask);
   TEST_ASSERT_EQUAL(kNoManifest, gE.history().current(6));
-  TEST_ASSERT_EQUAL_UINT64(1ull << 2, gE.persistence().stats().v1FailedMask);
+  TEST_ASSERT_EQUAL_UINT64((1ull << 0) | (1ull << 2), gE.persistence().stats().v1FailedMask);  // junk, truncated
   TEST_ASSERT_EQUAL_UINT32(1, gE.persistence().stats().v1Imported);  // slot 3, no epoch header
   for (uint8_t s : {0, 1, 2}) TEST_ASSERT_EQUAL(kNoManifest, gE.history().current(s));
   TEST_ASSERT_NOT_EQUAL(kNoManifest, gE.history().current(3));
+  TEST_ASSERT_TRUE(gE.reservations().check());
+}
+
+// The NoteOn rows of run `r`: (tick, pitch) in row order.
+static std::vector<std::pair<uint32_t, uint8_t>> onsOf(RunId r) {
+  std::vector<std::pair<uint32_t, uint8_t>> v;
+  for (uint32_t i = 0; i < gE.runs().run(r).rowCount; ++i) {
+    const PassEvent& e = gE.runs().rowAt(r, i, gE.pool());
+    if ((e.status & 0xF0) == 0x90) v.push_back({e.tick, e.data1});
+  }
+  return v;
+}
+
+void test_a_pass_stream_slot_imports_its_active_passes_as_runs() {
+  // The record pass in capture order: two overlapping 48s (last open first), a NoteOn of velocity 0 closing 50, a
+  // stray NoteOff, a 67 held across the loop end whose NoteOff was sealed past it (3272 = 200 wrapped), CC and bend.
+  const Pass record{1, 0, 0, 0, {on(0, 60), {50, 0xB0, 1, 7, 100}, on(100, 48), on(150, 48), off(200, 48), off(300, 60),
+                                 off(400, 48), on(600, 50), {700, 0x90, 1, 50, 0}, off(800, 51), on(1000, 64),
+                                 off(1500, 64), {2000, 0xE0, 2, 0xD0, 0x07}, on(2900, 67), off(3272, 67)}};
+  // Stored in tick order, as on the card: 75 held across the loop end, its NoteOff (50) before its NoteOn (3000).
+  const Pass overdubA{3, 2, 0, 1, {off(50, 75), on(500, 72), off(700, 72), on(3000, 75)}};
+  const Pass undone{4, 3, 1, 1, {on(0, 80), off(100, 80), {10, 0xB0, 1, 1, 1}}};  // state 1: not Active
+  const Pass overdubC{2, 1, 0, 1, {on(10, 74), off(20, 74)}};                     // merged before A
+  put("/MidiLooper/current/slots/loop_01_04.bin", passStream(kLoop, 0, {record, overdubA, undone, overdubC}));
+  const std::vector<uint8_t> before = get("/MidiLooper/current/slots/loop_01_04.bin");
+  gE.attachCard(gCard);
+  const uint32_t writes = gCard.writes;
+  gE.startBootLoad();
+  run(40);
+  TEST_ASSERT_EQUAL_UINT32(1, gE.persistence().stats().v1Imported);
+  TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
+  // The event run first, then the record pass, overdub C, overdub A.
+  const auto& m = gE.manifests().manifest(gE.history().current(12));
+  TEST_ASSERT_EQUAL_UINT8(4, m.runCount);
+  TEST_ASSERT_EQUAL_UINT32(2, gE.runs().run(m.runs[0]).rowCount);
+  TEST_ASSERT_EQUAL_HEX8(0xB0, gE.runs().rowAt(m.runs[0], 0, gE.pool()).status);
+  const PassEvent& pb = gE.runs().rowAt(m.runs[0], 1, gE.pool());
+  TEST_ASSERT_EQUAL_HEX8(0xE1, pb.status);
+  TEST_ASSERT_EQUAL_UINT32(2000 + 8192, pb.data1 | (pb.data2 << 7));
+  const std::vector<std::pair<uint32_t, uint8_t>> rec = {{0, 60}, {100, 48}, {150, 48}, {600, 50}, {1000, 64}, {2900, 67}};
+  TEST_ASSERT_TRUE(rec == onsOf(m.runs[1]));
+  TEST_ASSERT_TRUE((std::vector<std::pair<uint32_t, uint8_t>>{{10, 74}}) == onsOf(m.runs[2]));
+  TEST_ASSERT_TRUE((std::vector<std::pair<uint32_t, uint8_t>>{{500, 72}, {3000, 75}}) == onsOf(m.runs[3]));
+  // The geometry, as NOTE_EDIT gathers it: 48@100 closed by the later NoteOff (last open first), 67 wrapped.
+  TEST_ASSERT_EQUAL(ProductionNoteEdit::Gather::Running, gE.noteEdit().request({12, 0, kLoop, 0, 127}, 0));
+  run(gClock + 30);
+  struct G { uint32_t tick; uint8_t pitch; uint32_t length; };
+  const G want[] = {{0, 60, 300}, {100, 48, 300}, {150, 48, 50}, {600, 50, 100}, {1000, 64, 500},
+                    {2900, 67, 372}, {10, 74, 10}, {500, 72, 200}, {3000, 75, 122}};
+  TEST_ASSERT_EQUAL_UINT16(9, gE.noteEdit().count());
+  TEST_ASSERT_EQUAL_UINT32(0, gE.persistence().stats().v1HeldWhole);
+  for (const G& w : want) {
+    bool found = false;
+    for (uint16_t i = 0; i < gE.noteEdit().count(); ++i) {
+      const EditNote& n = gE.noteEdit().note(i);
+      found |= n.tick == w.tick && n.pitch == w.pitch && n.length == w.length;
+    }
+    TEST_ASSERT_TRUE_MESSAGE(found, "a pass-stream note with its paired geometry");
+  }
+  TEST_ASSERT_TRUE(gE.approveSaving());
+  run(gClock + ProductionPersistence::kSettleUs / kUsPerTick + 50);
+  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/slot_12.mle"));
+  TEST_ASSERT_TRUE(before == get("/MidiLooper/current/slots/loop_01_04.bin"));
+  TEST_ASSERT_TRUE(gE.reservations().check());
+}
+
+void test_a_long_pass_imports_in_windows() {
+  // 1,200 notes out of start order (several cycles of an overdub) in one pass, 700 in the next: more than one collect
+  // window each; each run in start order.
+  Pass a{1, 0, 0, 0, {}}, b{2, 1, 0, 1, {}};
+  for (uint32_t k = 0; k < 1200; ++k) {
+    const uint32_t t = ((k * 7919u) % 1200u) * 5u;
+    a.ev.push_back(on(t, static_cast<uint8_t>(30 + k % 60)));
+    a.ev.push_back(off(t + 2, static_cast<uint8_t>(30 + k % 60)));
+  }
+  for (uint32_t k = 0; k < 700; ++k) {
+    const uint32_t t = ((k * 31u) % 700u) * 8u + 1u;
+    b.ev.push_back(on(t, 90));
+    b.ev.push_back(off(t + 3, 90));
+  }
+  put("/MidiLooper/current/slots/loop_00_07.bin", passStream(6144, 0, {a, b}));
+  gE.attachCard(gCard);
+  gE.startBootLoad();
+  run(400);
+  TEST_ASSERT_EQUAL_UINT32(1, gE.persistence().stats().v1Imported);
+  const auto& m = gE.manifests().manifest(gE.history().current(7));
+  TEST_ASSERT_EQUAL_UINT8(2, m.runCount);  // no kept events: no event run
+  const uint32_t rows[] = {2400, 1400};
+  for (uint8_t k = 0; k < 2; ++k) {
+    const RunId r = m.runs[k];
+    TEST_ASSERT_EQUAL_UINT32(rows[k], gE.runs().run(r).rowCount);
+    for (uint32_t i = 1; i < gE.runs().run(r).rowCount; ++i)
+      TEST_ASSERT_TRUE(gE.runs().rowAt(r, i - 1, gE.pool()).tick <= gE.runs().rowAt(r, i, gE.pool()).tick);
+  }
+  TEST_ASSERT_TRUE(gE.reservations().check());
+}
+
+void test_pass_stream_skips_and_failures_are_named() {
+  const Pass record{1, 0, 0, 0, {on(0, 60), off(300, 60)}};
+  put("/MidiLooper/current/slots/loop_00_00.bin", passStream(kLoop, 0, {record}, /*edits*/ 2));
+  put("/MidiLooper/current/slots/loop_00_01.bin", passStream(kLoop, 768, {record}));
+  put("/MidiLooper/current/slots/loop_00_02.bin", passStream(kLoop, 0, {{1, 0, 0, 0, {on(0, 60), on(10, 61), off(20, 60)}}}));
+  put("/MidiLooper/current/slots/loop_00_03.bin", passStream(kLoop, 0, {}));  // no passes
+  put("/MidiLooper/current/slots/loop_00_07.bin", passStream(0, 0, {}));      // the card's placeholder: loop 0
+  std::vector<Pass> many;
+  for (uint32_t k = 0; k < 17; ++k)  // 17 Active passes, two of them CC only: 15 with notes, still too many
+    many.push_back({k + 1, k, 0, static_cast<uint8_t>(k == 0 ? 0 : 1),
+                    k == 3 || k == 4 ? std::vector<Ev>{{k, 0xB0, 1, 7, 1}} : std::vector<Ev>{on(k, 60), off(k + 1, 60)}});
+  put("/MidiLooper/current/slots/loop_00_05.bin", passStream(kLoop, 0, many));
+  put("/MidiLooper/current/slots/loop_00_06.bin", passStream(kLoop, 0, {record}));
+  // Refused after the first pass's run was taken (the second pass has 900 notes in one span: Dense): every run of
+  // the failed import is released.
+  Pass dense{2, 1, 0, 1, {}};
+  for (uint32_t k = 0; k < 900; ++k) {
+    dense.ev.push_back(on(10, static_cast<uint8_t>(30 + k % 60)));
+    dense.ev.push_back(off(20, static_cast<uint8_t>(30 + k % 60)));
+  }
+  put("/MidiLooper/current/slots/loop_00_04.bin", passStream(kLoop, 0, {record, dense}));
+  const uint32_t runsFree = gE.runs().freeCount() + gE.runs().reclaimPendingRuns();
+  gE.attachCard(gCard);
+  gE.startBootLoad();
+  run(60);
+  TEST_ASSERT_EQUAL_UINT32(runsFree - 2, gE.runs().freeCount() + gE.runs().reclaimPendingRuns());  // slots 2 and 6
+  const auto& st = gE.persistence().stats();
+  TEST_ASSERT_EQUAL_UINT64((1ull << 0) | (1ull << 1) | (1ull << 3) | (1ull << 7), st.v1SkippedMask);
+  TEST_ASSERT_EQUAL_UINT64(1ull << 0, st.v1EditedMask);
+  TEST_ASSERT_EQUAL_UINT64(1ull << 1, st.v1OffsetMask);
+  TEST_ASSERT_EQUAL_UINT64((1ull << 3) | (1ull << 7), st.v1EmptyMask);
+  TEST_ASSERT_EQUAL_UINT64((1ull << 4) | (1ull << 5), st.v1FailedMask);  // Dense; 17 Active passes
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(ProductionPersistence::Reader::Status::Dense), st.v1Outcome[4]);
+  using R = ProductionPersistence::Reader::Status;
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(R::ManyPasses), st.v1Outcome[5]);
+  TEST_ASSERT_EQUAL_UINT32(2, st.v1Imported);  // slots 2 and 6
+  for (uint8_t s : {0, 1, 3, 4, 5, 7}) TEST_ASSERT_EQUAL(kNoManifest, gE.history().current(s));
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, gE.history().current(6));
+  // Slot 2: 61 has no NoteOff in its pass — held for the whole loop (its NoteOff one tick before its start), counted.
+  TEST_ASSERT_EQUAL_UINT32(1, st.v1HeldWhole);
+  TEST_ASSERT_EQUAL(ProductionNoteEdit::Gather::Running, gE.noteEdit().request({2, 0, kLoop, 0, 127}, 0));
+  run(gClock + 30);
+  TEST_ASSERT_EQUAL_UINT16(2, gE.noteEdit().count());
+  bool whole = false;
+  for (uint16_t i = 0; i < 2; ++i)
+    whole |= gE.noteEdit().note(i).pitch == 61 && gE.noteEdit().note(i).tick == 10 &&
+             gE.noteEdit().note(i).length == kLoop - 1;
+  TEST_ASSERT_TRUE(whole);
   TEST_ASSERT_TRUE(gE.reservations().check());
 }
 
@@ -311,6 +488,8 @@ void test_an_engine_file_takes_precedence() {
 
 void test_no_heap() {
   put("/MidiLooper/current/slots/loop_00_05.bin", lsv1(kLoop, 0, kNotes, kEvents));
+  put("/MidiLooper/current/slots/loop_00_06.bin", passStream(kLoop, 0, {{1, 0, 0, 0, {on(0, 60), off(300, 60)}},
+                                                                       {2, 1, 0, 1, {on(10, 61), {20, 0xB0, 1, 7, 1}, off(40, 61)}}}));
   gE.attachCard(gCard);
   gTrap = true;
   const unsigned long before = gHeapAllocations;
@@ -318,7 +497,7 @@ void test_no_heap() {
   run(30);
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
-  TEST_ASSERT_EQUAL_UINT32(1, gE.persistence().stats().v1Imported);
+  TEST_ASSERT_EQUAL_UINT32(2, gE.persistence().stats().v1Imported);
 }
 
 int main(int, char**) {
@@ -326,6 +505,9 @@ int main(int, char**) {
   RUN_TEST(test_an_lsv1_slot_imports_its_current_content);
   RUN_TEST(test_notes_out_of_start_order_import_in_windows);
   RUN_TEST(test_skipped_and_failed_v1_slots_are_named);
+  RUN_TEST(test_a_pass_stream_slot_imports_its_active_passes_as_runs);
+  RUN_TEST(test_a_long_pass_imports_in_windows);
+  RUN_TEST(test_pass_stream_skips_and_failures_are_named);
   RUN_TEST(test_an_engine_file_takes_precedence);
   RUN_TEST(test_no_heap);
   return UNITY_END();
