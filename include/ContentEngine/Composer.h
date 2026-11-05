@@ -102,15 +102,17 @@ class Composer {
       edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
       wrapStart_[r] = firstRowAtOrAfter(r, loop_);
       band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
-      cursor_[r] = 0;
+      hideEnd_[r] = edit_[r] ? leadingHideRows(r) : 0;
+      cursor_[r] = hideEnd_[r];
       wrapCursor_[r] = wrapStart_[r];
       band2Cursor_[r] = band2Start_[r];
+      refreshHeads(r);
       if (edit_[r]) continue;  // EDIT-1: an edit run is not counted as a source occluder
       for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
         const PassEvent& e = row(r, i);
         if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
       }
-      for (uint32_t i = 0; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes starting at tick 0, per pitch
+      for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
         if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
     }
     if (index_ != nullptr) {
@@ -159,21 +161,27 @@ class Composer {
     windowOpen_ = true;
     return true;
   }
+  /// `maxRows` is a work budget in row units: each merged row costs 1, and every kLookaheadReadsPerUnit look-ahead
+  /// reads cost one more (device-measured: a merged row ~4 µs, a look-ahead read ~0.4 µs), so a grain's duration stays
+  /// bounded when later passes cluster within the OVL-6 range; such a window takes more grains instead.
   template <uint16_t Cap>
   bool composeRows(SpanWindow<Cap>& w, uint32_t maxRows) {
     if (!windowOpen_) return true;
     Stream s;
-    for (uint32_t n = 0; n < maxRows; ++n) {
+    for (uint32_t units = 0; units < maxRows;) {
       if (!nextStream(windowEnd_, s)) {
         endLookahead(w, windowEnd_);
         windowStart_ = windowEnd_;
         windowOpen_ = false;
         return true;
       }
+      lookaheadRows_ = 0;
       process(w, s);
+      units += 1 + lookaheadRows_ / kLookaheadReadsPerUnit;
     }
     return false;
   }
+  static constexpr uint32_t kLookaheadReadsPerUnit = 8;
   bool windowOpen() const { return windowOpen_; }
 
   /// Releases the pinned edit-index slot (also done by the next `begin`).
@@ -244,11 +252,13 @@ class Composer {
     for (uint8_t r = 0; r < count_; ++r) {
       const uint32_t p = cp.position;
       cursor_[r] = firstRowAtOrAfter(r, p);
+      if (cursor_[r] < hideEnd_[r]) cursor_[r] = hideEnd_[r];
       if (cursor_[r] > wrapStart_[r]) cursor_[r] = wrapStart_[r];
       uint32_t w = firstRowAtOrAfter(r, loop_ + p);
       wrapCursor_[r] = w < wrapStart_[r] ? wrapStart_[r] : (w > band2Start_[r] ? band2Start_[r] : w);
       const uint32_t b2 = firstRowAtOrAfter(r, 2 * loop_ + p);
       band2Cursor_[r] = b2 < band2Start_[r] ? band2Start_[r] : b2;
+      refreshHeads(r);
     }
     return true;
   }
@@ -263,9 +273,10 @@ class Composer {
     ++cycle_;
     windowStart_ = 0;
     for (uint8_t r = 0; r < count_; ++r) {
-      cursor_[r] = 0;
+      cursor_[r] = hideEnd_[r];
       wrapCursor_[r] = wrapStart_[r];
       band2Cursor_[r] = band2Start_[r];
+      refreshHeads(r);
     }
     return true;
   }
@@ -326,29 +337,50 @@ class Composer {
 
   /// The stream whose next row comes first in DEC-244 order among rows before `limit`: position, class, pass order;
   /// at equal position and class, NoteOffs carried from earlier cycles before a main row of the same run.
+  /// Reads only the cached head keys (RAM): one PSRAM read per row, when its cursor advances (`refreshHead`).
   bool nextStream(uint32_t limit, Stream& best) const {
-    bool found = false;
-    uint32_t bestPos = 0;
-    uint8_t bestCls = 0;
+    uint32_t bestKey = kNoHead;
     for (uint8_t r = 0; r < count_; ++r)
       for (uint8_t b = 3; b-- > 0;) {
-        uint32_t pos;
-        const PassEvent* e;
-        if (!head(r, b, limit, pos, e)) continue;
-        const uint8_t c = cls(*e);
-        if (!found || pos < bestPos || (pos == bestPos && c < bestCls)) {
+        const uint32_t k = headKey_[r][b];
+        if (k < bestKey) {
           best = Stream{r, b};
-          bestPos = pos;
-          bestCls = c;
-          found = true;
+          bestKey = k;
         }
       }
-    return found;
+    return bestKey != kNoHead && (bestKey >> 2) < limit;
+  }
+
+  /// Head key of a stream: position << 2 | class (DEC-244 order: position, then class), or kNoHead when exhausted.
+  void refreshHead(uint8_t r, uint8_t b) {
+    uint32_t pos;
+    const PassEvent* e;
+    headKey_[r][b] = head(r, b, UINT32_MAX, pos, e) ? (pos << 2) | cls(*e) : kNoHead;
+    if (b != 0) return;
+    // Main stream: also the head's pitch and the next row's tick, so the look-ahead can skip a pass from RAM.
+    headPitch_[r] = headKey_[r][0] == kNoHead ? 0 : (e->data1 & 0x7F);
+    nextTick_[r] = cursor_[r] + 1 < wrapStart_[r] ? row(r, cursor_[r] + 1).tick : kNoHead;
+  }
+  /// Edit runs lead with their hide rows (writer order); they are collected by the index, never merged.
+  uint32_t leadingHideRows(uint8_t r) const {
+    uint32_t lo = 0, hi = src_[r].rowLimit;
+    while (lo < hi) {
+      const uint32_t mid = lo + (hi - lo) / 2;
+      if (row(r, mid).status == kHideNoteStatus)
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+    return lo;
+  }
+  void refreshHeads(uint8_t r) {
+    for (uint8_t b = 0; b < 3; ++b) refreshHead(r, b);
   }
 
   /// Run-timeline tick of note `noteId`'s NoteOff in run `r` if it lies at or before `limitTick` (main stream from the
   /// cursor, then the wrap stream), else UINT32_MAX. Bounded by the rows in that span.
   uint32_t offTickWithin(uint8_t r, uint32_t noteId, uint32_t limitTick) const {
+    if (headKey_[r][0] != kNoHead && (headKey_[r][0] >> 2) > limitTick) return UINT32_MAX;  // cached: no read
     for (uint32_t i = cursor_[r]; i < wrapStart_[r]; ++i) {
       ++lookaheadRows_;
       const PassEvent& e = row(r, i);
@@ -373,14 +405,25 @@ class Composer {
     if (off > on + loop_ - 1) off = on + loop_ - 1;  // Q-LEN-1 effective end
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j) {
       if (edit_[j]) continue;  // EDIT-1
-      for (uint32_t i = cursor_[j]; i < wrapStart_[j]; ++i) {
+      // From the cached head (the pass's next unprocessed row, at or after `on`) and the next row's tick: most passes
+      // are decided without reading PSRAM; only a second row inside [on, to] continues from the source.
+      const uint32_t k = headKey_[j][0];
+      uint32_t i = cursor_[j];
+      if (k == kNoHead || (k >> 2) > to) {
+        i = wrapStart_[j];
+      } else {
+        const uint32_t h = k >> 2;
+        if ((k & 3u) == 1 && headPitch_[j] == pitch && h >= on && h < off) return true;
+        i = nextTick_[j] > to ? wrapStart_[j] : i + 1;
+      }
+      for (; i < wrapStart_[j]; ++i) {
         ++lookaheadRows_;
         const PassEvent& e = row(j, i);
         if (e.tick > to) break;
         if (e.tick >= on && cls(e) == 1 && e.data1 == pitch && e.tick < off) return true;
       }
       if (to < loop_) continue;
-      for (uint32_t i = 0; i < wrapStart_[j]; ++i) {  // next cycle, positions [1, to - loop]
+      for (uint32_t i = hideEnd_[j]; i < wrapStart_[j]; ++i) {  // next cycle, positions [1, to - loop]
         ++lookaheadRows_;
         const PassEvent& e = row(j, i);
         if (e.tick > to - loop_) break;
@@ -455,6 +498,7 @@ class Composer {
       ++wrapCursor_[r];
     else
       ++band2Cursor_[r];
+    refreshHead(r, s.band);
     const uint16_t runKey = makeRunKey(src_[r].run, r);
     if (e.status == kHideNoteStatus) return;  // collected at begin
     const uint8_t c = cls(e);
@@ -509,7 +553,7 @@ class Composer {
     const uint32_t at = loopEnd ? 0 : b;
     for (uint8_t j = 0; j < count_; ++j) {
       const uint16_t runKey = makeRunKey(src_[j].run, j);
-      for (uint32_t i = loopEnd ? 0 : cursor_[j]; i < wrapStart_[j]; ++i) {
+      for (uint32_t i = loopEnd ? hideEnd_[j] : cursor_[j]; i < wrapStart_[j]; ++i) {
         const PassEvent& e = row(j, i);
         if (e.tick != at) break;
         if (cls(e) != 1) continue;
@@ -538,6 +582,11 @@ class Composer {
   uint32_t wrapCursor_[MaxRuns];  // wrap stream: NoteOffs of notes held across the loop end
   uint32_t band2Start_[MaxRuns];  // first row with tick >= 2 x loop (notes held across more than one wrap)
   uint32_t band2Cursor_[MaxRuns];
+  static constexpr uint32_t kNoHead = 0xFFFFFFFFu;
+  uint32_t headKey_[MaxRuns][3];  // cached stream heads (`refreshHead`), so selecting the next row reads no PSRAM
+  uint8_t headPitch_[MaxRuns];    // main-stream head pitch
+  uint32_t nextTick_[MaxRuns];    // tick of the main-stream row after the head (kNoHead: none)
+  uint32_t hideEnd_[MaxRuns];     // first row after an edit run's leading hide rows (0 for other runs)
   uint8_t count_;
   bool edit_[MaxRuns];
   IndexStore* index_;
