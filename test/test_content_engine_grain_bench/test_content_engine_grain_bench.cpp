@@ -154,7 +154,8 @@ enum class TickLoad : uint8_t { Spread, Clustered, CcBurst };
 /// The Clock tick path (E6.2, measure first): one track's windows for a whole loop, played tick by tick through the
 /// player, the terminal scheduler and the output hub (every emit queued on 3 ports; ports drained outside the timed
 /// region). Per tick: window rows processed, emits, time. Workloads: the spread window; 59 passes starting chords in
-/// the same 9 ticks (OUT-2 selects 16); and the admitted maximum of controller rows on one tick (59 x 47 CC rows).
+/// the same 9 ticks (OUT-2 selects 16); and the admitted maximum of continuous-controller rows on one tick (59 x 47),
+/// which the composer limits to 32 per tick (owner 2026-11-05).
 static void tickPath(TickLoad load, const char* name) {
   if (load == TickLoad::Spread) {
     buildWorkload();
@@ -176,7 +177,8 @@ static void tickPath(TickLoad load, const char* name) {
           id += 6;
         }
       } else {
-        for (uint32_t k = 0; k < kNotesPerPass; ++k) gRuns.append(r, row(100, id++, 0xB0, static_cast<uint8_t>(k)), gPool);
+        static constexpr uint8_t kContinuous[] = {1, 2, 7, 10, 11, 74};  // continuous controllers only (MidiClass.h)
+        for (uint32_t k = 0; k < kNotesPerPass; ++k) gRuns.append(r, row(100, id++, 0xB0, kContinuous[k % 6]), gPool);
       }
       gRuns.seal(r);
       ids[p] = r;
@@ -197,7 +199,7 @@ static void tickPath(TickLoad load, const char* name) {
   TickPlayer::Emit out[255];
   OutputHub<>::Sent sent[32];
   Stat tick;
-  uint32_t maxRows = 0, maxEmits = 0, rowsAtWorst = 0, totalRows = 0, lostEmits = 0;
+  uint32_t maxRows = 0, maxEmits = 0, rowsAtWorst = 0, totalRows = 0;
   uint64_t totalCycles = 0;
   while (gComp.composeNext(gWin, kWinTicks)) {
     uint16_t k = 0;
@@ -226,7 +228,6 @@ static void tickPath(TickLoad load, const char* name) {
       tick.add(dt);
       totalCycles += dt;
       totalRows += rows;
-      if (n == 255) ++lostEmits;  // the player's out buffer was full: emits beyond it are lost today
       if (rows > maxRows) maxRows = rows;
       if (n > maxEmits) maxEmits = n;
       if (dt == tick.max) rowsAtWorst = rows;
@@ -237,11 +238,12 @@ static void tickPath(TickLoad load, const char* name) {
   gComp.end();
   report(name, tick);
   char line[200];
-  snprintf(line, sizeof(line), "GRAIN,%s_rows_max=%lu,emits_max=%lu,rows_at_worst=%lu,us_per_row=%.2f,full_buffers=%lu",
-           name, static_cast<unsigned long>(maxRows), static_cast<unsigned long>(maxEmits),
-           static_cast<unsigned long>(rowsAtWorst),
-           totalRows ? toMicros(static_cast<uint32_t>(totalCycles / totalRows)) : 0.0,
-           static_cast<unsigned long>(lostEmits));
+  snprintf(line, sizeof(line),
+           "GRAIN,%s_rows_max=%lu,emits_max=%lu,rows_at_worst=%lu,us_per_row=%.2f,spills=%lu,continuous_limited=%lu", name,
+           static_cast<unsigned long>(maxRows), static_cast<unsigned long>(maxEmits),
+           static_cast<unsigned long>(rowsAtWorst), totalRows ? toMicros(static_cast<uint32_t>(totalCycles / totalRows)) : 0.0,
+           static_cast<unsigned long>(gTickPlayer.stats().spills),
+           static_cast<unsigned long>(gComp.stats().continuousLimited));
   TEST_MESSAGE(line);
 }
 

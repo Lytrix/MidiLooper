@@ -33,6 +33,8 @@
 
 #include <cstdint>
 
+#include "ContentEngine/MidiClass.h"
+
 namespace ContentEngine {
 
 constexpr uint32_t kDinMessageMicros = 960;  // 3 bytes x 10 bits at 31,250 baud
@@ -157,9 +159,14 @@ class OutputHub {
 
   PortResult control(uint32_t now, uint8_t p, uint8_t status, uint8_t d1, uint8_t d2) {
     const uint8_t type = status & 0xF0, ch = status & 0x0F;
-    const int state = stateSlot(type, d1);
-    if (state >= 0) return essential(ports_[p], now, status, d1, d2, ch, static_cast<uint8_t>(state));
-    if (type == 0xB0 && isParameter(d1)) return parameter(ports_[p], now, status, d1, d2);
+    switch (controlClass(status, d1)) {
+      case ControlClass::Essential:
+        return essential(ports_[p], now, status, d1, d2, ch, static_cast<uint8_t>(stateSlot(type, d1)));
+      case ControlClass::Parameter:
+        return parameter(ports_[p], now, status, d1, d2);
+      case ControlClass::Continuous:
+        break;
+    }
     return continuous(ports_[p], status, d1, d2);
   }
 
@@ -288,7 +295,6 @@ class OutputHub {
     const uint8_t ch = static_cast<uint8_t>(idx / kStateSlots), slot = static_cast<uint8_t>(idx % kStateSlots);
     return static_cast<uint8_t>((slot == 2 ? 0xC0 : 0xB0) | ch);
   }
-  static bool isParameter(uint8_t d1) { return d1 == 6 || d1 == 38 || (d1 >= 96 && d1 <= 101); }
 
   static void push(PortData& d, const Item& it) {
     d.ring[(d.head + d.count) % Ordered] = it;

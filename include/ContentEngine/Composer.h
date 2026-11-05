@@ -56,6 +56,7 @@
 
 #include "ContentEngine/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/MidiClass.h"
 #include "ContentEngine/PassEvent.h"
 #include "ContentEngine/SourceRun.h"
 #include "ContentEngine/SpanWindow.h"
@@ -75,6 +76,7 @@ class Composer {
     uint32_t maxLookaheadRowsPerNoteOn;
     uint32_t lookaheadRowsLastWindow;
     uint32_t openOverflow;  // effective instances refused untracked: more than kMaxOpen open at once
+    uint32_t continuousLimited;  // continuous-controller rows beyond 32 on one tick, left out of the window
   };
   static constexpr uint8_t kMaxOpen = 48;
   const Stats& stats() const { return stats_; }
@@ -125,6 +127,7 @@ class Composer {
     w.reset(identity_, a, windowEnd_);
     w.cycleBase = cycle_ * loop_;
     stats_.lookaheadRowsLastWindow = 0;
+    ccPos_ = UINT32_MAX;
     for (uint8_t i = 0; i < openCount_; ++i) {
       if (open_[i].selected) w.carry[w.carryCount++] = {open_[i].noteId, open_[i].runKey};
       open_[i].entry = kNoEntry;
@@ -562,6 +565,19 @@ class Composer {
       return;
     }
     if (c == 2) {
+      // Owner 2026-11-05: at most 32 continuous-controller values per tick reach the window (MidiClass.h). Rows arrive
+      // in DEC-244 order, so the same ones are kept every cycle.
+      if (controlClass(e.status, e.data1) == ControlClass::Continuous) {
+        if (pos != ccPos_) {
+          ccPos_ = pos;
+          ccCount_ = 0;
+        }
+        if (ccCount_ >= Config::kMaxContinuousPerTick) {
+          ++stats_.continuousLimited;
+          return;
+        }
+        ++ccCount_;
+      }
       if (w.count < Cap) {
         w.entries[w.count++] = SpanEntry{pos, e.noteId, kOpenLength, runKey, e.status, e.data1, e.data2, 0};
         ++w.startCount;
@@ -659,6 +675,8 @@ class Composer {
   int8_t zeroOnsetLast_[128];  // highest pass order with a NoteOn at tick 0, per pitch (-1: none)
   Stats stats_;
   mutable uint32_t lookaheadRows_;
+  uint32_t ccPos_ = UINT32_MAX;  // the position the continuous-controller count belongs to
+  uint8_t ccCount_ = 0;
 };
 
 }  // namespace ContentEngine

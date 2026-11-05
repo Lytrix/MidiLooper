@@ -1013,3 +1013,27 @@ terminal scheduler and `OutputHub` (each emit queued on 3 ports; port drains not
 E_tick follows from the tick time the owner gives the playback path: per-track cap ≈ (budget per tick ÷ 8 tracks) ÷
 ~2 µs per emit. For example 25 % of a tick (260 µs) gives ~16 emits per track per tick; a burst then spills over
 ~170 ticks (≈ 0.2 s late), with NoteOffs first.
+
+### E6.2a — continuous-controller limit and spill (owner decision 2026-11-05, as built)
+
+**Owner rule:** continuous controllers are limited, not lossless — they would overrun the tick and flood the ports.
+Essential messages (sustain and the switch controllers CC64-69, Program Change, Bank Select, channel mode
+CC120-127) and RPN / NRPN sequences are never limited. One classifier (`MidiClass.h`) serves the writer, the composer
+and the output hub.
+- **Recording:** the writer keeps at most `Config::kMaxContinuousPerTick` = 32 continuous values per tick
+  (`WriterResult::Limited`, counted); the next tick has its own 32.
+- **Playback:** the composer leaves continuous rows beyond 32 per tick out of the window (`Stats::continuousLimited`);
+  rows merge in DEC-244 order, so the same ones are kept every cycle and after a cold start. Several passes can each
+  hold 32 on a tick; the window still gets 32.
+- **No loss in the tick:** `WindowPlayer::tick` consumes a row only if it can emit it; the rest wait for the next tick
+  (`Stats::spills`). Due NoteOffs beyond the buffer stay due in the terminal scheduler (they were dropped before).
+  `beginWindow`'s buffer must hold T.
+
+Device (image `3d2e90dc…`): controller burst (2,773 continuous rows on one tick) — window keeps 32, worst tick
+15.4 µs (was 417 µs, with 2,518 messages lost); clustered 20.8 µs; spread 9.1 µs. A controller message costs ~0.5 µs
+on 3 ports, a note ~2 µs. 32 per tick on 8 tracks ≈ 123 µs (~12 % of a tick); 64 would be ≈ 250 µs.
+
+Tests (`test_content_engine_tick_limits`, 5): classification; writer limit with essentials, RPN and pitch bend; the
+composer limit over two cycles (same rows kept); player spill with every row played once in order; 16 NoteOffs through
+a 4-message buffer, none lost. Mutations caught: no writer limit, no composer limit, the count kept across windows,
+essentials limited too, sustain classed continuous, no spill, NoteOffs beyond the buffer lost.

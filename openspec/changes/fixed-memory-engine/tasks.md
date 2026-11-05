@@ -88,6 +88,7 @@ revision 3 is the baseline; no whole-plan revisions.
 ## E6 — playback and output
 
 - [x] E6.1 `PlaybackTrack`: three windows per track, steady + transition cursors, deterministic succession, late switch and underrun counted, catch-up targets (`test_content_engine_playback_track` 6, reference-stream comparison, mutation-checked).
+- [x] E6.2a Continuous-controller limit (owner: 32 per track per tick, recorded and played; essentials and RPN never limited), shared classifier, tick spill instead of loss (`test_content_engine_tick_limits` 5, mutation-checked; device burst tick 417 → 15 µs).
 - [ ] E6.2 Tick path: per-tick cap from the measured cost (bench `tick_*`, 2026-11-05: ~2 µs per emit, burst 2,773 rows in one tick; the player loses emits beyond its buffer — must spill), occupancy mask, sounding ledger, port FIFOs; scheduler wiring with boundary deadlines. Owner: tick time share for playback.
 
 ## CE-C1 — output

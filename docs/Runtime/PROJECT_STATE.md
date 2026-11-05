@@ -1,3 +1,9 @@
+**2026-11-05 — Fixed-memory engine: E6.2a continuous-controller limit (owner) and tick spill.**
+- Continuous controllers: at most 32 per track per tick, when recorded (writer) and when played (composer); sustain,
+  program change, bank select, channel mode and RPN/NRPN are never limited. The tick no longer loses rows or NoteOffs
+  when its buffer is full: they wait for the next tick.
+- Device: a 2,773-controller burst's worst tick 417 µs → 15 µs; a controller message costs ~0.5 µs, a note ~2 µs.
+
 **2026-11-05 — Fixed-memory engine: E6.1 playback windows per track.**
 - `PlaybackTrack`: playing / next / transition windows, steady and transition compose cursors, deterministic
   succession at boundaries (late switch and underrun counted), catch-up for a composer that missed its boundary.

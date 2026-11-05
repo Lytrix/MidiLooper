@@ -66,10 +66,18 @@ struct SpanWindow {
   }
 };
 
+/// Plays one track's windows. Per tick: due NoteOffs first, then the window's rows in order (the composer already
+/// limited continuous controllers to 32 per tick). A row is consumed only if what it emits fits the caller's buffer;
+/// the rest stay for
+/// the next tick (counted as spill), so nothing is consumed without being emitted; due NoteOffs that do not fit stay due
+/// in the scheduler. `beginWindow`'s buffer must hold T (a transition may close every sounding instance).
 template <uint16_t T>
 class WindowPlayer {
  public:
   using Scheduler = TerminalScheduler<T>;
+  struct Stats {
+    uint32_t spills;  // ticks that left due rows for the next tick (the caller's buffer was full)
+  };
   struct Emit {
     uint32_t tick;
     uint8_t cls;  // 0 NoteOff, 1 NoteOn, 2 other
@@ -86,7 +94,11 @@ class WindowPlayer {
     entries_ = nullptr;
     count_ = 0;
     next_ = 0;
+    stats_ = Stats{};
   }
+  const Stats& stats() const { return stats_; }
+  /// Rows of the playing window not yet consumed (a spill at the window's end is reported by the caller).
+  uint16_t pending() const { return static_cast<uint16_t>(count_ - next_); }
 
   /// Starts playing `w`. A different source identity is a transition: instances `w` does not carry close now.
   template <uint16_t Cap>
@@ -120,11 +132,20 @@ class WindowPlayer {
       if (entries_[i].terminal && base_ + entries_[i].tick == t)
         sched_->composedEnd(entries_[i].noteId, runIdOf(entries_[i].runKey), t);
     typename Scheduler::Out offs[T];
-    const uint8_t d = sched_->due(t, offs, static_cast<uint8_t>(T));
-    for (uint8_t i = 0; i < d && n < max; ++i) out[n++] = fromOut(offs[i]);
+    const uint8_t room = static_cast<uint8_t>(max - n < T ? max - n : T);  // NoteOffs that do not fit stay due
+    const uint8_t d = sched_->due(t, offs, room);
+    for (uint8_t i = 0; i < d; ++i) out[n++] = fromOut(offs[i]);
     while (next_ < count_ && base_ + entries_[next_].tick <= t) {
-      const SpanEntry& e = entries_[next_++];
-      if (e.terminal) continue;
+      const SpanEntry& e = entries_[next_];
+      if (e.terminal) {
+        ++next_;
+        continue;
+      }
+      if (n >= max) {  // nothing is consumed without being emitted: the rest waits for the next tick
+        ++stats_.spills;
+        break;
+      }
+      ++next_;
       const uint8_t type = e.status & 0xF0;
       if (type == 0x90 && e.data2 != 0) {
         const uint32_t end = e.length == kOpenLength ? kOpenEnd : base_ + e.tick + e.length;
@@ -148,6 +169,7 @@ class WindowPlayer {
   }
 
   Scheduler* sched_;
+  Stats stats_;
   uint32_t identity_;
   uint32_t base_;
   const SpanEntry* entries_;

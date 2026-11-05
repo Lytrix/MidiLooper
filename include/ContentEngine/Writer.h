@@ -15,6 +15,8 @@
 //   following wrap ends the take.
 // * Stop: a generated closure (flagged in `origin`) for every open note, into its own run, then every run seals.
 //   Nothing it needs can be refused.
+// * Continuous controllers (MidiClass.h): at most `Config::kMaxContinuousPerTick` per tick; later values on that tick
+//   are not recorded (`Limited`, counted). Essential and parameter messages are never limited.
 // Overlap consequences are not written here (CE-E, derived at composition). No allocation; `init()` writes every field.
 
 #pragma once
@@ -22,6 +24,7 @@
 #include <cstdint>
 
 #include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/MidiClass.h"
 #include "ContentEngine/PassEvent.h"
 #include "ContentEngine/RowReservations.h"
 #include "ContentEngine/RunTable.h"
@@ -43,6 +46,7 @@ enum class WriterResult : uint8_t {
   DeniedOpenNotes,  // 128 notes already open
   DeniedCapacity,   // the row and what it owes do not fit
   Unmatched,        // NoteOff with no open note on its lane: nothing written
+  Limited,          // a continuous controller beyond the per-tick limit: nothing written (owner 2026-11-05)
   FinalInterval,    // wrap without a descriptor for the next run: the next wrap ends the take
   Stopped,          // the wrap ended a FinalInterval take
 };
@@ -78,6 +82,9 @@ class Writer {
     for (auto& o : open_) o = Open{};
     openCount_ = 0;
     openOrder_ = 0;
+    ccTick_ = 0xFFFFFFFFu;
+    ccCount_ = 0;
+    continuousLimited_ = 0;
   }
 
   /// `loopLength` (0 when not yet known, e.g. a Record take) marks NoteOffs of notes held a full loop (Q-LEN-1).
@@ -125,13 +132,26 @@ class Writer {
     return WriterResult::Ok;
   }
 
-  /// CC, pitch bend, program change, aftertouch: one row, nothing owed.
+  /// CC, pitch bend, program change, aftertouch: one row, nothing owed. Continuous controllers are limited per tick.
   WriterResult channelEvent(uint32_t tick, uint8_t status, uint8_t data1, uint8_t data2) {
     if (state_ != State::Writing) return WriterResult::NotWriting;
-    return res_->accept(active_, row(tick - activeBase_, 0, status, data1, data2, 0), 0) == Admission::Ok
-               ? WriterResult::Ok
-               : WriterResult::DeniedCapacity;
+    if (controlClass(status, data1) == ControlClass::Continuous) {
+      if (tick != ccTick_) {
+        ccTick_ = tick;
+        ccCount_ = 0;
+      }
+      if (ccCount_ >= Config::kMaxContinuousPerTick) {
+        ++continuousLimited_;
+        return WriterResult::Limited;
+      }
+    }
+    if (res_->accept(active_, row(tick - activeBase_, 0, status, data1, data2, 0), 0) != Admission::Ok)
+      return WriterResult::DeniedCapacity;
+    if (controlClass(status, data1) == ControlClass::Continuous) ++ccCount_;
+    return WriterResult::Ok;
   }
+  /// Continuous controller values not recorded because their tick already had the limit.
+  uint32_t continuousLimited() const { return continuousLimited_; }
 
   WriterResult wrap(uint32_t wrapTick = 0) {
     if (state_ != State::Writing) return WriterResult::NotWriting;
@@ -263,6 +283,9 @@ class Writer {
   uint8_t sealedHead_, sealedCount_;
   uint32_t sealedOverflow_;
   uint32_t seq_;
+  uint32_t ccTick_;  // the tick the continuous count below belongs to
+  uint8_t ccCount_;
+  uint32_t continuousLimited_;
   uint32_t loopLength_;
   uint32_t activeBase_;
   uint8_t slot_, kind_;
