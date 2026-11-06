@@ -377,6 +377,86 @@ void test_a_record_stop_past_half_a_bar_keeps_the_next_bar_and_longer_takes_trim
   TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 74, start + 5 * kBar + 300, start + 5 * kBar + 301).size());
 }
 
+// ---- E9.8j pre-roll: notes begun before a take's tick 0 ---------------------------------------------------------------
+
+/// Queues a Record on track `t` into `slot` and returns its start (the next bar on a stopped track).
+static uint32_t armRecord(uint8_t t, uint8_t slot) {
+  C().selectTrack(t);
+  const uint32_t start = recordStart(t);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(t, slot, gClock));
+  return start;
+}
+/// Ends the Record take on `t` with a queued Stop just before the bar `bars` after `start`.
+static void stopAtBar(uint8_t t, uint32_t start, uint32_t bars, const std::vector<Live>& live = {}) {
+  run(start + bars * kBar - 100, live);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueStop(t, gClock));
+  run(start + bars * kBar + 1, live);
+}
+
+// Played 10 and 30 ticks before tick 0: pickups, written at Stop before the loop end — 70 (released 30 ticks into the
+// take) from loop - 10 to its NoteOff in the next cycle, 71 (released before tick 0) from loop - 30 to loop - 20.
+// Heard from the second cycle (the first after Stop plays the window prepared from the take).
+void test_notes_begun_just_before_tick_0_are_pickups_before_the_loop_end() {
+  gClock = 0;
+  const uint32_t start = armRecord(0, 0);
+  const std::vector<Live> live = {
+      {start - 30, start - 20, 71},
+      {start - 10, start + 30, 70},
+      {start + 0, start + 40, 60},
+  };
+  stopAtBar(0, start, 1, live);
+  TEST_ASSERT_EQUAL_UINT32(2, C().stats().pickups);
+  TEST_ASSERT_EQUAL_UINT32(2, X().stats().pickupNotes);
+  TEST_ASSERT_EQUAL_UINT32(kBar, X().loopLength(X().contentOf(0)));  // the loop is not lengthened
+  TEST_ASSERT_EQUAL_UINT8(2, gE.manifests().manifest(X().contentOf(0)).runCount);  // the take and its pickups
+  run(start + 5 * kBar);
+  for (uint32_t c = 2; c <= 3; ++c) {  // cycle c ends at start + (c + 1) x bar
+    const uint32_t end = start + (c + 1) * kBar;
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 70, end - 10, end - 9).size());
+    TEST_ASSERT_EQUAL_UINT32(1, offs(kPortUsbDevice, 70, end + 30, end + 31).size());
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 71, end - 30, end - 29).size());
+    TEST_ASSERT_EQUAL_UINT32(1, offs(kPortUsbDevice, 71, end - 20, end - 19).size());
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 60, end, end + 1).size());
+  }
+  C().transportStop(gClock, us(gClock), kUsPerTick);
+  run(gClock + 10);
+  expectSilentEnd();
+}
+
+// A note arriving within half a tick of tick 0 (an external clock's first pulse with the downbeat) is recorded at tick
+// 0; so is one held since long before (legacy armed pre-roll). One released before tick 0 and begun out of reach is
+// not recorded, nor is a note heard on another track.
+void test_a_note_at_the_take_start_or_held_into_it_is_recorded_at_tick_0() {
+  gClock = 0;
+  const uint32_t start = armRecord(0, 0);
+  run(start - 400);
+  C().inputNoteOn(gClock, 0x90, 50, 100, us(gClock), kUsPerTick);  // held from long before
+  C().inputNoteOn(gClock, 0x90, 52, 100, us(gClock), kUsPerTick);  // out of reach, released before tick 0
+  run(start - 200);
+  C().inputNoteOff(gClock, 0x80, 52, us(gClock));
+  run(start - 20);
+  C().selectTrack(1);
+  C().inputNoteOn(gClock, 0x90, 54, 100, us(gClock), kUsPerTick);  // another track's, inside the window
+  C().inputNoteOff(gClock, 0x80, 54, us(gClock) + 500);
+  C().selectTrack(0);
+  run(start);
+  C().inputNoteOn(start - 1, 0x90, 60, 100, us(start) - 200, kUsPerTick);  // 200 µs before tick 0's time
+  run(start + 200);
+  C().inputNoteOff(gClock, 0x80, 60, us(gClock));
+  C().inputNoteOff(gClock, 0x80, 50, us(gClock));
+  stopAtBar(0, start, 1);
+  TEST_ASSERT_EQUAL_UINT32(2, C().stats().preRollAtStart);
+  TEST_ASSERT_EQUAL_UINT32(0, C().stats().pickups);
+  run(start + 4 * kBar);
+  for (uint32_t c = 1; c <= 3; ++c) {  // cycle 1 of a 1-bar take may join a tick late (no prepared window)
+    const uint32_t s = start + c * kBar;
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 60, s, s + 2).size());
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 50, s, s + 2).size());
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, ons(kPortUsbDevice, 52, start + 1, gClock).size());
+  TEST_ASSERT_EQUAL_UINT32(0, ons(kPortUsbDevice, 54, start + 1, gClock).size());
+}
+
 void test_live_input_is_heard_on_the_right_tracks_ports_and_recorded() {
   gE.output().setPorts(0, 1u << kPortUsbDevice);
   gE.output().setPorts(1, 1u << kPortUsbHost);
@@ -442,6 +522,8 @@ int main(int, char**) {
   RUN_TEST(test_transport_stop_silences_and_start_plays_from_position_0);
   RUN_TEST(test_a_record_stop_just_past_a_bar_line_ends_the_loop_there);
   RUN_TEST(test_a_record_stop_past_half_a_bar_keeps_the_next_bar_and_longer_takes_trim_too);
+  RUN_TEST(test_notes_begun_just_before_tick_0_are_pickups_before_the_loop_end);
+  RUN_TEST(test_a_note_at_the_take_start_or_held_into_it_is_recorded_at_tick_0);
   RUN_TEST(test_live_input_is_heard_on_the_right_tracks_ports_and_recorded);
   RUN_TEST(test_no_heap);
   return UNITY_END();

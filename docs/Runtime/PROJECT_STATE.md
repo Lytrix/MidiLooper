@@ -1,3 +1,9 @@
+**2026-11-06 — Fixed-memory engine: E9.8j notes just before a take's start are kept.**
+- The first note when recording from a stopped external clock is no longer lost: a note arriving with the start is
+  recorded on the downbeat, one held from earlier too, and a note played up to a 16th early is placed just before the
+  loop's end, so it sounds ahead of each downbeat (heard from the second pass). Host-tested; the owner checks it with
+  Ableton's clock.
+
 **2026-11-06 — Fixed-memory engine: E9.8i a late Record Stop ends at the bar just passed.**
 - As legacy: pressing Stop up to half a bar after a bar line ends the loop at that line instead of adding a bar.
   Nothing recorded is removed: notes played after the line come back at the loop start, held notes end in the next

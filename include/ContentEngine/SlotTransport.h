@@ -37,6 +37,10 @@
 //   `length` shorter than the take ends the loop there; the take's rows past it are kept and are the loop's wrap
 //   stream — notes played after the bar line sound from the loop start, a note held across it ends in the next cycle.
 //   Playback goes on in phase: cycle 1 began at the bar line, so the take joins at its position now.
+// * Pickups (E9.8j, owner 2026-11-06: the note-off wrap in reverse): notes played shortly before a Record take's tick 0
+//   (`stop`'s `pickups`, gathered by `TrackControl`) are written at Stop, when the loop is known, as a second run of the
+//   take: NoteOn at `loop - before`, NoteOff where the note really ended (past the loop end: the wrap stream), never
+//   longer than the loop. From the second cycle they sound just before each downbeat.
 // * Live occupancy (E6.2f): an accepted overdub NoteOn occupies its pitch on the writing track; its NoteOff, or Stop's
 //   closures, release it.
 // * Undo / Redo: History moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
@@ -98,6 +102,8 @@ class SlotTransport {
     uint32_t provisionalSelections;  // wraps prepared with a provisional source (E9.1b)
     uint32_t recordPrepares;         // Record takes whose window 0 was composed ahead
     uint32_t trimmedTakes;           // Record takes ended at the bar line before their Stop (E9.8i)
+    uint32_t pickupNotes;            // notes played before a take's tick 0, written at its Stop (E9.8j)
+    uint32_t pickupsDropped;         // pickups not written (no run descriptor)
   };
 
   void init(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, WriterT& writer, Track* const* tracks) {
@@ -159,12 +165,23 @@ class SlotTransport {
   }
 
   /// Ends the take at `clock`. `out` receives NoteOffs (a track stopped by an empty slot); it must hold `Track::T`.
+  /// A note played before a Record take's tick 0 (E9.8j): `before` ticks before it (1 or more); `off` where it ended,
+  /// relative to tick 0 (negative: before it).
+  struct Pickup {
+    uint32_t before;
+    int32_t off;
+    uint8_t channel, pitch, velocity;
+  };
+  static constexpr uint8_t kMaxPickups = 16;
+
   /// `length` (a Record take; 0: the take's length): the loop ends there, before `clock` (E9.8i) — at most a loop
-  /// earlier, so the take's rows past it fit the loop's wrap stream.
-  Result stop(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length = 0) {
+  /// earlier, so the take's rows past it fit the loop's wrap stream. `pickups` (a Record take, at most `kMaxPickups`):
+  /// notes played before its tick 0 (E9.8j).
+  Result stop(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length = 0,
+              const Pickup* pickups = nullptr, uint8_t pickupCount = 0) {
     emitted = 0;
     if (mode_ == Mode::Idle) return Result::NotWriting;
-    return mode_ == Mode::Recording ? stopRecord(clock, out, max, emitted, length)
+    return mode_ == Mode::Recording ? stopRecord(clock, out, max, emitted, length, pickups, pickupCount)
                                     : stopOverdub(clock, out, max, emitted);
   }
   /// The bar for preparing a Record take's window 0 at bar lines (0: at the window end only).
@@ -401,6 +418,50 @@ class SlotTransport {
     manifests_->release(p, *runs_);  // the track's lease holds it while it is composed and played
     ++stats_.provisionalSelections;
   }
+  /// E9.8j: the take's pickups as one run of loop positions — NoteOn at `loop - before`, NoteOff at `loop + off`
+  /// (the wrap stream when past the loop end), at least a tick and less than a loop long — written in tick order.
+  RunId writePickups(const Pickup* pk, uint8_t n) {
+    if (n > kMaxPickups) n = kMaxPickups;
+    struct Ev {
+      uint32_t tick;
+      uint8_t i;
+      bool on;
+    };
+    Ev ev[2 * kMaxPickups];
+    uint8_t m = 0;
+    for (uint8_t i = 0; i < n; ++i) {
+      if (pk[i].before == 0 || pk[i].before >= loop_) continue;
+      const uint32_t on = loop_ - pk[i].before;
+      const int64_t want = static_cast<int64_t>(loop_) + pk[i].off;
+      const uint32_t off = want <= on ? on + 1 : want >= on + loop_ ? on + loop_ - 1 : static_cast<uint32_t>(want);
+      ev[m++] = Ev{on, i, true};
+      ev[m++] = Ev{off, i, false};
+    }
+    if (m == 0 || writer_->begin(wSlot_, RunKind::kRecord, loop_, 0) != WriterResult::Ok) {
+      stats_.pickupsDropped += n;
+      return kNoRun;
+    }
+    for (uint8_t a = 1; a < m; ++a)  // by tick; a NoteOff before a NoteOn on the same tick
+      for (uint8_t b = a; b > 0 && (ev[b].tick < ev[b - 1].tick || (ev[b].tick == ev[b - 1].tick && !ev[b].on && ev[b - 1].on)); --b) {
+        const Ev e = ev[b];
+        ev[b] = ev[b - 1];
+        ev[b - 1] = e;
+      }
+    uint32_t last = 0;
+    for (uint8_t k = 0; k < m; ++k) {
+      const Pickup& p = pk[ev[k].i];
+      if (ev[k].on) {
+        if (writer_->noteOn(ev[k].tick, p.channel, p.pitch, p.velocity) == WriterResult::Ok) ++stats_.pickupNotes;
+      } else {
+        writer_->noteOff(ev[k].tick, p.channel, p.pitch, 0);
+      }
+      last = ev[k].tick;
+    }
+    writer_->stop(last);
+    const RunId r = writer_->lastRun();
+    return runs_->run(r).rowCount != 0 ? r : kNoRun;
+  }
+
   void prepareRecord(uint32_t len) {
     preparedLen_ = len;
     const RunId r0 = writer_->activeRun();
@@ -414,7 +475,8 @@ class SlotTransport {
     ++stats_.recordPrepares;
   }
 
-  Result stopRecord(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length) {
+  Result stopRecord(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length, const Pickup* pickups,
+                    uint8_t pickupCount) {
     const uint32_t before = manifests_->nextIdentity();
     writer_->stop(clock);
     releaseAllHeld();
@@ -423,12 +485,18 @@ class SlotTransport {
     loop_ = length != 0 && length < raw && raw - length < length ? length : raw;
     if (loop_ != raw) ++stats_.trimmedTakes;
     mode_ = Mode::Idle;
+    const RunId rp = loop_ != 0 && pickupCount != 0 ? writePickups(pickups, pickupCount) : kNoRun;
+    const bool takeRows = runs_->run(r0).rowCount != 0;
     Result result = Result::Ok;
-    if (loop_ == 0 || runs_->run(r0).rowCount == 0) {
+    if (loop_ == 0 || (!takeRows && rp == kNoRun)) {
       ++stats_.emptyTakes;
       result = Result::Empty;
     } else {
-      const ManifestId m = publish(kNoManifest, r0);  // admitted at Record start
+      RunId list[2];
+      uint8_t n = 0;
+      if (takeRows) list[n++] = r0;
+      if (rp != kNoRun) list[n++] = rp;
+      const ManifestId m = manifests_->create(wSlot_, ++revision_, loop_, list, n, *runs_);  // admitted at Record start
       history_->commit(wSlot_, m);
       slot_[wTrack_] = wSlot_;
       origin_[wTrack_] = wStart_;

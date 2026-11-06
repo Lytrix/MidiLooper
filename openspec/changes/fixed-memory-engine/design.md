@@ -1986,3 +1986,30 @@ line trims to 2 bars and plays in phase. Mutations caught 6 / 6 (no trim queued,
 ignored, no bar-line preparation, an uncovering window used, late-join limit applied). RAM2 + 104 B (149,680).
 Device `52246da5…`: boot clean, 22 slots loaded; owner confirmed on the DROID (2026-11-06).
 
+## E9.8j — pre-roll: notes begun before a take's tick 0 (owner 2026-11-06; as built)
+
+Owner report: starting a Record take from a stopped external clock (Ableton) always missed the first note — the
+downbeat note arrives with MIDI Start and the first pulse, and is handled just before the take exists, so it only went
+to thru. Owner design: buffer the live input, and resolve a note begun `X` ticks before tick 0 at Stop to `loop - X`
+(the NoteOff wrap in reverse). Legacy had an armed pre-roll that recorded notes still held at the start at tick 0.
+- **Heard notes (`TrackControl`):** while no take writes, the last 16 live notes on the input's track are kept (arrival
+  µs, release µs or held; the oldest makes room; a note struck again ends the earlier).
+- **At a Record take's start** (tick 0 at `nowUs`), for the take's track: `before = round((nowUs - on) / usPerTick)`.
+  A held note with `before` 0, or held since longer than `kPreRollTicks` (48, a 16th at 192 PPQN), is recorded at
+  tick 0 (`preRollAtStart`). A note with 1 ≤ `before` ≤ 48 is a pickup (`pickups`): released already (its length
+  known), or held — then its release during the take is followed (the NoteOff does not reach the writer; a new NoteOn
+  on its pitch ends it; Stop ends one still held). A note released before tick 0 and begun out of reach is dropped.
+- **At Stop (`SlotTransport::writePickups`):** the loop is known, so the pickups become a second run of the take,
+  written in tick order: NoteOn at `loop - before`, NoteOff at `loop + off` (`off` relative to tick 0; past the loop
+  end it is the wrap stream), at least a tick and less than a loop long. The take's state lists both runs; the loop
+  is not lengthened. A take with only pickups is still a take.
+- **Heard from the second cycle** for a loop no longer than the first window: the first cycle after Stop plays window
+  0 prepared from the take's own run (E9.1b), which has no pickups.
+
+Tests (`test_content_engine_track_control`, +2): notes 10 and 30 ticks before tick 0 (one released 30 ticks into the
+take, one before it) sound at `loop - 10` / `loop - 30` with their NoteOffs at `loop + 30` / `loop - 20` in cycles 2
+and 3, the take's state has two runs, nothing sounds after transport stop; a note 200 µs before tick 0's time and one
+held from 400 ticks before are recorded at tick 0; one released before tick 0 from 400 ticks before and one on another
+track 20 ticks before are not recorded. Mutations caught 7 / 7. RAM2 + 488 B (150,168).
+Device `da0d2dc8…`: boot clean, 22 slots loaded; the owner checks it with Ableton's clock.
+

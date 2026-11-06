@@ -14,6 +14,13 @@
 //   line instead (E9.8i, legacy `RecordStopLength::quantizeTransportRecordLength`): it stops on the next tick, its loop
 //   one bar shorter than the next bar would make it, the notes played since kept as the loop's wrap stream
 //   (`SlotTransport::stop`). `stopNow` ends a take at once.
+// * Pre-roll (E9.8j, owner 2026-11-06: with an external clock the first note was missed; the note-off wrap in
+//   reverse): while no take writes, the last `kHeardNotes` live notes are kept with their arrival time. When a Record
+//   take starts on the track: a note that arrived within half a tick of tick 0 is recorded at tick 0, as is one held
+//   since longer than `kPreRollTicks` (legacy armed pre-roll); one that began 1..`kPreRollTicks` ticks before tick 0 is
+//   a pickup — its release is followed during the take (or a new NoteOn on its pitch ends it), and Stop writes it
+//   before the loop's end (`SlotTransport::stop`). A note released before tick 0 whose start was out of reach is not
+//   recorded.
 // * Slot switch: the target composes from the request on (`SlotTransport::launch`, fresh from its loop start) and plays
 //   from the next grid step (`NextGrid`, 16ths by default) or the playing slot's loop end (`LoopEnd`); a take on the
 //   track ends first. An empty target stops the track and takes the slot, ready to record.
@@ -42,6 +49,8 @@ class TrackControl {
     uint32_t recordsStarted;  // queued Records that began
     uint32_t recordsWaited;   // eligible ticks a queued Record waited for the writer
     uint32_t switches;        // slot switches committed
+    uint32_t pickups;         // notes begun before a take's tick 0, written at its Stop (E9.8j)
+    uint32_t preRollAtStart;  // notes held at a take's start, recorded at its tick 0
   };
 
   void init(Transport& transport, Output& output, uint32_t ticksPerBar, uint32_t gridTicks) {
@@ -55,6 +64,9 @@ class TrackControl {
     for (auto& m : muted_) m = false;
     for (auto& s : soloed_) s = false;
     for (auto& w : wasPlaying_) w = false;
+    for (auto& h : heard_) h = Heard{};
+    pickupCount_ = 0;
+    pickupTrack_ = kNone;
     stats_ = Stats{};
   }
   /// The runtime bar and grid (time signature, launch grid).
@@ -63,6 +75,10 @@ class TrackControl {
     grid_ = gridTicks;
     x_->setBarTicks(bar_);
   }
+
+  /// E9.8j: how long before a Record take's tick 0 a note may begin and still be recorded (a 16th at 192 PPQN).
+  static constexpr uint32_t kPreRollTicks = 48;
+  static constexpr uint8_t kHeardNotes = 16;
 
   void selectTrack(uint8_t t) { selected_ = t; }
   uint8_t selectedTrack() const { return selected_; }
@@ -100,9 +116,16 @@ class TrackControl {
     pending_[w].stop = false;
     pending_[w].trimEnd = 0;
     const uint32_t start = clock - x_->writePosition(clock);
+    const bool pickups = x_->mode() == Transport::Mode::Recording && pickupTrack_ == w;
+    if (pickups)  // still held at Stop: it ends there, as the take's own notes do
+      for (uint8_t i = 0; i < pickupCount_; ++i)
+        if (pickupOpen_[i]) pickups_[i].off = static_cast<int32_t>(clock - start);
     Emit buf[T];
     uint8_t n;
-    const Result r = x_->stop(clock, buf, T, n, trimEnd > start && trimEnd < clock ? trimEnd - start : 0);
+    const Result r = x_->stop(clock, buf, T, n, trimEnd > start && trimEnd < clock ? trimEnd - start : 0,
+                              pickups ? pickups_ : nullptr, pickups ? pickupCount_ : 0);
+    pickupCount_ = 0;
+    pickupTrack_ = kNone;
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
@@ -178,16 +201,29 @@ class TrackControl {
       inputNoteOff(clock, status, pitch, nowUs);
       return;
     }
+    const uint8_t channel = static_cast<uint8_t>((status & 0x0F) + 1);
     if (x_->writingTrack() != kNone) {
+      endPickup(clock, channel, pitch);  // a new note on a pickup's pitch ends the pickup
       Emit buf[T];
       uint8_t n;
-      x_->noteOn(clock, static_cast<uint8_t>((status & 0x0F) + 1), pitch, velocity, buf, T, n);
+      x_->noteOn(clock, channel, pitch, velocity, buf, T, n);
       out_->route(buf, n, nowUs, usPerTick);
+    } else {
+      hear(target(), channel, pitch, velocity, nowUs);
     }
     out_->thruNoteOn(target(), status, pitch, velocity, nowUs);
   }
   void inputNoteOff(uint32_t clock, uint8_t status, uint8_t pitch, uint32_t nowUs) {
-    if (x_->writingTrack() != kNone) x_->noteOff(clock, static_cast<uint8_t>((status & 0x0F) + 1), pitch, 0);
+    const uint8_t channel = static_cast<uint8_t>((status & 0x0F) + 1);
+    if (x_->writingTrack() != kNone) {
+      if (!endPickup(clock, channel, pitch)) x_->noteOff(clock, channel, pitch, 0);
+    } else {
+      for (Heard& h : heard_)
+        if (h.used && h.held && h.track == target() && h.channel == channel && h.pitch == pitch) {
+          h.held = false;
+          h.offUs = nowUs;
+        }
+    }
     out_->thruNoteOff(target(), status, pitch, nowUs);
   }
   void inputEvent(uint32_t clock, uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
@@ -243,6 +279,15 @@ class TrackControl {
     Quantize switchQ = Quantize::NextGrid;
     uint32_t switchAt = 0;
   };
+  struct Heard {  // a live note while no take writes (E9.8j)
+    uint32_t onUs, offUs;
+    uint8_t track, channel, pitch, velocity;
+    bool used, held;
+  };
+  Heard heard_[kHeardNotes] = {};
+  typename Transport::Pickup pickups_[Transport::kMaxPickups] = {};
+  bool pickupOpen_[Transport::kMaxPickups] = {};
+  uint8_t pickupCount_ = 0, pickupTrack_ = kNone;
 
   uint8_t target() const {
     const uint8_t w = x_->writingTrack();
@@ -276,7 +321,59 @@ class TrackControl {
     if (x_->startRecord(t, p.recordSlot, clock) == Result::Ok) {
       p.recordSlot = kNone;
       ++stats_.recordsStarted;
+      gatherPreRoll(t, clock, nowUs, usPerTick);
     }
+  }
+  /// E9.8j: the notes heard on `t` before its take's tick 0 (`clock`, at `nowUs`).
+  void gatherPreRoll(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    pickupCount_ = 0;
+    pickupTrack_ = t;
+    const uint32_t tickUs = usPerTick != 0 ? usPerTick : 1;
+    for (Heard& h : heard_) {
+      if (!h.used || h.track != t) continue;
+      h.used = false;
+      const uint32_t before = nowUs - h.onUs > 0x7FFFFFFFu ? 0 : (nowUs - h.onUs + tickUs / 2) / tickUs;
+      if (h.held && (before == 0 || before > kPreRollTicks)) {  // at tick 0: just before it, or held since long before
+        Emit buf[T];
+        uint8_t n;
+        if (x_->noteOn(clock, h.channel, h.pitch, h.velocity, buf, T, n) == Result::Ok) ++stats_.preRollAtStart;
+        continue;
+      }
+      if (before == 0 || before > kPreRollTicks || pickupCount_ >= Transport::kMaxPickups) continue;
+      const uint32_t length = h.held ? 0 : (h.offUs - h.onUs + tickUs / 2) / tickUs;
+      pickups_[pickupCount_] = {before, h.held ? 0 : static_cast<int32_t>(length) - static_cast<int32_t>(before),
+                                h.channel, h.pitch, h.velocity};
+      pickupOpen_[pickupCount_++] = h.held;
+      ++stats_.pickups;
+    }
+  }
+  /// While no take writes: a live note on `track` (the oldest kept one makes room).
+  void hear(uint8_t track, uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t nowUs) {
+    Heard* slot = nullptr;
+    for (Heard& h : heard_) {
+      if (h.used && h.held && h.track == track && h.channel == channel && h.pitch == pitch) {
+        h.held = false;  // struck again: the earlier one ends
+        h.offUs = nowUs;
+      }
+      if (!h.used) {
+        if (slot == nullptr || slot->used) slot = &h;
+      } else if (slot == nullptr || (slot->used && static_cast<int32_t>(h.onUs - slot->onUs) < 0)) {
+        slot = &h;
+      }
+    }
+    *slot = Heard{nowUs, nowUs, track, channel, pitch, velocity, true, true};
+  }
+  /// A pickup still held on the take's track ends at `clock` (input after that tick). False: none.
+  bool endPickup(uint32_t clock, uint8_t channel, uint8_t pitch) {
+    if (pickupTrack_ != x_->writingTrack()) return false;
+    const uint32_t start = clock - x_->writePosition(clock);
+    for (uint8_t i = 0; i < pickupCount_; ++i)
+      if (pickupOpen_[i] && pickups_[i].channel == channel && pickups_[i].pitch == pitch) {
+        pickupOpen_[i] = false;
+        pickups_[i].off = static_cast<int32_t>(clock - start);
+        return true;
+      }
+    return false;
   }
   void commitSwitch(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Pending& p = pending_[t];
