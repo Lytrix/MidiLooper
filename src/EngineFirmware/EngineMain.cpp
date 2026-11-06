@@ -304,6 +304,9 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(ct.exists), static_cast<unsigned long>(ct.openRead),
                   static_cast<unsigned long>(ct.sectorRead), static_cast<unsigned long>(ct.sectorWrite),
                   static_cast<unsigned long>(ct.store), gEngine.persistence().stats().store);
+    Serial.printf("#ENGINE,card_write,next=%lu,jump=%lu,not_ready=%lu,stops=%lu\n",
+                  static_cast<unsigned long>(ct.nextWrite), static_cast<unsigned long>(ct.jumpWrite),
+                  static_cast<unsigned long>(ct.notReady), static_cast<unsigned long>(ct.stops));
     Serial.printf("#ENGINE,store,error=%u,first_sector=%lu,fat_type=%u,cluster_sectors=%u,clusters=%lu\n",
                   gCard.storeError(), static_cast<unsigned long>(gCard.storeSector()), SD.sdfs.fatType(),
                   static_cast<unsigned>(SD.sdfs.sectorsPerCluster()), static_cast<unsigned long>(SD.sdfs.clusterCount()));
@@ -327,6 +330,7 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
   } else if (std::strcmp(verb, "cardfree") == 0) {  // the card's free space (scans the FAT: ~1 s, read only)
+    gCard.quiesce();  // SdFat reads the FAT: the store's stream is stopped first
     const uint32_t t = millis();
     const int32_t free = SD.sdfs.freeClusterCount();
     Serial.printf("#ENGINE,cardfree,free_clusters=%ld,cluster_sectors=%u,clusters=%lu,ms=%lu\n",

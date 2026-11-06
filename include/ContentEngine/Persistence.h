@@ -14,10 +14,12 @@
 //   the device, a save ~30 ms): one file, `store.bin`, created and preallocated in one contiguous run when saving is
 //   approved (or at the first boot after), then only read and written sector by sector, with no file-system work. Each
 //   slot has two copies (A / B, `kCopySectors` each: a slot may hold the whole content pool); a save writes the copy
-//   that is not current, one sector write a grain (one took up to 8 ms on the device) — the body (`SaveJob`), its last
-//   partial sector, then the header with the next sequence (one counter past every copy the boot found, so a save
-//   reads nothing) — so an interrupted save leaves the current copy whole. The surface state alternates between two
-//   sectors.
+//   that is not current, one sector write a grain — the body (`SaveJob`), its last partial sector, then the header with
+//   the next sequence (one counter past every copy the boot found, so a save reads nothing) — so an interrupted save
+//   leaves the current copy whole. The surface state alternates between two sectors. No write waits for the card
+//   (E9.8h; a stop that waited for the card to program took up to 8 ms): a grain writes only when the card says it is
+//   `ready` for that sector, and a save or state write is complete only once the card is idle again (`closing_`: what
+//   it holds programmed).
 // * Boot load: every slot's valid copy with the later sequence is loaded (`LoadJob`: admission, CRC, full release on
 //   failure), the other copy when it fails; a slot whose copies fail stays empty and is counted by name
 //   (`Stats::loadFailed`); loading never writes. A slot with no copy in the store is taken from before the store: its
@@ -59,6 +61,14 @@ struct CardIo {
   virtual bool openStore(const char* path, uint32_t sectors, bool create, bool& created) = 0;
   virtual bool readSector(uint32_t i, uint8_t* data) = 0;         // 512 B
   virtual bool writeSector(uint32_t i, const uint8_t* data) = 0;  // 512 B
+  /// False while writing sector `i` now would wait for the card (it is still taking or programming an earlier one);
+  /// a save or state grain then does nothing and is tried again. `kIdle`: a save or state write is complete — false
+  /// until the card has everything programmed. The default: a card that never waits.
+  static constexpr uint32_t kIdle = 0xFFFFFFFFu;
+  virtual bool ready(uint32_t i) {
+    (void)i;
+    return true;
+  }
   virtual ~CardIo() = default;
 };
 
@@ -171,7 +181,7 @@ class Persistence {
     approved_ = false;
     saving_ = loading_ = kNone;
     bootNext_ = Slots;
-    store_ = sealing_ = fromStore_ = stateHave_ = false;
+    store_ = sealing_ = fromStore_ = stateHave_ = closing_ = false;
     haveCopy_ = copyB_ = 0;
     stateSeq_ = savingSeq_ = 0;
     nextSeq_ = 1;
@@ -228,7 +238,7 @@ class Persistence {
     if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && state_ != stateSaved_)
       stateDue_ = true;  // written by the next persistence grain
   }
-  bool pending() const { return saving_ != kNone || booting() || stateDue_; }
+  bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
 
   // ---- Surface state ----------------------------------------------------------------------------------------------------
   /// The surface's state now (`kStateBytes`); saved once settled and approved.
@@ -248,12 +258,17 @@ class Persistence {
   }
   /// One persistence grain: a save chunk, or a load grain, or the next boot file opened.
   bool step() {
+    if (closing_) {  // a save or state write is complete only once the card has it programmed
+      if (!card_->ready(CardIo::kIdle)) return true;
+      closing_ = false;
+    }
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
     if (importing_ != kNone) return stepImport();
-    if (stateDue_) {
+    if (stateDue_) {  // the card is idle here (`closing_`): the write does not wait
       writeState();
-      return false;
+      closing_ = store_;
+      return closing_;
     }
     if (bootNext_ == 0) {  // the boot's first grain: the store (created on the first boot after approval), the state
       if (approved_) openStore(importScratch_);
@@ -331,10 +346,11 @@ class Persistence {
   static uint32_t stateSum(uint32_t v) { return (v * 2654435761u) ^ 0xA5A5A5A5u; }
   // The store's state sectors 0 and 1, alternately (one sector write is the whole save): magic "MLS2", sequence,
   // state, check word; the valid one with the later sequence counts.
+  uint8_t stateSector() const { return stateHave_ ? static_cast<uint8_t>(stateCopy_ ^ 1) : 0; }
   void writeState() {
     stateDue_ = false;
     if (!store_) return;
-    const uint8_t c = stateHave_ ? static_cast<uint8_t>(stateCopy_ ^ 1) : 0;
+    const uint8_t c = stateSector();
     uint8_t* b = sectorBuf();
     for (uint32_t i = 0; i < kSector; ++i) b[i] = 0;
     const uint32_t seq = stateSeq_ + 1;
@@ -414,6 +430,7 @@ class Persistence {
       for (uint32_t i = 0; i < 2 && store_; ++i) store_ = card_->writeSector(i, buf);
       for (uint8_t s = 0; s < Slots && store_; ++s)
         for (uint8_t c = 0; c < 2 && store_; ++c) store_ = card_->writeSector(copyBase(s, c), buf);
+      closing_ = true;  // once, at creation: these writes may wait for the card
     }
     stats_.store = store_ ? 1 : 2;
   }
@@ -507,10 +524,12 @@ class Persistence {
     savingCopy_ = c;
     savingPrint_ = seen_[s];
   }
-  /// A save grain: one sector write at most (one took up to 8 ms on the device) — a body chunk, then the last,
+  /// A save grain: one sector write at most, and only once the card is ready for it — a body chunk, then the last,
   /// partial sector, then the header.
   bool stepSave() {
     const uint8_t s = saving_;
+    // The sector this grain may write: a body chunk fills at most one (`ioNext_`), then the last one, then the header.
+    if (!card_->ready(!sealing_ || ioFill_ != 0 ? ioNext_ : copyBase(s, savingCopy_))) return true;
     if (!sealing_) {
       const typename Save::Status st = save_.step();
       if (st == Save::Status::Running) return true;
@@ -519,6 +538,7 @@ class Persistence {
         return true;
       }
       saving_ = kNone;
+      closing_ = true;
       ++stats_.saveFailed;
       saved_[s] = savingPrint_;
       return false;
@@ -526,6 +546,7 @@ class Persistence {
     if (ioFill_ != 0 && finishBody()) return true;  // `finishBody` empties the buffer: the header next
     sealing_ = false;
     saving_ = kNone;
+    closing_ = true;
     if (ioFill_ == 0 && writeHeader(s, savingCopy_, savingSeq_, ioBytes_)) {
       haveCopy_ |= 1ull << s;
       if (savingCopy_) copyB_ |= 1ull << s; else copyB_ &= ~(1ull << s);
@@ -637,6 +658,7 @@ class Persistence {
   Load load_;
   bool approved_ = false, fromTmp_ = false;
   bool store_ = false, sealing_ = false, fromStore_ = false, altValid_ = false, stateHave_ = false;
+  bool closing_ = false;  // the card is to be left idle (`CardIo::kIdle`) before the next grain's work
   uint8_t savingCopy_ = 0, loadingCopy_ = 0, stateCopy_ = 0;
   uint64_t haveCopy_ = 0, copyB_ = 0;  // per slot: a valid copy in the store, the current one is B
   uint32_t stateSeq_ = 0, savingSeq_ = 0, nextSeq_ = 1;  // `nextSeq_`: the next save's sequence (any slot)

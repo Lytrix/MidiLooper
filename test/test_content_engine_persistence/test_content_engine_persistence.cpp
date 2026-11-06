@@ -64,6 +64,14 @@ struct FakeCard : CardIo {
   uint32_t failSectorWritesAfter = 0xFFFFFFFFu;  // sector writes, then every one fails
   uint32_t failOneSectorWrite = 0xFFFFFFFFu;     // sector writes, then the next one fails (once)
   uint32_t stepWrites = 0, mostStepWrites = 0;   // sector writes in one engine step, and the most of them
+  // The card's timing, as the SD adapter sees it: a write stream stays open while sectors follow; a block keeps the
+  // card busy for a while, a stopped stream longer (programming). A write while busy, or one that has to stop the
+  // stream itself, waits on the device: `waitingWrites`.
+  static constexpr uint8_t kWriteBusy = 2, kStopBusy = 3;
+  bool streaming = false;
+  uint32_t next = 0;
+  uint8_t busy = 0;
+  uint32_t waitingWrites = 0, readsWhileStreaming = 0, stops = 0;
 
   void reset() {
     for (auto& f : files) f.used = false;
@@ -74,6 +82,10 @@ struct FakeCard : CardIo {
     storeSectors = 0;
     failSectorWritesAfter = failOneSectorWrite = 0xFFFFFFFFu;
     writes = sectorWrites = sectorReads = stepWrites = mostStepWrites = 0;
+    streaming = false;
+    next = 0;
+    busy = 0;
+    waitingWrites = readsWhileStreaming = stops = 0;
   }
   int find(const char* p) const {
     for (int i = 0; i < kFiles; ++i)
@@ -126,16 +138,25 @@ struct FakeCard : CardIo {
   bool readSector(uint32_t i, uint8_t* d) override {
     if (!storeOpen || i >= storeSectors) return false;
     ++sectorReads;
+    if (streaming) ++readsWhileStreaming;  // the adapter stops the stream and waits
+    streaming = false;
+    busy = 0;
     const uint8_t* s = sector(i);
     for (int k = 0; k < 512; ++k) d[k] = s ? s[k] : 0xA5;
     return true;
   }
   bool writeSector(uint32_t i, const uint8_t* d) override {
     if (!storeOpen || i >= storeSectors || sectorWrites >= failSectorWritesAfter) return false;
+    if (busy > 0 || (streaming && i != next)) ++waitingWrites;
+    busy = 0;
     if (sectorWrites == failOneSectorWrite) {
       failOneSectorWrite = 0xFFFFFFFFu;
+      streaming = false;
       return false;
     }
+    streaming = true;
+    next = i + 1;
+    busy = kWriteBusy;
     uint8_t* s = sector(i);
     if (s == nullptr) {
       TEST_ASSERT_TRUE(sectorCount < kSectors);
@@ -148,6 +169,20 @@ struct FakeCard : CardIo {
     ++stepWrites;
     return true;
   }
+  bool ready(uint32_t i) override {
+    if (busy > 0) {
+      --busy;
+      return false;
+    }
+    if (streaming && (i == kIdle || i != next)) {  // stopped now; programmed after a while
+      streaming = false;
+      busy = kStopBusy;
+      ++stops;
+      return false;
+    }
+    return true;
+  }
+  bool idle() const { return !streaming && busy == 0; }
   // Fixtures: files as an earlier firmware left them.
   void put(const char* path, const uint8_t* d, uint32_t n) {
     int i = find(path);
@@ -292,6 +327,7 @@ void test_autosave_waits_for_settle_and_free_slots() {
 
 void test_a_second_engine_boots_from_the_card() {
   gA.approveSaving();
+  const uint32_t waiting = gCard.waitingWrites;  // the new store's headers cleared at the approval
   record(gA, 0, 0, 60);
   record(gA, 1, 9, 72);
   TEST_ASSERT_EQUAL(R::Ok, gA.control().startOverdub(0, gClock));
@@ -305,10 +341,15 @@ void test_a_second_engine_boots_from_the_card() {
   const uint32_t before = gCard.sectorWrites;
   run(gA, gClock + kSettleTicks + 100);
   TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0) && gA.persistence().savedCurrent(9));  // each saved when settled
-  // A save is sector writes, at most one in a step (owner 2026-11-06: a save must not hold the main loop; one took up
-  // to 8 ms on the device); slot 0 took several.
+  // A save is sector writes, at most one in a step (owner 2026-11-06: a save must not hold the main loop); slot 0 took
+  // several.
   TEST_ASSERT_TRUE(gCard.sectorWrites - before > 4);
   TEST_ASSERT_EQUAL_UINT32(1, gCard.mostStepWrites);
+  // No write waits for the card (each asked `ready` first), and each save ends with the card idle: its stream stopped
+  // and programmed (the body follows on in one stream; the header is a stream of its own).
+  TEST_ASSERT_EQUAL_UINT32(waiting, gCard.waitingWrites);
+  TEST_ASSERT_TRUE(gCard.idle());
+  TEST_ASSERT_TRUE(gCard.stops >= 4);
   const uint32_t writes = gCard.writes;
   // Boot: a fresh engine on the same card.
   TEST_ASSERT_TRUE(gB.init(gPsramB, gRam2B, 2000));
@@ -538,6 +579,7 @@ void test_the_surface_state_is_saved_and_restored() {
   run(gA, gClock + kSettleTicks + 20);
   TEST_ASSERT_EQUAL_UINT32(0, gCard.writes);  // not approved: nothing written
   gA.approveSaving();
+  const uint32_t waiting = gCard.waitingWrites;  // the new store's headers cleared at the approval
   run(gA, gClock + kSettleTicks / 2);
   gA.setSurfaceState(state, us(gClock));  // unchanged: no new settle time
   run(gA, gClock + kSettleTicks);
@@ -553,6 +595,8 @@ void test_the_surface_state_is_saved_and_restored() {
   run(gA, gClock + kSettleTicks);
   TEST_ASSERT_EQUAL_UINT32(writes + 1, gCard.writes);
   TEST_ASSERT_NOT_NULL(gCard.sector(1));
+  TEST_ASSERT_EQUAL_UINT32(waiting, gCard.waitingWrites);  // each state write waited for a ready card
+  TEST_ASSERT_TRUE(gCard.idle());                          // and left it idle
   bootB();
   uint8_t back[ProductionPersistence::kStateBytes] = {};
   TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));

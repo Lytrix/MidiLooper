@@ -1885,6 +1885,33 @@ since). Native full suite 4,344 passed.
 
 Device (image `4d89e900…`, 32 GB card, FAT32, 16 KiB clusters): the store opened in 6 ms, 22 slots migrated on the
 first boot and loaded from the store after (0.40 s, 0 failed); undo / redo saves: worst grain 2.5–9.8 ms, worst
-sector write 2.5–8.2 ms, no sector read. Open: this card's single-sector write time; SdFat's SDIO write waits for the
-card inside its FIFO handshake and multi-block stop, so a non-blocking write is its own step.
+sector write 2.5–8.2 ms, no sector read. The write time was closed by E9.8h.
+
+## E9.8h — no save write waits for the card (owner 2026-11-06; as built)
+
+Measured first (diagnostic builds, `!ENGINE take`): every save write that jumped to another sector took
+1.6–8.2 ms, all of it SdFat's `syncDevice` — CMD12 to stop the open multi-block stream, then waiting on DAT0 while
+the card programs; the new stream's start and data took 12–20 µs. Gating writes on `isBusy()` alone did not help.
+
+- **The adapter's stream** (`SdCardIo`): store writes use SdFat's public `writeStart` / `writeData`, not
+  `writeSector`, so SdFat's own state stays idle. A sector after the last one continues the stream; any other starts
+  one. `ready(i)` is false while the card is busy (`isBusy()`: the block still transferring, or DAT0 low); when the
+  open stream is not at `i` (or `kIdle` is asked) it stops it with `stopTransmission(false)` and returns false until
+  the card has programmed it. Before the stop, `syncDevice()` on the idle SdFat clears its transfer flag without
+  waiting (the block is done): CMD12 clears the transfer-complete status that flag would otherwise wait for (a 1 s
+  timeout). Any other card access (file reads, sector reads, the store's opening, `cardfree`) first stops the stream
+  and waits (`quiesce`) — boot and diagnostics only.
+- **Persistence:** `CardIo::ready` (default true). A save grain writes only when the card is ready for its sector;
+  after a save or a state write (and the new store's cleared headers) `closing_` holds every further persistence grain
+  until `ready(kIdle)`: a save is complete only when the card has it programmed, and the next work finds the card
+  idle (so a state write never waits). Grains per pass stay capped, so a not-ready grain costs one `isBusy()`.
+
+Tests (`test_content_engine_persistence`, 12): the fake card models the stream (open while sectors follow) and busy
+time (after a block, longer after a stop); a write while busy or one that would stop the stream itself counts as
+waiting. Asserted: saves and state writes never wait; each ends with the card idle; at least one stop a save.
+Mutations: the save gate and the closing phase (twice: grain and state write) caught; a separate state-write gate
+was equivalent (the card is idle there) and removed. Native full suite green.
+
+Device (image `9672906b…`): 16 saves (single- and multi-sector slots): worst save grain 65–884 µs (the slot encoding;
+was 1.4–9.8 ms), a streamed write 6–10 µs, a new stream 11–20 µs; reboots load all 22 slots, 0 failed.
 

@@ -1,3 +1,9 @@
+**2026-11-06 — Fixed-memory engine: E9.8h saves never wait for the card.**
+- The last save hold (up to 8 ms) was SdFat stopping a write stream and waiting while the card programmed it. The
+  engine now writes the store as its own stream, stops it without waiting and moves on while the card is busy; a
+  save counts as done only once the card is idle again. On the device the worst save step is now under 1 ms (was up
+  to 9.8 ms; ~30 ms before E9.8g) and every slot reloads after a reboot.
+
 **2026-11-06 — Fixed-memory engine: E9.8g saves write sectors only (the A / B store).**
 - Slots and the selection are saved into one preallocated file, `/MidiLooper/engine/store.bin`, written sector by
   sector with no file-system work: two copies a slot, a save writes the other one and seals it last, so an interrupted

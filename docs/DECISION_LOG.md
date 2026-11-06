@@ -14744,3 +14744,11 @@ Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.
 - Device image `4d89e900…`: store created on the 32 GB card, 22 slots migrated then loaded from the store, 0 failed;
   worst save grain 2.5–9.8 ms (was ~30 ms), bounded by the card's single-sector write.
 
+### Amendment 1 — No store write waits for the card (2026-11-06, E9.8h)
+
+- A store write happens only when the card is `ready` for that sector; the SD adapter keeps its own multi-block
+  stream and stops it without waiting. A save or state write is complete only once the card is idle again (its data
+  programmed). Reason: SdFat's stop waited 1.6–8.2 ms while the card programmed.
+- Evidence: `test_content_engine_persistence` 12 / 12 (no waiting write, idle after each save), mutation-checked;
+  device `9672906b…`: worst save grain under 1 ms, 22 slots reloaded, 0 failed.
+
