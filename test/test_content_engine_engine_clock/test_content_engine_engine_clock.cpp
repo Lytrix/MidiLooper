@@ -120,10 +120,85 @@ void test_external_stop_continue_and_timeout() {
   const std::vector<uint32_t> v = drain(40000);
   TEST_ASSERT_FALSE(v.empty());
   TEST_ASSERT_EQUAL_UINT32(1, v.front());  // continues where it stopped
-  // No pulse for 500 ms: back to the internal clock, stopped.
-  TEST_ASSERT_TRUE(drain(40000 + EngineClock::kExternalTimeoutUs + 1).empty());
+  // Stopped, no pulse for 500 ms: back to the internal clock, stopped.
+  gC.midiStop(50000);
+  TEST_ASSERT_TRUE(drain(50000 + EngineClock::kExternalTimeoutUs + 1).empty());
   TEST_ASSERT_FALSE(gC.external());
   TEST_ASSERT_FALSE(gC.running());
+}
+
+// Owner 2026-11-06: the source's clock paused ~0.5 s mid-take and the clock stopped for good. As legacy: a running
+// clock keeps going on the internal clock at the last external tempo, then follows the pulses again, no tick skipped;
+// the gap does not move the tempo.
+void test_a_gap_in_the_clock_keeps_running_and_resumes() {
+  const uint32_t pulse = 25000;  // 100 BPM: not the internal default, so the gap runs at the measured tempo
+  gC.midiStart(0);
+  uint32_t t = 0, expect = 0;
+  for (int i = 0; i < 48; ++i, t += pulse) {
+    gC.midiPulse(t);
+    for (uint32_t k : drain(t)) TEST_ASSERT_EQUAL_UINT32(expect++, k);
+  }
+  TEST_ASSERT_UINT32_WITHIN(2, pulse / 8, gC.usPerTick());
+  // No pulse for 600 ms: still running, internally at the measured tempo, ticks in order.
+  const uint32_t gapEnd = t + 600000;
+  for (uint32_t u = t; u < gapEnd; u += 1000)
+    for (uint32_t k : drain(u)) TEST_ASSERT_EQUAL_UINT32(expect++, k);
+  TEST_ASSERT_TRUE(gC.running());
+  TEST_ASSERT_FALSE(gC.external());
+  TEST_ASSERT_UINT32_WITHIN(2, pulse / 8, gC.usPerTick());  // the internal clock at the external tempo
+  // It waits for the source up to the timeout (never ahead of it: at most the next pulse's tick), then runs on:
+  // ~30 ticks in the last 100 ms of the gap.
+  TEST_ASSERT_TRUE(expect >= 48 * 8 + 25);
+  // Pulses again: external, no tick skipped or repeated, the tempo unmoved.
+  for (int i = 0; i < 24; ++i, t += pulse) {
+    gC.midiPulse(gapEnd + i * pulse);
+    for (uint32_t k : drain(gapEnd + i * pulse)) TEST_ASSERT_EQUAL_UINT32(expect++, k);
+  }
+  TEST_ASSERT_TRUE(gC.external());
+  TEST_ASSERT_UINT32_WITHIN(2, pulse / 8, gC.usPerTick());
+}
+
+// Owner 2026-11-06 (Ableton over USB): pulses arrive bunched — several in one USB packet, read in one pass with one
+// time (intervals of 0). The tempo (over the span of 24 intervals) holds; no tick is skipped; no timeout.
+void test_bunched_pulses_keep_the_tempo() {
+  const uint32_t pulse = 20833;
+  gC.midiStart(0);
+  uint32_t t = 0, expect = 0, sent = 0;
+  for (int burst = 0; burst < 40; ++burst) {  // 4 pulses a packet, every 4 pulse periods
+    t += 4 * pulse;
+    for (int k = 0; k < 4; ++k, ++sent) gC.midiPulse(t);
+    for (uint32_t u = t; u < t + 4 * pulse; u += 1000)
+      for (uint32_t k : drain(u)) TEST_ASSERT_EQUAL_UINT32(expect++, k);
+  }
+  TEST_ASSERT_UINT32_WITHIN(30, pulse / 8, gC.usPerTick());
+  TEST_ASSERT_TRUE(gC.external());
+  TEST_ASSERT_TRUE(gC.running());
+  TEST_ASSERT_UINT32_WITHIN(8, sent * 8, expect);  // every pulse's ticks played, in order
+}
+
+// A flood (a MIDI feedback loop in the host, owner 2026-11-06: measured 106 µs a tick, ~2,900 BPM): a beat's pulses
+// within 20 ms. A span outside 1–300 BPM is not taken (legacy's range): the tempo stays a tempo.
+void test_a_flood_of_pulses_does_not_set_an_absurd_tempo() {
+  const uint32_t pulse = 20833;
+  gC.midiStart(0);
+  uint32_t t = 0;
+  for (int i = 0; i < 30; ++i, t += pulse) gC.midiPulse(t), drain(t);
+  for (int i = 0; i < 60; ++i, t += 800) {  // 24 pulses in 19 ms, sustained
+    gC.midiPulse(t), drain(t);
+    TEST_ASSERT_TRUE(gC.usPerTick() >= EngineClock::kMinUsPerTick);
+  }
+}
+
+void test_a_lone_late_pulse_does_not_move_the_tempo_but_a_new_tempo_does() {
+  const uint32_t pulse = 20833;
+  gC.midiStart(0);
+  uint32_t t = 0;
+  for (int i = 0; i < 30; ++i, t += pulse) gC.midiPulse(t), drain(t);
+  t += 200000;  // one late pulse (a 220 ms interval)
+  gC.midiPulse(t), drain(t);
+  TEST_ASSERT_UINT32_WITHIN(2, pulse / 8, gC.usPerTick());
+  for (int i = 0; i < 30; ++i) t += 2 * pulse + 2000, gC.midiPulse(t), drain(t);  // half the tempo, sustained
+  TEST_ASSERT_UINT32_WITHIN(5, (2 * pulse + 2000) / 8, gC.usPerTick());
 }
 
 void test_pulses_without_start_follow_from_the_next_tick() {
@@ -148,5 +223,9 @@ int main(int, char**) {
   RUN_TEST(test_a_later_midi_start_moves_to_the_next_bar);
   RUN_TEST(test_external_stop_continue_and_timeout);
   RUN_TEST(test_pulses_without_start_follow_from_the_next_tick);
+  RUN_TEST(test_a_gap_in_the_clock_keeps_running_and_resumes);
+  RUN_TEST(test_a_lone_late_pulse_does_not_move_the_tempo_but_a_new_tempo_does);
+  RUN_TEST(test_bunched_pulses_keep_the_tempo);
+  RUN_TEST(test_a_flood_of_pulses_does_not_set_an_absurd_tempo);
   return UNITY_END();
 }

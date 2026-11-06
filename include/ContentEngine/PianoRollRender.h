@@ -10,7 +10,7 @@
 // one-row note bars at brightness 7, the highlighted note at 10.
 // * Detailed view (`drawRollBand`): per visible bar its draw source — span segments; a dense bar's 32-column raster;
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
-//   the live overlay (a take being recorded) on top.
+//   the live overlay's notes (a take being recorded) on top, at the view's scale.
 // * Overview strip (`drawOverviewBand`): the whole loop from density tiles.
 // * `pitchExtent`: the lowest and highest pitch sounding in a bar range, from density tiles (the auto-fit range).
 
@@ -112,13 +112,16 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
     }
   }
   if (overlay == nullptr) return;
-  // The overlay's view matches this one: column c is x0 + c, row r is pitch lowPitch + r (setView by the caller).
-  for (uint8_t p = v.lowPitch; p <= v.highPitch && p < 128; ++p) {
-    const int16_t y = roll::rowOf(v, p);
-    if (y < rowFrom || y > rowTo) continue;
-    for (int16_t x = v.x0; x <= v.x1; ++x) {
-      const uint8_t px = overlay->pixel(static_cast<uint16_t>(x - v.x0), static_cast<uint8_t>(p - v.lowPitch));
-      if (px != 0) roll::pixel(fb, width, x, y, px);
+  // The live take's notes, at this view's scale (a held note reaches the current position; one crossing the loop end
+  // wraps at the overlay's loop).
+  const uint32_t oLoop = overlay->loopLength();
+  for (uint16_t i = 0; i < overlay->count(); ++i) {
+    const auto n = overlay->note(i);
+    if (n.end >= n.start) {
+      roll::span(v, fb, width, rowFrom, rowTo, n.start, n.end - n.start + 1, n.pitch, n.value);
+    } else if (oLoop != 0) {
+      roll::span(v, fb, width, rowFrom, rowTo, n.start, oLoop - n.start, n.pitch, n.value);
+      roll::span(v, fb, width, rowFrom, rowTo, 0, n.end + 1, n.pitch, n.value);
     }
   }
 }

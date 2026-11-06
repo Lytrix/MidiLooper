@@ -9,12 +9,21 @@
 // * Internal: one tick every `usPerTick` (from the tempo, BPM × 100) while running; `start` / `stop` from the surface.
 // * External: a MIDI clock pulse at tick 8k makes ticks up to 8k due at once; between pulses ticks are spread over the
 //   last measured pulse interval, but never past 8k + 7 before the next pulse arrives (the clock never runs ahead of
-//   its source). Tempo: the mean of the last 24 intervals. MIDI Start: the next bar line, held there until the first
+//   its source). MIDI Start: the next bar line, held there until the first
 //   pulse (as the legacy `ClockManager` holds tick 0); Stop: no tick due; Continue: running from where it stopped.
 // * Tick numbers only rise and a running clock never skips one (a late clock catches up `kCatchUp` ticks a pass): the
 //   engine's tracks, jobs and queued gestures key on them. A start — `start` or MIDI Start — moves on to the next bar
 //   line (`barTicks`) instead of going back to 0, so the bar grid is where the song starts; nothing plays meanwhile.
-// * The source is the external clock while pulses arrive (a pulse within `kExternalTimeoutUs`); without them, internal.
+// * The source is the external clock while pulses arrive (a pulse within `kExternalTimeoutUs`); without them, internal
+//   — and a running clock keeps running on the internal clock at the last external tempo, following the pulses again
+//   when they come back (no tick skipped), as the legacy `ClockManager` (owner 2026-11-06: a half-second gap in the
+//   source's clock froze the take).
+// * Tempo, as the legacy `ClockManager`: the span of the last 24 pulse intervals (25 arrival times — one beat), so
+//   pulses that arrive bunched (USB delivers several in one packet: intervals of 0) do not move it; a new span within
+//   2.5 % of the tempo is blended in at 2 % (legacy: within 3 BPM, 2 %), else taken as it is — except while a gap (an
+//   interval over three pulse periods) is inside the span: the tempo holds until the span has passed it. A span outside
+//   1–300 BPM is ignored (legacy `setBpmFloat`'s range): a flood of pulses (a MIDI feedback loop in the host) cannot
+//   set a tempo of thousands of BPM.
 // No allocation; O(1) a call.
 
 #pragma once
@@ -29,7 +38,9 @@ class EngineClock {
   static constexpr uint32_t kTicksPerPulse = kTicksPerQuarter / 24;
   static constexpr uint32_t kExternalTimeoutUs = 500000;
   static constexpr uint8_t kCatchUp = 16;
-  static constexpr uint8_t kWindow = 24;  // pulse intervals averaged for the tempo
+  static constexpr uint8_t kWindow = 24;  // pulse intervals the tempo spans (one beat)
+  static constexpr uint32_t kMinUsPerTick = 60000000u / (300u * kTicksPerQuarter);  // 300 BPM
+  static constexpr uint32_t kMaxUsPerTick = 60000000u / (1u * kTicksPerQuarter);    // 1 BPM
 
   void init(uint32_t bpmX100, uint32_t barTicks = 768) {
     barTicks_ = barTicks == 0 ? 1 : barTicks;
@@ -41,11 +52,13 @@ class EngineClock {
     pulses_ = 0;
     lastPulseUs_ = 0;
     pulseLimit_ = 0;
-    intervals_ = 0;
-    intervalSum_ = 0;
+    stamps_ = 0;
     head_ = 0;
+    gapHold_ = 0;
+    extUsPerTick_ = 0;
+    timeoutAgeUs_ = 0;
     holdForPulse_ = aligned_ = false;
-    for (uint32_t& i : interval_) i = 0;
+    for (uint32_t& t : stamp_) t = 0;
   }
   /// The internal tempo (BPM × 100, e.g. 12000).
   void setTempo(uint32_t bpmX100) {
@@ -85,14 +98,7 @@ class EngineClock {
     running_ = true;
   }
   void midiPulse(uint32_t nowUs) {
-    if (external_ && pulses_ != 0) {
-      const uint32_t dt = nowUs - lastPulseUs_;
-      if (intervals_ == kWindow) intervalSum_ -= interval_[head_];
-      else ++intervals_;
-      interval_[head_] = dt;
-      intervalSum_ += dt;
-      head_ = static_cast<uint8_t>((head_ + 1) % kWindow);
-    }
+    if (external_ && pulses_ != 0) addPulseTime(nowUs);
     if (!external_) {  // pulses without a Start: follow them from the tick due next (no tick is skipped)
       external_ = true;
       aligned_ = true;
@@ -113,9 +119,16 @@ class EngineClock {
 
   /// The next tick to play at `nowUs`, if one is due; `count` limits the catch-up within one pass.
   bool due(uint32_t nowUs, uint32_t& tick, uint8_t& count) {
-    if (external_ && nowUs - lastPulseUs_ > kExternalTimeoutUs) {  // the source went away: internal, stopped
+    if (external_ && static_cast<int32_t>(nowUs - lastPulseUs_) > static_cast<int32_t>(kExternalTimeoutUs)) {
+      timeoutAgeUs_ = nowUs - lastPulseUs_;  // the source went away: internal
+      if (running_ && !holdForPulse_) {  // keep running at the last external tempo (legacy)
+        internalUsPerTick_ = usPerTick();
+        lastTickUs_ = nowUs - internalUsPerTick_;  // the tick due next is due now
+      } else {
+        running_ = false;
+      }
+      holdForPulse_ = false;
       external_ = false;
-      running_ = false;
     }
     if (!running_ || count >= kCatchUp) return false;
     if (external_) {
@@ -140,15 +153,36 @@ class EngineClock {
   bool running() const { return running_; }
   bool external() const { return external_; }
   /// Microseconds per tick: the external clock's measured value, else the internal tempo's.
-  uint32_t usPerTick() const {
-    if (external_ && intervals_ != 0) return intervalSum_ / intervals_ / kTicksPerPulse;
-    return internalUsPerTick_;
-  }
+  uint32_t usPerTick() const { return external_ && extUsPerTick_ != 0 ? extUsPerTick_ : internalUsPerTick_; }
+  /// Diagnostics: how long the source had been silent at the last timeout.
+  uint32_t timeoutAgeUs() const { return timeoutAgeUs_; }
   /// The tick the next `due` returns.
   uint32_t nextTick() const { return next_; }
   void setBar(uint32_t barTicks) { barTicks_ = barTicks == 0 ? 1 : barTicks; }
 
  private:
+  /// A pulse's arrival time into the tempo span (25 times: 24 intervals, one beat).
+  void addPulseTime(uint32_t nowUs) {
+    const uint32_t prev = stamp_[(head_ + kWindow) % (kWindow + 1)];
+    const uint32_t period = extUsPerTick_ * kTicksPerPulse;  // the pulse period at the current tempo (0: unknown)
+    if (stamps_ != 0 && period != 0 && nowUs - prev > 3 * period) gapHold_ = kWindow;  // a gap: hold the tempo
+    stamp_[head_] = nowUs;
+    head_ = static_cast<uint8_t>((head_ + 1) % (kWindow + 1));
+    if (stamps_ <= kWindow) ++stamps_;
+    if (stamps_ <= kWindow) return;  // not a full beat yet
+    if (gapHold_ != 0) {
+      --gapHold_;
+      if (period != 0) return;
+    }
+    const uint32_t span = nowUs - stamp_[head_];  // the oldest of the 25 times
+    const uint32_t measured = span / (kWindow * kTicksPerPulse);
+    if (measured < kMinUsPerTick || measured > kMaxUsPerTick) return;  // outside 1–300 BPM: not a tempo
+    const uint32_t diff = measured > extUsPerTick_ ? measured - extUsPerTick_ : extUsPerTick_ - measured;
+    if (extUsPerTick_ != 0 && diff * 40 < extUsPerTick_)  // within 2.5 %: blended in at 2 %
+      extUsPerTick_ = (extUsPerTick_ * 49 + measured + 25) / 50;
+    else
+      extUsPerTick_ = measured;
+  }
   /// The first tick of the next bar (this one, when nothing of it has played).
   uint32_t nextBar() const { return (next_ + barTicks_ - 1) / barTicks_ * barTicks_; }
 
@@ -156,9 +190,9 @@ class EngineClock {
   bool running_ = false, external_ = false, holdForPulse_ = false, aligned_ = false;
   uint32_t next_ = 0, lastTickUs_ = 0;
   uint32_t pulses_ = 0, lastPulseUs_ = 0, pulseLimit_ = 0;
-  uint32_t interval_[kWindow] = {};
-  uint32_t intervalSum_ = 0;
-  uint8_t intervals_ = 0, head_ = 0;
+  uint32_t stamp_[kWindow + 1] = {};
+  uint32_t extUsPerTick_ = 0, timeoutAgeUs_ = 0;
+  uint8_t stamps_ = 0, head_ = 0, gapHold_ = 0;
 };
 
 }  // namespace ContentEngine

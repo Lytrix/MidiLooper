@@ -10,12 +10,16 @@
 //    after c is played).
 // 2. Every tick the clock has due, in order (`EngineClock::due`, at most `kCatchUp` a pass): `EngineRoot::clockTick`.
 // 3. The jobs (`submitJobs`) and worker grains while the scheduler grants them.
-// 4. Each port's due messages to the wire.
+// 4. Each port's due messages to the wire: DIN and USB device. The USB host port is the DROID's: it gets only the
+//    surface's LED feedback (as the legacy firmware, which never sends playback there) — the host driver's
+//    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop.
 // 5. The control surface (E9.8b-1, `Surface`): the DROID control plane (channels 13–16, never recorded nor thru) as
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
 //    a millisecond (the DROID host's gap). Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
 // 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
 //    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note.
+// Breadcrumbs (`CrashReport.breadcrumb`, kept across a warm reset): the main-loop stage and the last tick, printed at
+// the next boot (`#CAP,…,DIAG,prev_crumbs,…`), so a hang can be placed after a reset.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
@@ -57,7 +61,18 @@ constexpr uint8_t kSendPerPass = 32;      // messages a port a pass
 constexpr uint8_t kGrainsPerPass = 8;     // the scheduler's own slack check decides; this bounds one pass
 constexpr uint32_t kDefaultTempo = 12000;  // 120 BPM until a tempo is set or an external clock arrives
 
-uint32_t gLastTick = 0;  // the last tick played (input arriving now belongs after it)
+uint32_t gLastTick = 0;
+uint32_t gPassMaxUs = 0, gPulses = 0, gTimeouts = 0;  // diagnostics (`!ENGINE take`)
+// Clock-gap diagnostics: counters since the last pulse, snapshotted when two pulses are > 200 ms apart.
+uint32_t gPasses = 0, gUsbIn = 0, gUsbOut = 0, gUsbOutPassMax = 0, gLastPulseUs = 0;
+uint32_t gPassesAtPulse = 0, gUsbInAtPulse = 0, gUsbOutAtPulse = 0;
+struct Gap {
+  uint32_t atMs, gapUs, passes, usbIn, usbOut, outBurst;
+};
+Gap gGaps[8];
+uint8_t gGapCount = 0;
+uint32_t gOutThisPass = 0;
+bool gWasExternal = false;  // the last tick played (input arriving now belongs after it)
 bool gBootReported = false;
 uint32_t gBootStartUs = 0;
 
@@ -77,28 +92,43 @@ void transmitAll(uint32_t nowUs) {
   for (uint8_t i = 0; i < n; ++i)
     usbMIDI.send(buf[i].status & 0xF0, buf[i].data1, buf[i].data2, (buf[i].status & 0x0F) + 1, 0);
   if (n != 0) usbMIDI.send_now();
-  n = gEngine.transmit(kPortUsbHost, nowUs, buf, kSendPerPass);
-  for (uint8_t i = 0; i < n; ++i)
-    gHostMidi.send(buf[i].status & 0xF0, buf[i].data1, buf[i].data2, (buf[i].status & 0x0F) + 1);
+  gUsbOut += n;
+  gOutThisPass += n;
+  (void)gEngine.transmit(kPortUsbHost, nowUs, buf, kSendPerPass);  // drained: playback never goes to the DROID
 }
 
 // ---- Input ----------------------------------------------------------------------------------------------------------
 void realtime(uint8_t status, uint32_t nowUs) {
   switch (status) {
-    case 0xF8:
+    case 0xF8: {
+      ++gPulses;
+      const uint32_t t = micros();
+      if (gLastPulseUs != 0 && t - gLastPulseUs > 200000 && gGapCount < 8)
+        gGaps[gGapCount++] = Gap{millis(), t - gLastPulseUs, gPasses - gPassesAtPulse, gUsbIn - gUsbInAtPulse,
+                                 gUsbOut - gUsbOutAtPulse, gUsbOutPassMax};
+      gLastPulseUs = t;
+      gPassesAtPulse = gPasses;
+      gUsbInAtPulse = gUsbIn;
+      gUsbOutAtPulse = gUsbOut;
+      gUsbOutPassMax = 0;
       gClock.midiPulse(nowUs);
       break;
-    case 0xFA:
+    }
+    case 0xFA:  // Start: a running transport stops first, so no track plays across the jump to the next bar line
+      if (gClock.running()) gEngine.control().transportStop(gLastTick, nowUs, gClock.usPerTick());
       gClock.midiStart(nowUs);
       gEngine.control().transportStart(gClock.nextTick(), nowUs, gClock.usPerTick());
+      gSurface.transportStarted(gClock.nextTick());
       break;
     case 0xFB:
+      if (gClock.running()) break;
       gClock.midiContinue(nowUs);
       gEngine.control().transportStart(gClock.nextTick(), nowUs, gClock.usPerTick());
+      gSurface.transportStarted(gClock.nextTick());
       break;
     case 0xFC:
+      if (gClock.running()) gEngine.control().transportStop(gLastTick, nowUs, gClock.usPerTick());
       gClock.midiStop(nowUs);
-      gEngine.control().transportStop(gLastTick, nowUs, gClock.usPerTick());
       break;
     default:
       break;
@@ -149,6 +179,7 @@ struct DinParser {
 void pollInput(uint32_t nowUs) {
   for (uint8_t i = 0; i < kInputPerPass && Serial8.available(); ++i) gDin.feed(static_cast<uint8_t>(Serial8.read()), nowUs);
   for (uint8_t i = 0; i < kInputPerPass && usbMIDI.read(); ++i) {
+    ++gUsbIn;
     const uint8_t type = usbMIDI.getType();
     if (type >= 0xF8) {
       realtime(type, nowUs);
@@ -235,6 +266,30 @@ void command(char* line, uint32_t nowUs) {
     gDisplay.hold(millis(), 3000);
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
+  } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
+    auto& x = gEngine.transport();
+    const uint8_t w = x.writingSlot();
+    const ManifestId m = w == ProductionTransport::kNoSlot ? kNoManifest : x.contentOf(w);
+    const ManifestId h = w == ProductionTransport::kNoSlot ? kNoManifest : gEngine.history().current(w);
+    Serial.printf("#ENGINE,clock,timeout_age_us=%lu\n", static_cast<unsigned long>(gClock.timeoutAgeUs()));
+    Serial.printf("#ENGINE,take,pass_max_us=%lu,pulses=%lu,timeouts=%lu,running=%u,external=%u,us_per_tick=%lu,tick=%lu\n",
+                  static_cast<unsigned long>(gPassMaxUs), static_cast<unsigned long>(gPulses),
+                  static_cast<unsigned long>(gTimeouts), gClock.running(), gClock.external(),
+                  static_cast<unsigned long>(gClock.usPerTick()), static_cast<unsigned long>(gLastTick));
+    gPassMaxUs = 0;
+    for (uint8_t i = 0; i < gGapCount; ++i)
+      Serial.printf("#ENGINE,gap,at_ms=%lu,gap_us=%lu,passes=%lu,usb_in=%lu,usb_out=%lu,out_burst=%lu\n",
+                    static_cast<unsigned long>(gGaps[i].atMs), static_cast<unsigned long>(gGaps[i].gapUs),
+                    static_cast<unsigned long>(gGaps[i].passes), static_cast<unsigned long>(gGaps[i].usbIn),
+                    static_cast<unsigned long>(gGaps[i].usbOut), static_cast<unsigned long>(gGaps[i].outBurst));
+    gGapCount = 0;
+    Serial.printf("#ENGINE,take,slot=%u,mode=%u,pos=%lu,content_loop=%lu,history=%u,overlay=%u,dropped=%lu,frames=%lu,"
+                  "focus=%u\n",
+                  w, static_cast<unsigned>(x.mode()), static_cast<unsigned long>(x.writePosition(gLastTick)),
+                  static_cast<unsigned long>(m == kNoManifest ? 0 : gEngine.manifests().manifest(m).loopLengthTicks),
+                  h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
+                  static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
+                  gEngine.tiles().detailSlot(0));
   } else if (std::strcmp(verb, "status") == 0) {
     EditNote n{};
     const bool note = gSurface.edit().selected(n);
@@ -280,7 +335,17 @@ void sendLed(uint8_t note, uint8_t velocity) {
   sendDin(status, note, velocity);
   usbMIDI.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1, 0);
   usbMIDI.send_now();
+  ++gUsbOut;
+  ++gOutThisPass;
   gHostMidi.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
+}
+
+// ---- Breadcrumbs -----------------------------------------------------------------------------------------------------
+enum Stage : uint32_t { kInput = 1, kSerial, kTicks, kJobs, kGrains, kSend, kSurface, kLeds, kScreen, kIdle };
+DMAMEM uint32_t gPrevCrumbs[8];
+void crumb(uint32_t stage) {
+  CrashReport.breadcrumb(1, stage);
+  CrashReport.breadcrumb(2, gLastTick);
 }
 
 void reportBootLoad() {
@@ -297,10 +362,20 @@ void reportBootLoad() {
 }  // namespace
 
 void setup() {
+  // The previous boot's breadcrumbs, before this boot writes any: the struct (end of RAM2) survives a warm reset.
+  {
+    volatile uint32_t* bc = reinterpret_cast<volatile uint32_t*>(0x2027FFC0);
+    for (int i = 0; i < 8; ++i) gPrevCrumbs[i] = bc[i];
+    for (int i = 0; i < 7; ++i) bc[i] = 0;  // this boot's crumbs start clean (the mask too)
+  }
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
   const bool crashed = static_cast<bool>(CrashReport);
   Serial.printf("#CAP,%lu,DIAG,boot_reset,crash=%u\n", static_cast<unsigned long>(micros()), crashed ? 1u : 0u);
+  // The previous boot's last main-loop stage and tick (bitmask, stage, tick): where a hang stopped it.
+  Serial.printf("#CAP,%lu,DIAG,prev_crumbs,mask=%lx,stage=%lu,tick=%lu\n", static_cast<unsigned long>(micros()),
+                static_cast<unsigned long>(gPrevCrumbs[0]), static_cast<unsigned long>(gPrevCrumbs[1]),
+                static_cast<unsigned long>(gPrevCrumbs[2]));
   if (crashed) Serial.print(CrashReport);
   if (!gEngine.init(gPsram, gRam2, kBlockUs)) {
     Serial.println("#CAP,BOOT,engine,init_failed");
@@ -310,6 +385,9 @@ void setup() {
     Serial.printf("#CAP,MEM_REGION,%s,%s,%u\n", r == EngineRoot::Region::Psram ? "psram" : "ram2", name,
                   static_cast<unsigned>(bytes));
   });
+  // Each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default), whatever channel a
+  // note was recorded on; live thru follows the selected track's channel.
+  for (uint8_t t = 0; t < kTrackCount; ++t) gEngine.output().setChannel(t, static_cast<uint8_t>(t + 1));
   gClock.init(kDefaultTempo, kTicksPerBar);
   gSurface.init(gEngine, gClock);
   gDisplay.begin();
@@ -325,9 +403,23 @@ void setup() {
 }
 
 void loop() {
+  static uint32_t passStart = 0;
+  {
+    const uint32_t t = micros();
+    if (passStart != 0 && t - passStart > gPassMaxUs) gPassMaxUs = t - passStart;
+    passStart = t;
+    if (gWasExternal && !gClock.external()) ++gTimeouts;
+    gWasExternal = gClock.external();
+    ++gPasses;
+    if (gOutThisPass > gUsbOutPassMax) gUsbOutPassMax = gOutThisPass;
+    gOutThisPass = 0;
+  }
   uint32_t now = micros();
+  crumb(kInput);
   pollInput(now);
+  crumb(kSerial);
   pollSerial(now);
+  crumb(kTicks);
   uint8_t count = 0;
   uint32_t tick;
   while (gClock.due(micros(), tick, count)) {
@@ -336,7 +428,9 @@ void loop() {
     transmitAll(micros());
   }
   now = micros();
+  crumb(kJobs);
   gEngine.submitJobs(gLastTick, now, gClock.usPerTick());
+  crumb(kGrains);
   for (uint8_t g = 0; g < kGrainsPerPass && gEngine.runGrain(micros()); ++g) {
     uint8_t c2 = 0;
     if (gClock.due(micros(), tick, c2)) {  // a tick came due: play it before the next grain
@@ -344,6 +438,7 @@ void loop() {
       gLastTick = tick;
     }
   }
+  crumb(kSend);
   transmitAll(micros());
   if (!gBootReported && gCard.ready() && !gEngine.persistence().booting()) {
     gBootReported = true;
@@ -352,7 +447,9 @@ void loop() {
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
+  crumb(kSurface);
   gSurface.service(millis(), gLastTick, micros());
+  crumb(kLeds);
   if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   EngineFirmware::EditView ev;
@@ -372,7 +469,9 @@ void loop() {
       ev.notePitch = n.pitch;
     }
   }
+  crumb(kScreen);
   gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
+  crumb(kIdle);
 }
 
 #endif  // ENGINE_FIRMWARE

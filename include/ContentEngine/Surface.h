@@ -15,21 +15,24 @@
 //   triple action), a third within the triple window a triple; a lone tap is a short once the double window passes.
 //   Per-button debounce after a release. A release without its press is dropped.
 // * Gestures, on the selected track `t` and its selected slot (engine slot t × 8 + s), as `MidiButtonActions`:
-//   - record 36: short = record / overdub toggle (an armed slot punches in; a take ends — Record at the bar, overdub at
-//     once; an empty slot arms; a playing track overdubs; a stopped one plays the slot); double = undo; triple = redo;
-//     long = clear;
+//   - record 36: short = record / overdub toggle (armed: on a stopped transport it starts the transport and the take
+//     with it, on a running one the arm is cancelled — legacy `handleArmedRecordPress`; a take ends — Record at the
+//     bar, overdub at once; an empty slot arms; a playing track overdubs; a stopped one plays the slot); double = undo;
+//     triple = redo; long = clear;
 //   - slot 50–57: short = the slot's toggle (selects it; during a take on another slot: the take ends, then the slot
-//     records (empty) or plays (filled) at the loop end; an empty slot arms Record — at the playing slot's loop start or
-//     the bar — and a second press punches in; the playing slot toggles the track's mute; another filled slot plays
-//     from the loop end, or at once on the grid when the track is stopped); double = overdub the slot (when it plays,
-//     else the short gesture); triple = redo; long = clear;
+//     records (empty) or plays (filled) at the loop end; an empty slot arms Record — at the playing slot's loop start,
+//     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
+//     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
+//     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
+//     overdub the slot (when it plays, else the short gesture); triple = redo; long = clear;
 //   - track switch 37: short = the next track; double = undo; triple = redo; long = mute toggle;
 //   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
 //     back to the loop start (stop, then start at the next bar line);
 //   - play / stop 40: short = the selected track stops, or plays its selected slot;
 //   - tracks 60–67: short = select; double = mute toggle; long = solo toggle.
-//   A start on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
-//   tick (a Record or a play starts on that bar line, not one bar later).
+//   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
+//   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
+//   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick.
 // * LEDs (channel 15 notes, the legacy `MidiLedManager` / `TrackManagerMidiLedFeedback` velocities), for the selected
 //   track's shown slot: 16th content 0–15 (64) and position 16–31 (127) of the current bar, transport 39 (127), bars
 //   40–47 (current 127, with notes 64, in the loop 32), loop slots 50–57 (taking or armed 96, queued switch blinking
@@ -228,6 +231,14 @@ class Surface {
   }
   const EditSurface<Engine>& edit() const { return edit_; }
 
+  /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
+  void transportStarted(uint32_t firstTick) {
+    for (uint8_t t = 0; t < kTracks; ++t) {
+      const uint8_t slot = control().queuedRecordSlot(t);
+      if (slot != 0xFF) control().queueRecord(t, slot, firstTick - 1);
+    }
+  }
+
   /// The engine slot a track has selected (its slot button's), for the screen.
   uint8_t selectedSlot(uint8_t t) const { return static_cast<uint8_t>(t * kSlotsPerTrack + slot_[t]); }
   void selectSlot(uint8_t t, uint8_t s) { slot_[t] = s; }
@@ -279,6 +290,7 @@ class Surface {
     clock_->start(us_);
     control().transportStart(clock_->nextTick(), us_, us());
     tick_ = clock_->nextTick() - 1;  // the gestures that follow are due on the first tick
+    transportStarted(clock_->nextTick());
   }
   void stopClock() {
     if (clock_->external()) return;
@@ -382,8 +394,9 @@ class Surface {
   }
 
   void toggleRecord(uint8_t t) {
-    if (control().recordQueued(t)) {  // armed: punch in
-      control().punchIn(t, tick_, us_, us());
+    if (control().recordQueued(t)) {  // armed (legacy `handleArmedRecordPress`): start the transport, else cancel
+      if (!clock_->running()) startClock();
+      else control().cancelQueued(t);
       return;
     }
     if (transport().writingTrack() == t) {
@@ -419,11 +432,14 @@ class Surface {
       return;
     }
     if (empty(slot)) {
-      if (control().queuedRecordSlot(t) == slot) {
-        control().punchIn(t, tick_, us_, us());
+      if (control().queuedRecordSlot(t) != slot) {
+        control().queueRecord(t, slot, tick_);  // armed: at the playing slot's loop start, the bar, or the transport
+      } else if (x.playing(t)) {
+        control().punchIn(t, tick_, us_, us());  // a second press on a playing track
+      } else if (!clock_->running()) {
+        startClock();  // a second press on a stopped transport: it starts, and the take with it
       } else {
-        startClock();
-        control().queueRecord(t, slot, tick_);
+        control().cancelQueued(t);
       }
       return;
     }

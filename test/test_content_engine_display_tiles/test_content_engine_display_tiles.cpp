@@ -254,33 +254,42 @@ void test_draw_rule_never_blanks() {
 
 // ---- E7.2: live overlay and display jobs -------------------------------------------------------------------------------
 
-// The overlay paints what is being recorded over the view: the start column at NoteOn, new columns as the held note
-// grows, the rest at NoteOff; pitches and positions outside the view are ignored; a held note wraps the loop end.
-void test_live_overlay_paints_the_recorded_notes() {
-  static LiveOverlay<256, 64> overlay;
+// The overlay keeps the take's notes in loop positions (owner 2026-11-06: drawn at any view scale, as a first take's
+// view grows with the current tick): a held note reaches the current position until its NoteOff; a retrigger ends the
+// held one; positions wrap at the loop while overdubbing (none yet on a first take); past capacity notes are dropped
+// and counted; the extent names the pitches shown; clear empties it.
+void test_live_overlay_keeps_the_recorded_notes() {
+  static LiveOverlay<4> overlay;
   overlay.init();
-  overlay.setView(kLoop, kBar, 3, 40);  // bar 1 onward, 3 ticks per column, pitches 40..103
   overlay.noteOn(800, 60, 127);
-  TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel((800 - kBar) / 3, 20));
-  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((800 - kBar) / 3 + 1, 20));
+  TEST_ASSERT_EQUAL_UINT16(1, overlay.count());
   overlay.advance(900);
-  for (uint32_t c = (800 - kBar) / 3; c <= (900 - kBar) / 3; ++c) TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel(c, 20));
-  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((900 - kBar) / 3 + 1, 20));
+  TEST_ASSERT_EQUAL_UINT32(800, overlay.note(0).start);
+  TEST_ASSERT_EQUAL_UINT32(900, overlay.note(0).end);  // held: the current position
+  TEST_ASSERT_EQUAL_UINT8(15, overlay.note(0).value);
   overlay.noteOff(1000, 60);
-  TEST_ASSERT_EQUAL_UINT8(15, overlay.pixel((1000 - kBar) / 3, 20));
-  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel((1000 - kBar) / 3 + 1, 20));
-  overlay.noteOn(800, 20, 127);  // below the view
-  overlay.noteOff(900, 20);
-  overlay.noteOn(100, 61, 127);  // before the view
-  overlay.noteOff(200, 61);
-  for (uint16_t c = 0; c < 256; ++c) TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel(c, 21));
-  // Wrap: a view from position 0 sees the end of a note held across the loop end.
-  overlay.setView(kLoop, 0, 3, 40);
+  overlay.advance(5000);
+  TEST_ASSERT_EQUAL_UINT32(1000, overlay.note(0).end);  // released: its NoteOff
+  overlay.noteOn(1100, 62, 64);
+  overlay.noteOn(1200, 62, 64);  // a retrigger ends the held one at 1200
+  TEST_ASSERT_EQUAL_UINT32(1200, overlay.note(1).end);
+  TEST_ASSERT_EQUAL_UINT16(3, overlay.count());
+  uint8_t lo, hi;
+  TEST_ASSERT_TRUE(overlay.extent(lo, hi));
+  TEST_ASSERT_EQUAL_UINT8(60, lo);
+  TEST_ASSERT_EQUAL_UINT8(62, hi);
+  // A first take has no loop: positions grow. Overdubbing wraps at the loop.
+  overlay.setLoop(kLoop);
   overlay.noteOn(kLoop - 30, 50, 64);
-  overlay.advance(kLoop + 30);  // the Clock wrapped
-  TEST_ASSERT_EQUAL_UINT8(8, overlay.pixel(0, 10));
-  TEST_ASSERT_EQUAL_UINT8(8, overlay.pixel(10, 10));
-  TEST_ASSERT_EQUAL_UINT8(0, overlay.pixel(11, 10));
+  overlay.advance(kLoop + 30);
+  TEST_ASSERT_EQUAL_UINT32(kLoop - 30, overlay.note(3).start);
+  TEST_ASSERT_EQUAL_UINT32(30, overlay.note(3).end);
+  overlay.noteOn(10, 51, 64);  // past capacity: dropped, counted
+  TEST_ASSERT_EQUAL_UINT16(4, overlay.count());
+  TEST_ASSERT_EQUAL_UINT32(1, overlay.dropped());
+  overlay.clear();
+  TEST_ASSERT_EQUAL_UINT16(0, overlay.count());
+  TEST_ASSERT_FALSE(overlay.extent(lo, hi));
 }
 
 using Sched = WorkerScheduler<16>;
@@ -368,7 +377,7 @@ int main(int, char**) {
   RUN_TEST(test_density_for_other_slots);
   RUN_TEST(test_dense_bar);
   RUN_TEST(test_draw_rule_never_blanks);
-  RUN_TEST(test_live_overlay_paints_the_recorded_notes);
+  RUN_TEST(test_live_overlay_keeps_the_recorded_notes);
   RUN_TEST(test_display_jobs_focus_first_and_newest_wins);
   RUN_TEST(test_no_heap);
   return UNITY_END();

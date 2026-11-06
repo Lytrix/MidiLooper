@@ -129,8 +129,10 @@ void tearDown() {}
 /// Slot 0 on track 0, one bar: `notes` (positions in ticks from the take start, each 40 ticks long).
 static void recordBar(std::initializer_list<std::pair<uint32_t, uint8_t>> notes) {
   static Live live[700];
-  tap(S::kSlotBase + 0);
-  ms(400);  // the clock starts and the take with it
+  tap(S::kSlotBase + 0);  // armed
+  ms(400);
+  tap(S::kSlotBase + 0);  // the clock starts and the take with it
+  ms(400);
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, gE.transport().mode());
   // The take started on the clock's first tick (0): positions from there.
   const uint32_t t0 = gUs - gLast * kTick;
@@ -318,7 +320,9 @@ void test_notelen_double_deletes_and_creates_and_leave_keeps_one_step() {
 void test_a_window_denser_than_the_selection_is_halved() {
   // 2 bars, 600 notes: more than the 512 a session holds; the first bar alone fits.
   static Live live[700];
-  tap(S::kSlotBase + 0);
+  tap(S::kSlotBase + 0);  // armed
+  ms(400);
+  tap(S::kSlotBase + 0);  // the clock starts and the take with it
   ms(400);
   const uint32_t t0 = gUs - gLast * kTick;
   uint32_t n = 0;

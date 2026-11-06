@@ -1804,3 +1804,35 @@ the 24-tick refusal and leave keeping one U: step, a dense window halved, no all
 (+1): a created note heard, undone, redone and kept. Device (image `734df605…`): driven as the DROID over USB (entry with
 slot 24's 16-bar window, F1 select, F4 pitch, undo, leave; worst frame 927 µs), then confirmed by the owner on the
 DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, motor feedback (E9.8b-3).
+
+## E9.8 device fixes (owner reports 2026-11-06; as built)
+
+- **Hangs:** the engine image sent playback to the USB host port; the DROID there and the host driver's `write_packed`
+  spins with interrupts toggled until the device takes a packet, so playback bursts (track switches, record starts,
+  MIDI Start) hung the board past even the USB reboot request. The host port now gets only the surface's LED feedback
+  (as legacy, which never sends playback to the DROID); its playback is drained. MIDI Start while running stops the
+  transport first; Continue while running and Stop while stopped do nothing. The main loop leaves breadcrumbs (stage,
+  tick) printed at the next boot (`DIAG,prev_crumbs`).
+- **Arm first** (legacy `handleArmedRecordPress`): a Record on a stopped transport only arms; the second press starts
+  the transport and the take on its first tick; on a running transport the second record press cancels; a slot's
+  second press on a playing track punches in. Every transport start (`Surface::transportStarted`, MIDI Start too)
+  re-queues armed Records on its first tick.
+- **Track letters** as legacy `trackStateToLetter` (R, O, A, P, S — the selected slot has content —, -, M), the
+  selected track's letter pulsing at 1 Hz (brightness 4–10).
+- **Live notes while recording:** `LiveOverlay` is now a list of the take's notes (768, start / end / pitch /
+  brightness; a held note reaching the current position, a note across the loop end wrapping while overdubbing), drawn
+  by `drawRollBand` at the view's scale. A first take's view grows with the current tick and ends at it (legacy
+  `resolveDisplayLoopLength`); the pitch range includes the take's notes. 9,492 B, inside the overlay line.
+- **Track channels:** each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default),
+  set by the firmware with `ClockOutput::setChannel` at boot; live thru follows the selected track's channel. The
+  engine's own default stays "as recorded" (its tests).
+- **External clock** (owner's Ableton over USB): a running clock rides out a gap in the pulses on the internal clock
+  at the last tempo and follows the pulses again with no tick skipped (legacy keeps `sequencerRunning`); the tempo is
+  the span of the last 24 pulses (one beat, as legacy), so pulses bunched in one USB packet do not move it, blended at
+  2 % within 2.5 %, held while a gap is inside the span, and a span outside 1–300 BPM is ignored. The timeout compares
+  signed. The remaining stalls in the owner's runs were a MIDI feedback loop in the Ableton set (channel 3 sent back),
+  which floods the same USB link; diagnosed with `!ENGINE take` (loop pass, pulses, timeouts, gaps).
+
+Tests: `test_content_engine_engine_clock` (+5: gap, lone late pulse, bunched pulses, flood), `test_content_engine_surface`
+(+1: arm, start, cancel, re-queue), the overlay tests rewritten for the note list (drawn at two scales, wrapping);
+mutation-checked. Device: each fix verified over USB, then by the owner on the DROID and with Ableton.

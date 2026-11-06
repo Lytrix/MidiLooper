@@ -331,10 +331,8 @@ class EngineRoot {
     // Detail tiles now show this slot: sweep it again for them (its density tiles stay meanwhile).
     p_->tiles.setWanted(slot, 0);
   }
-  /// The live overlay's view (the detailed piano roll's): loop length, first position, ticks per column, lowest pitch.
-  void setOverlayView(uint32_t loop, uint32_t first, uint32_t ticksPerColumn, uint8_t lowPitch) {
-    p_->overlay.setView(loop, first, ticksPerColumn, lowPitch);
-  }
+  /// The live overlay: the shown take's notes, drawn at the view's scale (`drawRollBand`).
+  const ProductionOverlay& overlay() const { return p_->overlay; }
   /// Live input with the overlay painted when the take is on the shown slot.
   void inputNoteOn(uint32_t clock, uint8_t status, uint8_t pitch, uint8_t velocity, uint32_t nowUs, uint32_t usPerTick) {
     r_->control.inputNoteOn(clock, status, pitch, velocity, nowUs, usPerTick);
@@ -430,8 +428,14 @@ class EngineRoot {
     }
     const uint8_t w = r_->transport.writingSlot();
     if (w != ProductionTransport::kNoSlot && w == p_->tiles.detailSlot(0)) {
+      if (overlaySlot_ != w) p_->overlay.clear();  // a new take on the shown slot
       overlaySlot_ = w;
       overlayUntil_ = 0;
+      // Positions wrap at the slot's loop while overdubbing; a first take has none yet (its length so far).
+      const ManifestId m = r_->transport.contentOf(w);
+      p_->overlay.setLoop(r_->transport.mode() == ProductionTransport::Mode::Overdubbing && m != kNoManifest
+                              ? r_->manifests.manifest(m).loopLengthTicks
+                              : 0);
       p_->overlay.advance(r_->transport.writePosition(clock));
     } else if (overlaySlot_ != ProductionTransport::kNoSlot) {
       if (overlayUntil_ == 0) {

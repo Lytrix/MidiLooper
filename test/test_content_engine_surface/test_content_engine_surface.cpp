@@ -146,13 +146,22 @@ static void untilRecording(uint32_t maxUs) {
   while (gUs < end && X().mode() != ProductionTransport::Mode::Recording) run(gUs + 125);
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());
 }
-/// Track 0 slot `s` recorded for one bar through its slot button (the take ends at the bar).
+/// Track 0 slot `s` recorded for one bar through its slot button (the take ends at the bar). On a stopped transport
+/// the first press arms (owner 2026-11-06: as legacy) and the second starts the transport and the take with it.
 static void recordOneBar(uint8_t s, uint8_t pitch) {
   const bool wasRunning = gClk.running();
   tap(S::kSlotBase + s);
   ms(400);  // the short gesture fires after the double window
-  TEST_ASSERT_TRUE(gClk.running());
-  if (!wasRunning) TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());  // on the clock's first tick
+  TEST_ASSERT_EQUAL_UINT8(s, C().queuedRecordSlot(0));
+  if (!wasRunning) {
+    TEST_ASSERT_FALSE(gClk.running());  // armed, waiting for the transport
+    run(gUs + kBarUs);
+    TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());
+    tap(S::kSlotBase + s);
+    ms(400);
+    TEST_ASSERT_TRUE(gClk.running());
+    TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());  // on the clock's first tick
+  }
   untilRecording(3 * kBarUs);
   const uint32_t start = gUs;
   run(start + kBarUs - 300 * kTick, {{start + 50 * kTick, start + 200 * kTick, pitch}});
@@ -203,6 +212,38 @@ void test_an_armed_slot_punches_in_on_its_second_press() {
   ms(400);
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());
   TEST_ASSERT_EQUAL_UINT8(2, X().writingSlot());
+}
+
+void test_the_record_button_arms_then_starts_or_cancels() {
+  // Stopped: the record button on an empty slot arms; its second press starts the transport and the take.
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_EQUAL_UINT8(0, C().queuedRecordSlot(0));
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_TRUE(gClk.running());
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());
+  tap(S::kRecordNote);  // the take ends at the bar
+  run(gUs + kBarUs);
+  // Running, track 1 stopped: an arm on its empty slot is cancelled by the second press.
+  tap(S::kTrackBase + 1);
+  ms(400);
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(8, C().queuedRecordSlot(1));
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(0xFF, C().queuedRecordSlot(1));
+  // A transport start re-queues an armed Record on its first tick.
+  tap(S::kTransportNote);  // stop
+  ms(400);
+  tap(S::kSlotBase + 0);  // track 1 slot 8: armed while stopped
+  ms(400);
+  tap(S::kTransportNote);  // start
+  ms(400);
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());
+  TEST_ASSERT_EQUAL_UINT8(8, X().writingSlot());
 }
 
 void test_record_button_toggles_overdub_undoes_and_clears() {
@@ -311,6 +352,7 @@ int main(int, char**) {
   RUN_TEST(test_the_control_plane_is_the_surfaces);
   RUN_TEST(test_slot_buttons_record_play_switch_and_mute);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
+  RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);
   RUN_TEST(test_track_buttons_select_mute_and_solo);
   RUN_TEST(test_transport_and_play_stop_buttons);

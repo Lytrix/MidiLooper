@@ -9,12 +9,15 @@
 // path): measured 2026-11-06, the panel stayed blank when the first frame was a DMA one and drew once a blocking frame
 // had been sent.
 // The legacy layout:
-// * Left column (x 0–21): the 8 tracks — a state letter (P playing, R writing, - idle) and the number; the selected
-//   track bright.
+// * Left column (x 0–21): the 8 tracks — the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A
+//   armed, P playing, S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track's solo — the selected track
+//   shows its real state) and the number; the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
 // * Piano roll (x 22–225): the detailed view (rows 0–31) of the shown slot — the whole loop up to 16 bars, else a
 //   16-bar page following the playhead (legacy `kMaxDetailedWindowBars`) — with bar lines (and beat lines up to 4
 //   bars), the notes from the engine's tiles (`EngineRoot::drawRollBand`: span, dense and density
-//   tiles, the live take's overlay) and the playhead; the overview strip (rows 33–40) of the whole loop from density
+//   tiles, the live take's overlay — a take's notes show at once, a held note growing to the current tick until its
+//   NoteOff, and a first take's view growing with the current tick, as legacy (`resolveDisplayLoopLength`); the pitch
+//   range includes the overlay's notes) and the playhead; the overview strip (rows 33–40) of the whole loop from density
 //   tiles, with the detailed view's range and the playhead marked — only when the loop is longer than the detailed view
 //   (a loop the view already shows whole would only repeat as a slab).
 // * Below it: the shown slot, its bars and undo depth. Sidebar (x 226–255): tempo, clock source, transport.
@@ -31,6 +34,7 @@
 #include <SSD1322.h>  // before the font: it declares GFXfont
 #include <Font5x7FixedMono.h>
 
+#include <cmath>
 #include <cstdio>
 
 #include "ContentEngine/EngineClock.h"
@@ -148,14 +152,30 @@ class EngineDisplay {
     if (!e.persistence().approved()) text("RO", kSideX, 56, 4);  // read only: saving not approved
   }
 
-  void drawTracks(ContentEngine::EngineRoot& e, uint8_t sel) {
+  /// The legacy track letter for track `t`.
+  static char letter(ContentEngine::EngineRoot& e, uint8_t t, uint8_t sel, uint8_t shown) {
     auto& x = e.transport();
+    auto& c = e.control();
+    bool anySolo = false;
+    for (uint8_t i = 0; i < 8; ++i) anySolo |= c.soloed(i);
+    if (t != sel && (c.muted(t) || (anySolo && !c.soloed(t)))) return 'M';
+    if (x.writingTrack() == t)
+      return x.mode() == ContentEngine::EngineRoot::Transport::Mode::Recording ? 'R' : 'O';
+    if (c.queuedRecordSlot(t) != 0xFF) return 'A';
+    if (x.playing(t)) return 'P';
+    // Stopped: the selected slot's content (a cancelled arm on an empty slot is '-' again).
+    return shown < ContentEngine::Config::kSlotCount && x.contentOf(shown) != ContentEngine::kNoManifest ? 'S' : '-';
+  }
+  void drawTracks(ContentEngine::EngineRoot& e, uint8_t sel) {
     char label[3] = {0, 0, 0};
+    // The selected track's letter pulses: 1 Hz between 4 and 10 (legacy `minPulse` / `maxPulse`).
+    const float phase = static_cast<float>(millis() % 1000) / 1000.0f;
+    const uint8_t pulse = static_cast<uint8_t>(4.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
     for (uint8_t t = 0; t < 8; ++t) {
       const int16_t y = static_cast<int16_t>(t * 8 + 7);
-      label[0] = x.writingTrack() == t ? 'R' : x.playing(t) ? 'P' : '-';
+      label[0] = letter(e, t, sel, shown_[t]);
       label[1] = 0;
-      text(label, 0, y, t == sel ? 15 : 7);
+      text(label, 0, y, t == sel ? pulse : 8);
       label[0] = static_cast<char>('1' + t);
       text(label, 10, y, t == sel ? 15 : 4);
     }
@@ -168,9 +188,13 @@ class EngineDisplay {
     uint32_t loop = m == ContentEngine::kNoManifest ? 0 : e.manifests().manifest(m).loopLengthTicks;
     uint32_t pos = 0;
     const bool playing = x.playing(track) && x.playingSlot(track) == slot;
+    bool firstTake = false;
     if (writing) {
       pos = x.writePosition(lastTick);
-      if (loop == 0 || loop > 256 * kBar) loop = (pos / (kViewBars * kBar) + 1) * kViewBars * kBar;  // a first take
+      if (loop == 0 || loop > 256 * kBar) {  // a first take: the view grows with it (legacy)
+        loop = pos == 0 ? 1 : pos;
+        firstTake = true;
+      }
     } else if (playing && loop != 0) {
       pos = (lastTick - x.origin(track)) % loop;
     }
@@ -182,7 +206,9 @@ class EngineDisplay {
     const uint32_t bars = (loop + kBar - 1) / kBar;
     const bool editing = edit_.active && edit_.slot == slot;
     uint32_t viewTicks = loop < kViewBars * kBar ? loop : kViewBars * kBar;
-    uint32_t first = (pos / viewTicks) * viewTicks;
+    // A first take's view ends at the current tick (the playhead at the right edge, as legacy); else the page holding
+    // the playhead.
+    uint32_t first = firstTake ? loop - viewTicks : (pos / viewTicks) * viewTicks;
     if (editing && edit_.ready && edit_.ticks != 0) {  // NOTE_EDIT: the session's window, frozen
       first = edit_.first;
       viewTicks = edit_.ticks;
@@ -200,9 +226,19 @@ class EngineDisplay {
       if (edit_.notePitch < lo) lo = edit_.notePitch;
       if (edit_.notePitch > hi) hi = edit_.notePitch;
     }
+    const int32_t w = kX1 - kX0;
+    uint8_t olo, ohi;
+    if (writing && e.overlay().extent(olo, ohi)) {  // the take's notes so far stay in range
+      if (!ContentEngine::pitchExtent(e.tiles(), slot, firstBar, lastBar, lo, hi)) {
+        lo = olo;
+        hi = ohi;
+      }
+      if (olo < lo) lo = olo;
+      if (ohi > hi) hi = ohi;
+      if (hi == lo) hi = static_cast<uint8_t>(lo + 1);
+    }
     if (hi == lo) hi = static_cast<uint8_t>(lo + 1);
     // Grid: bar lines, and beat lines dim up to 4 bars.
-    const int32_t w = kX1 - kX0;
     const bool beats = viewTicks <= 4 * kBar;
     for (uint32_t b = 0; b * (kBar / 4) < viewTicks; ++b) {
       if (!beats && b % 4 != 0) continue;
@@ -214,7 +250,6 @@ class EngineDisplay {
       v.highlightTick = edit_.noteTick;
       v.highlightPitch = edit_.notePitch;
     }
-    if (writing) e.setOverlayView(loop, first, viewTicks / static_cast<uint32_t>(w + 1) + 1, lo);
     e.drawRollBand(v, fb(), DISPLAY_WIDTH, kRollY0, kRollY1);
     if (playing || writing) {
       const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);

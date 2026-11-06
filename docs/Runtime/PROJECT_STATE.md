@@ -1,3 +1,10 @@
+**2026-11-06 — Fixed-memory engine: device fixes from the owner's playing.**
+- No more hangs (playback is no longer sent to the DROID's USB port), Record arms first as legacy, the track letters
+  and pulse match legacy, notes show live while recording (a first take's view grows with it), and the external clock
+  follows Ableton as legacy (rides out gaps, bunched USB pulses, absurd tempos); each track plays on its own MIDI
+  channel (track n → channel n). The last stalls were an Ableton MIDI
+  feedback loop. Remaining E9.8: later surface pieces (E9.8b-3) and deleting legacy (E9.8d).
+
 **2026-11-06 — Fixed-memory engine: E9.8b-2 NOTE_EDIT from the DROID.**
 - The engine image edits notes from the DROID as legacy did: edit mode, the four faders (select, coarse, fine, pitch),
   NOTELEN start / end and delete / create, undo / redo — each edit heard at once; the screen shows the frozen 16-bar

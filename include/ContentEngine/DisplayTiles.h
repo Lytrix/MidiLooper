@@ -374,90 +374,84 @@ class TileSweep {
   Status status_ = Status::Idle;
 };
 
-/// The live overlay (plan § 9.3): what the writer is recording, painted over the visible bars until the committed
-/// tiles show it. 4-bit pixels, `Columns` x `Rows` (8 KiB at 256 x 64). A NoteOn paints its start column; a held note
-/// grows as `advance` reaches new columns (only those are painted); a NoteOff paints the rest of its span. Spans that
-/// cross the loop end wrap. Positions outside the view are ignored. No allocation.
-template <uint16_t Columns = 256, uint8_t Rows = 64>
+/// The live overlay (plan § 9.3): what the writer is recording, drawn over the piano roll until the committed tiles
+/// show it. A list of the take's notes in loop positions (start, end, pitch, brightness from velocity), so the roll
+/// draws them at whatever scale its view has — owner 2026-11-06: as legacy, a first take's view grows with the current
+/// tick, so a fixed-scale raster cannot follow it. A held note's end is the current position (`advance`) until its
+/// NoteOff. A note crossing the loop end (`setLoop`; 0: no loop yet, a first take) wraps. More than `MaxNotes` notes:
+/// the rest are not shown until the tiles show them (`dropped`). `extent` names the pitches shown, for the auto-fit.
+/// No allocation; O(1) a NoteOn / NoteOff / advance.
+template <uint16_t MaxNotes = 768>
 class LiveOverlay {
  public:
+  static constexpr uint32_t kOpen = 0xFFFFFFFFu;
+  struct Note {
+    uint32_t start, end;  // loop positions; end kOpen while held
+    uint8_t pitch, value;
+  };
+
   void init() {
-    loop_ = 1;
-    first_ = 0;
-    perColumn_ = 1;
-    low_ = 0;
+    loop_ = 0;
     clear();
   }
-  /// The visible area: loop position of column 0, ticks per column, lowest pitch shown (rows go up from it). Clears.
-  void setView(uint32_t loopLength, uint32_t firstTick, uint32_t ticksPerColumn, uint8_t lowPitch) {
-    loop_ = loopLength;
-    first_ = firstTick;
-    perColumn_ = ticksPerColumn;
-    low_ = lowPitch;
-    clear();
-  }
+  /// The loop length positions wrap at (0: none yet). Does not clear.
+  void setLoop(uint32_t loopLength) { loop_ = loopLength; }
+  uint32_t loopLength() const { return loop_; }
   void clear() {
-    for (auto& b : pixels_) b = 0;
-    for (auto& h : held_) h = Held{kNone, 0, 0};
+    count_ = 0;
+    now_ = 0;
+    dropped_ = 0;
+    for (auto& o : open_) o = kNone;
+    lo_ = 0xFF;
+    hi_ = 0;
   }
 
   void noteOn(uint32_t pos, uint8_t pitch, uint8_t velocity) {
-    held_[pitch & 0x7F] = Held{pos % loop_, pos % loop_, static_cast<uint8_t>(velocity >> 3)};
-    paint(pos % loop_, pos % loop_ + 1, pitch, held_[pitch & 0x7F].value);
+    pitch &= 0x7F;
+    noteOff(pos, pitch);  // a retrigger ends the held one
+    if (count_ == MaxNotes) {
+      ++dropped_;
+      return;
+    }
+    notes_[count_] = Note{wrap(pos), kOpen, pitch, static_cast<uint8_t>(velocity >> 3 == 0 ? 1 : velocity >> 3)};
+    open_[pitch] = count_++;
+    if (pitch < lo_) lo_ = pitch;
+    if (pitch > hi_) hi_ = pitch;
   }
-  /// Held notes paint up to `pos` (the Clock position): O(held notes + new columns).
-  void advance(uint32_t pos) {
-    for (uint8_t p = 0; p < 128; ++p)
-      if (held_[p].start != kNone) extend(p, pos % loop_);
-  }
+  /// The current position: held notes reach it.
+  void advance(uint32_t pos) { now_ = wrap(pos); }
   void noteOff(uint32_t pos, uint8_t pitch) {
-    if (held_[pitch & 0x7F].start == kNone) return;
-    extend(pitch & 0x7F, pos % loop_);
-    held_[pitch & 0x7F].start = kNone;
+    pitch &= 0x7F;
+    if (open_[pitch] == kNone) return;
+    notes_[open_[pitch]].end = wrap(pos);
+    open_[pitch] = kNone;
   }
 
-  uint8_t pixel(uint16_t column, uint8_t row) const {
-    const uint32_t i = static_cast<uint32_t>(row) * Columns + column;
-    return (pixels_[i / 2] >> ((i & 1) ? 4 : 0)) & 0xF;
+  uint16_t count() const { return count_; }
+  /// Note `i` with a held note's end at the current position.
+  Note note(uint16_t i) const {
+    Note n = notes_[i];
+    if (n.end == kOpen) n.end = now_;
+    return n;
+  }
+  uint32_t dropped() const { return dropped_; }
+  /// The lowest and highest pitch shown. False: none.
+  bool extent(uint8_t& lo, uint8_t& hi) const {
+    if (lo_ > hi_) return false;
+    lo = lo_;
+    hi = hi_;
+    return true;
   }
 
  private:
-  static constexpr uint32_t kNone = 0xFFFFFFFFu;
-  struct Held {
-    uint32_t start, paintedTo;  // loop positions
-    uint8_t value;
-  };
+  static constexpr uint16_t kNone = 0xFFFF;
+  uint32_t wrap(uint32_t pos) const { return loop_ == 0 ? pos : pos % loop_; }
 
-  void extend(uint8_t pitch, uint32_t pos) {
-    Held& h = held_[pitch];
-    if (pos >= h.paintedTo) {
-      paint(h.paintedTo, pos + 1, pitch, h.value);
-    } else {  // crossed the loop end
-      paint(h.paintedTo, loop_, pitch, h.value);
-      paint(0, pos + 1, pitch, h.value);
-    }
-    h.paintedTo = pos + 1 >= loop_ ? 0 : pos + 1;
-  }
-  /// Paints positions [a, b) of one pitch: the columns of the view they cover.
-  void paint(uint32_t a, uint32_t b, uint8_t pitch, uint8_t value) {
-    if (pitch < low_ || pitch >= low_ + Rows || b <= a) return;
-    const uint32_t end = first_ + static_cast<uint32_t>(Columns) * perColumn_;
-    if (b <= first_ || a >= end) return;
-    const uint32_t c0 = (a > first_ ? a - first_ : 0) / perColumn_;
-    uint32_t c1 = ((b < end ? b : end) - first_ - 1) / perColumn_;
-    if (c1 >= Columns) c1 = Columns - 1;
-    for (uint32_t c = c0; c <= c1; ++c) set(static_cast<uint16_t>(c), static_cast<uint8_t>(pitch - low_), value);
-  }
-  void set(uint16_t column, uint8_t row, uint8_t value) {
-    const uint32_t i = static_cast<uint32_t>(row) * Columns + column;
-    uint8_t& b = pixels_[i / 2];
-    b = (i & 1) ? static_cast<uint8_t>((b & 0x0F) | (value << 4)) : static_cast<uint8_t>((b & 0xF0) | value);
-  }
-
-  uint8_t pixels_[Columns * Rows / 2];
-  Held held_[128];
-  uint32_t loop_ = 1, first_ = 0, perColumn_ = 1;
-  uint8_t low_ = 0;
+  Note notes_[MaxNotes];
+  uint16_t open_[128];
+  uint16_t count_ = 0;
+  uint32_t loop_ = 0, now_ = 0, dropped_ = 0;
+  uint8_t lo_ = 0xFF, hi_ = 0;
 };
 
 /// Tile sweeps as scheduler jobs (E7.2). `Workers` sweep workers (the display compose cursors), each with its own

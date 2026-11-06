@@ -139,14 +139,32 @@ void test_dense_raster_density_fallback_overview_and_extent() {
 void test_the_live_overlay_draws_on_top() {
   gStore.setDetail(0, 1);
   const RollView v = view(1);
-  gOverlay.setView(kLoop, 0, kLoop / 203, 48);
+  gOverlay.clear();
+  gOverlay.setLoop(kLoop);
   gOverlay.noteOn(300, 52, 100);
-  gOverlay.advance(600);
+  gOverlay.advance(600);  // held: drawn to the current position
   drawRollBand(gStore, &gOverlay, v, gFb, kW, 0, 31);
   const int y = roll::map(52, 48, 63, 31, 0);
-  TEST_ASSERT_TRUE(px(22 + 20, y) != 0);
-  TEST_ASSERT_TRUE(px(22 + 39, y) != 0);
-  TEST_ASSERT_EQUAL_UINT8(0, px(22 + 50, y));
+  TEST_ASSERT_TRUE(px(22 + roll::map(300, 0, kLoop, 0, 203), y) != 0);
+  TEST_ASSERT_TRUE(px(22 + roll::map(590, 0, kLoop, 0, 203), y) != 0);
+  TEST_ASSERT_EQUAL_UINT8(0, px(22 + roll::map(700, 0, kLoop, 0, 203), y));
+  // The same notes at another scale (a first take's view grows): half the loop spans the width.
+  std::memset(gFb, 0, sizeof gFb);
+  RollView half = v;
+  half.loop = kLoop / 2;
+  half.ticks = kLoop / 2;
+  drawRollBand(gStore, &gOverlay, half, gFb, kW, 0, 31);
+  TEST_ASSERT_TRUE(px(22 + roll::map(590, 0, kLoop / 2, 0, 203), y) != 0);
+  // Wrapped: a held note crossing the loop end draws its tail and its head.
+  std::memset(gFb, 0, sizeof gFb);
+  gOverlay.clear();
+  gOverlay.noteOn(kLoop - 100, 55, 100);
+  gOverlay.advance(kLoop + 100);
+  drawRollBand(gStore, &gOverlay, v, gFb, kW, 0, 31);
+  const int y55 = roll::map(55, 48, 63, 31, 0);
+  TEST_ASSERT_TRUE(px(22 + roll::map(kLoop - 50, 0, kLoop, 0, 203), y55) != 0);
+  TEST_ASSERT_TRUE(px(22 + roll::map(50, 0, kLoop, 0, 203), y55) != 0);
+  gOverlay.clear();
 }
 
 // ---- Root --------------------------------------------------------------------------------------------------------------
@@ -178,7 +196,6 @@ void test_root_overlay_then_tiles_then_clear() {
   TEST_ASSERT_TRUE(gE.init(gPsram, gRam2, 2000));
   gClock = 0;
   gE.setDisplayFocus(0, 1);
-  gE.setOverlayView(kLoop, 0, kLoop / 203, 48);
   gE.control().selectTrack(0);
   TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(0, 0, 0));
   const std::vector<Live> take = {{kBar + 768, kBar + 1200, 55}};
