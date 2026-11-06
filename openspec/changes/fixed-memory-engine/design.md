@@ -2060,5 +2060,7 @@ RAM2 + 64 B (150,264). Device `ae0946fa…`: boot clean, 22 slots, worst frame 2
 Owner's first look: the progress line sat in the roll — the library's `draw_hline` takes the row first
 (`frame, y, x0, x1`), and the band's separator and the overview's view-range marker (E9.8c) had the same argument
 order wrong; all go through `hline(x0, x1, y)` now, and the progress moved into the dots' row. Device `f6a02aef…`:
-boot clean, worst frame 409 µs running. LOOP_EDIT's fields
+boot clean, worst frame 409 µs running. The values then sat two rows above the bottom (owner): they end on the bottom row now (labels rows
+50–54, values 57–63) and the two rows went to the roll (0–39) and the overview (41–46). Device `8d4883d5…`: boot
+clean. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
