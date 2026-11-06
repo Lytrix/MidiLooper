@@ -2,8 +2,8 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // fixed-memory-engine E9.6: the piano roll from tiles. Renderer (a small tile store): span segments at the legacy
-// geometry and brightness, the highlighted note, band clipping, a dense bar's raster, the density fallback, the
-// overview strip, the pitch extent and the live overlay on top. Root (production): the overlay paints a take on the
+// geometry and brightness, the highlighted note, band clipping, a dense bar's raster, the density fallback, the pitch
+// extent and the live overlay on top. Root (production): the overlay paints a take on the
 // shown slot and gives way to the committed tiles; Clear blanks the slot; a NOTE_EDIT gather takes the display cursor
 // from a running sweep, which is asked again and completes; no allocation.
 
@@ -106,7 +106,7 @@ void test_bands_touch_only_their_rows() {
   TEST_ASSERT_TRUE(lit(31, 31) > 0);
 }
 
-void test_dense_raster_density_fallback_overview_and_extent() {
+void test_dense_raster_density_fallback_and_extent() {
   gStore.setDetail(0, 1);
   const uint16_t t = gStore.takeSpare();
   std::memset(gStore.tile(t).raster, 0, sizeof gStore.tile(t).raster);
@@ -125,68 +125,11 @@ void test_dense_raster_density_fallback_overview_and_extent() {
   const int y60 = roll::map(60, 48, 63, 31, 0);
   TEST_ASSERT_EQUAL_UINT8(kRollDensityBrightness, px(22, y60));  // never blank: the density tile, dim
   TEST_ASSERT_EQUAL_UINT8(kRollDensityBrightness, px(22 + 50, y60));
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 2, kLoop, kBar, 22, 225, 33, 40, gFb, kW, 33, 40);
-  TEST_ASSERT_TRUE(lit(33, 40) > 0);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(22, 33));  // one pitch is also the busiest: full brightness
-  TEST_ASSERT_EQUAL_UINT32(0, lit(0, 32));
   uint8_t lo, hi;
   TEST_ASSERT_TRUE(pitchExtent(gStore, 2, 0, 3, lo, hi));
   TEST_ASSERT_EQUAL_UINT8(60, lo);
   TEST_ASSERT_EQUAL_UINT8(60, hi);
   TEST_ASSERT_FALSE(pitchExtent(gStore, 3, 0, 3, lo, hi));
-}
-
-// E9.8k: the overview as a full-height cell per beat, as bright as the pitches sounding in it (a span tile's raster;
-// else the density tile, each beat alike) from 2 (one) to 8 (the busiest beat), dimmed to 2-5 outside the detailed
-// view; no divider between bars.
-void test_the_overview_shows_pitches_per_beat_as_brightness() {
-  gStore.setDetail(0, 5);
-  const uint16_t t = gStore.takeSpare();
-  std::memset(gStore.tile(t).raster, 0, sizeof gStore.tile(t).raster);
-  auto on = [&](uint8_t col, uint8_t p) { gStore.tile(t).raster[col][p / 8] |= static_cast<uint8_t>(1u << (p % 8)); };
-  on(0, 60), on(3, 62), on(7, 64), on(5, 60), on(2, 66), on(1, 68), on(4, 70);  // beat 1 of bar 0: six pitches
-  on(9, 60), on(15, 60);                                                        // beat 2: one
-  gStore.header(t) = Store::Header{21, 0, 5, false};
-  gStore.publishSpan(0, 0, t);
-  DensityTile two{};  // bar 1: no span tile yet, four pitches
-  two.counts[48 / 2] |= 1u << ((48 & 1) * 4);
-  two.counts[50 / 2] |= 5u << ((50 & 1) * 4);
-  two.counts[52 / 2] |= 2u << ((52 & 1) * 4);
-  two.counts[54 / 2] |= 1u << ((54 & 1) * 4);
-  gStore.publishDensity(5, 1, two, 21);
-  // Two bars over x 0..63 (7.9 px a beat), rows 10..15.
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(0, 10));  // the busiest beat, full height
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(6, 15));
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(7, 10));   // one pitch
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(14, 15));
-  TEST_ASSERT_EQUAL_UINT8(0, px(20, 15));                  // nothing sounds in beat 3
-  TEST_ASSERT_EQUAL_UINT8(6, px(31, 10));                  // bar 1: four of six, 2 + 6 x 3 / 5 = 5.6, rounded
-  TEST_ASSERT_EQUAL_UINT8(6, px(61, 15));
-  TEST_ASSERT_EQUAL_UINT8(6, px(62, 15));                  // no divider: the bar's last column too
-  TEST_ASSERT_EQUAL_UINT32(0, lit(0, 9) + lit(16, 63));    // only the strip's rows
-  // The detailed view on bar 1: bar 0's beats take the same scale dimmed (busiest 5, one pitch 2); bar 1 is unchanged.
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, kBar, kBar);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutsideHigh, px(0, 10));
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutsideLow, px(7, 10));
-  TEST_ASSERT_EQUAL_UINT8(6, px(31, 10));
-  // ... on bar 0: bar 1 dims (6 of 8: 2 + 4 x 3 / 6 = 4).
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, 0, kBar);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(0, 10));
-  TEST_ASSERT_EQUAL_UINT8(4, px(31, 10));
-  // A band of rows 10..12 draws only those.
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 12);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(0, 12));
-  TEST_ASSERT_EQUAL_UINT32(0, lit(13, 15));
-  // Narrow bars: every beat keeps at least a column.
-  std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 6, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(6, px(5, 15));
 }
 
 void test_the_live_overlay_draws_on_top() {
@@ -364,7 +307,6 @@ void test_no_heap() {
   gE.control().stopNow(gClock, us(gClock), kUsPerTick);
   run(gClock + 2000);
   gE.drawRollBand(rootView(), gFb, kW, 0, 31);
-  drawOverviewBand(gE.tiles(), 0, 1000, kBar, 22, 225, 33, 40, gFb, kW, 33, 40);
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
 }
@@ -373,8 +315,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
   RUN_TEST(test_bands_touch_only_their_rows);
-  RUN_TEST(test_dense_raster_density_fallback_overview_and_extent);
-  RUN_TEST(test_the_overview_shows_pitches_per_beat_as_brightness);
+  RUN_TEST(test_dense_raster_density_fallback_and_extent);
   RUN_TEST(test_the_live_overlay_draws_on_top);
   RUN_TEST(test_root_overlay_then_tiles_then_clear);
   RUN_TEST(test_the_pre_roll_is_drawn_while_the_take_records);

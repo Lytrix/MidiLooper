@@ -14,12 +14,10 @@
 //   While it does not, the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A armed, P playing,
 //   S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track's solo
 //   — the selected track shows its real state); the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
-// * Overview strip (x 22–255, rows 0–2, two dark rows above the roll; owner 2026-11-06) when the loop is longer than
-//   the view: a full-height cell per beat as bright as the pitches sounding in it (2–8), dimmed (2–5) outside the
-//   view's bars.
-// * Piano roll (x 22–255, rows 5–45; four dark rows under it, no rule before the status band): the shown slot — the
-//   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
-//   (`EngineRoot::drawRollBand`) and the playhead.
+// * Piano roll (x 22–255, rows 0–45; four dark rows under it, no rule before the status band): the shown slot — the
+//   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4
+//   bars), the engine's tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (owner
+//   2026-11-06: too crowded; BARS and the position say where the page is).
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
@@ -69,7 +67,7 @@ struct EditView {
 class EngineDisplay {
  public:
   static constexpr uint32_t kFrameMs = 33;
-  static constexpr int16_t kX0 = 22, kX1 = 255, kOverY0 = 0, kOverY1 = 2, kRollY0 = 5, kRollY1 = 45;
+  static constexpr int16_t kX0 = 22, kX1 = 255, kRollY0 = 0, kRollY1 = 45;
   static constexpr int16_t kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
   static constexpr uint32_t kViewBars = 16;
   static constexpr uint8_t kRule = 3;  // the roll's bar lines and the status band's cell dividers (owner)
@@ -361,18 +359,7 @@ class EngineDisplay {
       const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - first) * w / viewTicks);
       for (int16_t y = kRollY0; y <= kRollY1; y += 2) oled_.gfx.draw_pixel(fb(), bx, y, 10);
     }
-    // Overview: the whole loop, the view's range and the playhead (when the view does not already show it whole).
-    if (loop > viewTicks) drawOverview(e, slot, loop, first, viewTicks, pos, playing || writing);
     return info;
-  }
-
-  void drawOverview(ContentEngine::EngineRoot& e, uint8_t slot, uint32_t loop, uint32_t first, uint32_t viewTicks,
-                    uint32_t pos, bool moving) {
-    const int32_t w = kX1 - kX0;
-    ContentEngine::drawOverviewBand(e.tiles(), slot, loop, kBar, kX0, kX1, kOverY0, kOverY1, fb(), DISPLAY_WIDTH,
-                                    kOverY0, kOverY1, first, viewTicks, static_cast<uint8_t>(kBar / kQuarter));
-    if (moving)
-      oled_.gfx.draw_vline(fb(), static_cast<int16_t>(kX0 + static_cast<int64_t>(pos) * w / loop), kOverY0, kOverY1, 12);
   }
 
   // ---- Status band ---------------------------------------------------------------------------------------------------

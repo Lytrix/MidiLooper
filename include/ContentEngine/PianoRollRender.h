@@ -11,10 +11,6 @@
 // * Detailed view (`drawRollBand`): per visible bar its draw source — span segments; a dense bar's 32-column raster;
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
 //   the live overlay's notes (a take being recorded) on top, at the view's scale.
-// * Overview strip (`drawOverviewBand`): the whole loop as a full-height cell per beat, as bright as the pitches
-//   sounding in it (from the span tiles' rasters, else density tiles), dimmed outside the detailed view; no divider
-//   between bars, which crowded the strip (E9.8k, owner
-//   2026-11-06: the view's range was not readable on a busy strip; pitch rows read as blocks, column heights crowded).
 // * `pitchExtent`: the lowest and highest pitch sounding in a bar range, from density tiles (the auto-fit range).
 
 #pragma once
@@ -38,10 +34,6 @@ struct RollView {
 constexpr uint8_t kRollNoteBrightness = 7;
 constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
-constexpr uint8_t kRollOverviewLow = 2;    // an overview beat with the fewest pitches sounding (one)
-constexpr uint8_t kRollOverviewHigh = 8;   // ... with the most (the loop's busiest beat; owner: 14, then 9, too bright)
-constexpr uint8_t kRollOverviewOutsideLow = 2;   // one pitch outside the detailed view (owner: 1 looked black)
-constexpr uint8_t kRollOverviewOutsideHigh = 5;  // the busiest beat outside it
 
 namespace roll {
 
@@ -128,69 +120,6 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
     } else if (oLoop != 0) {
       roll::span(v, fb, width, rowFrom, rowTo, n.start, oLoop - n.start, n.pitch, n.value);
       roll::span(v, fb, width, rowFrom, rowTo, 0, n.end + 1, n.pitch, n.value);
-    }
-  }
-}
-
-/// Rows [rowFrom, rowTo] of the overview strip: the whole loop of `slot` as a full-height cell per beat, its brightness
-/// the pitches sounding in that beat (the bar's raster columns of the beat, OR-ed; a bar not swept into a span tile
-/// yet: its density tile's pitches, the same for each beat) from `kRollOverviewLow` (one) to `kRollOverviewHigh` (the
-/// busiest beat); a beat with none stays dark. Beats outside the detailed view's bars [viewFirst, viewFirst +
-/// viewTicks) take the same scale dimmed to 2–5 (viewTicks 0: every bar is in view). O(bars x 32 raster columns).
-template <typename Store>
-void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t barTicks, int16_t x0, int16_t x1,
-                      int16_t y0, int16_t y1, uint8_t* fb, uint16_t width, int16_t rowFrom, int16_t rowTo,
-                      uint32_t viewFirst = 0, uint32_t viewTicks = 0, uint8_t beatsPerBar = 4) {
-  if (rowFrom < y0) rowFrom = y0;
-  if (rowTo > y1) rowTo = y1;
-  if (rowFrom > rowTo || loop == 0 || barTicks == 0 || beatsPerBar == 0 || beatsPerBar > 8) return;
-  constexpr uint8_t kCols = SpanTile::kColumns;
-  using Kind = typename Store::Kind;
-  const uint32_t bars = (loop + barTicks - 1) / barTicks;
-  const uint32_t n = bars < 64 ? bars : 64;
-  uint8_t pitches[64 * 8];  // per beat: pitches sounding
-  uint8_t most = 0;
-  for (uint32_t bar = 0; bar < n; ++bar) {
-    const auto d = store.drawSource(slot, static_cast<uint8_t>(bar));
-    for (uint8_t b = 0; b < beatsPerBar; ++b) {
-      uint8_t c = 0;
-      if (d.kind == Kind::Span || d.kind == Kind::Dense) {
-        uint8_t any[16] = {};
-        for (uint8_t col = b * kCols / beatsPerBar; col < (b + 1) * kCols / beatsPerBar; ++col)
-          for (uint8_t k = 0; k < 16; ++k) any[k] |= d.span->raster[col][k];
-        for (uint8_t k = 0; k < 16; ++k)
-          for (uint8_t m = any[k]; m != 0; m &= static_cast<uint8_t>(m - 1)) ++c;
-      } else if (d.kind == Kind::Density) {
-        for (uint8_t p = 0; p < 128; ++p) c += ((d.density->counts[p / 2] >> ((p & 1) * 4)) & 0x0F) != 0 ? 1 : 0;
-      }
-      pitches[bar * beatsPerBar + b] = c;
-      if (c > most) most = c;
-    }
-  }
-  if (most == 0) return;
-  const int32_t w = x1 - x0;
-  const uint32_t beatTicks = barTicks / beatsPerBar;
-  for (uint32_t bar = 0; bar < n; ++bar) {
-    const uint32_t barStart = bar * barTicks, barEnd = barStart + barTicks < loop ? barStart + barTicks : loop;
-    const bool inView = viewTicks == 0 || (barStart < viewFirst + viewTicks && barEnd > viewFirst);
-    for (uint8_t b = 0; b < beatsPerBar; ++b) {
-      const uint32_t s = barStart + b * beatTicks;
-      if (s >= barEnd) break;
-      const uint32_t e = s + beatTicks < barEnd ? s + beatTicks : barEnd;
-      const uint8_t c = pitches[bar * beatsPerBar + b];
-      if (c == 0) continue;
-      const int16_t xa = static_cast<int16_t>(x0 + roll::map(s, 0, loop, 0, w));
-      int16_t xb = static_cast<int16_t>(x0 + roll::map(e, 0, loop, 0, w) - 1);
-      if (xb < xa) xb = xa;
-      if (xb > x1) xb = x1;
-      constexpr uint8_t kSteps = kRollOverviewHigh - kRollOverviewLow;
-      uint8_t v = most == 1 ? kRollOverviewHigh
-                            : static_cast<uint8_t>(kRollOverviewLow + (kSteps * (c - 1) + (most - 1) / 2) / (most - 1));
-      if (!inView)
-        v = static_cast<uint8_t>(kRollOverviewOutsideLow +
-                                 (v - kRollOverviewLow) * (kRollOverviewOutsideHigh - kRollOverviewOutsideLow) / kSteps);
-      for (int16_t y = rowFrom; y <= rowTo; ++y)
-        for (int16_t x = xa; x <= xb; ++x) roll::pixel(fb, width, x, y, v);
     }
   }
 }

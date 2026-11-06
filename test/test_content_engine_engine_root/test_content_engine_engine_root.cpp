@@ -283,7 +283,7 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
   }
   TEST_ASSERT_TRUE(gE.reservations().check());
   TEST_ASSERT_TRUE(checkConservation(gE.pool(), gE.runs(), gE.manifests()));
-  // E9.6: the piano roll of the shown slot from its tiles — a frame drawn in 8-row bands, and the overview strip.
+  // E9.6: the piano roll of the shown slot from its tiles — a frame drawn in 8-row bands.
   TEST_ASSERT_EQUAL(ProductionTiles::Kind::Span, gE.tiles().drawSource(0, 0).kind);
   static uint8_t fb[256 * 64 / 2];
   const RollView v{0, loop0, kBar, 0, loop0, 40, 110, 22, 225, 0, 31};
@@ -294,7 +294,6 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
     gE.drawRollBand(v, fb, 256, row, static_cast<int16_t>(row + 7));
     if (realMicros() - b0 > maxBandUs) maxBandUs = realMicros() - b0;
   }
-  drawOverviewBand(gE.tiles(), 0, loop0, kBar, 22, 225, 33, 40, fb, 256, 33, 40);
   const uint32_t frameUs = realMicros() - f0;
   uint32_t litPixels = 0;
   for (uint8_t b : fb) litPixels += (b >> 4 != 0) + ((b & 0x0F) != 0);
