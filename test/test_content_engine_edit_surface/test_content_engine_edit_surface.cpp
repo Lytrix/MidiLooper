@@ -514,6 +514,46 @@ void test_f2_back_at_the_start_keeps_the_bracket_on_the_note() {
   TEST_ASSERT_EQUAL_UINT8(depth0, gE.noteEdit().depth());
 }
 
+// F3 puts the start past its reference 16th (+60: into the next); F2 then moves it in whole 16ths keeping that offset
+// (owner 2026-11-07: it fell back 48 ticks, and F3 was rewritten). Below the 16th (−20) too.
+void test_f2_keeps_the_offset_f3_set_past_the_16th() {
+  recordBar({{0, 60}, {100, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));  // 64 @ 100: reference 16th 2 (96)
+  settle();
+  f3(64 + 60);
+  TEST_ASSERT_EQUAL_UINT32(96 + 60, sel().tick);  // 156: in 16th 3
+  drainMotors(200);
+  ms(400);
+  f2(-8192 + 16384 * 10 / 15 + 20);  // to 16th 10
+  TEST_ASSERT_EQUAL_UINT32(10 * 48 + 60, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(0, written(drainMotors(50), 2));  // F3's value is unchanged: not rewritten
+  ms(400);
+  f3(64 - 20);
+  TEST_ASSERT_EQUAL_UINT32(10 * 48 - 20, sel().tick);
+  ms(400);
+  f2(-8192 + 16384 * 0 / 15 + 20);  // to 16th 0: −20 wraps to the loop's end
+  TEST_ASSERT_EQUAL_UINT32(768 - 20, sel().tick);
+  ms(400);
+  f2(-8192 + 16384 * 5 / 15 + 20);  // and back: 16th 5 − 20
+  TEST_ASSERT_EQUAL_UINT32(5 * 48 - 20, sel().tick);
+}
+
+// A write still to be sent when a later one finds the fader at its value already: the earlier is dropped (the motor
+// would go to a value the selection no longer has).
+void test_a_pending_write_gives_way_to_a_fader_already_there() {
+  recordBar({{0, 60}, {100, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  drainMotors(200);
+  f4(64);            // F4 rests at 64
+  f1(pbFor(8, 16));  // 67: F4 to be written 67 (not sent yet)
+  f1(pbFor(2, 16));  // 64: F4 is at 64 already
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(0, written(drainMotors(300), 3));
+}
+
 void test_geometry_waits_the_grace_period_after_entry() {
   recordBar({{96, 60}});
   enterEdit();  // the bracket at the playhead selects the closest note (60 @ 96)
@@ -656,6 +696,8 @@ int main(int, char**) {
   RUN_TEST(test_the_droid_fader_bank_follows_note_edit);
   RUN_TEST(test_motor_faders_follow_the_selection_and_their_echo_changes_nothing);
   RUN_TEST(test_f2_back_at_the_start_keeps_the_bracket_on_the_note);
+  RUN_TEST(test_f2_keeps_the_offset_f3_set_past_the_16th);
+  RUN_TEST(test_a_pending_write_gives_way_to_a_fader_already_there);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);

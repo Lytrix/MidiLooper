@@ -17,7 +17,7 @@
 //   note has left would drop it (as legacy `shouldApplySelectionOnNoteIdChange`; owner 2026-11-06: F2–F4 did not move
 //   the selected note).
 // * F2 coarse (channel 14 pitch bend; acts on a movement ≥ 150 or after 1 s at rest): position — the 16th across the
-//   loop (`map`), keeping the start's offset in its 16th; length — the end across the loop
+//   loop (`map`), keeping the start's offset from the reference 16th (F3's, which may lie past the 16th); length — the end across the loop
 //   (`lengthEditCoarsePitchbendToLoopTick`), at least a 16th (`applyLengthEndTargetRules`).
 // * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end
 //   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
@@ -254,6 +254,11 @@ class EditSurface {
     lastCoarse_ = pb;
     lastCoarseMs_ = ms;
     hadCoarse_ = true;
+    // The start's offset from the reference 16th, which F3 sets (−64 … +63: it may lie past the 16th) — taken before
+    // `base` undoes the gesture's last step, while the note and the reference 16th still go together.
+    const int32_t offset = static_cast<int32_t>(session().current(static_cast<uint16_t>(sel_)).tick) -
+                           static_cast<int32_t>(refStep_ * kSixteenth);  // wrapped or not: the modulo below
+    const int32_t loop = static_cast<int32_t>(loop_);
     EditNote v = base(Fader::Coarse, ms);
     if (length_) {
       uint32_t end = lengthCoarseTick(pb);
@@ -264,9 +269,12 @@ class EditSurface {
     } else {
       const uint32_t total = loop_ / kSixteenth;
       const uint32_t step = arduinoMap(pb, kPbMin, kPbMax, 0, static_cast<int32_t>(total) - 1);
-      uint32_t start = step * kSixteenth + v.tick % kSixteenth;
-      if (start >= loop_) start = loop_ - 1;
-      v.tick = start;
+      // Whole 16ths, keeping F3's offset (owner 2026-11-07: a start F3 had put past its 16th — 1.2.4.47 and on — fell
+      // back 48 ticks under F2, and F3 was rewritten).
+      int32_t start = static_cast<int32_t>(step * kSixteenth) + offset;
+      start %= loop;
+      if (start < 0) start += loop;
+      v.tick = static_cast<uint32_t>(start);
       refStep_ = step;
     }
     if (commit(Fader::Coarse, v, ms)) drive(kMotorFine, ms);
@@ -486,13 +494,17 @@ class EditSurface {
     }
     if ((mask & kMotorPitch) && note) write(3, n.pitch, ms);
   }
-  /// A fader already at `v` (its last message, and `v` written before) is not written again: no motor travel, no
+  /// A fader already at `v` (its last message) is not written: no motor travel, no
   /// window that would swallow the musician's next move (owner 2026-11-06: F3, rewritten on every F2 step, ignored a
   /// move that followed).
   void write(uint8_t i, int32_t v, uint32_t ms) {
     Motor& f = motors_[i];
     const int32_t slack = slackOf(i);
-    if (f.known && (f.at > v ? f.at - v : v - f.at) < slack && f.value == v && f.written) return;
+    if (f.known && (f.at > v ? f.at - v : v - f.at) < slack) {  // there already (its stored value is its position)
+      f.value = v;
+      f.want = false;
+      return;
+    }
     f.from = f.at;
     f.fromKnown = f.known;
     f.arrived = f.known && (f.at > v ? f.at - v : v - f.at) < slack;

@@ -2181,3 +2181,11 @@ an F3 move writes nothing — F2 shows the reference 16th, which F3 offsets from
 than narrowing F3's range); and a motor's message within `kMotorLandingPb` (600) / `kMotorLandingCc` (4) of the
 written value is its landing, not a move. Tests: F3 writes nothing; F2 / F3 landings past their values are not moves
 (mutations 2 / 2). Device `ce9490ad…`: the owner's check pending.
+
+**F2 keeps F3's offset** (owner 2026-11-07: a start F3 had set past its 16th — 1.2.4.47 and on — fell back 48 ticks
+under F2). F3 offsets the start from the reference 16th by −64 … +63, so it may lie past that 16th; F2 kept only the
+start's offset inside its own 16th. F2 now moves the start in whole 16ths keeping its offset from the reference 16th
+(taken before `base` undoes the gesture's last step), so F3's value is unchanged and it is not rewritten. A fader at
+the value it would be written to is not written (its stored value is its position, sent back since the last change),
+and a write still pending is dropped then. `test_content_engine_edit_surface` +2 (mutations 4 / 4; two offset
+normalisations removed as equivalent under the modulo). Device `a7391638…`: the owner's check pending.
