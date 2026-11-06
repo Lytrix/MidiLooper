@@ -2130,4 +2130,4 @@ the current one at boot so the DROID follows a restart — and the main loop sen
 `test_content_engine_edit_surface` +1 (mutations 2 / 4; the two survivors are equivalent: the bank at the gather's
 start rather than the session's opening, and `init`'s reset of a member already initialised). Legacy also pulsed a
 trigger note to snap the motor faders; motor feedback stays off (the legacy default). Device `efdbf66a…`: boot clean;
-the owner's DROID check pending.
+the owner confirmed F2–F4 move the selected note on the DROID (2026-11-06).
