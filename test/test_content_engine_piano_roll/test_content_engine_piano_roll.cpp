@@ -220,6 +220,44 @@ void test_root_overlay_then_tiles_then_clear() {
   TEST_ASSERT_EQUAL_UINT32(0, lit(0, 31));
 }
 
+// E9.8j: while the take records, its pre-roll is drawn — a note held into tick 0 from the start, a pickup begun 20 ticks
+// early before the take's current end, wrapping to where it was released (100 ticks into the take).
+void test_the_pre_roll_is_drawn_while_the_take_records() {
+  TEST_ASSERT_TRUE(gE.init(gPsram, gRam2, 2000));
+  gClock = 0;
+  gE.setDisplayFocus(0, 1);
+  gE.control().selectTrack(0);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(0, 0, 0));
+  const std::vector<Live> take = {{kBar - 400, kBar + 50, 50}, {kBar - 20, kBar + 100, 57}};
+  run(kBar + 300, take);
+  const auto& o = gE.overlay();
+  TEST_ASSERT_EQUAL_UINT16(2, o.count());
+  TEST_ASSERT_EQUAL_UINT32(299, o.wrapLength());  // a first take: its length so far
+  bool sawPickup = false, sawStart = false;
+  for (uint16_t i = 0; i < o.count(); ++i) {
+    const auto n = o.note(i);
+    if (n.pitch == 57) {
+      sawPickup = true;
+      TEST_ASSERT_EQUAL_UINT32(299 - 20, n.start);
+      TEST_ASSERT_EQUAL_UINT32(100, n.end);  // wrapped: released 100 ticks into the take
+    }
+    if (n.pitch == 50) {
+      sawStart = true;
+      TEST_ASSERT_EQUAL_UINT32(0, n.start);
+      TEST_ASSERT_EQUAL_UINT32(50, n.end);
+    }
+  }
+  TEST_ASSERT_TRUE(sawPickup && sawStart);
+  RollView v = rootView();  // as the screen: the view is the take so far
+  v.loop = v.ticks = 299;
+  gE.drawRollBand(v, gFb, kW, 0, 31);
+  const int y57 = roll::map(57, 48, 63, 31, 0), y50 = roll::map(50, 48, 63, 31, 0);
+  TEST_ASSERT_TRUE(px(22 + roll::map(290, 0, 299, 0, 203), y57) != 0);  // before the view's end
+  TEST_ASSERT_TRUE(px(22 + roll::map(50, 0, 299, 0, 203), y57) != 0);   // wrapped to the start
+  TEST_ASSERT_EQUAL_UINT8(0, px(22 + roll::map(200, 0, 299, 0, 203), y57));
+  TEST_ASSERT_TRUE(px(22 + roll::map(20, 0, 299, 0, 203), y50) != 0);
+}
+
 void test_a_gather_takes_the_display_cursor_from_a_sweep() {
   TEST_ASSERT_TRUE(gE.init(gPsram, gRam2, 2000));
   gClock = 0;
@@ -285,6 +323,7 @@ int main(int, char**) {
   RUN_TEST(test_dense_raster_density_fallback_overview_and_extent);
   RUN_TEST(test_the_live_overlay_draws_on_top);
   RUN_TEST(test_root_overlay_then_tiles_then_clear);
+  RUN_TEST(test_the_pre_roll_is_drawn_while_the_take_records);
   RUN_TEST(test_a_gather_takes_the_display_cursor_from_a_sweep);
   RUN_TEST(test_a_new_focus_gets_span_tiles);
   RUN_TEST(test_no_heap);

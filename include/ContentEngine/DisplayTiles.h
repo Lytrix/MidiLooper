@@ -380,8 +380,11 @@ class TileSweep {
 /// tick, so a fixed-scale raster cannot follow it. A held note's end is the current position (`advance`) until its
 /// NoteOff. A note crossing the loop end (`setLoop`; 0: no loop yet, a first take) wraps. More than `MaxNotes` notes:
 /// the rest are not shown until the tiles show them (`dropped`). `extent` names the pitches shown, for the auto-fit.
-/// No allocation; O(1) a NoteOn / NoteOff / advance.
-template <uint16_t MaxNotes = 768>
+/// Pickups (E9.8j, a Record take's notes begun before its tick 0; `MaxPickups`): drawn `before` ticks before the
+/// view's end (the loop's, or the take's length so far), ending where they were released — wrapped to the take's
+/// start when released after tick 0; a held one fills the view (at Stop it becomes almost a loop long). Notes
+/// `count()` and `note(i)` list both. No allocation; O(1) a NoteOn / advance, O(`MaxPickups`) a NoteOff.
+template <uint16_t MaxNotes = 768, uint8_t MaxPickups = 16>
 class LiveOverlay {
  public:
   static constexpr uint32_t kOpen = 0xFFFFFFFFu;
@@ -399,6 +402,7 @@ class LiveOverlay {
   uint32_t loopLength() const { return loop_; }
   void clear() {
     count_ = 0;
+    pickupCount_ = 0;
     now_ = 0;
     dropped_ = 0;
     for (auto& o : open_) o = kNone;
@@ -418,22 +422,56 @@ class LiveOverlay {
     if (pitch < lo_) lo_ = pitch;
     if (pitch > hi_) hi_ = pitch;
   }
+  /// A pickup: begun `before` ticks before tick 0; `off` where it ended relative to tick 0 (negative: before it), or
+  /// held (`open`) — its NoteOff then ends it (`noteOff`).
+  void pickup(uint32_t before, int32_t off, bool open, uint8_t pitch, uint8_t velocity) {
+    if (pickupCount_ == MaxPickups || before == 0) return;
+    pitch &= 0x7F;
+    pickups_[pickupCount_++] = Pickup{before, off, pitch, static_cast<uint8_t>(velocity >> 3 == 0 ? 1 : velocity >> 3), open};
+    if (pitch < lo_) lo_ = pitch;
+    if (pitch > hi_) hi_ = pitch;
+  }
   /// The current position: held notes reach it.
   void advance(uint32_t pos) { now_ = wrap(pos); }
+  /// Ends the note held on `pitch`, else a held pickup on it.
   void noteOff(uint32_t pos, uint8_t pitch) {
     pitch &= 0x7F;
-    if (open_[pitch] == kNone) return;
+    if (open_[pitch] == kNone) {
+      for (uint8_t i = 0; i < pickupCount_; ++i)
+        if (pickups_[i].open && pickups_[i].pitch == pitch) {
+          pickups_[i].open = false;
+          pickups_[i].off = static_cast<int32_t>(wrap(pos));
+          return;
+        }
+      return;
+    }
     notes_[open_[pitch]].end = wrap(pos);
     open_[pitch] = kNone;
   }
 
-  uint16_t count() const { return count_; }
-  /// Note `i` with a held note's end at the current position.
+  uint16_t count() const { return static_cast<uint16_t>(count_ + pickupCount_); }
+  /// Note `i` with a held note's end at the current position. A pickup's start is `before` ticks before
+  /// `wrapLength()`; its end before its start means it wraps.
   Note note(uint16_t i) const {
+    if (i >= count_) {
+      const Pickup& p = pickups_[i - count_];
+      const uint32_t w = wrapLength();
+      const uint32_t start = w > p.before ? w - p.before : 0;
+      uint32_t end;
+      if (p.open)
+        end = start == 0 ? w : start - 1;  // the whole view
+      else if (p.off < 0)
+        end = start + static_cast<uint32_t>(p.off + static_cast<int32_t>(p.before));  // ended before tick 0
+      else
+        end = static_cast<uint32_t>(p.off);  // wrapped to the take's start
+      return Note{start, end, p.pitch, p.value};
+    }
     Note n = notes_[i];
     if (n.end == kOpen) n.end = now_;
     return n;
   }
+  /// Where wrapped notes wrap: the loop, or a first take's length so far.
+  uint32_t wrapLength() const { return loop_ != 0 ? loop_ : now_; }
   uint32_t dropped() const { return dropped_; }
   /// The lowest and highest pitch shown. False: none.
   bool extent(uint8_t& lo, uint8_t& hi) const {
@@ -447,9 +485,17 @@ class LiveOverlay {
   static constexpr uint16_t kNone = 0xFFFF;
   uint32_t wrap(uint32_t pos) const { return loop_ == 0 ? pos : pos % loop_; }
 
+  struct Pickup {
+    uint32_t before;
+    int32_t off;
+    uint8_t pitch, value;
+    bool open;
+  };
   Note notes_[MaxNotes];
+  Pickup pickups_[MaxPickups];
   uint16_t open_[128];
   uint16_t count_ = 0;
+  uint8_t pickupCount_ = 0;
   uint32_t loop_ = 0, now_ = 0, dropped_ = 0;
   uint8_t lo_ = 0xFF, hi_ = 0;
 };

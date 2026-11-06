@@ -2011,5 +2011,15 @@ take, one before it) sound at `loop - 10` / `loop - 30` with their NoteOffs at `
 and 3, the take's state has two runs, nothing sounds after transport stop; a note 200 µs before tick 0's time and one
 held from 400 ticks before are recorded at tick 0; one released before tick 0 from 400 ticks before and one on another
 track 20 ticks before are not recorded. Mutations caught 7 / 7. RAM2 + 488 B (150,168).
-Device `da0d2dc8…`: boot clean, 22 slots loaded; the owner checks it with Ableton's clock.
+Device `da0d2dc8…`: the owner confirmed it with Ableton's clock (2026-11-06).
+
+**Shown at once** (owner: the display showed the pre-roll only after Stop — the overlay is fed by live input during
+the take, and these notes reached the writer or `TrackControl` before it): when `EngineRoot` sees a new take on the
+shown slot it adds the take's tick-0 notes (held, ended by their NoteOff) and its pickups to the overlay
+(`TrackControl::startNote…` / `pickup…`). `LiveOverlay::pickup` (16) draws one `before` ticks before
+`wrapLength()` — the loop, or a first take's length so far, which is where the loop will end — ending where it was
+released: before tick 0 inside that span, after it wrapped to the take's start, still held across the whole view. The
+renderer wraps at `wrapLength()` (ordinary first-take notes never wrap). `test_content_engine_piano_roll` +1 (both
+drawn 300 ticks into the take, the pickup's wrapped head and tail, nothing between), mutations 4 / 4. RAM2 + 32 B
+(150,200). Device `384aae22…`.
 

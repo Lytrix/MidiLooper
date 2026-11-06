@@ -144,7 +144,7 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 6812948u;
-constexpr size_t kRam2Budget = 150168u;  // measured (E9.8j: + 488 B pre-roll notes and pickups; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 150200u;  // measured (E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -432,7 +432,17 @@ class EngineRoot {
     }
     const uint8_t w = r_->transport.writingSlot();
     if (w != ProductionTransport::kNoSlot && w == p_->tiles.detailSlot(0)) {
-      if (overlaySlot_ != w) p_->overlay.clear();  // a new take on the shown slot
+      if (overlaySlot_ != w) {  // a new take on the shown slot: its pre-roll (E9.8j) is shown at once
+        p_->overlay.clear();
+        const auto& c = r_->control;
+        if (c.pickupTrack() == r_->transport.writingTrack()) {
+          for (uint8_t i = 0; i < c.startNoteCount(); ++i) p_->overlay.noteOn(0, c.startNotePitch(i), c.startNoteVelocity(i));
+          for (uint8_t i = 0; i < c.pickupCount(); ++i) {
+            const auto& pk = c.pickup(i);
+            p_->overlay.pickup(pk.before, pk.off, c.pickupOpen(i), pk.pitch, pk.velocity);
+          }
+        }
+      }
       overlaySlot_ = w;
       overlayUntil_ = 0;
       // Positions wrap at the slot's loop while overdubbing; a first take has none yet (its length so far).

@@ -67,6 +67,7 @@ class TrackControl {
     for (auto& h : heard_) h = Heard{};
     pickupCount_ = 0;
     pickupTrack_ = kNone;
+    startCount_ = 0;
     stats_ = Stats{};
   }
   /// The runtime bar and grid (time signature, launch grid).
@@ -266,6 +267,15 @@ class TrackControl {
   bool stopQueued(uint8_t t) const { return pending_[t].stop; }
   bool switchQueued(uint8_t t) const { return pending_[t].switchSlot != kNone; }
   bool muted(uint8_t t) const { return muted_[t]; }
+  /// E9.8j, for the display: the running Record take's pre-roll — notes recorded at its tick 0 (pitch, velocity) and
+  /// its pickups (held ones `pickupOpen`).
+  uint8_t pickupTrack() const { return pickupTrack_; }
+  uint8_t startNoteCount() const { return startCount_; }
+  uint8_t startNotePitch(uint8_t i) const { return startNotes_[i].pitch; }
+  uint8_t startNoteVelocity(uint8_t i) const { return startNotes_[i].velocity; }
+  uint8_t pickupCount() const { return pickupCount_; }
+  const typename Transport::Pickup& pickup(uint8_t i) const { return pickups_[i]; }
+  bool pickupOpen(uint8_t i) const { return pickupOpen_[i]; }
   const Stats& stats() const { return stats_; }
 
  private:
@@ -288,6 +298,11 @@ class TrackControl {
   typename Transport::Pickup pickups_[Transport::kMaxPickups] = {};
   bool pickupOpen_[Transport::kMaxPickups] = {};
   uint8_t pickupCount_ = 0, pickupTrack_ = kNone;
+  struct StartNote {
+    uint8_t pitch, velocity;
+  };
+  StartNote startNotes_[kHeardNotes] = {};
+  uint8_t startCount_ = 0;
 
   uint8_t target() const {
     const uint8_t w = x_->writingTrack();
@@ -327,6 +342,7 @@ class TrackControl {
   /// E9.8j: the notes heard on `t` before its take's tick 0 (`clock`, at `nowUs`).
   void gatherPreRoll(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     pickupCount_ = 0;
+    startCount_ = 0;
     pickupTrack_ = t;
     const uint32_t tickUs = usPerTick != 0 ? usPerTick : 1;
     for (Heard& h : heard_) {
@@ -336,7 +352,10 @@ class TrackControl {
       if (h.held && (before == 0 || before > kPreRollTicks)) {  // at tick 0: just before it, or held since long before
         Emit buf[T];
         uint8_t n;
-        if (x_->noteOn(clock, h.channel, h.pitch, h.velocity, buf, T, n) == Result::Ok) ++stats_.preRollAtStart;
+        if (x_->noteOn(clock, h.channel, h.pitch, h.velocity, buf, T, n) == Result::Ok) {
+          ++stats_.preRollAtStart;
+          if (startCount_ < kHeardNotes) startNotes_[startCount_++] = {h.pitch, h.velocity};
+        }
         continue;
       }
       if (before == 0 || before > kPreRollTicks || pickupCount_ >= Transport::kMaxPickups) continue;

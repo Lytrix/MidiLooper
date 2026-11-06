@@ -113,8 +113,8 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
   }
   if (overlay == nullptr) return;
   // The live take's notes, at this view's scale (a held note reaches the current position; one crossing the loop end
-  // wraps at the overlay's loop).
-  const uint32_t oLoop = overlay->loopLength();
+  // wraps at the overlay's loop, or a first take's pickup at the take's length so far).
+  const uint32_t oLoop = overlay->wrapLength();
   for (uint16_t i = 0; i < overlay->count(); ++i) {
     const auto n = overlay->note(i);
     if (n.end >= n.start) {
