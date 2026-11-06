@@ -38,7 +38,7 @@ constexpr uint8_t kRollNoteBrightness = 7;
 constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
 constexpr uint8_t kRollOverviewLow = 2;    // an overview beat with the fewest pitches sounding (one)
-constexpr uint8_t kRollOverviewHigh = 14;  // ... with the most (the loop's busiest beat)
+constexpr uint8_t kRollOverviewHigh = 9;   // ... with the most (the loop's busiest beat; owner: 14 was too bright)
 
 namespace roll {
 

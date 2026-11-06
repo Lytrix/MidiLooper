@@ -16,9 +16,9 @@
 //   — the selected track shows its real state); the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
 // * Piano roll (x 22–255, rows 0–39): the shown slot — the whole loop up to 16 bars, else a 16-bar page following the
 //   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
-//   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 41–46) when the loop is longer than the
-//   view: a full-height cell per beat as bright as the pitches sounding in it (2–14), a bright bar under the view's
-//   range (row 47).
+//   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 43–46, three dark rows under the roll)
+//   when the loop is longer than the view: a full-height cell per beat as bright as the pitches sounding in it
+//   (2–9), a bright bar under the view's range (row 47).
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
@@ -68,7 +68,7 @@ struct EditView {
 class EngineDisplay {
  public:
   static constexpr uint32_t kFrameMs = 33;
-  static constexpr int16_t kX0 = 22, kX1 = 255, kRollY0 = 0, kRollY1 = 39, kOverY0 = 41, kOverY1 = 46;
+  static constexpr int16_t kX0 = 22, kX1 = 255, kRollY0 = 0, kRollY1 = 39, kOverY0 = 43, kOverY1 = 46;
   static constexpr int16_t kSepY = 48, kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
   static constexpr uint32_t kViewBars = 16;
 

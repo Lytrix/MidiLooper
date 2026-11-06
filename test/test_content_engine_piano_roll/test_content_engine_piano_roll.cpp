@@ -138,7 +138,7 @@ void test_dense_raster_density_fallback_overview_and_extent() {
 }
 
 // E9.8k: the overview as a full-height cell per beat, as bright as the pitches sounding in it (a span tile's raster;
-// else the density tile, each beat alike) from 2 (one) to 14 (the busiest beat); a dark column between bars.
+// else the density tile, each beat alike) from 2 (one) to 9 (the busiest beat); a dark column between bars.
 void test_the_overview_shows_pitches_per_beat_as_brightness() {
   gStore.setDetail(0, 5);
   const uint16_t t = gStore.takeSpare();
@@ -161,8 +161,8 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(7, 10));   // one pitch
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(14, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(20, 15));                  // nothing sounds in beat 3
-  TEST_ASSERT_EQUAL_UINT8(7, px(31, 10));                  // bar 1: three of six, 2 + 12 x 2 / 5 = 6.8, rounded
-  TEST_ASSERT_EQUAL_UINT8(7, px(61, 15));
+  TEST_ASSERT_EQUAL_UINT8(5, px(31, 10));                  // bar 1: three of six, 2 + 7 x 2 / 5 = 4.8, rounded
+  TEST_ASSERT_EQUAL_UINT8(5, px(61, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(62, 15));                  // the gap after the bar
   TEST_ASSERT_EQUAL_UINT32(0, lit(0, 9) + lit(16, 63));    // only the strip's rows
   // A band of rows 10..12 draws only those.
@@ -173,12 +173,12 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   // A bar 4 px wide whose last beat is 1 px: that column is the gap.
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 8, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(7, px(6, 15));
+  TEST_ASSERT_EQUAL_UINT8(5, px(6, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(7, 15));
   // Narrow bars (under 4 px) keep every column.
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 6, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(7, px(5, 15));
+  TEST_ASSERT_EQUAL_UINT8(5, px(5, 15));
 }
 
 void test_the_live_overlay_draws_on_top() {
