@@ -48,6 +48,10 @@ class EditSurface {
   static constexpr int32_t kCoarseThreshold = 150;
   static constexpr int32_t kF1Deadband = 96;  // of 16,384: F1's rest test (a 16th of a 16-step window is 1,092)
   enum class Fader : uint8_t { None, Coarse, Fine, Pitch, Delete, Create, Length };
+  /// Diagnostics (`!ENGINE trace`): what the last fader message did.
+  enum class Why : uint8_t { Acted, NotReady, Grace, AtRest, NoChange, Refused };
+  Why lastWhy() const { return why_; }
+  uint8_t lastRefusal() const { return refusal_; }  // the `EditResult` of the last refused commit
 
   void init(Engine& e) {
     e_ = &e;
@@ -137,7 +141,11 @@ class EditSurface {
     int32_t step = static_cast<int32_t>((static_cast<int64_t>(pb - kPbMin) * (steps - 1)) / (kPbMax - kPbMin));
     if (step < 0) step = 0;
     if (step >= static_cast<int32_t>(steps)) step = static_cast<int32_t>(steps - 1);
-    if (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband) return;  // F1 at rest: the selection stays
+    if (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband) {  // F1 at rest: the selection stays
+      why_ = Why::AtRest;
+      return;
+    }
+    why_ = Why::Acted;
     f1Pb_ = pb;
     f1Seen_ = true;
     const uint32_t target = first_ + static_cast<uint32_t>(step) * kSixteenth;
@@ -177,7 +185,10 @@ class EditSurface {
   void coarse(int16_t pb, uint32_t ms) {
     if (!geometryReady(ms)) return;
     const int32_t moved = pb > lastCoarse_ ? pb - lastCoarse_ : lastCoarse_ - pb;
-    if (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs) return;
+    if (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs) {
+      why_ = Why::AtRest;
+      return;
+    }
     lastCoarse_ = pb;
     lastCoarseMs_ = ms;
     hadCoarse_ = true;
@@ -200,7 +211,10 @@ class EditSurface {
   }
   void fine(uint8_t cc, uint32_t ms) {
     if (!geometryReady(ms)) return;
-    if (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80) return;
+    if (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80) {
+      why_ = Why::AtRest;
+      return;
+    }
     lastFine_ = cc;
     lastFineMs_ = ms;
     hadFine_ = true;
@@ -221,7 +235,10 @@ class EditSurface {
   }
   void pitch(uint8_t cc, uint32_t ms) {
     if (!geometryReady(ms)) return;
-    if (session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) return;  // no change
+    if (session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) {  // no change
+      why_ = Why::NoChange;
+      return;
+    }
     EditNote v = base(Fader::Pitch, ms);
     v.pitch = cc & 0x7F;
     commit(Fader::Pitch, v, ms);
@@ -319,10 +336,13 @@ class EditSurface {
     }
   }
   bool geometryReady(uint32_t ms) {
+    why_ = Why::NotReady;
     if (!editing() || sel_ < 0) return false;
     EditNote n;
     if (!selected(n)) return false;
-    return armed_ || ms - armedMs_ >= kGraceMs;
+    if (armed_ || ms - armedMs_ >= kGraceMs) return true;
+    why_ = Why::Grace;
+    return false;
   }
   /// The note a gesture starts from: its value before the gesture (the step it replaces is undone first).
   EditNote base(Fader f, uint32_t ms) {
@@ -336,10 +356,14 @@ class EditSurface {
   }
   void commit(Fader f, const EditNote& v, uint32_t ms) {
     const EditChange c{static_cast<uint16_t>(sel_), v};
-    if (session().apply(&c, 1, focus()) != EditResult::Ok) {
+    const EditResult r = session().apply(&c, 1, focus());
+    if (r != EditResult::Ok) {
       gesture_ = Fader::None;
+      why_ = Why::Refused;
+      refusal_ = static_cast<uint8_t>(r);
       return;
     }
+    why_ = Why::Acted;
     gesture_ = f;
     gestureNote_ = sel_;
     gestureMs_ = ms;
@@ -393,6 +417,8 @@ class EditSurface {
   uint8_t slot_ = 0;
   uint32_t loop_ = 0, first_ = 0, ticks_ = 0, pos_ = 0, bracket_ = 0, refStep_ = 0, anchor_ = 0;
   int16_t sel_ = -1;
+  Why why_ = Why::Acted;
+  uint8_t refusal_ = 0;
   int16_t f1Pb_ = 0;     // the F1 value the last select acted on
   bool f1Seen_ = false;  // ... this session
   bool length_ = false, armed_ = false;

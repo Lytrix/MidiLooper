@@ -151,9 +151,21 @@ void realtime(uint8_t status, uint32_t nowUs) {
   }
 }
 
+bool gTrace = false;  // `!ENGINE trace 1`: every control-plane message and what the edit surface did with it
+
 void channelMessage(uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
   if (Surface<EngineRoot>::controlPlane(status)) {  // the DROID's: never recorded, never thru
     gSurface.input(status, d1, d2, millis());
+    if (gTrace) {
+      const auto& ed = gSurface.edit();
+      EditNote n{};
+      const bool sel = ed.selected(n);
+      Serial.printf("#IN,%lu,%02x,%u,%u,editing=%u,sel=%u,why=%u,refused=%u,depth=%u,tick=%lu,pitch=%u,bracket=%lu\n",
+                    static_cast<unsigned long>(millis()), status, d1, d2, ed.editing(), sel,
+                    static_cast<unsigned>(ed.lastWhy()), ed.lastRefusal(), gEngine.noteEdit().depth(),
+                    sel ? static_cast<unsigned long>(n.tick) : 0ul, sel ? n.pitch : 0u,
+                    static_cast<unsigned long>(ed.bracket()));
+    }
     return;
   }
   const uint8_t type = status & 0xF0;
@@ -277,6 +289,9 @@ void command(char* line, uint32_t nowUs) {
     report(verb, static_cast<uint8_t>(c.undo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
   } else if (std::strcmp(verb, "redo") == 0) {
     report(verb, static_cast<uint8_t>(c.redo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
+  } else if (std::strcmp(verb, "trace") == 0) {  // trace 1 / 0: control-plane input (diagnostics)
+    gTrace = a != 0;
+    report(verb, 0);
   } else if (std::strcmp(verb, "fbdump") == 0) {  // the last frame drawn: `scripts/render_display_dump.py`
     gDisplay.dump();
   } else if (std::strcmp(verb, "oled-test") == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes

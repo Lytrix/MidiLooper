@@ -2113,3 +2113,9 @@ the first F1 message of a session acts. In length mode a resting F1 no longer le
 +1 (mutations 3 / 3). `!ENGINE fbdump` now also prints the edit state the frame was drawn with (`#FB,edit,…`). Device
 `b63db4bd…`: boot clean; F2 moves with F1 repeats and jitter between them moved the note 48 → 192 → 384 → 576 and F4
 set its pitch.
+
+**Control-plane trace** (diagnostics, owner 2026-11-06: F2–F4 still did not move the note on the DROID; a capture
+could not show the input). `!ENGINE trace 1` prints every control-plane message as
+`#IN,<ms>,<status>,<d1>,<d2>,editing=,sel=,why=,refused=,depth=,tick=,pitch=,bracket=`, with what the edit surface
+did: `EditSurface::lastWhy` (0 acted, 1 not ready — not editing or nothing selected, 2 the selection's grace period, 3
+at rest, 4 no change, 5 refused: `lastRefusal` the `EditResult`). Off at boot; nothing else changes.
