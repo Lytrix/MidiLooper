@@ -2038,8 +2038,8 @@ every field keeps a fixed place with `-` when it has nothing to show (as on the 
   BARS — the selection — UNDO and the tempo.
   * The current tick: the legacy save dots (`status::SaveIndicator`, the legacy `resolveDeferredSaveDisplayStatus`
     rules; `Persistence::writing` / `unsaved` / the save counters; `RO` before approval) and the transport icon (stop,
-    play, record, overdub; armed: the record disc pulsing 3–9) over `bar.beat.16th.tick` with the bar bright, the
-    loop's progress under it. A queued slot switch or Record counts down to its start, `-1.3.2.24`
+    play, record, overdub; armed: the record disc pulsing 3–9) over `bar.beat.16th.tick` with the bar bright. While
+    no dots show, the loop's progress runs in their row from the left up to the icon (owner 2026-11-06). A queued slot switch or Record counts down to its start, `-1.3.2.24`
     (`TrackControl::ticksToQueued`: the boundary `beforeTick` waits for — the playing slot's loop start, the launch
     grid or the next bar). In NOTE_EDIT the block reads START over the selected note's start (the bracket in length
     mode).
@@ -2056,5 +2056,9 @@ every field keeps a fixed place with `-` when it has nothing to show (as on the 
 `test_content_engine_status_view` 4 (save dots, positions and countdown, tempo / port / note labels, session slot);
 `test_content_engine_track_control` +1 (the countdown for a grid switch, a loop-end switch and a Record on a stopped
 track; the level of a played downbeat and of live input); persistence: `unsaved` / `writing` around an autosave.
-RAM2 + 64 B (150,264). Device `ae0946fa…`: boot clean, 22 slots, worst frame 236 µs stopped. LOOP_EDIT's fields
+RAM2 + 64 B (150,264). Device `ae0946fa…`: boot clean, 22 slots, worst frame 236 µs stopped.
+Owner's first look: the progress line sat in the roll — the library's `draw_hline` takes the row first
+(`frame, y, x0, x1`), and the band's separator and the overview's view-range marker (E9.8c) had the same argument
+order wrong; all go through `hline(x0, x1, y)` now, and the progress moved into the dots' row. Device `f6a02aef…`:
+boot clean, worst frame 409 µs running. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.

@@ -20,8 +20,8 @@
 // * Status band (rows 48–63; 3 × 5 labels over 5 × 7 values, every number right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
 //     save, mid after a failure; `RO` before saving is approved) and the transport icon (stop, play, record, overdub,
-//     a pulsing record circle when armed) over the position `bar.beat.16th.tick` (the bar bright), the loop's progress
-//     under it. A queued slot or Record counts down to its start (`-1.3.2.24`). In NOTE_EDIT the block reads START over
+//     a pulsing record circle when armed) over the position `bar.beat.16th.tick` (the bar bright); while no dots show,
+//     the loop's progress runs in their row up to the icon. A queued slot or Record counts down to its start (`-1.3.2.24`). In NOTE_EDIT the block reads START over
 //     the selected note's start (the bracket's in length mode), all bright.
 //   - BARS: the loop's length in bars (a first take: its bars so far).
 //   - the selection: TRACK, SLOT (1–8 within the track) and the port over its channel (`USB1 1`; `ALL` when the track
@@ -195,6 +195,8 @@ class EngineDisplay {
   }
   static uint8_t iconWidth(Icon i) { return i == Icon::Stop ? 4 : i == Icon::Play ? 3 : 5; }
   void separator(int16_t x) { oled_.gfx.draw_vline(fb(), x, kLabY - 1, 63, 2); }
+  /// A row from `x0` to `x1` (the library's `draw_hline` takes the row first).
+  void hline(int16_t x0, int16_t x1, int16_t y, uint8_t v) { oled_.gfx.draw_hline(fb(), y, x0, x1, v); }
 
   // ---- Frame ---------------------------------------------------------------------------------------------------------
   void draw(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick, uint32_t nowMs) {
@@ -213,7 +215,7 @@ class EngineDisplay {
       }
       info = drawSlot(e, sel, slot, lastTick);
     }
-    oled_.gfx.draw_hline(fb(), kX0, kSepY, kX1, 2);
+    hline(kX0, kX1, kSepY, 2);
     drawStatus(e, clock, sel, info, lastTick, nowMs);
   }
 
@@ -357,7 +359,7 @@ class EngineDisplay {
                                     DISPLAY_WIDTH, kOverY0, kOverY1);
     const int16_t vx0 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first) * w / loop);
     const int16_t vx1 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first + viewTicks) * w / loop);
-    oled_.gfx.draw_hline(fb(), vx0, kOverY1 + 1, vx1 > kX1 ? kX1 : vx1, 5);
+    hline(vx0, vx1 > kX1 ? kX1 : vx1, kOverY1 + 1, 5);
     if (moving)
       oled_.gfx.draw_vline(fb(), static_cast<int16_t>(kX0 + static_cast<int64_t>(pos) * w / loop), kOverY0, kOverY1, 12);
   }
@@ -419,10 +421,12 @@ class EngineDisplay {
         dots_.start(p.stats().saves, p.stats().saveFailed);
         started_ = true;
       }
+      bool dots = true;  // the dots (or RO) take the row; else the loop's progress does
       if (!p.approved()) {
         label("RO", x0, kLabY, 4);
       } else {
         const st::SaveDots d = dots_.update(nowMs, p.writing(), p.unsaved(), p.stats().saves, p.stats().saveFailed);
+        dots = d != st::SaveDots::Off;
         for (uint8_t i = 0; i < 4 && d != st::SaveDots::Off; ++i) {
           const uint8_t v = d == st::SaveDots::Pending ? 2
                             : d == st::SaveDots::Busy  ? (st::SaveIndicator::step(nowMs) == i ? 8 : 2)
@@ -448,7 +452,13 @@ class EngineDisplay {
         ic = Icon::Play;
         iv = 6;
       }
-      icon(ic, static_cast<int16_t>(xr - iconWidth(ic) + 1), kLabY, iv);
+      const int16_t ix = static_cast<int16_t>(xr - iconWidth(ic) + 1);
+      icon(ic, ix, kLabY, iv);
+      if (!dots && info.moving && queued == 0) {  // the loop's progress, from the left up to the icon
+        const int16_t end = static_cast<int16_t>(ix - 3);
+        hline(x0, end, kLabY + 2, 3);
+        hline(x0, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (end - x0) / info.loop), kLabY + 2, 13);
+      }
       if (queued != 0) {
         const st::Position left = st::countdown(queued, kBar, kQuarter);
         position(&left, xr, 13, 8, true);
@@ -458,10 +468,6 @@ class EngineDisplay {
       } else {
         position(nullptr, xr, 4, 4, false);
       }
-    }
-    if (info.moving && queued == 0) {  // the loop's progress
-      oled_.gfx.draw_hline(fb(), x0, 63, xr, 3);
-      oled_.gfx.draw_hline(fb(), x0, 63, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (kTickW - 1) / info.loop), 13);
     }
     x0 = static_cast<int16_t>(x0 + kTickW + kGap);
     // ---- BARS ----
