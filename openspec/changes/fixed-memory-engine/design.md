@@ -2021,5 +2021,5 @@ shown slot it adds the take's tick-0 notes (held, ended by their NoteOff) and it
 released: before tick 0 inside that span, after it wrapped to the take's start, still held across the whole view. The
 renderer wraps at `wrapLength()` (ordinary first-take notes never wrap). `test_content_engine_piano_roll` +1 (both
 drawn 300 ticks into the take, the pickup's wrapped head and tail, nothing between), mutations 4 / 4. RAM2 + 32 B
-(150,200). Device `384aae22…`.
+(150,200). Device `384aae22…`: owner confirmed (2026-11-06).
 
