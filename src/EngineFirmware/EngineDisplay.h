@@ -16,8 +16,10 @@
 //   — the selected track shows its real state); the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
 // * Piano roll (x 22–255, rows 0–39): the shown slot — the whole loop up to 16 bars, else a 16-bar page following the
 //   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
-//   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 41–46) when the loop is longer than the view.
-// * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number right-aligned, no leading zeros):
+//   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 41–46) when the loop is longer than the
+//   view: the view's bars by note count, the others dim, a bright bar under the view's range (row 47).
+// * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
+//   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
 //     save, mid after a failure; `RO` before saving is approved) and the transport icon (stop, play, record, overdub,
 //     a pulsing record circle when armed) over the position `bar.beat.16th.tick` (the bar bright); while no dots show,
@@ -372,10 +374,13 @@ class EngineDisplay {
     }
     if (ohi == olo) ohi = static_cast<uint8_t>(olo + 1);
     ContentEngine::drawOverviewBand(e.tiles(), slot, loop, kBar, olo, ohi, kX0, kX1, kOverY0, kOverY1, fb(),
-                                    DISPLAY_WIDTH, kOverY0, kOverY1);
+                                    DISPLAY_WIDTH, kOverY0, kOverY1, first, viewTicks);
+    // Under the strip: a bright bar under the detailed view's range, a dim one under the rest.
     const int16_t vx0 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first) * w / loop);
-    const int16_t vx1 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first + viewTicks) * w / loop);
-    hline(vx0, vx1 > kX1 ? kX1 : vx1, kOverY1 + 1, 5);
+    int16_t vx1 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first + viewTicks) * w / loop);
+    if (vx1 > kX1) vx1 = kX1;
+    hline(kX0, kX1, kOverY1 + 1, 2);
+    hline(vx0, vx1, kOverY1 + 1, 13);
     if (moving)
       oled_.gfx.draw_vline(fb(), static_cast<int16_t>(kX0 + static_cast<int64_t>(pos) * w / loop), kOverY0, kOverY1, 12);
   }

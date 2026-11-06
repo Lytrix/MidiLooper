@@ -2062,5 +2062,13 @@ Owner's first look: the progress line sat in the roll — the library's `draw_hl
 order wrong; all go through `hline(x0, x1, y)` now, and the progress moved into the dots' row. Device `f6a02aef…`:
 boot clean, worst frame 409 µs running. The values then sat two rows above the bottom (owner): they end on the bottom row now (labels rows
 50–54, values 57–63) and the two rows went to the roll (0–39) and the overview (41–46). Device `8d4883d5…`: boot
-clean; owner confirmed (2026-11-06). LOOP_EDIT's fields
+clean; owner confirmed (2026-11-06).
+
+**The overview's range** (owner 2026-11-06, from a screen capture — `!ENGINE fbdump`, the legacy `#FB` format for
+`scripts/render_display_dump.py`): the view's range marker (brightness 5) sat under a strip drawn at 6 that a busy loop
+fills almost solid, so neither read. `drawOverviewBand` now draws per bar and pitch row one block whose brightness
+follows the row's highest note count (6, 8, 10, 12), leaves a dark column between bars 4 px or wider, and draws the
+bars outside the detailed view at 2; under the strip a bright bar (13) marks the view's range on a dim one (2).
+`test_content_engine_piano_roll` +1 (mutations 6 / 6). Device `ef3491d8…`: boot clean; the capture shows the 16 viewed bars of 31 apart
+from the rest. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.

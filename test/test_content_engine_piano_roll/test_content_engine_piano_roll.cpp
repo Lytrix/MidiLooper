@@ -136,6 +136,43 @@ void test_dense_raster_density_fallback_overview_and_extent() {
   TEST_ASSERT_FALSE(pitchExtent(gStore, 3, 0, 3, lo, hi));
 }
 
+// E9.8k: the overview's bars by note count, a dark column between them, and the bars outside the view dim.
+void test_the_overview_shows_counts_bar_gaps_and_the_view() {
+  DensityTile one{}, three{};
+  one.counts[60 / 2] |= 1u << ((60 & 1) * 4);
+  three.counts[60 / 2] |= 3u << ((60 & 1) * 4);
+  three.counts[61 / 2] |= 1u << ((61 & 1) * 4);  // the same row (a 2-row strip): the highest count wins
+  gStore.publishDensity(4, 0, one, 11);
+  gStore.publishDensity(4, 1, three, 11);
+  gStore.publishDensity(4, 2, one, 11);
+  gStore.publishDensity(4, 3, one, 11);
+  std::memset(gFb, 0, sizeof gFb);
+  // Four bars over x 0..80: 20 px a bar; the view is bars 0-1.
+  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11, 0, 2 * kBar);
+  const int y = roll::map(60, 60, 70, 11, 10);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(0, y));         // bar 0: one note
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(18, y));
+  TEST_ASSERT_EQUAL_UINT8(0, px(19, y));                              // the gap
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness + 4, px(20, y));    // bar 1: three
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(40, y));           // bar 2: outside the view
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(78, y));
+  TEST_ASSERT_EQUAL_UINT8(0, px(79, y));
+  // A later page (bars 2-3): the bars before it are dim too.
+  std::memset(gFb, 0, sizeof gFb);
+  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11, 2 * kBar, 2 * kBar);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(0, y));
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(40, y));
+  // No view given: every bar by its count.
+  std::memset(gFb, 0, sizeof gFb);
+  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(40, y));
+  // Narrow bars (under 4 px) keep every column.
+  std::memset(gFb, 0, sizeof gFb);
+  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 12, 10, 11, gFb, kW, 10, 11);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(2, y));
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness + 4, px(3, y));
+}
+
 void test_the_live_overlay_draws_on_top() {
   gStore.setDetail(0, 1);
   const RollView v = view(1);
@@ -321,6 +358,7 @@ int main(int, char**) {
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
   RUN_TEST(test_bands_touch_only_their_rows);
   RUN_TEST(test_dense_raster_density_fallback_overview_and_extent);
+  RUN_TEST(test_the_overview_shows_counts_bar_gaps_and_the_view);
   RUN_TEST(test_the_live_overlay_draws_on_top);
   RUN_TEST(test_root_overlay_then_tiles_then_clear);
   RUN_TEST(test_the_pre_roll_is_drawn_while_the_take_records);
