@@ -329,6 +329,36 @@ void command(char* line, uint32_t nowUs) {
                   h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
+  } else if (std::strcmp(verb, "history") == 0) {  // history pressure (E4.7, diagnostics; changes nothing)
+    const auto& h = gEngine.history();
+    const auto& hs = h.stats();
+    Serial.printf("#ENGINE,history,held=%u,high_water=%u,depth=%u,evicted_undo=%lu,evicted_redo=%lu,dropped_redo=%lu,"
+                  "collapsed=%lu,undo_past_retained=%lu,last_lost_slot=%d,last_past_slot=%d\n",
+                  h.heldStates(), hs.highWater, ContentEngine::ProductionHistory::kDepth,
+                  static_cast<unsigned long>(hs.evictedUndo), static_cast<unsigned long>(hs.evictedRedo),
+                  static_cast<unsigned long>(hs.droppedRedo), static_cast<unsigned long>(hs.collapsedWraps),
+                  static_cast<unsigned long>(hs.undoPastRetained),
+                  hs.lastLostSlot == ContentEngine::ProductionHistory::kNone ? -1 : hs.lastLostSlot,
+                  hs.lastPastSlot == ContentEngine::ProductionHistory::kNone ? -1 : hs.lastPastSlot);
+    // Per populated slot (content now, or steps held, or steps lost): slot:undo/redo/lost; then how the retained steps
+    // (undo + redo) spread over those slots.
+    static constexpr uint8_t kBuckets = 7;  // 0, 1, 2, 3-4, 5-8, 9-16, 17+
+    uint16_t spread[kBuckets] = {};
+    uint8_t populated = 0;
+    Serial.print("#ENGINE,history_slots");
+    for (uint8_t s = 0; s < ContentEngine::Config::kSlotCount; ++s) {
+      const uint8_t u = h.undoDepth(s), r = h.redoDepth(s);
+      const uint16_t lost = h.lostSteps(s);
+      if (h.current(s) == ContentEngine::kNoManifest && u == 0 && r == 0 && lost == 0) continue;
+      ++populated;
+      Serial.printf(",%u:%u/%u/%u", s, u, r, lost);
+      const uint8_t n = u + r;
+      ++spread[n == 0 ? 0 : n == 1 ? 1 : n == 2 ? 2 : n <= 4 ? 3 : n <= 8 ? 4 : n <= 16 ? 5 : 6];
+    }
+    Serial.println();
+    Serial.printf("#ENGINE,history_spread,populated=%u,steps_0=%u,steps_1=%u,steps_2=%u,steps_3_4=%u,steps_5_8=%u,"
+                  "steps_9_16=%u,steps_17_up=%u\n",
+                  populated, spread[0], spread[1], spread[2], spread[3], spread[4], spread[5], spread[6]);
   } else if (std::strcmp(verb, "readbench") == 0) {  // readbench N K: store read speed (read only; blocks ~N ms)
     // N sectors in a row from the store's slot area, K a "grain" (one call each, then `readSectors(K)`), then 64
     // single sectors scattered across the store: the cost of fetching history from the card (diagnostics).

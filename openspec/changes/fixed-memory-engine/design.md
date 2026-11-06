@@ -1915,13 +1915,14 @@ was equivalent (the card is idle there) and removed. Native full suite green.
 Device (image `9672906b…`): 16 saves (single- and multi-sector slots): worst save grain 65–884 µs (the slot encoding;
 was 1.4–9.8 ms), a streamed write 6–10 µs, a new stream 11–20 µs; reboots load all 22 slots, 0 failed.
 
-## E4.6 — undo history per slot on the card (DEC-254, proposed; not built)
+## E4.6 — undo history per slot on the card (DEC-254, deferred by owner 2026-11-06; not built)
 
 Owner 2026-11-06: 99 undos per slot; E4's 99 are shared by all slots (each current state included) and were spent
 across slots within minutes of playing. DEC-254 proposes a hot tier (each slot's current state and recent steps in
 PSRAM, about today's footprint) and a cold tier (every state on the card: runs written once as immutable records,
 each slot's state list as an A / B record), with undo into a cold state fetched in persistence grains. The E4 rules
-above stay in force until DEC-254 is approved and built; without a card the engine keeps them.
+above stay in force (owner 2026-11-06: deferred until the engine and A / B persistence are device-qualified; the
+next step is E4.7's history-pressure diagnostics, and DEC-254 lists the owner's conditions should it be approved).
 
 Measured (E4.6a, image `2400f523…`, 32 GB card, `!ENGINE readbench`, read only):
 
@@ -1934,4 +1935,24 @@ Measured (E4.6a, image `2400f523…`, 32 GB card, `!ENGINE readbench`, read only
 
 A typical slot (~320 sectors) reads in ~7.5 ms of card time, so a cold undo takes roughly 20–50 ms with decoding (the
 boot loads 22 slots in 0.40 s); the largest slot (~4,100 sectors) ~90 ms of reads.
+
+## E4.7 — history-pressure diagnostics (owner 2026-11-06; as built)
+
+Counters only; no history rule, pool or schema changes (DEC-254 deferred).
+- `History::Stats`: `highWater` (most states held), `evictedUndo`, `evictedRedo` (redo branches dropped by eviction;
+  their states also count in `droppedRedo`), `undoPastRetained` (undo refused at the floor eviction raised: the slot's
+  oldest kept state with no empty slot below), `lastLostSlot` and `lastPastSlot` (kNone: none). `lostSteps(slot)`:
+  steps each slot lost to eviction (undo states and redo-branch states; a redo dropped by the slot's own commit is not
+  pressure), saturating at 65,535. RAM2 + 136 B (the engine budget is now 149,576 B).
+- `!ENGINE history`: the counters; then each populated slot as `slot:undo/redo/lost`; then how the retained steps
+  (undo + redo) spread over populated slots (0, 1, 2, 3–4, 5–8, 9–16, 17+).
+
+Tests (`test_content_engine_history`, 16): the counters pinned where eviction takes an undo state (lost by that slot,
+high-water 99, an undo refused at the raised floor counts) and a redo branch (one branch, two steps, lost by its
+slot), and where refusals are not pressure (the empty slot, a session's start, a redo dropped by a commit).
+Mutations caught 6 / 6.
+
+Device (image `025c14c2…`, the owner's 22 slots after boot): 65 of 99 states held, nothing evicted. 21 slots hold one
+step each (their take, undoable to the empty slot); slot 56 holds 44 (37 undo, 7 redo). The "44" the owner saw is one
+slot's history, not about two steps per slot.
 

@@ -90,6 +90,9 @@ void test_undo_redo_and_redo_drop() {
   TEST_ASSERT_TRUE(gH.undo(0));
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(0));  // the empty slot
   TEST_ASSERT_FALSE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().undoPastRetained);  // the empty slot is the bottom, nothing forgotten
+  TEST_ASSERT_EQUAL_UINT8(3, gH.stats().highWater);
+  TEST_ASSERT_EQUAL_UINT8(ProdHistory::kNone, gH.stats().lastLostSlot);
   TEST_ASSERT_EQUAL_UINT8(3, gH.redoDepth(0));
   TEST_ASSERT_TRUE(gH.redo(0));
   TEST_ASSERT_EQUAL_UINT16(a, gH.current(0));
@@ -103,6 +106,7 @@ void test_undo_redo_and_redo_drop() {
   TEST_ASSERT_EQUAL_UINT8(3, gH.undoDepth(0));  // a, b, d
   TEST_ASSERT_EQUAL_UINT16(1, gRuns.reclaimPendingRuns());  // c's run
   TEST_ASSERT_EQUAL_UINT32(1, gH.stats().droppedRedo);
+  TEST_ASSERT_EQUAL_UINT16(0, gH.lostSteps(0));  // a redo dropped by a commit is not lost to pressure
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
   drainReclaim();
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
@@ -145,9 +149,17 @@ void test_full_history_forgets_the_oldest_step() {
   TEST_ASSERT_EQUAL_UINT8(98, gH.undoDepth(0));  // 99 states, floor = the oldest kept
   TEST_ASSERT_FALSE(gManifests.manifest(first).live);
   TEST_ASSERT_EQUAL_UINT32(1, gH.stats().evictedUndo);
+  // Pressure (E4.7): the table peaked at 99, slot 0 lost one step.
+  TEST_ASSERT_EQUAL_UINT8(99, gH.stats().highWater);
+  TEST_ASSERT_EQUAL_UINT16(1, gH.lostSteps(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gH.stats().lastLostSlot);
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().evictedRedo);
   for (uint8_t i = 0; i < 98; ++i) TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().undoPastRetained);
   TEST_ASSERT_FALSE(gH.undo(0));
   TEST_ASSERT_NOT_EQUAL(kNoManifest, gH.current(0));  // the floor: never the empty slot
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().undoPastRetained);  // refused because a step was forgotten
+  TEST_ASSERT_EQUAL_UINT8(0, gH.stats().lastPastSlot);
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
 }
 
@@ -166,6 +178,10 @@ void test_eviction_takes_the_oldest_step_across_slots() {
   TEST_ASSERT_TRUE(gH.canUndo(0) && gH.undoDepth(0) == 98);  // slot 0 kept every step (98 states + empty below)
   TEST_ASSERT_EQUAL_UINT8(98, gH.heldStates());
   TEST_ASSERT_EQUAL_UINT32(2, gH.stats().droppedRedo);
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().evictedRedo);  // one branch, two steps, lost by slot 1
+  TEST_ASSERT_EQUAL_UINT16(2, gH.lostSteps(1));
+  TEST_ASSERT_EQUAL_UINT16(0, gH.lostSteps(0));
+  TEST_ASSERT_EQUAL_UINT8(1, gH.stats().lastLostSlot);
   TEST_ASSERT_FALSE(gManifests.manifest(r1).live);
   TEST_ASSERT_FALSE(gManifests.manifest(r2).live);
 }
@@ -189,6 +205,7 @@ void test_session_undo_is_bounded_and_stop_makes_one_step() {
   TEST_ASSERT_TRUE(gH.undo(0));
   TEST_ASSERT_EQUAL_UINT16(rec, gH.current(0));
   TEST_ASSERT_FALSE(gH.undo(0));  // not below the session start
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().undoPastRetained);  // a session bound, not forgotten history
   TEST_ASSERT_EQUAL_UINT8(0, gH.sessionDepth(SessionKind::Overdub));
   TEST_ASSERT_TRUE(gH.redo(0));
   TEST_ASSERT_TRUE(gH.redo(0));  // w2 current, w3 redo

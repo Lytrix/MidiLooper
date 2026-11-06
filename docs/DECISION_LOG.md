@@ -14758,7 +14758,9 @@ Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.
 **Owner:** `ContentEngine::History` (per-slot depth, hot / cold state, fetch); `ContentEngine::Persistence` (the card's
 run and state records). OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) E4.6.
 Builds on DEC-252 (one bounded content engine) and DEC-253 (the store).
-**Status:** Proposed — awaiting owner approval. No production code until approved (hard triggers below).
+**Status:** Deferred by owner (2026-11-06) — kept as a proposed future extension, not rejected. No implementation,
+no storage-format migration under DEC-254 until the fixed-memory engine and the A / B persistence are
+device-qualified; then the owner reassesses from history-pressure diagnostics (below) whether useful undo is lost.
 
 ### Reassessment
 
@@ -14821,4 +14823,23 @@ Builds on DEC-252 (one bounded content engine) and DEC-253 (the store).
 3. **Per-slot depth** — `History` counts and evicts per slot; hot table with cold entries (state known, runs not held).
 4. **Fetch** — undo / redo into a cold state: admission, grains, switch on completion, refusal by name.
 5. **Pressure** — hot entries and rows yield cold-safe states first; boot loads hot states only.
+
+### Owner review 2026-11-06 — deferred
+
+- **Evidence so far:** 22 populated slots held 44 retained steps, about 2 a slot; at that rate 64 slots would want
+  ~128, above the shared 99. That shows 99 globally may become restrictive; it does not show a need for 99 per slot.
+- **Ratified behaviour stays:** independent undo / redo per slot; 99 retained steps globally; fixed manifest and
+  history pools; no runtime allocation and no SD dependency for ordinary undo; the session-abandon and Stop
+  guarantees.
+- **Next:** history-pressure diagnostics with no change to history semantics and no persistent schema change: global
+  high-water, oldest-history evictions, per-slot undo / redo depths, which slot loses a step, undo attempts beyond
+  retained history, and the distribution of retained steps across populated slots.
+- **Conditions if DEC-254 is later approved:** recent history resident and instant; older immutable history on SD
+  without full slot snapshots per step; accepted MIDI recording separate from SD write completion; Stop and
+  accepted-note closure never dependent on SD; proven interruption recovery, history eviction, manifest
+  reconstruction and per-slot redo semantics; older-history loading as **one supersedable target per slot**, not a
+  FIFO of independent undo load jobs (this replaces the queued-presses proposal above); worst-case SD load latency
+  benchmarked before responsiveness is promised.
+- **First diagnostic reading** (E4.7, device `025c14c2…`, after boot): 65 of 99 held, none evicted; 21 slots hold one
+  step each and slot 56 holds 44 (37 undo, 7 redo) — the 44 retained steps are one slot's history.
 

@@ -26,6 +26,9 @@
 //   slot, the empty slot) from eviction, so abandon always returns to the pre-session state and U: after the fold
 //   always reaches it. A session longer than the 99 forgets its own oldest steps instead; undo then steps from the
 //   oldest kept session state straight back to the start.
+// * Pressure diagnostics (E4.7, owner 2026-11-06; no effect on any rule above): the most states ever held, steps
+//   forgotten by eviction (undo states, and redo branches), how many each slot lost and which lost last, and undo
+//   presses refused because the slot's older steps were forgotten.
 // Every dropped state releases its manifest reference, so its runs reach the reclaim queue. No allocation.
 
 #pragma once
@@ -52,6 +55,12 @@ class History {
     uint32_t evictedUndo;     // oldest undo states forgotten to make room
     uint32_t droppedRedo;     // redo states dropped (by a commit on their slot, or by eviction)
     uint32_t collapsedWraps;  // session states folded into the session's one step at its end (overdub or edit)
+    // Pressure (E4.7).
+    uint32_t evictedRedo;       // redo branches dropped by eviction (their states also count in `droppedRedo`)
+    uint32_t undoPastRetained;  // undo refused at a floor that eviction raised (older steps forgotten)
+    uint8_t highWater;          // the most states held at once
+    uint8_t lastLostSlot;       // the slot that last lost a step to eviction (kNone: none)
+    uint8_t lastPastSlot;       // the slot of the last undo refused past retained history (kNone: none)
   };
 
   void init(Manifests& manifests, Runs& runs) {
@@ -66,6 +75,8 @@ class History {
     seq_ = 0;
     for (auto& s : slots_) s = Slot{kNone, kNone, kNone, true};
     stats_ = Stats{};
+    stats_.lastLostSlot = stats_.lastPastSlot = kNone;
+    for (auto& n : lost_) n = 0;
     for (auto& x : sessions_) x = Session{kNone, 0, kNone};
   }
 
@@ -197,6 +208,7 @@ class History {
     if (s.oldest == kNone) s.oldest = e;
     s.newest = e;
     s.current = e;
+    if (count_ > stats_.highWater) stats_.highWater = count_;
     return evicted ? HistoryCommit::CommittedEvicted : HistoryCommit::Committed;
   }
 
@@ -218,7 +230,13 @@ class History {
 
   /// O(1). False (nothing changes) when the slot cannot undo.
   bool undo(uint8_t slot) {
-    if (!canUndo(slot)) return false;
+    if (!canUndo(slot)) {
+      if (slot < Slots && atForgottenFloor(slot)) {
+        ++stats_.undoPastRetained;
+        stats_.lastPastSlot = slot;
+      }
+      return false;
+    }
     Slot& s = slots_[slot];
     s.current = entries_[s.current].older;  // kNone: the empty slot
     return true;
@@ -283,6 +301,8 @@ class History {
     return true;
   }
   const Stats& stats() const { return stats_; }
+  /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
+  uint16_t lostSteps(uint8_t slot) const { return slot < Slots ? lost_[slot] : 0; }
 
  private:
   struct Entry {
@@ -309,11 +329,11 @@ class History {
     --count_;
   }
 
-  /// Drops every state newer than the slot's current (all of them when the slot is at its empty base).
-  void dropRedo(uint8_t slot) {
+  /// Drops every state newer than the slot's current (all of them when the slot is at its empty base); returns how many.
+  uint8_t dropRedo(uint8_t slot) {
     Slot& s = slots_[slot];
     uint8_t e = s.current == kNone ? s.oldest : entries_[s.current].newer;
-    if (e == kNone) return;
+    if (e == kNone) return 0;
     if (s.current == kNone) {
       s.oldest = s.newest = kNone;
       s.emptyBelow = true;  // the base is the empty slot again: everything above it is gone
@@ -321,12 +341,25 @@ class History {
       entries_[s.current].newer = kNone;
       s.newest = s.current;
     }
+    uint8_t n = 0;
     while (e != kNone) {
       const uint8_t next = entries_[e].newer;
       freeEntry(e);
       ++stats_.droppedRedo;
+      ++n;
       e = next;
     }
+    return n;
+  }
+  /// The slot is at the floor eviction raised: its oldest kept state, with no empty slot below.
+  bool atForgottenFloor(uint8_t slot) const {
+    const Slot& s = slots_[slot];
+    return s.current != kNone && entries_[s.current].older == kNone && !s.emptyBelow;
+  }
+  void lose(uint8_t slot, uint8_t n) {
+    const uint32_t sum = static_cast<uint32_t>(lost_[slot]) + n;
+    lost_[slot] = static_cast<uint16_t>(sum > 0xFFFFu ? 0xFFFFu : sum);
+    stats_.lastLostSlot = slot;
   }
 
   bool protectedStart(uint8_t e) const {
@@ -358,7 +391,8 @@ class History {
     Slot& s = slots_[bestSlot];
     const bool undoSide = s.current != kNone && entries_[best].seq < entries_[s.current].seq;
     if (!undoSide) {
-      dropRedo(bestSlot);  // a redo chain cannot have a hole
+      lose(bestSlot, dropRedo(bestSlot));  // a redo chain cannot have a hole
+      ++stats_.evictedRedo;
       return;
     }
     const uint8_t older = entries_[best].older, newer = entries_[best].newer;
@@ -371,6 +405,7 @@ class History {
     }
     freeEntry(best);
     ++stats_.evictedUndo;
+    lose(bestSlot, 1);
   }
 
   Manifests* manifests_ = nullptr;
@@ -383,6 +418,7 @@ class History {
   uint32_t seq_ = 0;
   Slot slots_[Slots];
   Stats stats_{};
+  uint16_t lost_[Slots] = {};  // per slot: steps lost to eviction (E4.7)
 };
 
 }  // namespace ContentEngine

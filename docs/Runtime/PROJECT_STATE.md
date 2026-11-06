@@ -1,3 +1,8 @@
+**2026-11-06 — Fixed-memory engine: DEC-254 deferred; E4.7 history-pressure diagnostics.**
+- The owner deferred DEC-254 (undo on the card) until the engine and A / B persistence are device-qualified; the
+  shared 99 stays. `!ENGINE history` now shows how full the history is, what was forgotten and by which slot. First
+  reading: 65 of 99 used, nothing forgotten; 21 slots hold one step each, and slot 56 alone holds 44.
+
 **2026-11-06 — Fixed-memory engine: DEC-254 proposed, undo history per slot on the card.**
 - The owner wants 99 undos per slot; today 99 are shared by all slots. Keeping that in PSRAM would need ~1.7 MB more
   than the 8 MB chip has free, so DEC-254 proposes recent steps in PSRAM and every step on the card, fetched when
