@@ -207,6 +207,40 @@ void test_delete_and_abandon() {
   TEST_ASSERT_FALSE(gE.noteEdit().editing());
 }
 
+// E9.8b-2: a created note is heard; undo removes it, redo brings it back; its index is past the gathered ones.
+void test_a_created_note_is_heard_and_undoable() {
+  takeAndOverdub();
+  gather({0, 0, kLoop, 0, 127});
+  TEST_ASSERT_EQUAL(EditResult::Ok, gE.noteEdit().enter());
+  const uint16_t gathered = gE.noteEdit().size();
+  const uint32_t id = gE.noteIds().peek();
+  gE.noteIds().advance();
+  uint16_t index = 0;
+  TEST_ASSERT_EQUAL(EditResult::Ok, gE.noteEdit().create(EditNote{id, 2400, 24, 72, 80, 0, 0}, 7, index));
+  TEST_ASSERT_EQUAL_UINT16(gathered, index);
+  TEST_ASSERT_EQUAL_UINT16(gathered + 1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT32(2400, gE.noteEdit().current(index).tick);
+  uint32_t at = gClock;
+  run(at + 2 * kLoop + 10);
+  TEST_ASSERT_EQUAL_UINT32(2400, positions(72, at + kLoop, at + 2 * kLoop)[0]);
+  uint32_t focus = 0;
+  TEST_ASSERT_EQUAL(EditResult::Ok, gE.noteEdit().undo(focus));
+  at = gClock;
+  run(at + 2 * kLoop + 10);
+  TEST_ASSERT_EQUAL_UINT32(0, positions(72, at + kLoop, at + 2 * kLoop).size());
+  TEST_ASSERT_EQUAL(EditResult::Ok, gE.noteEdit().redo(focus));
+  TEST_ASSERT_EQUAL_UINT32(7, focus);
+  at = gClock;
+  run(at + 2 * kLoop + 10);
+  TEST_ASSERT_EQUAL_UINT32(1, positions(72, at + kLoop, at + 2 * kLoop).size());
+  // Leaving keeps it: one U: step with the created note.
+  gE.noteEdit().leave();
+  run(gClock + 20);
+  at = gClock;
+  run(at + 2 * kLoop + 10);
+  TEST_ASSERT_EQUAL_UINT32(1, positions(72, at + kLoop, at + 2 * kLoop).size());
+}
+
 void test_more_than_512_notes_is_refused_by_name() {
   gE.control().selectTrack(0);
   TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(0, 0, 0));
@@ -247,6 +281,7 @@ int main(int, char**) {
   RUN_TEST(test_the_selection_is_what_shows_with_stored_geometry);
   RUN_TEST(test_an_edit_is_heard_and_undo_redo_return_its_focus);
   RUN_TEST(test_delete_and_abandon);
+  RUN_TEST(test_a_created_note_is_heard_and_undoable);
   RUN_TEST(test_more_than_512_notes_is_refused_by_name);
   RUN_TEST(test_no_heap);
   return UNITY_END();

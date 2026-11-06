@@ -15,7 +15,7 @@
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
 //    a millisecond (the DROID host's gap). Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
 // 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
-//    its selected slot.
+//    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
@@ -236,11 +236,18 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
   } else if (std::strcmp(verb, "status") == 0) {
+    EditNote n{};
+    const bool note = gSurface.edit().selected(n);
     Serial.printf("#ENGINE,status,tick=%lu,running=%u,external=%u,us_per_tick=%lu,approved=%u,frames=%lu,"
-                  "frame_draw_worst_us=%lu\n",
+                  "frame_draw_worst_us=%lu,edit=%u,edit_window=%lu+%lu,bracket=%lu,note=%d,pitch=%u,len=%lu\n",
                   static_cast<unsigned long>(gLastTick), gClock.running(), gClock.external(),
                   static_cast<unsigned long>(us), gEngine.persistence().approved(),
-                  static_cast<unsigned long>(gDisplay.frames()), static_cast<unsigned long>(gDisplay.worstDrawUs()));
+                  static_cast<unsigned long>(gDisplay.frames()), static_cast<unsigned long>(gDisplay.worstDrawUs()),
+                  gSurface.edit().editing() ? 2u : gSurface.edit().entering() ? 1u : 0u,
+                  static_cast<unsigned long>(gSurface.edit().windowFirst()),
+                  static_cast<unsigned long>(gSurface.edit().windowTicks()),
+                  static_cast<unsigned long>(gSurface.edit().bracket()), note ? static_cast<int>(n.tick) : -1,
+                  note ? n.pitch : 0u, note ? static_cast<unsigned long>(n.length) : 0ul);
   }
 }
 
@@ -348,7 +355,24 @@ void loop() {
   gSurface.service(millis(), gLastTick, micros());
   if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
-  gDisplay.service(gEngine, gClock, gLastTick, millis());
+  EngineFirmware::EditView ev;
+  const auto& ed = gSurface.edit();
+  if (ed.active()) {
+    ev.active = true;
+    ev.ready = ed.editing();
+    ev.slot = ed.slot();
+    ev.first = ed.windowFirst();
+    ev.ticks = ed.windowTicks();
+    ev.bracket = ed.bracket();
+    ev.length = ed.lengthMode();
+    EditNote n;
+    if (ed.selected(n)) {
+      ev.note = true;
+      ev.noteTick = n.tick;
+      ev.notePitch = n.pitch;
+    }
+  }
+  gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
 }
 
 #endif  // ENGINE_FIRMWARE

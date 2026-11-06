@@ -1,3 +1,8 @@
+**2026-11-06 — Fixed-memory engine: E9.8b-2 NOTE_EDIT from the DROID.**
+- The engine image edits notes from the DROID as legacy did: edit mode, the four faders (select, coarse, fine, pitch),
+  NOTELEN start / end and delete / create, undo / redo — each edit heard at once; the screen shows the frozen 16-bar
+  window, bracket and selected note. Owner confirmed it on the DROID. Loop editing and the extra edit buttons are later.
+
 **2026-11-06 — Fixed-memory engine: E9.8b-1 the DROID plays the engine.**
 - The engine image reads the DROID with the legacy gesture map (DROID ini unchanged): record / overdub / undo / redo /
   clear, slot record-arm-punch-in and switching, track select / mute / solo, transport and play / stop, with the

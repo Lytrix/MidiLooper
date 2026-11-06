@@ -6,8 +6,10 @@
 //
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
-// 60–67. Edit mode 38, length 35, the extended edit buttons 41–48, bar / 16th steps and the faders are the NOTE_EDIT
-// surface and jam (E9.8b-2, E9.4c): read and ignored here.
+// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: enter / leave on the shown slot, long: leave), NOTELEN
+// 35 (short: start ↔ end, double: delete / create), F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4 CC 2 /
+// CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
+// buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
 // * Presses (`PressDetector`, the legacy `MidiButtonProcessor`): long when held ≥ the long time (on release); else a
 //   tap — a second tap within the double window is a double (at once, or after the triple window when the button has a
 //   triple action), a third within the triple window a triple; a lone tap is a short once the double window passes.
@@ -39,6 +41,7 @@
 
 #include <cstdint>
 
+#include "ContentEngine/EditSurface.h"
 #include "ContentEngine/EngineClock.h"
 
 namespace ContentEngine {
@@ -154,8 +157,19 @@ class Surface {
  public:
   // Channel 16 button notes (MidiConfig) and their detector indices.
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
+  static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
-  enum Button : uint8_t { kRecord, kTrackSwitch, kTransport, kPlayStop, kSlot0, kTrack0 = kSlot0 + 8, kButtons = kTrack0 + 8 };
+  enum Button : uint8_t {
+    kRecord,
+    kTrackSwitch,
+    kTransport,
+    kPlayStop,
+    kLength,
+    kEditMode,
+    kSlot0,
+    kTrack0 = kSlot0 + 8,
+    kButtons = kTrack0 + 8
+  };
   static constexpr uint8_t kTracks = 8, kSlotsPerTrack = 8;
 
   void init(Engine& e, EngineClock& clock) {
@@ -167,6 +181,9 @@ class Surface {
     press_.configure(kTrackSwitch, T{300, 400, 600, 0, true});
     press_.configure(kTransport, T{300, 400, 3000, 50, false});
     press_.configure(kPlayStop, T{400, 400, 3000, 50, false});
+    press_.configure(kLength, T{300, 400, 600, 0, false});
+    press_.configure(kEditMode, T{300, 400, 600, 0, false});
+    edit_.init(e);
     for (uint8_t s = 0; s < kSlotsPerTrack; ++s) press_.configure(kSlot0 + s, T{300, 400, 600, 0, true});
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t& s : slot_) s = 0;
@@ -179,7 +196,18 @@ class Surface {
   /// A control-plane message at `ms`.
   void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
     const uint8_t type = status & 0xF0, channel = status & 0x0F;
-    if (channel != 15 || (type != 0x90 && type != 0x80)) return;  // faders, other planes: E9.8b-2
+    if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14)
+      const int16_t pb = static_cast<int16_t>(static_cast<int32_t>(d1 | (d2 << 7)) - 8192);
+      if (channel == 15) edit_.select(pb, ms);
+      else if (channel == 13) edit_.coarse(pb, ms);
+      return;
+    }
+    if (type == 0xB0 && channel == 14) {  // F3 fine CC 2, F4 pitch CC 3 (channel 15)
+      if (d1 == 2) edit_.fine(d2, ms);
+      else if (d1 == 3) edit_.pitch(d2, ms);
+      return;
+    }
+    if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     const uint8_t b = buttonOf(d1);
     if (b == 0xFF) return;
     if (type == 0x90 && d2 != 0)
@@ -196,7 +224,9 @@ class Surface {
     uint8_t b;
     Press p;
     while (press_.next(ms, b, p)) dispatch(b, p);
+    edit_.service(ms);
   }
+  const EditSurface<Engine>& edit() const { return edit_; }
 
   /// The engine slot a track has selected (its slot button's), for the screen.
   uint8_t selectedSlot(uint8_t t) const { return static_cast<uint8_t>(t * kSlotsPerTrack + slot_[t]); }
@@ -230,6 +260,8 @@ class Surface {
     if (note == kTrackSwitchNote) return kTrackSwitch;
     if (note == kTransportNote) return kTransport;
     if (note == kPlayStopNote) return kPlayStop;
+    if (note == kLengthNote) return kLength;
+    if (note == kEditModeNote) return kEditMode;
     if (note >= kSlotBase && note < kSlotBase + kSlotsPerTrack) return static_cast<uint8_t>(kSlot0 + note - kSlotBase);
     if (note >= kTrackBase && note < kTrackBase + kTracks) return static_cast<uint8_t>(kTrack0 + note - kTrackBase);
     return 0xFF;
@@ -270,7 +302,9 @@ class Surface {
     const uint8_t slot = selectedSlot(t);
     switch (b) {
       case kRecord:
-        if (p == Press::Short) toggleRecord(t);
+        if (p == Press::Double && edit_.editing()) edit_.undo();
+        else if (p == Press::Triple && edit_.editing()) edit_.redo();
+        else if (p == Press::Short) toggleRecord(t);
         else if (p == Press::Double) control().undo(slot, tick_, us_, us());
         else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
         else control().clear(slot, tick_, us_, us());
@@ -289,6 +323,14 @@ class Surface {
           stopClock();
           startClock();
         }
+        return;
+      case kEditMode:
+        if (p == Press::Short && !edit_.active()) enterEdit(t);
+        else if (p == Press::Short || p == Press::Long) edit_.leave();
+        return;  // double: the set browser (a later slice)
+      case kLength:
+        if (p == Press::Short) edit_.toggleLength();
+        else if (p == Press::Double) edit_.deleteOrCreate(nowMs_);
         return;
       case kPlayStop:
         if (p != Press::Short) return;  // double: the set browser, long: the window (later slices)
@@ -326,6 +368,17 @@ class Surface {
       else if (p == Press::Double) control().setMute(tt, !control().muted(tt), us_);
       else if (p == Press::Long) control().setSolo(tt, !control().soloed(tt), us_);
     }
+  }
+
+  /// NOTE_EDIT on the shown slot (the playing or selected one), the window at the playhead.
+  void enterEdit(uint8_t t) {
+    auto& x = transport();
+    const uint8_t slot = x.playing(t) ? x.playingSlot(t) : selectedSlot(t);
+    const ManifestId m = x.contentOf(slot);
+    if (m == kNoManifest || x.writingSlot() == slot) return;
+    const uint32_t loop = e_->manifests().manifest(m).loopLengthTicks;
+    const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
+    edit_.enter(slot, loop, pos, nowMs_);
   }
 
   void toggleRecord(uint8_t t) {
@@ -455,6 +508,7 @@ class Surface {
   Engine* e_ = nullptr;
   EngineClock* clock_ = nullptr;
   PressDetector<kButtons> press_;
+  EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t sent_[128] = {};
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;

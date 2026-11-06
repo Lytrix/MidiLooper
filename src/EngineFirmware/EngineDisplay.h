@@ -11,12 +11,15 @@
 // The legacy layout:
 // * Left column (x 0–21): the 8 tracks — a state letter (P playing, R writing, - idle) and the number; the selected
 //   track bright.
-// * Piano roll (x 22–225): the detailed view (rows 0–31) of the shown slot — up to 4 bars, paged with the playhead —
-//   with beat and bar lines, the notes from the engine's tiles (`EngineRoot::drawRollBand`: span, dense and density
+// * Piano roll (x 22–225): the detailed view (rows 0–31) of the shown slot — the whole loop up to 16 bars, else a
+//   16-bar page following the playhead (legacy `kMaxDetailedWindowBars`) — with bar lines (and beat lines up to 4
+//   bars), the notes from the engine's tiles (`EngineRoot::drawRollBand`: span, dense and density
 //   tiles, the live take's overlay) and the playhead; the overview strip (rows 33–40) of the whole loop from density
 //   tiles, with the detailed view's range and the playhead marked — only when the loop is longer than the detailed view
 //   (a loop the view already shows whole would only repeat as a slab).
 // * Below it: the shown slot, its bars and undo depth. Sidebar (x 226–255): tempo, clock source, transport.
+// * NOTE_EDIT (E9.8b-2, `EditView`): the window frozen at the session's, the selected note highlighted, the bracket as a
+//   dotted line, and the status `EDIT` / `EDIT LEN` with the selected note's pitch and start (or the bracket).
 // Reads the engine only (tiles, transport, history): nothing here composes, allocates or touches pages. Drawing a frame
 // is a non-engine block of the main loop (part of B_max).
 
@@ -35,11 +38,21 @@
 
 namespace EngineFirmware {
 
+/// What NOTE_EDIT shows (from the surface's `EditSurface`).
+struct EditView {
+  bool active = false, ready = false;  // a session gathering / open
+  uint8_t slot = 0xFF;
+  uint32_t first = 0, ticks = 0, bracket = 0;
+  bool note = false, length = false;
+  uint32_t noteTick = 0;
+  uint8_t notePitch = 0;
+};
+
 class EngineDisplay {
  public:
   static constexpr uint32_t kFrameMs = 33;
   static constexpr int16_t kX0 = 22, kX1 = 225, kRollY0 = 0, kRollY1 = 31, kOverY0 = 33, kOverY1 = 40, kSideX = 227;
-  static constexpr uint32_t kViewBars = 4;
+  static constexpr uint32_t kViewBars = 16;
 
   void begin() {
     oled_.begin();
@@ -79,7 +92,8 @@ class EngineDisplay {
   /// Once per main-loop pass: a frame when one is due and the previous transfer is done. Returns the frame's draw time
   /// in µs (0: no frame).
   uint32_t service(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick,
-                   uint32_t nowMs) {
+                   uint32_t nowMs, const EditView& edit = EditView{}) {
+    edit_ = edit;
     oled_.api.pollDisplayTransfer();
     if (nowMs - lastFrameMs_ < kFrameMs || oled_.api.isDisplayTransferActive()) return 0;
     lastFrameMs_ = nowMs;
@@ -166,8 +180,13 @@ class EngineDisplay {
       return;
     }
     const uint32_t bars = (loop + kBar - 1) / kBar;
-    const uint32_t viewTicks = loop < kViewBars * kBar ? loop : kViewBars * kBar;
-    const uint32_t first = (pos / viewTicks) * viewTicks;
+    const bool editing = edit_.active && edit_.slot == slot;
+    uint32_t viewTicks = loop < kViewBars * kBar ? loop : kViewBars * kBar;
+    uint32_t first = (pos / viewTicks) * viewTicks;
+    if (editing && edit_.ready && edit_.ticks != 0) {  // NOTE_EDIT: the session's window, frozen
+      first = edit_.first;
+      viewTicks = edit_.ticks;
+    }
     // Pitch range: the view's bars, from density tiles (as the legacy auto-fit).
     uint8_t lo, hi;
     const uint8_t firstBar = static_cast<uint8_t>(first / kBar);
@@ -177,26 +196,51 @@ class EngineDisplay {
       lo = 60;
       hi = 72;
     }
+    if (editing && edit_.note) {  // the edited note stays in range
+      if (edit_.notePitch < lo) lo = edit_.notePitch;
+      if (edit_.notePitch > hi) hi = edit_.notePitch;
+    }
     if (hi == lo) hi = static_cast<uint8_t>(lo + 1);
-    // Grid: beats dim, bars brighter.
+    // Grid: bar lines, and beat lines dim up to 4 bars.
     const int32_t w = kX1 - kX0;
+    const bool beats = viewTicks <= 4 * kBar;
     for (uint32_t b = 0; b * (kBar / 4) < viewTicks; ++b) {
+      if (!beats && b % 4 != 0) continue;
       const int16_t gx = static_cast<int16_t>(kX0 + static_cast<int32_t>(b * (kBar / 4)) * w / static_cast<int32_t>(viewTicks));
       oled_.gfx.draw_vline(fb(), gx, kRollY0, kRollY1, b % 4 == 0 ? 3 : 1);
     }
-    const RollView v{slot, loop, kBar, first, viewTicks, lo, hi, kX0, kX1, kRollY0, kRollY1};
+    RollView v{slot, loop, kBar, first, viewTicks, lo, hi, kX0, kX1, kRollY0, kRollY1};
+    if (editing && edit_.note) {
+      v.highlightTick = edit_.noteTick;
+      v.highlightPitch = edit_.notePitch;
+    }
     if (writing) e.setOverlayView(loop, first, viewTicks / static_cast<uint32_t>(w + 1) + 1, lo);
     e.drawRollBand(v, fb(), DISPLAY_WIDTH, kRollY0, kRollY1);
     if (playing || writing) {
       const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
       oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
     }
+    if (editing && edit_.ready && edit_.bracket >= first && edit_.bracket < first + viewTicks) {  // the bracket, dotted
+      const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - first) * w / viewTicks);
+      for (int16_t y = kRollY0; y <= kRollY1; y += 2) oled_.gfx.draw_pixel(fb(), bx, y, 10);
+    }
     // Overview: the whole loop, the view's range and the playhead (when the view does not already show it whole).
     if (loop > viewTicks) drawOverview(e, slot, loop, bars, first, viewTicks, pos, playing || writing, lo, hi);
     // Status line.
-    snprintf(line, 40, "S%02u %s %lub u%u", slot, writing ? "REC" : playing ? "PLAY" : "STOP",
-             static_cast<unsigned long>(bars), e.history().undoDepth(slot));
-    text(line, kX0 + 2, 54, 10);
+    if (editing) {
+      if (!edit_.ready)
+        snprintf(line, 40, "S%02u EDIT ...", slot);
+      else if (edit_.note)
+        snprintf(line, 40, "S%02u EDIT%s n%u @%lu", slot, edit_.length ? " LEN" : "", edit_.notePitch,
+                 static_cast<unsigned long>(edit_.noteTick));
+      else
+        snprintf(line, 40, "S%02u EDIT%s @%lu", slot, edit_.length ? " LEN" : "", static_cast<unsigned long>(edit_.bracket));
+      text(line, kX0 + 2, 54, 15);
+    } else {
+      snprintf(line, 40, "S%02u %s %lub u%u", slot, writing ? "REC" : playing ? "PLAY" : "STOP",
+               static_cast<unsigned long>(bars), e.history().undoDepth(slot));
+      text(line, kX0 + 2, 54, 10);
+    }
     snprintf(line, 40, "bar %lu/%lu", static_cast<unsigned long>(pos / kBar + 1), static_cast<unsigned long>(bars));
     text(line, kX0 + 2, 63, 6);
   }
@@ -220,6 +264,7 @@ class EngineDisplay {
   }
 
   SSD1322 oled_;
+  EditView edit_;
   uint8_t shown_[ContentEngine::kTrackCount] = {};
   uint8_t focus_ = 0xFF;
   uint32_t lastFrameMs_ = 0, frames_ = 0, worstUs_ = 0;

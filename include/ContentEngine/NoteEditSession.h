@@ -125,6 +125,20 @@ class NoteEditSession {
     }
     return r;
   }
+  /// A new note (its noteId fresh: the caller's) as one E: step; `at` is its selection index (E9.8b-2).
+  EditResult create(const EditNote& note, uint32_t focus, uint16_t& at) {
+    const EditResult r = writer_->create(note, at);
+    if (r == EditResult::Ok) {
+      focus_[index(writer_->depth())] = focus;
+      stepTaken();
+    }
+    return r;
+  }
+  /// The E: level (an edit surface collapses a fader gesture into its one step while the level is unchanged).
+  uint8_t depth() const { return writer_->depth(); }
+  /// The session's notes as they are now (edits applied, created notes included): `size` of them.
+  uint16_t size() const { return writer_->editing() ? writer_->count() : count_; }
+  const EditNote& current(uint16_t i) const { return writer_->editing() ? writer_->note(i) : notes_[i]; }
   EditResult undo(uint32_t& focus) {
     const EditResult r = writer_->undo();
     if (r == EditResult::Ok) {

@@ -1772,3 +1772,35 @@ punch-in, record button overdub / undo / clear, track select / mute / solo / nex
 (changes only), no allocation; mutation-checked. Device (image `bd7560ed…`): driven as the DROID over USB (a slot press
 started the clock and played slot 24, 82 LED messages, the transport button stopped it), then confirmed by the owner on
 the DROID.
+
+## E9.8b-2 — core NOTE_EDIT from the DROID (owner 2026-11-06: core NOTE_EDIT, matching legacy; as built)
+
+`include/ContentEngine/EditSurface.h`, owned by `Surface`:
+- **Session:** edit mode 38 short opens NOTE_EDIT on the shown slot over the detailed window as it is (the whole loop up
+  to 16 bars, else the 16-bar page at the playhead), frozen while editing as legacy; a window with more notes than the
+  512-note selection is halved around the playhead (at least a bar). The bracket starts at the playhead and selects the
+  note in its 16th, else the closest. Short again or long leaves, keeping the edits as one U: step.
+- **Faders** (legacy `ControlSurfaceManager`, motor feedback off as its default): F1 (pitch bend channel 16) the 16th
+  under the fader within the window, then the note stacked in it by the position inside the step; F2 (pitch bend
+  channel 14) the start in 16ths across the loop keeping its offset (movement ≥ 150 or after 1 s at rest), or in length
+  mode the end across the loop; F3 (CC 2 channel 15) the start as the reference 16th + (value − 64), or the end anchor ±
+  48; F4 (CC 3 channel 15) the pitch. An end stays at least a 16th after the start. The geometry faders wait 750 ms
+  after a selection unless F1 moved. One gesture of one fader on one note is one E: step (a move within 300 ms replaces
+  the gesture's step, as legacy collapses contiguous updates).
+- **NOTELEN 35:** short = start ↔ end editing (the bracket and reference 16th follow); double = delete the selected
+  note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts within 24 ticks. The record button's
+  double / triple are the session's undo / redo while editing, restoring the selection (undo to the session start keeps
+  the current one).
+- **Engine:** `EditWriter::create` adds a note to the session as one deleted at its start, brought to life by one E:
+  step (undo returns it to deleted, nothing written); `NoteEditSession::create` / `current` / `size` / `depth`;
+  `EngineRoot::noteIds` for its fresh id.
+- **Screen:** the detailed window is now the legacy 16 bars (beat lines up to 4 bars); in NOTE_EDIT the frozen window,
+  the selected note highlighted, the bracket dotted, and the `EDIT` / `EDIT LEN` status.
+
+Tests: `test_content_engine_edit_surface`: entry and F1 stacked selection, geometry faders heard with one step a
+gesture and undo / redo, the grace period, length mode with the 16th minimum and the fine anchor, delete / create /
+the 24-tick refusal and leave keeping one U: step, a dense window halved, no allocation (8 tests; 15 mutations caught,
+1 equivalent: delete clearing the selection — a deleted note already reads as unselected); `test_content_engine_note_edit`
+(+1): a created note heard, undone, redone and kept. Device (image `734df605…`): driven as the DROID over USB (entry with
+slot 24's 16-bar window, F1 select, F4 pitch, undo, leave; worst frame 927 µs), then confirmed by the owner on the
+DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, motor feedback (E9.8b-3).

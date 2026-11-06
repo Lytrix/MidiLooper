@@ -163,6 +163,7 @@ class EngineRoot {
   using Transport = ProductionTransport;
   using Control = ProductionControl;
   using Tiles = ProductionTiles;
+  using NoteEdit = ProductionNoteEdit;
   struct Stats {
     uint32_t sweepsStarted;
     uint32_t sweepsDone;   // ended Done (a usable set) — Superseded / Refused are not counted here
@@ -364,6 +365,7 @@ class EngineRoot {
   ProductionOutput& output() { return r_->output; }
   ProductionControl& control() { return r_->control; }
   ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
+  NoteIdSource& noteIds() { return r_->ids; }  // a created note's fresh id (ids are never reused)
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }
   const ProductionPool& pool() const { return p_->pool; }
   const ProductionRuns& runs() const { return r_->runs; }

@@ -17,6 +17,9 @@
 //   a new manifest, and makes it the session's one History state (the previous one is released to reclaim). With no
 //   note edited the session state is removed and the slot plays its start. A newer action supersedes a running
 //   rebuild (its reservation is forgiven, its run reclaimed).
+// * Create (E9.8b-2, the legacy NOTELEN double press on an empty bracket): `create` adds a note to the session as one
+//   that was deleted at its start, and one E: step brings it to life — undo returns it to deleted (nothing written; its
+//   hide row hides nothing), redo brings it back. Its noteId is the caller's (fresh).
 // * `leave` keeps the current state as one U: step (after a running rebuild completes); `abandon` returns to the start.
 // No allocation; `init()` writes every field.
 
@@ -161,6 +164,27 @@ class EditWriter {
     return EditResult::Ok;
   }
 
+  /// A new note as one E: step (see the header); `index` is its selection index. DeniedSelection: the selection is
+  /// full or the note invalid; nothing changes when the step is refused.
+  EditResult create(const EditNote& note, uint16_t& index) {
+    if (!open_ || leaving_) return EditResult::NotEditing;
+    if (count_ == MaxSelection || !valid(note) || note.tick >= loop_) return EditResult::DeniedSelection;
+    EditNote absent = note;
+    absent.deleted = 1;
+    orig_[count_] = cur_[count_] = absent;
+    EditNote live = note;
+    live.deleted = 0;
+    const EditChange c{count_, live};
+    ++count_;
+    const EditResult r = apply(&c, 1);
+    if (r != EditResult::Ok) {
+      --count_;
+      return r;
+    }
+    index = c.index;
+    return r;
+  }
+
   /// O(changes of the step).
   EditResult undo() {
     if (!open_ || leaving_) return EditResult::NotEditing;
@@ -244,6 +268,7 @@ class EditWriter {
   }
 
   bool editing() const { return open_; }
+  uint16_t count() const { return count_; }  // the selection, created notes included
   bool building() const { return buildRun_ != kNoRun; }
   uint8_t depth() const { return cursor_; }  // the E: level
   uint8_t redoDepth() const { return static_cast<uint8_t>(stepCount_ - cursor_); }
