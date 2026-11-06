@@ -256,6 +256,26 @@ void test_more_than_512_notes_is_refused_by_name() {
   TEST_ASSERT_EQUAL(EditResult::DeniedSelection, gE.noteEdit().enter());
 }
 
+// A note released on the tick it began (NoteOn and NoteOff on one tick, a press under a tick long): the gather ends
+// (owner 2026-11-06: entering NOTE_EDIT hung the device — its NoteOff lookup found length 0 and never moved on); the
+// zero-length note is not selectable, the others are.
+void test_a_note_released_on_its_start_tick_does_not_stall_the_gather() {
+  gE.control().selectTrack(0);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(0, 0, 0));
+  const uint32_t s = kBar, kNever = 0xFFFFFFFFu;
+  // On and off on one tick: the NoteOn's entry first, then the NoteOff's (`run` takes each entry's off before its on).
+  run(s + kLoop - 50, {{s + 100, s + 300, 60}, {s + 500, kNever, 70}, {kNever, s + 500, 70}, {s + 900, s + 950, 62}});
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueStop(0, gClock));
+  run(s + kLoop + kLoop);
+  TEST_ASSERT_EQUAL(G::Running, gE.noteEdit().request({0, 0, kLoop, 0, 127}, 0));
+  run(gClock + 20);
+  TEST_ASSERT_EQUAL(G::Done, gE.noteEdit().status());
+  TEST_ASSERT_EQUAL_UINT16(2, gE.noteEdit().count());
+  TEST_ASSERT_NOT_NULL(find(60));
+  TEST_ASSERT_NOT_NULL(find(62));
+  TEST_ASSERT_NULL(find(70));
+}
+
 void test_no_heap() {
   takeAndOverdub();
   gTrap = true;
@@ -283,6 +303,7 @@ int main(int, char**) {
   RUN_TEST(test_delete_and_abandon);
   RUN_TEST(test_a_created_note_is_heard_and_undoable);
   RUN_TEST(test_more_than_512_notes_is_refused_by_name);
+  RUN_TEST(test_a_note_released_on_its_start_tick_does_not_stall_the_gather);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

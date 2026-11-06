@@ -259,6 +259,7 @@ class NoteEditSession {
         --units;
         continue;
       }
+      bool off = false;
       for (; units > 0 && row_ < rows; --units, ++row_) {
         const PassEvent& p = runs_->rowAt(r, row_, *pool_);
         if (p.noteId != n.noteId) continue;
@@ -267,13 +268,17 @@ class NoteEditSession {
           onFound_ = true;
         } else if (onFound_ && (type == 0x80 || (type == 0x90 && p.data2 == 0))) {
           n.length = p.tick - n.tick;
+          off = true;
           break;
         }
       }
-      if (row_ < rows && n.length != 0) {
+      if (off && n.length != 0) {
         ++look_;
         row_ = kNoRow;
-      } else if (row_ >= rows) {  // no stored NoteOff (cannot happen for a sealed take): not selectable
+      } else if (off || row_ >= rows) {
+        // No stored NoteOff (cannot happen for a sealed take), or one on the NoteOn's own tick (a press under a tick
+        // long; owner 2026-11-06: the lookup found length 0 and never moved on, which hung entering NOTE_EDIT): not
+        // selectable (an edited note is at least a tick long).
         notes_[look_] = notes_[count_ - 1];
         noteRuns_[look_] = noteRuns_[count_ - 1];
         --count_;

@@ -2095,3 +2095,11 @@ no dots across a selection's settle and write, sampled after every grain (mutati
 clean; on the external clock, 0.3 s after `!ENGINE select` the line was drawn on each of four switches. Owner
 confirmed the screen as it stands (2026-11-06). LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
+
+**Entering NOTE_EDIT hung the device** (owner 2026-11-06). Reproduced over USB MIDI (edit mode 38 on channel 16 from
+the host) with a temporary hang probe (an `IntervalTimer` printing the main-loop stage after 1 s stuck; not kept): the
+loop stopped in a job grain. `NoteEditSession::lookupGrain` finds each gathered note's NoteOff; a note whose NoteOff is
+on its NoteOn's tick (a press under a tick long) gave length 0, and the lookup neither advanced nor spent its units —
+one grain looped forever. Such a note is now not selectable, like one with no stored NoteOff (an edited note is at
+least a tick long). `test_content_engine_note_edit` +1 (hung before the fix; mutations 2 / 2). Device `a69d7221…`:
+boot clean; edit mode enters and shows START / NOTE / VELOCITY / LENGTH, and leaves.
