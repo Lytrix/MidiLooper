@@ -2067,11 +2067,12 @@ clean; owner confirmed (2026-11-06).
 **The overview's range** (owner 2026-11-06, from a screen capture — `!ENGINE fbdump`, the legacy `#FB` format for
 `scripts/render_display_dump.py`): the view's range marker (brightness 5) sat under a strip drawn at 6 that a busy loop
 fills almost solid, so neither read. A first try (blocks per bar and pitch row by note count, the bars outside the
-view at 2) read as stacked containers, and 2 did not show on the panel (owner). `drawOverviewBand` now draws a column
-per beat, as high as the pitches sounding in it — the beat's 8 raster columns of the bar's span tile OR-ed (the shown
-slot's tiles cover its whole loop), else the density tile's pitches for each beat — scaled so the busiest beat fills
-the strip (rounded up: a sounding beat is at least a row). The detailed view's bars are drawn at 10, the others at 4;
-a bar 4 px or wider leaves its last column dark (a 1-px last beat is that gap). Under the strip a bright bar (13)
-marks the view's range on a dim one (2). `test_content_engine_piano_roll` +1 (mutations 9 / 9). Device `326f9ccb…`:
-boot clean; the capture shows the 31-bar loop's beats, the 16 viewed bars apart from the rest. LOOP_EDIT's fields
+view at 2) read as stacked containers, and 2 did not show on the panel; a second (a column per beat, as high as its
+pitches) was too crowded (owner). Like the page blocks of hardware sequencers, `drawOverviewBand` now draws a
+full-height cell per beat whose brightness is the pitches sounding in it — the beat's 8 raster columns of the bar's
+span tile OR-ed (the shown slot's tiles cover its whole loop), else the density tile's pitches for each beat — from 2
+(one pitch) to 14 (the loop's busiest beat), rounded; neither the darkest nor the brightest level (owner); a silent
+beat stays dark. A bar 4 px or wider leaves its last column dark (a 1-px last beat is that gap). The view's range is
+the bright bar under the strip (13, on a dim 2). `test_content_engine_piano_roll` +1 (mutations 8 / 8). Device
+`a4aec17d…`: boot clean; the capture shows the 31-bar loop's beats by brightness. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
