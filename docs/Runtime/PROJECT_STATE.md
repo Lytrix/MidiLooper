@@ -1,3 +1,10 @@
+**2026-11-06 — Fixed-memory engine: E9.8f external-clock stalls fixed.**
+- The stalls and missed notes while recording on Ableton's USB clock were not the engine's loop (every stage stayed
+  under 2 ms) nor the feedback loop alone: Ableton's USB stream stalled while the Teensy sent nothing and resumed when
+  the clock timeout restarted output. While following an external clock the engine now sends an Active Sensing byte
+  after 20 ms of USB silence: no gap in a 4-minute run, owner "rock stable". Saves write one sector a grain; a save
+  still holds the loop ~30 ms on file open / close / rename (open).
+
 **2026-11-06 — Fixed-memory engine: device fixes from the owner's playing.**
 - No more hangs (playback is no longer sent to the DROID's USB port), Record arms first as legacy, the track letters
   and pulse match legacy, notes show live while recording (a first take's view grows with it), and the external clock

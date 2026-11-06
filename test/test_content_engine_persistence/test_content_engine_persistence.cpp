@@ -50,12 +50,14 @@ struct FakeCard : CardIo {
   uint32_t readAt = 0;
   uint32_t failWriteAfter = 0xFFFFFFFFu;  // bytes, then every write fails
   uint32_t writes = 0;                   // any mutation of the card
+  uint32_t largestWrite = 0;             // bytes, the largest single `write`
 
   void reset() {
     for (auto& f : files) f.used = false;
     dirCount = 0;
     reading = writing = -1;
     failWriteAfter = 0xFFFFFFFFu;
+    largestWrite = 0;
     writes = 0;
   }
   int find(const char* p) const {
@@ -102,6 +104,7 @@ struct FakeCard : CardIo {
     if (writing < 0 || files[writing].size + n > kBytes || files[writing].size + n > failWriteAfter) return false;
     std::memcpy(files[writing].data + files[writing].size, d, n);
     files[writing].size += n;
+    if (n > largestWrite) largestWrite = n;
     return true;
   }
   bool closeWrite() override {
@@ -223,10 +226,16 @@ void test_a_second_engine_boots_from_the_card() {
   record(gA, 1, 9, 72);
   TEST_ASSERT_EQUAL(R::Ok, gA.control().startOverdub(0, gClock));
   const uint32_t o = gClock;
-  run(gA, o + 4 * kBar - 100, {{o + 600, o + 700, 64}});
+  std::vector<Live> notes = {{o + 600, o + 700, 64}};
+  for (uint8_t i = 0; i < 48; ++i)  // enough content that slot 0's file spans several sectors
+    notes.push_back({o + 100 + i * 60u, o + 130 + i * 60u, static_cast<uint8_t>(40 + i)});
+  run(gA, o + 4 * kBar - 100, notes);
   TEST_ASSERT_EQUAL(R::Ok, gA.control().stopNow(gClock, us(gClock), kUsPerTick));
   run(gA, gClock + kSettleTicks + 100);
   TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0) && gA.persistence().savedCurrent(9));  // each saved when settled
+  // A save grain writes at most one sector (a 16 KiB write held the device's loop ~31 ms); the slot took several.
+  TEST_ASSERT_TRUE(gCard.largestWrite <= 512);
+  TEST_ASSERT_TRUE(gCard.files[gCard.find("/MidiLooper/engine/slot_00.mle")].size > 512);
   const uint32_t writes = gCard.writes;
   // Boot: a fresh engine on the same card.
   TEST_ASSERT_TRUE(gB.init(gPsramB, gRam2B, 2000));

@@ -60,6 +60,9 @@ class Persistence {
   static constexpr uint32_t kSettleUs = 2000000;  // 2 s without a change
   static constexpr uint8_t kStateBytes = 9;        // the selected track, then each track's selected slot
   static constexpr uint32_t kChunk = 16384;
+  // A save grain writes one SD sector: a 16 KiB write held the main loop ~31 ms on the device (owner 2026-11-06:
+  // audible during playback). The file is the same whatever the chunk (the CRC runs across chunks).
+  static constexpr uint32_t kSaveChunk = 512;
   using Reservations = RowReservations<Pool, Runs>;
 
   struct Sink {
@@ -70,7 +73,7 @@ class Persistence {
     Card* card;
     bool read(uint8_t* d, uint32_t n) { return card->read(d, n); }
   };
-  using Save = SaveJob<Pool, Runs, Manifests, HistoryT, Sink, kChunk>;
+  using Save = SaveJob<Pool, Runs, Manifests, HistoryT, Sink, kSaveChunk>;
   using Load = LoadJob<Pool, Runs, Manifests, HistoryT, Source, kChunk>;
 
   struct Stats {

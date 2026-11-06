@@ -62,6 +62,18 @@ constexpr uint8_t kGrainsPerPass = 8;     // the scheduler's own slack check dec
 constexpr uint32_t kDefaultTempo = 12000;  // 120 BPM until a tempo is set or an external clock arrives
 
 uint32_t gLastTick = 0;
+enum Stage : uint32_t { kInput = 1, kSerial, kTicks, kJobs, kGrains, kSend, kSurface, kLeds, kScreen, kIdle };
+// Diagnostics: the worst time each main-loop stage took since the last `!ENGINE take` (the time between two crumbs is
+// the earlier stage's).
+uint32_t gStageMaxUs[kIdle + 1] = {};
+uint32_t gStageAtUs = 0, gStage = 0;
+// USB heartbeat: while following an external clock, an Active Sensing byte goes to the USB host whenever the port has
+// been quiet for `kHeartbeatUs`. Without it, Ableton's USB stream (clock and notes) stalled while the Teensy sent
+// nothing — a late pulse paused the ticks, so the port went quiet — until the clock timeout resumed output: every gap
+// ended one pulse after the timeout (500 ms → 518 ms gaps, 250 ms → 268 ms). With it: no gap in a 4-minute
+// record / overdub run (owner 2026-11-06, "rock stable").
+constexpr uint32_t kHeartbeatUs = 20000;
+uint32_t gLastUsbTxUs = 0, gHeartbeats = 0;
 uint32_t gPassMaxUs = 0, gPulses = 0, gTimeouts = 0;  // diagnostics (`!ENGINE take`)
 // Clock-gap diagnostics: counters since the last pulse, snapshotted when two pulses are > 200 ms apart.
 uint32_t gPasses = 0, gUsbIn = 0, gUsbOut = 0, gUsbOutPassMax = 0, gLastPulseUs = 0;
@@ -91,7 +103,10 @@ void transmitAll(uint32_t nowUs) {
   n = gEngine.transmit(kPortUsbDevice, nowUs, buf, kSendPerPass);
   for (uint8_t i = 0; i < n; ++i)
     usbMIDI.send(buf[i].status & 0xF0, buf[i].data1, buf[i].data2, (buf[i].status & 0x0F) + 1, 0);
-  if (n != 0) usbMIDI.send_now();
+  if (n != 0) {
+    usbMIDI.send_now();
+    gLastUsbTxUs = micros();
+  }
   gUsbOut += n;
   gOutThisPass += n;
   (void)gEngine.transmit(kPortUsbHost, nowUs, buf, kSendPerPass);  // drained: playback never goes to the DROID
@@ -272,6 +287,18 @@ void command(char* line, uint32_t nowUs) {
     const ManifestId m = w == ProductionTransport::kNoSlot ? kNoManifest : x.contentOf(w);
     const ManifestId h = w == ProductionTransport::kNoSlot ? kNoManifest : gEngine.history().current(w);
     Serial.printf("#ENGINE,clock,timeout_age_us=%lu\n", static_cast<unsigned long>(gClock.timeoutAgeUs()));
+    // Worst stage times (µs): input, serial, ticks, jobs, grains, send, surface, leds, screen; saves so far.
+    Serial.printf("#ENGINE,stages,input=%lu,serial=%lu,ticks=%lu,jobs=%lu,grains=%lu,send=%lu,surface=%lu,leds=%lu,"
+                  "screen=%lu,saves=%lu,save_failed=%lu,heartbeats=%lu\n",
+                  static_cast<unsigned long>(gStageMaxUs[kInput]), static_cast<unsigned long>(gStageMaxUs[kSerial]),
+                  static_cast<unsigned long>(gStageMaxUs[kTicks]), static_cast<unsigned long>(gStageMaxUs[kJobs]),
+                  static_cast<unsigned long>(gStageMaxUs[kGrains]), static_cast<unsigned long>(gStageMaxUs[kSend]),
+                  static_cast<unsigned long>(gStageMaxUs[kSurface]), static_cast<unsigned long>(gStageMaxUs[kLeds]),
+                  static_cast<unsigned long>(gStageMaxUs[kScreen]),
+                  static_cast<unsigned long>(gEngine.persistence().stats().saves),
+                  static_cast<unsigned long>(gEngine.persistence().stats().saveFailed),
+                  static_cast<unsigned long>(gHeartbeats));
+    for (uint32_t& m : gStageMaxUs) m = 0;
     Serial.printf("#ENGINE,take,pass_max_us=%lu,pulses=%lu,timeouts=%lu,running=%u,external=%u,us_per_tick=%lu,tick=%lu\n",
                   static_cast<unsigned long>(gPassMaxUs), static_cast<unsigned long>(gPulses),
                   static_cast<unsigned long>(gTimeouts), gClock.running(), gClock.external(),
@@ -355,15 +382,19 @@ void sendLed(uint8_t note, uint8_t velocity) {
   sendDin(status, note, velocity);
   usbMIDI.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1, 0);
   usbMIDI.send_now();
+  gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
   gHostMidi.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
 }
 
 // ---- Breadcrumbs -----------------------------------------------------------------------------------------------------
-enum Stage : uint32_t { kInput = 1, kSerial, kTicks, kJobs, kGrains, kSend, kSurface, kLeds, kScreen, kIdle };
 DMAMEM uint32_t gPrevCrumbs[8];
 void crumb(uint32_t stage) {
+  const uint32_t t = micros();
+  if (gStage != 0 && t - gStageAtUs > gStageMaxUs[gStage]) gStageMaxUs[gStage] = t - gStageAtUs;
+  gStage = stage;
+  gStageAtUs = t;
   CrashReport.breadcrumb(1, stage);
   CrashReport.breadcrumb(2, gLastTick);
 }
@@ -460,6 +491,12 @@ void loop() {
   }
   crumb(kSend);
   transmitAll(micros());
+  if (gClock.external() && micros() - gLastUsbTxUs >= kHeartbeatUs) {
+    usbMIDI.sendRealTime(usbMIDI.ActiveSensing);
+    usbMIDI.send_now();
+    gLastUsbTxUs = micros();
+    ++gHeartbeats;
+  }
   if (!gBootReported && gCard.ready() && !gEngine.persistence().booting()) {
     gBootReported = true;
     reportBootLoad();
