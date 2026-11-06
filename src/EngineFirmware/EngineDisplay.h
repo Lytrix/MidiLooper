@@ -14,11 +14,11 @@
 //   While it does not, the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A armed, P playing,
 //   S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track's solo
 //   — the selected track shows its real state); the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
-// * Overview strip (x 22–255, rows 0–3, two dark rows above the roll; owner 2026-11-06) when the loop is longer than
+// * Overview strip (x 22–255, rows 0–2, two dark rows above the roll; owner 2026-11-06) when the loop is longer than
 //   the view: a full-height cell per beat as bright as the pitches sounding in it (2–8), dimmed (2–5) outside the
 //   view's bars.
-// * Piano roll (x 22–255, rows 6–46): the shown slot — the whole loop up to 16 bars, else a 16-bar page following the
-//   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
+// * Piano roll (x 22–255, rows 5–45; four dark rows under it, no rule before the status band): the shown slot — the
+//   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
 //   (`EngineRoot::drawRollBand`) and the playhead.
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
@@ -69,10 +69,10 @@ struct EditView {
 class EngineDisplay {
  public:
   static constexpr uint32_t kFrameMs = 33;
-  static constexpr int16_t kX0 = 22, kX1 = 255, kOverY0 = 0, kOverY1 = 3, kRollY0 = 6, kRollY1 = 46;
-  static constexpr int16_t kSepY = 48, kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
+  static constexpr int16_t kX0 = 22, kX1 = 255, kOverY0 = 0, kOverY1 = 2, kRollY0 = 5, kRollY1 = 45;
+  static constexpr int16_t kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
   static constexpr uint32_t kViewBars = 16;
-  static constexpr uint8_t kRule = 3;  // the roll's bar lines, the status band's rule and its cell dividers (owner)
+  static constexpr uint8_t kRule = 3;  // the roll's bar lines and the status band's cell dividers (owner)
 
   void begin() {
     oled_.begin();
@@ -236,7 +236,6 @@ class EngineDisplay {
       }
       info = drawSlot(e, sel, slot, lastTick);
     }
-    hline(kX0, kX1, kSepY, kRule);
     drawStatus(e, clock, sel, info, lastTick, nowMs);
   }
 

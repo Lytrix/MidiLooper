@@ -2082,5 +2082,7 @@ busiest beat in view is 8 (from 9). Device `aa8d1537…`: boot clean. Owner (a t
 still crowded the strip; the beats now run on without the dark column. Device `9ca63d9a…`: boot clean. Owner: the
 strip moved to the top (rows 0–3), two dark rows above the roll (rows 6–46). Device `392b701d…`: boot clean. Owner:
 the rule between the roll and the status band, and the band's cell dividers, are drawn at the roll's bar-line
-brightness (3, from 2) so they read on the panel. Device `3e978100…`: boot clean. LOOP_EDIT's fields
+brightness (3, from 2) so they read on the panel. Device `3e978100…`: boot clean. Owner (still cramped): the strip is
+3 rows (0–2), the roll rows 5–45, and the rule is gone — four dark rows separate the roll from the band. Device
+`d14a2532…`: boot clean. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
