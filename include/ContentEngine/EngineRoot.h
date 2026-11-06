@@ -160,6 +160,9 @@ static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit 
 class EngineRoot {
  public:
   enum class Region : uint8_t { Psram, Ram2 };
+  using Transport = ProductionTransport;
+  using Control = ProductionControl;
+  using Tiles = ProductionTiles;
   struct Stats {
     uint32_t sweepsStarted;
     uint32_t sweepsDone;   // ended Done (a usable set) — Superseded / Refused are not counted here

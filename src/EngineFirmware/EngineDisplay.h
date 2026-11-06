@@ -150,7 +150,7 @@ class EngineDisplay {
   void drawSlot(ContentEngine::EngineRoot& e, uint8_t track, uint8_t slot, uint32_t lastTick, char* line) {
     auto& x = e.transport();
     const bool writing = x.writingSlot() == slot;
-    const ContentEngine::ManifestId m = e.history().current(slot);
+    const ContentEngine::ManifestId m = x.contentOf(slot);  // a cleared slot (an empty state) shows as empty
     uint32_t loop = m == ContentEngine::kNoManifest ? 0 : e.manifests().manifest(m).loopLengthTicks;
     uint32_t pos = 0;
     const bool playing = x.playing(track) && x.playingSlot(track) == slot;

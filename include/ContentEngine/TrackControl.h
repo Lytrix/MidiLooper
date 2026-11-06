@@ -194,6 +194,23 @@ class TrackControl {
     }
   }
 
+  /// E9.8b (the surface): the track stops at once, its queued gestures dropped.
+  void stopTrack(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    cancelQueued(t);
+    if (!x_->playing(t)) return;
+    Emit buf[T];
+    out_->route(buf, x_->stopTrack(t, clock, buf, T), nowUs, usPerTick);
+  }
+  /// E9.8b: the track's queued Record starts now (a second press on an armed slot punches in), as at its boundary —
+  /// the one writer still waits. DeniedSlot: none queued.
+  Result punchIn(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    if (pending_[t].recordSlot == kNone) return Result::DeniedSlot;
+    startRecord(t, clock, nowUs, usPerTick);
+    return x_->writingTrack() == t ? Result::Ok : Result::Busy;
+  }
+  uint8_t queuedRecordSlot(uint8_t t) const { return pending_[t].recordSlot; }
+  uint8_t queuedSwitchSlot(uint8_t t) const { return pending_[t].switchSlot; }
+  bool soloed(uint8_t t) const { return soloed_[t]; }
   bool recordQueued(uint8_t t) const { return pending_[t].recordSlot != kNone; }
   bool stopQueued(uint8_t t) const { return pending_[t].stop; }
   bool switchQueued(uint8_t t) const { return pending_[t].switchSlot != kNone; }

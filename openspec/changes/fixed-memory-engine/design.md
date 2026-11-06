@@ -1742,3 +1742,33 @@ never races it); the first frame after `begin` goes over blocking SPI — measur
 when the first frame was a DMA one and drew once a blocking frame had been sent. The screen only reads the engine
 (tiles, transport, history). Device (image `ada72d97…`): the owner confirmed the screen; worst frame draw 733 µs (slot
 24, 641 notes), inside the main loop's 2 ms block.
+
+## E9.8b-1 — performance controls (owner 2026-11-06: performance first, the legacy gesture map kept; as built)
+
+`include/ContentEngine/Surface.h` (host-tested on the production root), wired in `EngineMain.cpp`:
+- **Input:** the DROID control plane, channels 13–16 on any port, goes to the surface and is never recorded nor thru;
+  buttons are channel-16 notes (`MidiConfig`). Faders and the NOTE_EDIT buttons (35, 38, 41–48), bar / 16th steps:
+  E9.8b-2 / E9.4c.
+- **Presses** (`PressDetector`, the legacy `MidiButtonProcessor` timing): long on release when held ≥ the long time;
+  double / triple tap windows (a double waits for the triple window only on buttons with a triple action); a lone tap
+  is a short once the double window passes; per-button debounce; a release without its press dropped. Per-button
+  timing as the legacy table (transport 39: debounce 50, long 3 s; play / stop 40: double window 400).
+- **Gestures** as `MidiButtonActions`, on the selected track and its selected slot: record 36 (toggle / undo / redo /
+  clear), slots 50–57 (record-or-play toggle with arm and punch-in, the playing slot toggling mute, a filled slot from
+  the loop end; overdub / redo / clear), track switch 37 (next / undo / redo / mute), transport 39 (start-stop / back to
+  the loop start), play / stop 40, tracks 60–67 (select / mute / solo). A take ends as the engine decided at E9.4 (a
+  Record at the bar, an overdub at once). A gesture on a stopped transport starts the internal clock and acts on its
+  first tick, so a Record or a play starts on that bar line. `TrackControl` gained `stopTrack`, `punchIn` and the
+  queued-slot getters.
+- **LEDs** (channel 15 notes, the legacy velocities): tracks, slots, transport, bars, the current bar's 16th content and
+  the position, for the selected track's shown slot; only changes are sent, one message a millisecond (the DROID host's
+  gap), on every port as the legacy firmware.
+- Emptiness is `SlotTransport::contentOf`: a cleared slot (Clear is undoable: an empty state) is empty for the surface,
+  its LEDs and the screen.
+- The legacy GPIO buttons were never enabled in any legacy build (no `ENABLE_GPIO_BUTTONS`): not wired.
+
+Tests: `test_content_engine_surface` (9): press timing, the control-plane filter, slot record / play / switch / mute,
+punch-in, record button overdub / undo / clear, track select / mute / solo / next, transport and play / stop, LEDs
+(changes only), no allocation; mutation-checked. Device (image `bd7560ed…`): driven as the DROID over USB (a slot press
+started the clock and played slot 24, 82 LED messages, the transport button stopped it), then confirmed by the owner on
+the DROID.

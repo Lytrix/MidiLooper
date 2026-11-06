@@ -11,8 +11,11 @@
 // 2. Every tick the clock has due, in order (`EngineClock::due`, at most `kCatchUp` a pass): `EngineRoot::clockTick`.
 // 3. The jobs (`submitJobs`) and worker grains while the scheduler grants them.
 // 4. Each port's due messages to the wire.
-// 5. Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) until the surface is wired (E9.8b).
-// 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done.
+// 5. The control surface (E9.8b-1, `Surface`): the DROID control plane (channels 13–16, never recorded nor thru) as
+//    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
+//    a millisecond (the DROID host's gap). Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
+// 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
+//    its selected slot.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
@@ -28,6 +31,7 @@
 
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
+#include "ContentEngine/Surface.h"
 #include "EngineFirmware/EngineDisplay.h"
 #include "EngineFirmware/SdCardIo.h"
 
@@ -41,6 +45,9 @@ EngineRoot gEngine;
 EngineClock gClock;
 EngineFirmware::SdCardIo gCard;
 EngineFirmware::EngineDisplay gDisplay;
+Surface<EngineRoot> gSurface;
+uint32_t gLastLedUs = 0;
+constexpr uint32_t kLedGapUs = 1000;  // the DROID USB host drops packets closer than ~1 ms (legacy MIN_PACKET_GAP)
 USBHost gHost;
 MIDIDevice_BigBuffer gHostMidi(gHost);
 
@@ -99,6 +106,10 @@ void realtime(uint8_t status, uint32_t nowUs) {
 }
 
 void channelMessage(uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
+  if (Surface<EngineRoot>::controlPlane(status)) {  // the DROID's: never recorded, never thru
+    gSurface.input(status, d1, d2, millis());
+    return;
+  }
   const uint8_t type = status & 0xF0;
   if (type == 0x90)
     gEngine.inputNoteOn(gLastTick, status, d1, d2, nowUs, gClock.usPerTick());
@@ -203,12 +214,12 @@ void command(char* line, uint32_t nowUs) {
     c.selectTrack(static_cast<uint8_t>(a));
     report(verb, 0);
   } else if (std::strcmp(verb, "launch") == 0) {  // launch T S: the track switches to the slot at its loop end
-    gDisplay.show(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
+    if (b / 8 == a) gSurface.selectSlot(static_cast<uint8_t>(a), static_cast<uint8_t>(b % 8));
     report(verb, static_cast<uint8_t>(c.queueSwitch(static_cast<uint8_t>(a), static_cast<uint8_t>(b),
                                                     ProductionControl::Quantize::NextGrid, gLastTick)));
   } else if (std::strcmp(verb, "record") == 0) {  // record T S: from the next bar
     c.selectTrack(static_cast<uint8_t>(a));
-    gDisplay.show(static_cast<uint8_t>(a), static_cast<uint8_t>(b));
+    if (b / 8 == a) gSurface.selectSlot(static_cast<uint8_t>(a), static_cast<uint8_t>(b % 8));
     report(verb, static_cast<uint8_t>(c.queueRecord(static_cast<uint8_t>(a), static_cast<uint8_t>(b), gLastTick)));
   } else if (std::strcmp(verb, "overdub") == 0) {
     c.selectTrack(static_cast<uint8_t>(a));
@@ -247,14 +258,22 @@ void pollSerial(uint32_t nowUs) {
   }
 }
 
-// After boot load: each track shows its first slot with content (slots T x 8 .. T x 8 + 7).
-void showFirstSlots() {
+// After boot load: each track selects its first slot with content (slots T x 8 .. T x 8 + 7).
+void selectFirstSlots() {
   for (uint8_t t = 0; t < kTrackCount; ++t)
     for (uint8_t s = 0; s < 8; ++s)
-      if (gEngine.history().current(static_cast<uint8_t>(t * 8 + s)) != kNoManifest) {
-        gDisplay.show(t, static_cast<uint8_t>(t * 8 + s));
+      if (gEngine.transport().contentOf(static_cast<uint8_t>(t * 8 + s)) != kNoManifest) {
+        gSurface.selectSlot(t, s);
         break;
       }
+}
+
+void sendLed(uint8_t note, uint8_t velocity) {
+  const uint8_t status = static_cast<uint8_t>((velocity != 0 ? 0x90 : 0x80) | Surface<EngineRoot>::kLedChannel);
+  sendDin(status, note, velocity);
+  usbMIDI.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1, 0);
+  usbMIDI.send_now();
+  gHostMidi.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
 }
 
 void reportBootLoad() {
@@ -285,6 +304,7 @@ void setup() {
                   static_cast<unsigned>(bytes));
   });
   gClock.init(kDefaultTempo, kTicksPerBar);
+  gSurface.init(gEngine, gClock);
   gDisplay.begin();
   Serial8.begin(31250);
   gHost.begin();
@@ -321,10 +341,13 @@ void loop() {
   if (!gBootReported && gCard.ready() && !gEngine.persistence().booting()) {
     gBootReported = true;
     reportBootLoad();
-    showFirstSlots();
+    selectFirstSlots();
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
+  gSurface.service(millis(), gLastTick, micros());
+  if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
+  for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   gDisplay.service(gEngine, gClock, gLastTick, millis());
 }
 

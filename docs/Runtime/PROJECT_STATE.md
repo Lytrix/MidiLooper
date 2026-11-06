@@ -1,3 +1,8 @@
+**2026-11-06 — Fixed-memory engine: E9.8b-1 the DROID plays the engine.**
+- The engine image reads the DROID with the legacy gesture map (DROID ini unchanged): record / overdub / undo / redo /
+  clear, slot record-arm-punch-in and switching, track select / mute / solo, transport and play / stop, with the
+  legacy LEDs; the owner confirmed it on the DROID. Next: the NOTE_EDIT surface (E9.8b-2).
+
 **2026-11-06 — Fixed-memory engine: E9.8c the engine draws the screen.**
 - The engine image now drives the OLED in the legacy layout: tracks, a paged 4-bar piano roll with grid and playhead,
   the overview strip, status and sidebar (owner confirmed on the device). The panel needed one blocking SPI frame before
