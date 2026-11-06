@@ -1830,7 +1830,8 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
   grain, `surface.tmp` renamed over `surface.mls` (magic "MLS1", the state packed in 27 bits, a check word) — and read
   in the boot's first grain; the firmware restores it after the boot load, else selects each track's first slot with
   content. To stay inside the persistence PSRAM line the engine-file and V1-file path buffers are one (they are never
-  in use at once).
+  in use at once). Device (image `d43356b3…`): the owner approved saving on 2026-11-06; after a reboot 22 slots loaded
+  from engine files (no V1 import, 0.73 s) and the selected track was restored.
 - **Track channels:** each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default),
   set by the firmware with `ClockOutput::setChannel` at boot; live thru follows the selected track's channel. The
   engine's own default stays "as recorded" (its tests).
