@@ -72,6 +72,7 @@ class EngineDisplay {
   static constexpr int16_t kX0 = 22, kX1 = 255, kOverY0 = 0, kOverY1 = 3, kRollY0 = 6, kRollY1 = 46;
   static constexpr int16_t kSepY = 48, kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
   static constexpr uint32_t kViewBars = 16;
+  static constexpr uint8_t kRule = 3;  // the roll's bar lines, the status band's rule and its cell dividers (owner)
 
   void begin() {
     oled_.begin();
@@ -214,7 +215,7 @@ class EngineDisplay {
         if (r[y] & (0x10 >> c)) px(static_cast<int16_t>(x + c), static_cast<int16_t>(top + y), v);
   }
   static uint8_t iconWidth(Icon i) { return i == Icon::Stop ? 4 : i == Icon::Play ? 3 : 5; }
-  void separator(int16_t x) { oled_.gfx.draw_vline(fb(), x, kLabY - 1, 63, 2); }
+  void separator(int16_t x) { oled_.gfx.draw_vline(fb(), x, kLabY - 1, 63, kRule); }
   /// A row from `x0` to `x1` (the library's `draw_hline` takes the row first).
   void hline(int16_t x0, int16_t x1, int16_t y, uint8_t v) { oled_.gfx.draw_hline(fb(), y, x0, x1, v); }
 
@@ -235,7 +236,7 @@ class EngineDisplay {
       }
       info = drawSlot(e, sel, slot, lastTick);
     }
-    hline(kX0, kX1, kSepY, 2);
+    hline(kX0, kX1, kSepY, kRule);
     drawStatus(e, clock, sel, info, lastTick, nowMs);
   }
 
@@ -345,7 +346,7 @@ class EngineDisplay {
     for (uint32_t b = 0; b * (kBar / 4) < viewTicks; ++b) {
       if (!beats && b % 4 != 0) continue;
       const int16_t gx = static_cast<int16_t>(kX0 + static_cast<int32_t>(b * (kBar / 4)) * w / static_cast<int32_t>(viewTicks));
-      oled_.gfx.draw_vline(fb(), gx, kRollY0, kRollY1, b % 4 == 0 ? 3 : 1);
+      oled_.gfx.draw_vline(fb(), gx, kRollY0, kRollY1, b % 4 == 0 ? kRule : 1);
     }
     RollView v{slot, loop, kBar, first, viewTicks, lo, hi, kX0, kX1, kRollY0, kRollY1};
     if (editing && edit_.note) {

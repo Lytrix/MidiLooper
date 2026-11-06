@@ -2080,5 +2080,7 @@ clean. Owner: no bright line; the range outside the view dimmed instead — beat
 the same scale at 2–5 (`kRollOverviewOutsideLow` / `High`; owner: 1 looked black; mutations 4 / 4). Device `0d51ab5d…`: boot clean. Owner: a less intrusive strip — the
 busiest beat in view is 8 (from 9). Device `aa8d1537…`: boot clean. Owner (a test): no divider between bars — it
 still crowded the strip; the beats now run on without the dark column. Device `9ca63d9a…`: boot clean. Owner: the
-strip moved to the top (rows 0–3), two dark rows above the roll (rows 6–46). Device `392b701d…`: boot clean. LOOP_EDIT's fields
+strip moved to the top (rows 0–3), two dark rows above the roll (rows 6–46). Device `392b701d…`: boot clean. Owner:
+the rule between the roll and the status band, and the band's cell dividers, are drawn at the roll's bar-line
+brightness (3, from 2) so they read on the panel. Device `3e978100…`: boot clean. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
