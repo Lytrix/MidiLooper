@@ -17,7 +17,8 @@
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
 //    a millisecond (the DROID host's gap). Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
 // 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
-//    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note.
+//    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note (start, pitch, velocity,
+//    length in the status band, E9.8k).
 // Breadcrumbs (`CrashReport.breadcrumb`, kept across a warm reset): the main-loop stage and the last tick, printed at
 // the next boot (`#CAP,…,DIAG,prev_crumbs,…`), so a hang can be placed after a reset.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
@@ -632,6 +633,8 @@ void loop() {
       ev.note = true;
       ev.noteTick = n.tick;
       ev.notePitch = n.pitch;
+      ev.noteVelocity = n.velocity;
+      ev.noteLength = n.length;
     }
   }
   crumb(kScreen);

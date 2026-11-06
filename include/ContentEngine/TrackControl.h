@@ -261,6 +261,20 @@ class TrackControl {
     return x_->writingTrack() == t ? Result::Ok : Result::Busy;
   }
   uint8_t queuedRecordSlot(uint8_t t) const { return pending_[t].recordSlot; }
+  /// E9.8k, for the display: ticks from `clock` (the last tick played) to the tick that starts track `t`'s queued slot
+  /// switch, else its queued Record (0: neither queued) — the boundary `beforeTick` waits for.
+  uint32_t ticksToQueued(uint8_t t, uint32_t clock) const {
+    const Pending& p = pending_[t];
+    if (p.switchSlot == kNone && p.recordSlot == kNone) return 0;
+    const bool content = x_->playing(t) && x_->contentOf(x_->playingSlot(t)) != kNoManifest;
+    const bool loopStart = p.switchSlot != kNone ? p.switchQ == Quantize::LoopEnd && content : content;
+    uint32_t period = p.switchSlot != kNone ? grid_ : bar_, phase = clock;
+    if (loopStart) {
+      period = x_->loopLength(x_->contentOf(x_->playingSlot(t)));
+      phase = clock - x_->origin(t);
+    }
+    return period == 0 ? 0 : period - phase % period;
+  }
   uint8_t queuedSwitchSlot(uint8_t t) const { return pending_[t].switchSlot; }
   bool soloed(uint8_t t) const { return soloed_[t]; }
   bool recordQueued(uint8_t t) const { return pending_[t].recordSlot != kNone; }

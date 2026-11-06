@@ -89,6 +89,8 @@ class History {
     return true;
   }
   bool inSession(SessionKind kind) const { return sessions_[static_cast<uint8_t>(kind)].slot != kNone; }
+  /// The slot a session of `kind` is open on (kNone: none).
+  uint8_t sessionSlot(SessionKind kind) const { return sessions_[static_cast<uint8_t>(kind)].slot; }
   /// The O: / E: level: the session's states at or below its slot's current.
   uint8_t sessionDepth(SessionKind kind) const {
     const Session& x = sessions_[static_cast<uint8_t>(kind)];

@@ -490,6 +490,46 @@ void test_live_input_is_heard_on_the_right_tracks_ports_and_recorded() {
   TEST_ASSERT_EQUAL_UINT32(3, ons(kPortUsbHost, 52, kBar, gClock).size());  // played, then twice from the take
 }
 
+// E9.8k (the screen): the countdown to a queued launch and each track's activity level.
+void test_the_screen_counts_down_to_a_queued_launch_and_shows_activity() {
+  gClock = 0;
+  recordBars(0, 0, 4, {{0, 60}, {1600, 61}});  // slot 0: 4 bars
+  recordBars(0, 1, 2, {{0, 70}, {200, 71}});   // slot 1: 2 bars, playing
+  run(gClock + 500);
+  const uint32_t last = gClock - 1;  // the last tick played
+  TEST_ASSERT_EQUAL_UINT32(0, C().ticksToQueued(0, last));
+  TEST_ASSERT_EQUAL(R::Ok, C().queueSwitch(0, 0, Q::NextGrid, gClock));
+  const uint32_t commit = (gClock / kLaunchGridTicks + 1) * kLaunchGridTicks;
+  TEST_ASSERT_EQUAL_UINT32(commit - last, C().ticksToQueued(0, last));
+  run(commit);
+  TEST_ASSERT_EQUAL_UINT32(1, C().ticksToQueued(0, gClock - 1));
+  run(commit + 1);
+  TEST_ASSERT_EQUAL_UINT32(0, C().ticksToQueued(0, gClock - 1));  // started
+  // Activity: the last NoteOn's velocity (slot 0's downbeat), falling to 0 over half a second.
+  auto& out = gE.output();
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 60, commit, commit + 1).size());
+  TEST_ASSERT_EQUAL_UINT8(100, out.level(0, us(commit)));
+  TEST_ASSERT_EQUAL_UINT8(50, out.level(0, us(commit) + ProductionOutput::kLevelFallUs / 2));
+  TEST_ASSERT_EQUAL_UINT8(0, out.level(0, us(commit) + ProductionOutput::kLevelFallUs));
+  TEST_ASSERT_EQUAL_UINT8(0, out.level(0, us(commit) + 2 * ProductionOutput::kLevelFallUs));
+  TEST_ASSERT_EQUAL_UINT8(0, out.level(3, us(commit)));  // a track that played nothing
+  // A Record on a track that plays: its slot's loop start.
+  run(commit + 300);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(0, 2, gClock));
+  TEST_ASSERT_EQUAL_UINT32(commit + 4 * kBar - (gClock - 1), C().ticksToQueued(0, gClock - 1));
+  C().cancelQueued(0);
+  // At the playing slot's loop end: counted from its origin.
+  TEST_ASSERT_EQUAL(R::Ok, C().queueSwitch(0, 1, Q::LoopEnd, gClock));
+  TEST_ASSERT_EQUAL_UINT32(commit + 4 * kBar - (gClock - 1), C().ticksToQueued(0, gClock - 1));
+  // A Record on a stopped track: the next bar.
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(2, 16, gClock));
+  TEST_ASSERT_EQUAL_UINT32((gClock / kBar + 1) * kBar - (gClock - 1), C().ticksToQueued(2, gClock - 1));
+  // Live input counts on its target track.
+  C().selectTrack(3);
+  run(gClock + 3, {{gClock + 1, gClock + 2, 64}});
+  TEST_ASSERT_EQUAL_UINT8(100, out.level(3, us(gClock - 2)));
+}
+
 void test_no_heap() {
   const unsigned long before = gHeapAllocations;
   const std::vector<Live> take = {{kBar + 10, kBar + 50, 60}};  // before the trap: the test's own allocation
@@ -525,6 +565,7 @@ int main(int, char**) {
   RUN_TEST(test_notes_begun_just_before_tick_0_are_pickups_before_the_loop_end);
   RUN_TEST(test_a_note_at_the_take_start_or_held_into_it_is_recorded_at_tick_0);
   RUN_TEST(test_live_input_is_heard_on_the_right_tracks_ports_and_recorded);
+  RUN_TEST(test_the_screen_counts_down_to_a_queued_launch_and_shows_activity);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

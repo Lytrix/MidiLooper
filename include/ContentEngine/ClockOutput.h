@@ -57,6 +57,7 @@ class ClockOutput {
     for (auto& a : audible_) a = true;
     for (auto& c : channel_) c = kAsRecorded;
     for (auto& x : thru_) x = Thru{0, 0, false, 0};
+    for (auto& l : level_) l = Level{0, 0};
     stats_ = Stats{};
   }
 
@@ -70,6 +71,7 @@ class ClockOutput {
       const Emit& x = e[i];
       const uint8_t mask = mask_[x.track];
       if (x.cls == 1) {
+        heard(x.track, x.data2, nowUs);
         if (!audible_[x.track]) {
           ++stats_.silenced;
           continue;
@@ -120,6 +122,7 @@ class ClockOutput {
   /// held on that channel ends the held one first.
   void thruNoteOn(uint8_t t, uint8_t status, uint8_t pitch, uint8_t velocity, uint32_t nowUs) {
     const uint16_t note = thruNote(status, pitch);
+    heard(t, velocity, nowUs);
     thruNoteOff(t, status, pitch, nowUs);
     for (uint8_t s = 0; s < kThruSlots; ++s) {
       Thru& x = thru_[s];
@@ -156,7 +159,23 @@ class ClockOutput {
   }
   const Stats& stats() const { return stats_; }
 
+  /// The display's activity level (E9.8k): the velocity of track `t`'s last NoteOn — played or played through, muted
+  /// or not — falling linearly to 0 over `kLevelFallUs`.
+  static constexpr uint32_t kLevelFallUs = 500000;
+  uint8_t level(uint8_t t, uint32_t nowUs) const {
+    const Level& l = level_[t];
+    const uint32_t age = nowUs - l.atUs;
+    if (l.velocity == 0 || age >= kLevelFallUs) return 0;
+    return static_cast<uint8_t>(l.velocity - static_cast<uint64_t>(l.velocity) * age / kLevelFallUs);
+  }
+
  private:
+  struct Level {
+    uint32_t atUs;
+    uint8_t velocity;
+  };
+  void heard(uint8_t t, uint8_t velocity, uint32_t nowUs) { level_[t] = Level{nowUs, velocity}; }
+  Level level_[Tracks];
   static constexpr uint16_t kFree = 0xFFFFu;
   static constexpr uint32_t kNoEnd = 0xFFFFFFFFu;  // the hub's kNoEndMicros
   struct Key {

@@ -293,13 +293,24 @@ void test_autosave_waits_for_settle_and_free_slots() {
   record(gA, 0, 0, 60);
   run(gA, gClock + kSettleTicks / 2);
   TEST_ASSERT_EQUAL_UINT32(0, gA.persistence().stats().saves);  // not settled yet
-  run(gA, gClock + kSettleTicks);
+  TEST_ASSERT_TRUE(gA.persistence().unsaved());                 // the screen's dots: pending (E9.8k)
+  TEST_ASSERT_FALSE(gA.persistence().writing());
+  bool wrote = false;
+  for (const uint32_t end = gClock + kSettleTicks; gClock < end;) {
+    run(gA, gClock + 1);
+    wrote |= gA.persistence().writing();
+  }
   TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().saves);
+  TEST_ASSERT_TRUE(wrote);  // ... busy while the copy and its close were written
+  run(gA, gClock + 50);
+  TEST_ASSERT_FALSE(gA.persistence().writing());
+  TEST_ASSERT_FALSE(gA.persistence().unsaved());
   // An overdub open on the slot: no save until it stops and settles.
   TEST_ASSERT_EQUAL(R::Ok, gA.control().startOverdub(0, gClock));
   const uint32_t o = gClock;
   run(gA, o + 3 * 4 * kBar, {{o + 100, o + 300, 70}, {o + 4 * kBar + 100, o + 4 * kBar + 300, 71}});
   TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().saves);
+  TEST_ASSERT_TRUE(gA.persistence().unsaved());  // held back, still pending
   TEST_ASSERT_EQUAL(R::Ok, gA.control().stopNow(gClock, us(gClock), kUsPerTick));
   run(gA, gClock + kSettleTicks + 50);
   TEST_ASSERT_EQUAL_UINT32(2, gA.persistence().stats().saves);
@@ -592,8 +603,10 @@ void test_the_surface_state_is_saved_and_restored() {
   gA.setSurfaceState(next, us(gClock));
   run(gA, gClock + kSettleTicks / 2);
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
+  TEST_ASSERT_TRUE(gA.persistence().unsaved());  // the screen's dots: pending (E9.8k)
   run(gA, gClock + kSettleTicks);
   TEST_ASSERT_EQUAL_UINT32(writes + 1, gCard.writes);
+  TEST_ASSERT_FALSE(gA.persistence().unsaved());
   TEST_ASSERT_NOT_NULL(gCard.sector(1));
   TEST_ASSERT_EQUAL_UINT32(waiting, gCard.waitingWrites);  // each state write waited for a ready card
   TEST_ASSERT_TRUE(gCard.idle());                          // and left it idle

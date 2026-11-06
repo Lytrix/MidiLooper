@@ -239,6 +239,14 @@ class Persistence {
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
+  /// For the display's save dots (E9.8k): a slot or the surface state is being written.
+  bool writing() const { return saving_ != kNone || stateDue_ || closing_; }
+  /// A slot changed since its last save (it is saved once settled), or the surface state is not saved yet.
+  bool unsaved() const {
+    for (uint8_t s = 0; s < Slots; ++s)
+      if (!(seen_[s] == saved_[s])) return true;
+    return stateKnown_ && state_ != stateSaved_;
+  }
 
   // ---- Surface state ----------------------------------------------------------------------------------------------------
   /// The surface's state now (`kStateBytes`); saved once settled and approved.

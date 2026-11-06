@@ -2023,3 +2023,38 @@ renderer wraps at `wrapLength()` (ordinary first-take notes never wrap). `test_c
 drawn 300 ticks into the take, the pickup's wrapped head and tail, nothing between), mutations 4 / 4. RAM2 + 32 B
 (150,200). Device `384aae22…`: owner confirmed (2026-11-06).
 
+
+## E9.8k — the status band (owner 2026-11-06: mock-up "B2 round 6"; as built)
+
+The owner sketched the screen through six mock-up rounds (legacy vs E9.8c, then compacted variants) and approved
+"B2 round 6": the sidebar's items move into one status row under the roll, so the roll runs to the right edge, and
+every field keeps a fixed place with `-` when it has nothing to show (as on the RS7000 / MPC2000).
+
+* **Left column.** The track numbers. While the clock runs, each track's activity level — Cubase's activity column:
+  `ClockOutput::level(t, nowUs)`, the last NoteOn routed for the track (played, or played through from the input),
+  falling linearly to 0 over `kLevelFallUs` (0.5 s); dim on a muted or solo-hidden track (the owner: no `M` over the
+  level). While it is stopped, the legacy state letters (the selected one pulsing).
+* **Status row** (3 × 5 labels over 5 × 7 values, right-aligned, no leading zeros), in groups: the current tick —
+  BARS — the selection — UNDO and the tempo.
+  * The current tick: the legacy save dots (`status::SaveIndicator`, the legacy `resolveDeferredSaveDisplayStatus`
+    rules; `Persistence::writing` / `unsaved` / the save counters; `RO` before approval) and the transport icon (stop,
+    play, record, overdub; armed: the record disc pulsing 3–9) over `bar.beat.16th.tick` with the bar bright, the
+    loop's progress under it. A queued slot switch or Record counts down to its start, `-1.3.2.24`
+    (`TrackControl::ticksToQueued`: the boundary `beforeTick` waits for — the playing slot's loop start, the launch
+    grid or the next bar). In NOTE_EDIT the block reads START over the selected note's start (the bracket in length
+    mode).
+  * BARS: the loop's length (a first take: its bars so far). The owner tried slices that empty as the loop plays and
+    kept the number: the length is the fundamental fact.
+  * The selection: TRACK, SLOT (1–8 within the track: slot `t × 8 + i`) and the port over the channel (`USB1`, `DIN1`,
+    `HOST`; `ALL` while a track plays on every port, the default). In NOTE_EDIT: NOTE (C3 = 60), VELOCITY, LENGTH
+    (ticks), the label row inverted.
+  * UNDO (`History::undoDepth`), or ODUB / EDIT with the open session's steps when it is open on the shown slot
+    (`History::sessionSlot`, `sessionDepth`).
+  * The tempo in tenths (`status::tempoTenths`, the legacy thin dot) under a clock icon: dim on the internal clock; an
+    arrow into it, bright, on an external one.
+
+`test_content_engine_status_view` 4 (save dots, positions and countdown, tempo / port / note labels, session slot);
+`test_content_engine_track_control` +1 (the countdown for a grid switch, a loop-end switch and a Record on a stopped
+track; the level of a played downbeat and of live input); persistence: `unsaved` / `writing` around an autosave.
+RAM2 + 64 B (150,264). Device `ae0946fa…`: boot clean, 22 slots, worst frame 236 µs stopped. LOOP_EDIT's fields
+(START / LENGTH, the tempo lit) wait for E9.8b-3.
