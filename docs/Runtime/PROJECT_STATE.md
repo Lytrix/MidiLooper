@@ -1,3 +1,9 @@
+**2026-11-06 — Fixed-memory engine: DEC-254 proposed, undo history per slot on the card.**
+- The owner wants 99 undos per slot; today 99 are shared by all slots. Keeping that in PSRAM would need ~1.7 MB more
+  than the 8 MB chip has free, so DEC-254 proposes recent steps in PSRAM and every step on the card, fetched when
+  undone (measured: a typical slot reads in under 10 ms, a deep undo ~20–50 ms). Awaiting the owner's approval; no
+  code yet beyond the read benchmark (`!ENGINE readbench`).
+
 **2026-11-06 — Fixed-memory engine: E9.8h saves never wait for the card.**
 - The last save hold (up to 8 ms) was SdFat stopping a write stream and waiting while the card programmed it. The
   engine now writes the store as its own stream, stops it without waiting and moves on while the card is busy; a

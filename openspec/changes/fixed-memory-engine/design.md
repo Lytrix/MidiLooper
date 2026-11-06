@@ -1915,3 +1915,23 @@ was equivalent (the card is idle there) and removed. Native full suite green.
 Device (image `9672906b…`): 16 saves (single- and multi-sector slots): worst save grain 65–884 µs (the slot encoding;
 was 1.4–9.8 ms), a streamed write 6–10 µs, a new stream 11–20 µs; reboots load all 22 slots, 0 failed.
 
+## E4.6 — undo history per slot on the card (DEC-254, proposed; not built)
+
+Owner 2026-11-06: 99 undos per slot; E4's 99 are shared by all slots (each current state included) and were spent
+across slots within minutes of playing. DEC-254 proposes a hot tier (each slot's current state and recent steps in
+PSRAM, about today's footprint) and a cold tier (every state on the card: runs written once as immutable records,
+each slot's state list as an A / B record), with undo into a cold state fetched in persistence grains. The E4 rules
+above stay in force until DEC-254 is approved and built; without a card the engine keeps them.
+
+Measured (E4.6a, image `2400f523…`, 32 GB card, `!ENGINE readbench`, read only):
+
+| Read | Time |
+|---|---|
+| Streamed sectors | ~22 MB/s, ~23 µs a sector |
+| Start of a stream (first grain) | 0.24–0.75 ms |
+| 8 / 16 sectors a grain, streaming | ≤ 0.18 / ≤ 0.36 ms |
+| One scattered sector | ~0.35 ms average, 0.9 ms worst |
+
+A typical slot (~320 sectors) reads in ~7.5 ms of card time, so a cold undo takes roughly 20–50 ms with decoding (the
+boot loads 22 slots in 0.40 s); the largest slot (~4,100 sectors) ~90 ms of reads.
+

@@ -329,6 +329,54 @@ void command(char* line, uint32_t nowUs) {
                   h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
+  } else if (std::strcmp(verb, "readbench") == 0) {  // readbench N K: store read speed (read only; blocks ~N ms)
+    // N sectors in a row from the store's slot area, K a "grain" (one call each, then `readSectors(K)`), then 64
+    // single sectors scattered across the store: the cost of fetching history from the card (diagnostics).
+    DMAMEM static uint8_t buf[512 * 16];
+    const uint32_t n = a > 0 ? static_cast<uint32_t>(a) : 1024, k = b > 0 && b <= 16 ? static_cast<uint32_t>(b) : 8;
+    const uint32_t base = gCard.storeSector();
+    if (base == 0) {
+      Serial.println("#ENGINE,readbench,no_store");
+      return;
+    }
+    gCard.quiesce();
+    SdCard* card = SD.sdfs.card();
+    for (uint8_t mode = 0; mode < 2; ++mode) {
+      uint32_t first = 0, worstGrain = 0, failed = 0;
+      const uint32_t t0 = micros();
+      for (uint32_t i = 0; i < n; i += k) {
+        const uint32_t g = micros();
+        if (mode == 0) {
+          for (uint32_t j = 0; j < k; ++j) failed += !card->readSector(base + 2 + i + j, buf + 512 * j);
+        } else {
+          failed += !card->readSectors(base + 2 + i, buf, k);
+        }
+        const uint32_t d = micros() - g;
+        if (i == 0) first = d; else if (d > worstGrain) worstGrain = d;
+      }
+      const uint32_t total = micros() - t0;
+      card->syncDevice();
+      Serial.printf("#ENGINE,readbench,mode=%s,sectors=%lu,per_grain=%lu,first_grain_us=%lu,worst_grain_us=%lu,"
+                    "total_us=%lu,kb_per_s=%lu,failed=%lu\n",
+                    mode == 0 ? "one_by_one" : "multi", static_cast<unsigned long>(n), static_cast<unsigned long>(k),
+                    static_cast<unsigned long>(first), static_cast<unsigned long>(worstGrain),
+                    static_cast<unsigned long>(total), static_cast<unsigned long>(total ? n * 512000ull / total : 0),
+                    static_cast<unsigned long>(failed));
+    }
+    uint32_t worst = 0, sum = 0, failed = 0, x = 12345;
+    for (uint8_t i = 0; i < 64; ++i) {
+      x = x * 1103515245u + 12345u;
+      const uint32_t s = base + 2 + (x >> 8) % (ContentEngine::ProductionPersistence::kStoreSectors - 2);
+      const uint32_t g = micros();
+      failed += !card->readSector(s, buf);
+      card->syncDevice();
+      const uint32_t d = micros() - g;
+      sum += d;
+      if (d > worst) worst = d;
+    }
+    Serial.printf("#ENGINE,readbench,mode=scattered,reads=64,avg_us=%lu,worst_us=%lu,failed=%lu\n",
+                  static_cast<unsigned long>(sum / 64), static_cast<unsigned long>(worst),
+                  static_cast<unsigned long>(failed));
   } else if (std::strcmp(verb, "cardfree") == 0) {  // the card's free space (scans the FAT: ~1 s, read only)
     gCard.quiesce();  // SdFat reads the FAT: the store's stream is stopped first
     const uint32_t t = millis();

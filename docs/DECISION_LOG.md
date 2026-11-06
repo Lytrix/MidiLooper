@@ -14752,3 +14752,73 @@ Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.
 - Evidence: `test_content_engine_persistence` 12 / 12 (no waiting write, idle after each save), mutation-checked;
   device `9672906b…`: worst save grain under 1 ms, 22 slots reloaded, 0 failed.
 
+## DEC-254 — Undo history per slot: recent steps in PSRAM, every step on the card
+
+**Date:** 2026-11-06
+**Owner:** `ContentEngine::History` (per-slot depth, hot / cold state, fetch); `ContentEngine::Persistence` (the card's
+run and state records). OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) E4.6.
+Builds on DEC-252 (one bounded content engine) and DEC-253 (the store).
+**Status:** Proposed — awaiting owner approval. No production code until approved (hard triggers below).
+
+### Reassessment
+
+| Field | Content |
+|---|---|
+| **Reason triggered** | Undo semantics change (per-slot depth; an undo can wait for the card); storage schema change (runs and states as separate records on the card); persistent state model change (history no longer wholly in PSRAM). Hard stop. |
+| **Current architecture** | E4: `History` holds 99 states **shared by all slots**, each slot's current state included; when full, the oldest step anywhere is forgotten. Every state's manifest and runs live in PSRAM. The store (DEC-253) keeps two whole copies of each slot (all its states, runs stored once). Owner report 2026-11-06: with 22 slots and a few overdubs the 99 is already 44 deep in use; the owner wants 99 undos **per slot**. |
+| **Proposed evolution** | Extend `History` and `Persistence` (no new content owner): a hot tier in PSRAM, a cold tier on the card, below. |
+| **Migration impact** | `History`, `SetFile`, `Persistence`, `SdCardIo`, `EngineRoot` wiring; their tests and a new fetch test; the store's format (a new store file; DEC-253 copies migrated read-only, as `.mle` files were). No V1 or legacy impact. |
+| **Recommendation** | The hot / cold design below, built in stages, each with a device gate. |
+| **Approval required** | YES. |
+
+### Decision (proposed)
+
+- **Depth per slot.** Each slot keeps up to 99 undo states (U: steps); the 100th forgets that slot's oldest step only.
+  Other slots are never affected by a slot's depth.
+- **Hot tier (PSRAM).** Each slot's current state and its most recent steps stay in PSRAM, in a hot table sized to
+  what fits (about today's 99 entries / 256 manifests; no PSRAM growth). Undo and redo within the hot steps stay
+  instant, as today. Open overdub and NOTE_EDIT sessions keep all their steps hot (protected, as today).
+- **Cold tier (the card).** Every committed state is on the card: each run once, as an immutable record with its own
+  check, and each slot's list of states (revision, loop length, run references) as a small A / B record. A state may
+  leave PSRAM only after its runs and state record are on the card; then dropping it from PSRAM loses nothing.
+- **Undo into the cold tier.** The target state's missing runs are fetched in persistence grains (writer-class
+  admission, reserved before any row is appended, as `LoadJob`); the slot keeps playing its current state and switches
+  when the fetch completes. Measured on the owner's card: a typical slot (~320 sectors) in roughly 20–50 ms, the
+  largest possible slot in under 0.5 s; usually only the runs not already held are read.
+- **Memory pressure.** Recording admission is unchanged and never refused because of history: when rows or hot
+  entries run short, the oldest hot non-current state anywhere leaves PSRAM (it is on the card). A fetch that cannot
+  be admitted even then is refused by name and the slot stays where it is.
+- **Card space.** Freed runs (no state of their slot lists them any more) are reclaimed on the card; the store is
+  sized for 64 slots × 99 states with headroom on the 32 GB card.
+- **Without the card** (no card, or saving not approved): today's behaviour, the shared 99 in PSRAM.
+- **Boot** loads each slot's current state (and its hot steps); deeper states are listed from their state records,
+  not loaded. The full 99 steps survive a reboot.
+
+### Alternatives considered
+
+| Alternative | Why not |
+|---|---|
+| Keep 99 shared (E4) | The owner's report: the depth is spent across slots within minutes of playing. |
+| 99 per slot in PSRAM only | ~1.7 MB more PSRAM (manifests ~0.9 MB, run descriptors ~0.6 MB, history ~75 KB); 1.56 MB is free on the 8 MB chip. Even with a second chip, the shared row pool (131,072 rows) would still bound history. |
+| Per-slot cap of 99 inside a larger shared PSRAM pool (~1,024 states) | Fits (~0.25 MB), but slots still compete; kept as the stopgap if this DEC is rejected or staged late. |
+| A whole slot copy per undo state on the card | 99× the card space and write time of the run-once records. |
+
+### Risks and rollback
+
+- Deep undo is no longer instant (bounded by the fetch; measured above). An owner decision is open on how a second
+  undo press during a fetch behaves (proposed: it queues, so three presses step back three states).
+- More card writes: each run is written once when committed (today's autosave writes whole slots).
+- Power loss: run records are written before the state record that lists them; the state record is A / B with a
+  sequence (DEC-253's pattern), so a cut leaves the previous list whole.
+- Rollback: the cold tier is behind the card; with it disabled the engine is E4 as built.
+
+### Stages (each with native tests, mutation checks and a device gate)
+
+1. **Measure** — done: `!ENGINE readbench` (image `2400f523…`, 32 GB card): streamed reads ~22 MB/s (23 µs a
+   sector), 0.24–0.75 ms to start a stream, 8 sectors a grain ≤ 0.18 ms, a scattered sector ~0.35 ms (worst 0.9 ms).
+2. **Run-once store** — run records and per-slot state records on the card; autosave writes new runs as committed;
+   migration from DEC-253 copies.
+3. **Per-slot depth** — `History` counts and evicts per slot; hot table with cold entries (state known, runs not held).
+4. **Fetch** — undo / redo into a cold state: admission, grains, switch on completion, refusal by name.
+5. **Pressure** — hot entries and rows yield cold-safe states first; boot loads hot states only.
+
