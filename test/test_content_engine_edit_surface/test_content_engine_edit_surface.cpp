@@ -319,6 +319,13 @@ static const Sent* findStatus(const std::vector<Sent>& v, uint8_t status) {
     if (s.m.status == status) return &s;
   return nullptr;
 }
+/// Times fader `i` was written (its trigger note on): F1 / F2 note 0 on 16 / 14, F3 / F4 note 1 / 2 on 15.
+static uint32_t written(const std::vector<Sent>& v, uint8_t i) {
+  static const uint8_t kStatus[4] = {0x9F, 0x9D, 0x9E, 0x9E}, kNote[4] = {0, 0, 1, 2};
+  uint32_t n = 0;
+  for (const Sent& s : v) n += (s.m.status == kStatus[i] && s.m.d1 == kNote[i]) ? 1 : 0;
+  return n;
+}
 static int32_t pbOf(const Sent* s) { return static_cast<int32_t>(s->m.d1 | (s->m.d2 << 7)) - 8192; }
 static uint32_t count(const std::vector<Sent>& v, uint8_t status) {
   uint32_t n = 0;
@@ -384,8 +391,8 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   f1(pbFor(2, 16));
   TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
   v = drainMotors(5);  // the writes, before the motors move
-  TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xEF));
-  TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xED));
+  TEST_ASSERT_EQUAL_UINT32(0, written(v, 0));
+  TEST_ASSERT_EQUAL_UINT32(1, written(v, 1));
   TEST_ASSERT_EQUAL_UINT8(64 + 4, findMsg(v, 0xBE, 2)->m.d2);
   TEST_ASSERT_EQUAL_UINT8(64, findMsg(v, 0xBE, 3)->m.d2);
   // The motors travel from where the faders were (the opening's values) to the new ones: every message on the way is
@@ -435,13 +442,13 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   f2(-8192 + 16384 * 10 / 15 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
   v = drainMotors(30);
-  TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xBE) + count(v, 0xED) + count(v, 0xEF));
+  TEST_ASSERT_EQUAL_UINT32(0, written(v, 0) + written(v, 1) + written(v, 2) + written(v, 3));
   // F3 moves it within the 16th: F2 follows.
   f3(64 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 20, sel().tick);
   v = drainMotors(300);
-  TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xED));
-  TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xBE));
+  TEST_ASSERT_EQUAL_UINT32(1, written(v, 1));
+  TEST_ASSERT_EQUAL_UINT32(0, written(v, 2));
   // A hand on a fader the motor was just sent to: a move off the motor's path is the musician's at once, and so is
   // everything after it, even back near the written value.
   settle();
@@ -454,6 +461,34 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   ms(400);
   f4(66);
   TEST_ASSERT_EQUAL_UINT8(66, sel().pitch);
+  // A hand move sends the fader's position back as a value alone — no trigger — so the DROID's stored start value
+  // (where a `clear`, also sent by the 16th-step LEDs 2 / 3, moves the motor) is the fader's (owner 2026-11-06: F4 went
+  // back to an old pitch).
+  v = drainMotors(300);
+  f4(72);
+  TEST_ASSERT_EQUAL_UINT8(72, sel().pitch);
+  v = drainMotors(300);
+  TEST_ASSERT_EQUAL_UINT32(0, written(v, 3));
+  const Sent* synced = findMsg(v, 0xBE, 3);
+  TEST_ASSERT_NOT_NULL(synced);
+  TEST_ASSERT_EQUAL_UINT8(72, synced->m.d2);
+  // A hand position still to be sent when the fader is written: the write wins, the old position is not sent after it.
+  f4(75);
+  f1(pbFor(10, 16));  // 64, moved to 500 above: F4 written 64
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  v = drainMotors(300);
+  uint32_t cc3 = 0;
+  for (const Sent& s : v) cc3 += (s.m.status == 0xBE && s.m.d1 == 3) ? 1 : 0;
+  TEST_ASSERT_EQUAL_UINT32(1, cc3);
+  TEST_ASSERT_EQUAL_UINT8(64, findMsg(v, 0xBE, 3)->m.d2);
+  // Outside NOTE_EDIT nothing is sent back.
+  tap(S::kEditModeNote);
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  drainMotors(300);
+  f4(50);
+  f2(1000);
+  TEST_ASSERT_EQUAL_UINT32(0, drainMotors(50).size());
 }
 
 // F2 back over the note's start within one gesture: the gesture's step is undone and the note is where it began — the

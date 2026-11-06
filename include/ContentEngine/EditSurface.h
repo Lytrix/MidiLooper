@@ -34,9 +34,12 @@
 //   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after an F3 move F2; after
 //   NOTELEN F2 and F3. A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
 //   CC 2 / 3 channel 15), then its trigger note (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released
-//   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). While a written fader's motor travels (`kMotorSettleMs` after the
-//   write, and until it has been quiet `kMotorQuietMs`) its messages are not moves; a fader value that changes nothing
-//   takes no undo step.
+//   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). A fader the musician moves has its position sent back as a
+//   value alone (legacy ValueOnly): the DROID's stored start value — where its `clear` sends the motor — stays with
+//   the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4's `clear`, and those are the 16th-step LEDs 2 /
+//   3: a stale stored value sent F4 back to an old pitch whenever those LEDs changed (owner 2026-11-06). While a
+//   written fader's motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its
+//   messages are not moves; a fader value that changes nothing takes no undo step.
 // No allocation; O(selection) a fader move.
 
 #pragma once
@@ -101,8 +104,14 @@ class EditSurface {
       }
       if (f.want) {
         f.want = false;
+        f.sync = false;
         m = value(i, f.value);
         f.phase = Motor::On;
+        return true;
+      }
+      if (f.sync && f.phase == Motor::Idle) {  // value only: no trigger, the motor stays where the hand put it
+        f.sync = false;
+        m = value(i, f.at);
         return true;
       }
     }
@@ -446,6 +455,7 @@ class EditSurface {
     uint32_t offAt = 0, settleUntil = 0;
     Phase phase = Idle;
     bool want = false, written = false, known = false, arrived = false, fromKnown = false;
+    bool sync = false;  // the musician moved it: its value (no trigger) is due, so the DROID's stored start value follows
   };
   static int32_t slackOf(uint8_t i) { return i < 2 ? kCoarseThreshold : 3; }  // pitch bend / CC jitter
   /// Writes the faders in `mask` to the selection (the bracket alone when nothing is selected: F2 / F3).
@@ -494,17 +504,19 @@ class EditSurface {
     Motor& f = motors_[i];
     f.at = v;
     f.known = true;
-    if (!f.written || static_cast<int32_t>(ms - f.settleUntil) >= 0) return false;
-    const int32_t slack = slackOf(i), to = f.value;
-    const bool there = (v > to ? v - to : to - v) < slack;
-    const int32_t lo = (f.from < to ? f.from : to) - slack, hi = (f.from > to ? f.from : to) + slack;
-    const bool onTheWay = !f.arrived && (!f.fromKnown || (v >= lo && v <= hi));
-    if (there || onTheWay) {
-      if (there) f.arrived = true;
-      if (static_cast<int32_t>(ms + kMotorQuietMs - f.settleUntil) > 0) f.settleUntil = ms + kMotorQuietMs;
-      return true;
+    if (f.written && static_cast<int32_t>(ms - f.settleUntil) < 0) {
+      const int32_t slack = slackOf(i), to = f.value;
+      const bool there = (v > to ? v - to : to - v) < slack;
+      const int32_t lo = (f.from < to ? f.from : to) - slack, hi = (f.from > to ? f.from : to) + slack;
+      const bool onTheWay = !f.arrived && (!f.fromKnown || (v >= lo && v <= hi));
+      if (there || onTheWay) {
+        if (there) f.arrived = true;
+        if (static_cast<int32_t>(ms + kMotorQuietMs - f.settleUntil) > 0) f.settleUntil = ms + kMotorQuietMs;
+        return true;
+      }
+      f.written = false;  // off the motor's path: the musician's hand
     }
-    f.written = false;  // off the motor's path: the musician's hand
+    if (editing()) f.sync = true;  // the musician's position becomes the DROID's stored start value (legacy ValueOnly)
     return false;
   }
   /// F1's value for the selected note: the centre of its place in its 16th's stack (the inverse of `select`).

@@ -2160,3 +2160,15 @@ lands on the note as it began, a value that changes nothing: the bracket stayed 
 16th-long note. The bracket now follows the note there too. `EditSurface::init` resets the motors. Tests: the motor
 test's travel runs on the motor's path from 67's values to 64's, an F3 not rewritten after an F2 step, a hand off the
 path acting at once; +1 for the bracket (mutations 9 / 9). Device `5b070ad2…`: boot clean; the owner's check pending.
+
+**Stray `clear`s from the step LEDs** (owner 2026-11-06, `captures/session_20261106_235103.log`: the pitch reset while
+moving F2). The trace showed one F4 message (80, the pitch last written) right after the DROID's `_ACK_F4_CLEAR`
+(channel 13 note 86), with no F4 write from the engine: the patch reads channel 15 notes 1 / 2 as F3 / F4's `clear`
+(`notegate2` / `notegate3`), and those are the 16th-step content LEDs 2 / 3 (legacy too) — the F2 move changed them,
+and the DROID sent the motor to its stored start value, stale since the musician had moved F4 by hand. The patch stays
+as it is (owner): a fader the musician moves now has its position sent back as a value alone (legacy ValueOnly; F1 /
+F2 pitch bend, F3 / F4 CC; no trigger), so the stored start value is the fader's and a stray `clear` moves nothing.
+Only in NOTE_EDIT; a pending one gives way to a write. Tests: a hand move sends its value without a trigger, a write
+wins over a pending value, nothing outside NOTE_EDIT; the motor test counts writes by their trigger notes (mutations
+7 / 7). Device `82547d71…` (flashed from HalfKay after the GUI loader could not reboot it — a capture held the serial
+port): the owner's check pending.
