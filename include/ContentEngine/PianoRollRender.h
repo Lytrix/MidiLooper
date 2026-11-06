@@ -12,8 +12,8 @@
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
 //   the live overlay's notes (a take being recorded) on top, at the view's scale.
 // * Overview strip (`drawOverviewBand`): the whole loop as a full-height cell per beat, as bright as the pitches
-//   sounding in it (from the span tiles' rasters, else density tiles), dimmed outside the detailed view, a dark column
-//   between bars (E9.8k, owner
+//   sounding in it (from the span tiles' rasters, else density tiles), dimmed outside the detailed view; no divider
+//   between bars, which crowded the strip (E9.8k, owner
 //   2026-11-06: the view's range was not readable on a busy strip; pitch rows read as blocks, column heights crowded).
 // * `pitchExtent`: the lowest and highest pitch sounding in a bar range, from density tiles (the auto-fit range).
 
@@ -136,8 +136,7 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
 /// the pitches sounding in that beat (the bar's raster columns of the beat, OR-ed; a bar not swept into a span tile
 /// yet: its density tile's pitches, the same for each beat) from `kRollOverviewLow` (one) to `kRollOverviewHigh` (the
 /// busiest beat); a beat with none stays dark. Beats outside the detailed view's bars [viewFirst, viewFirst +
-/// viewTicks) take the same scale dimmed to 2–5 (viewTicks 0: every bar is in view). A bar 4 px or wider leaves its
-/// last column dark, so bars read apart. O(bars x 32 raster columns).
+/// viewTicks) take the same scale dimmed to 2–5 (viewTicks 0: every bar is in view). O(bars x 32 raster columns).
 template <typename Store>
 void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t barTicks, int16_t x0, int16_t x1,
                       int16_t y0, int16_t y1, uint8_t* fb, uint16_t width, int16_t rowFrom, int16_t rowTo,
@@ -174,8 +173,6 @@ void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t 
   for (uint32_t bar = 0; bar < n; ++bar) {
     const uint32_t barStart = bar * barTicks, barEnd = barStart + barTicks < loop ? barStart + barTicks : loop;
     const bool inView = viewTicks == 0 || (barStart < viewFirst + viewTicks && barEnd > viewFirst);
-    const int16_t barX1 = static_cast<int16_t>(x0 + roll::map(barEnd, 0, loop, 0, w) - 1);
-    const bool gap = barX1 - (x0 + roll::map(barStart, 0, loop, 0, w)) + 1 >= 4;
     for (uint8_t b = 0; b < beatsPerBar; ++b) {
       const uint32_t s = barStart + b * beatTicks;
       if (s >= barEnd) break;
@@ -184,10 +181,6 @@ void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t 
       if (c == 0) continue;
       const int16_t xa = static_cast<int16_t>(x0 + roll::map(s, 0, loop, 0, w));
       int16_t xb = static_cast<int16_t>(x0 + roll::map(e, 0, loop, 0, w) - 1);
-      if (gap && xb == barX1) {
-        --xb;
-        if (xb < xa) continue;  // a 1-px last beat is the gap
-      }
       if (xb < xa) xb = xa;
       if (xb > x1) xb = x1;
       constexpr uint8_t kSteps = kRollOverviewHigh - kRollOverviewLow;
