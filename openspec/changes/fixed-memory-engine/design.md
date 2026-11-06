@@ -2092,5 +2092,6 @@ bar later). A switch changes the surface state, which is saved after its 2 s set
 then writing, and the progress line gives way to the dots. The selection is now saved silently: `Persistence::unsaved`
 counts slots only, and `writing` is a slot's save and its close (`closingSave_`), not a state write. Persistence test:
 no dots across a selection's settle and write, sampled after every grain (mutations 3 / 3). Device `b9f64bf5…`: boot
-clean; on the external clock, 0.3 s after `!ENGINE select` the line was drawn on each of four switches. LOOP_EDIT's fields
+clean; on the external clock, 0.3 s after `!ENGINE select` the line was drawn on each of four switches. Owner
+confirmed the screen as it stands (2026-11-06). LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
