@@ -1523,9 +1523,10 @@ orphan NoteOff on DIN; later cycles equal uninterrupted composition.
   as the piano roll shows them — the slot's current state composed with the display cursor (`Composer` T = 48: every
   effective note) — so a deleted or wholly occluded note is not selectable. Each carries its **stored** geometry: its
   NoteOn and NoteOff rows in the run that holds its current instance (an edit run's replacement after earlier edits),
-  found by a binary search on the NoteOn tick and a forward scan, a bounded number of rows a grain. Effective lengths are
-  never stored: overlap results are derived at composition (EDIT-1), so the edited note drives and the others adapt, as
-  in legacy NOTE_EDIT (`MOVE_NOTE_LOGIC.md`: the causing note is never modified). Composition stops at the range end;
+  found by a binary search on the NoteOn tick and a forward scan, a bounded number of rows a grain. The edited note
+  drives and the others adapt, as in legacy NOTE_EDIT (`MOVE_NOTE_LOGIC.md`: the causing note is never modified); since
+  an edit run is not an occluder (EDIT-1), the edit writer writes those results (see "Overlap in NOTE_EDIT" below —
+  this paragraph said they were derived at composition, which EDIT-1 rules out; owner 2026-11-07). Composition stops at the range end;
   cycle 0 is exact for notes starting in the range, since `begin` counts notes held across the loop end as sounding at
   position 0 and the hide look-ahead reads across it. More than 512: `TooMany`, nothing selected.
 - **Session:** `enter` opens the edit writer on the selection; `apply` / `undo` / `redo` are E: steps heard at once —
@@ -2189,3 +2190,23 @@ start's offset inside its own 16th. F2 now moves the start in whole 16ths keepin
 the value it would be written to is not written (its stored value is its position, sent back since the last change),
 and a write still pending is dropped then. `test_content_engine_edit_surface` +2 (mutations 4 / 4; two offset
 normalisations removed as equivalent under the modulo). Device `a7391638…`: the owner confirmed motor feedback and the four faders on the DROID (2026-11-07).
+
+## Overlap in NOTE_EDIT (owner 2026-11-07: "the overlap logic is not working in note edit"; as built)
+
+EDIT-1 makes an edit run no occluder, so NOTE_EDIT must write its own overlap results — and the edit writer wrote only
+the edited notes' replacements: a note moved onto another of its pitch left both sounding. The owner chose the legacy
+rules (`resolveConstrainedGeometry`, `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`), recomputed at every step.
+`EditWriter::overlapLength`: an edited, live note A is the causing note and never changes; an unedited note B of A's
+pitch (channel does not matter) that starts inside A — at A's start included — is hidden (CompleteCover,
+OverlapNoteOn); one that starts before A and sounds into it ends at A's start (OverlapNoteOff); edges that only touch
+change nothing — on linear spans across the loop's wrap. The results are derived from the session start's geometry
+at every rebuild and written like edits (B's hide row; a shortened B's NoteOn and NoteOff), so moving A away, deleting
+it or undoing brings B back, and each step stays one E: step. Acceptance reserves their rows with the step's own
+(`overlapRows`, the same rule): a hidden note 1, a shortened one 3; only the notes of an edited live note's pitch are
+looked at — O(selection) plus O(those x selection). Notes the musician edited never adapt (two edited notes of one
+pitch may overlap); notes outside the selection (outside the gathered window) are not targets.
+`test_content_engine_edit_writer` +4 (hide, shorten, touch, restore on move-away / undo / redo; the wrap both ways;
+the edges, a deleted causer, an undone created note; unedited recorded overlaps left alone), and the random-sequence
+test now lands a third of its edits on another note's pitch against a reference model written apart (mutations 9 / 9;
+two equivalent: an end-touch "shorten" to the note's own length, and the pitch filter, which only saves work). Device
+`32b258eb…`: boot clean; the owner's check pending.

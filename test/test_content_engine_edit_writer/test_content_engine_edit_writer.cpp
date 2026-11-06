@@ -133,11 +133,28 @@ static std::vector<Played> heard() {
   std::sort(out.begin(), out.end(), byTick);
   return out;
 }
-/// What the selection says the slot should play.
+/// What the selection says the slot should play: the edited notes as they are, the others after the overlap rules
+/// (a reference written apart from the writer's): hidden when they start inside an edited live note of their pitch,
+/// ending at its start when they start before it and sound into it, across the loop's wrap.
 static std::vector<Played> expected(const EditNote* cur) {
   std::vector<Played> out;
-  for (uint8_t i = 0; i < kNotes; ++i)
-    if (!cur[i].deleted) out.push_back({cur[i].tick, cur[i].noteId, cur[i].length, cur[i].pitch, cur[i].velocity});
+  for (uint8_t i = 0; i < kNotes; ++i) {
+    if (cur[i].deleted) continue;
+    uint32_t len = cur[i].length;
+    bool hidden = false;
+    if (cur[i] == gBase[i])
+      for (uint8_t k = 0; k < kNotes && !hidden; ++k) {
+        const EditNote& a = cur[k];
+        if (k == i || a.deleted || a == gBase[k] || a.pitch != cur[i].pitch) continue;
+        for (int s = -1; s <= 1 && !hidden; ++s) {
+          const int64_t b0 = static_cast<int64_t>(cur[i].tick) + s * static_cast<int64_t>(kLoop);
+          const int64_t b1 = b0 + cur[i].length, a0 = a.tick, a1 = a0 + a.length;
+          if (b0 >= a0 && b0 < a1) hidden = true;
+          else if (b0 < a0 && b1 > a0) len = std::min<uint32_t>(len, static_cast<uint32_t>(a0 - b0));
+        }
+      }
+    if (!hidden) out.push_back({cur[i].tick, cur[i].noteId, len, cur[i].pitch, cur[i].velocity});
+  }
   std::sort(out.begin(), out.end(), byTick);
   return out;
 }
@@ -341,6 +358,161 @@ void test_log_forgets_the_oldest_steps() {
 }
 
 // ---- Reference model: a stack of selection snapshots with the same step / entry limits -----------------------------
+// Overlap (owner 2026-11-07, legacy `resolveConstrainedGeometry`): the edited note A is never changed; an unedited note B
+// of its pitch that starts inside A is hidden, one that starts before A and sounds into it ends at A's start, edges
+// that only touch change nothing — each recomputed from the session start at every step, so moving A away or undoing
+// brings B back. Base: note i at 400 i + 10, 120 long, pitch 40 + i; the loop is 6144.
+void test_edited_notes_hide_and_shorten_same_pitch_notes() {
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.begin(0, gBase, kNotes));
+  EditNote cur[kNotes];
+  for (uint8_t i = 0; i < kNotes; ++i) cur[i] = gBase[i];
+  // A (note 3) onto pitch 45 from 1990, 100 long: B (note 5, 2010–2130) starts inside — hidden.
+  EditChange c = moved(3, 1990, 100, 45, 90);
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.apply(&c, 1));
+  finish();
+  cur[3] = c.value;
+  cur[5].deleted = 1;
+  expectHeard(cur);
+  // A from 2050: B starts before and sounds into it — it ends at 2050.
+  c = moved(3, 2050, 100, 45, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5] = gBase[5];
+  cur[5].length = 2050 - 2010;
+  expectHeard(cur);
+  // A from 2130, where B ends: they only touch — B as it was.
+  c = moved(3, 2130, 100, 45, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5] = gBase[5];
+  expectHeard(cur);
+  // Back to the hide; undo brings B back, redo hides it again.
+  c = moved(3, 2000, 100, 45, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5].deleted = 1;
+  expectHeard(cur);
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.undo());
+  finish();
+  cur[3] = moved(3, 2130, 100, 45, 90).value;
+  cur[5] = gBase[5];
+  expectHeard(cur);
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.redo());
+  finish();
+  cur[3] = c.value;
+  cur[5].deleted = 1;
+  expectHeard(cur);
+  // A elsewhere, on its own pitch: B is back.
+  c = moved(3, gBase[3].tick, gBase[3].length, gBase[3].pitch, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5] = gBase[5];
+  expectHeard(cur);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+// Across the loop's wrap: A (note 1) on pitch 40 from 6100, 100 long, sounds to 56 — B (note 0, 10–130) starts inside
+// its wrapped part: hidden. A from 50: B starts before, ends at 50.
+void test_overlap_across_the_loop_wrap() {
+  gW.begin(0, gBase, kNotes);
+  EditNote cur[kNotes];
+  for (uint8_t i = 0; i < kNotes; ++i) cur[i] = gBase[i];
+  EditChange c = moved(1, 6100, 100, 40, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[1] = c.value;
+  cur[1].length = kOpenLength;  // one composed cycle: A's end is in the next
+  cur[0].deleted = 1;
+  expectHeard(cur);
+  c = moved(1, 50, 100, 40, 90);
+  gW.apply(&c, 1);
+  finish();
+  cur[1] = c.value;
+  cur[0] = gBase[0];
+  cur[0].length = 40;
+  expectHeard(cur);
+}
+
+// The edges: B starting where A starts is hidden; B starting where A ends is untouched; a deleted A is no longer
+// the causing note; a created note undone (deleted again, unedited) is not a target.
+void test_overlap_edges_deleted_and_created_notes() {
+  gW.begin(0, gBase, kNotes);
+  EditNote cur[kNotes];
+  for (uint8_t i = 0; i < kNotes; ++i) cur[i] = gBase[i];
+  EditChange c = moved(3, 2010, 50, 45, 90);  // A starts with B (note 5, 2010–2130)
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5].deleted = 1;
+  expectHeard(cur);
+  c = moved(3, 1910, 100, 45, 90);  // A ends where B starts
+  gW.apply(&c, 1);
+  finish();
+  cur[3] = c.value;
+  cur[5] = gBase[5];
+  expectHeard(cur);
+  // A over B, deleted — with another edited note live on B's pitch far away (so B's pitch is looked at): B as it was.
+  EditChange two[2] = {moved(3, 1990, 100, 45, 90, true), moved(9, 4000, 50, 45, 90)};
+  gW.apply(two, 2);
+  finish();
+  cur[3] = two[0].value;
+  cur[9] = two[1].value;
+  expectHeard(cur);
+  c = moved(9, gBase[9].tick, gBase[9].length, gBase[9].pitch, gBase[9].velocity);  // note 9 back as it was
+  gW.apply(&c, 1);
+  finish();
+  cur[9] = gBase[9];
+  // A over B again; a note created inside A on its pitch, then undone (deleted, unedited): nothing for it.
+  c = moved(3, 1990, 300, 45, 90);
+  gW.apply(&c, 1);
+  finish();
+  uint16_t at = 0;
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.create(EditNote{999, 2100, 40, 45, 80, 0, 0}, at));
+  finish();
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.undo());
+  finish();
+  cur[3] = c.value;
+  cur[5].deleted = 1;
+  expectHeard(cur);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+// Unedited notes of one pitch that overlap in the recording stay as recorded: only an edited note causes.
+void test_unedited_overlaps_are_left_alone() {
+  const RunId r = gRuns.allocate(1, RunKind::kRecord);
+  auto row = [](uint32_t tick, uint32_t id, uint8_t status, uint8_t pitch, uint8_t vel) {
+    PassEvent e{};
+    e.tick = tick;
+    e.noteId = id;
+    e.status = status;
+    e.data1 = pitch;
+    e.data2 = vel;
+    return e;
+  };
+  const PassEvent rows[] = {row(100, 501, 0x90, 50, 90), row(200, 502, 0x90, 50, 90), row(300, 501, 0x80, 50, 0),
+                            row(400, 502, 0x80, 50, 0),  row(1000, 503, 0x90, 60, 90), row(1100, 503, 0x80, 60, 0)};
+  for (const PassEvent& e : rows) TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, e, gPool));
+  gRuns.seal(r);
+  const ManifestId m = gManifests.create(1, 1, kLoop, &r, 1, gRuns);
+  gRuns.release(r);
+  gH.commit(1, m);
+  const EditNote sel[] = {{501, 100, 200, 50, 90, 0, 0}, {502, 200, 200, 50, 90, 0, 0}, {503, 1000, 100, 60, 90, 0, 0}};
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.begin(1, sel, 3));
+  EditNote v = sel[2];
+  v.tick = 1200;
+  v.pitch = 50;  // onto their pitch, overlapping neither
+  const EditChange c{2, v};
+  TEST_ASSERT_EQUAL(EditResult::Ok, gW.apply(&c, 1));
+  finish();
+  const auto& man = gManifests.manifest(gH.current(1));
+  TEST_ASSERT_EQUAL_UINT32(3, gRuns.run(man.runs[man.runCount - 1]).rowCount);  // 503's hide and its two rows only
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 struct RefStep {
   std::vector<EditNote> before;  // the selection before the step
   uint16_t entries;
@@ -362,7 +534,12 @@ void test_random_sequences_match_the_reference_model() {
         x = x * 1103515245u + 12345u;
         const uint16_t i = static_cast<uint16_t>((start + k * 5) % kNotes);
         const bool del = ((x >> 4) % 7) == 0;
-        ch[k] = moved(i, (x >> 12) % (kLoop - 300), 1 + (x >> 3) % 200, static_cast<uint8_t>(60 + i), static_cast<uint8_t>(1 + (x >> 5) % 126), del);
+        // A third of the edits land on another note's pitch near it (overlap); the others on a pitch of their own.
+        const bool onto = ((x >> 14) % 3) == 0;
+        const uint16_t other = static_cast<uint16_t>((i + 1 + (x >> 16) % (kNotes - 1)) % kNotes);
+        const uint32_t tick = onto ? (gBase[other].tick + 60u + (x >> 12) % 160u) % (kLoop - 300) : (x >> 12) % (kLoop - 300);
+        ch[k] = moved(i, tick, 1 + (x >> 3) % 200, onto ? gBase[other].pitch : static_cast<uint8_t>(60 + i),
+                      static_cast<uint8_t>(1 + (x >> 5) % 126), del);
         next[i] = ch[k].value;
       }
       TEST_ASSERT_EQUAL(EditResult::Ok, gW.apply(ch, n));
@@ -446,6 +623,10 @@ int main(int, char**) {
   RUN_TEST(test_full_content_refuses_the_action);
   RUN_TEST(test_duplicate_note_in_one_step_is_refused);
   RUN_TEST(test_log_forgets_the_oldest_steps);
+  RUN_TEST(test_edited_notes_hide_and_shorten_same_pitch_notes);
+  RUN_TEST(test_overlap_across_the_loop_wrap);
+  RUN_TEST(test_overlap_edges_deleted_and_created_notes);
+  RUN_TEST(test_unedited_overlaps_are_left_alone);
   RUN_TEST(test_random_sequences_match_the_reference_model);
   RUN_TEST(test_no_heap_and_production_size);
   return UNITY_END();
