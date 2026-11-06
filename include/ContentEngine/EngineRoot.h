@@ -321,6 +321,10 @@ class EngineRoot {
     if (card_ != nullptr) p_->persistence.startBootLoad();
   }
   const ProductionPersistence& persistence() const { return p_->persistence; }
+  /// The surface's state (selected track and slots, `ProductionPersistence::kStateBytes`): saved like a slot.
+  void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
+    if (card_ != nullptr) p_->persistence.setSurfaceState(s, nowUs);
+  }
 
   // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
   /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).

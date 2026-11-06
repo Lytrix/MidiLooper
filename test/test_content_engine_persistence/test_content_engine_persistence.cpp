@@ -328,6 +328,47 @@ void test_an_interrupted_replace_boots_from_the_tmp_file() {
   TEST_ASSERT_TRUE(gB.persistence().savedCurrent(0));
 }
 
+// Owner 2026-11-06: the selected track and slots survive a reboot. Saved like a slot (only after approval, once
+// settled); a second engine on the same card restores them; a damaged file restores nothing.
+void test_the_surface_state_is_saved_and_restored() {
+  const uint8_t state[ProductionPersistence::kStateBytes] = {7, 0, 9, 18, 24, 32, 41, 50, 63};
+  gA.setSurfaceState(state, us(gClock));
+  run(gA, gClock + kSettleTicks + 20);
+  TEST_ASSERT_FALSE(gCard.exists("/MidiLooper/engine/surface.mls"));  // not approved: nothing written
+  TEST_ASSERT_EQUAL_UINT32(0, gCard.writes);
+  gA.approveSaving();
+  run(gA, gClock + kSettleTicks / 2);
+  gA.setSurfaceState(state, us(gClock));  // unchanged: no new settle time
+  run(gA, gClock + kSettleTicks);
+  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/surface.mls"));
+  TEST_ASSERT_FALSE(gCard.exists("/MidiLooper/engine/surface.tmp"));
+  const uint32_t writes = gCard.writes;
+  run(gA, gClock + kSettleTicks + 20);
+  TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);  // saved once
+  // A new selection is saved only once it has settled (2 s).
+  const uint8_t next[ProductionPersistence::kStateBytes] = {3, 1, 9, 18, 24, 32, 41, 50, 63};
+  gA.setSurfaceState(next, us(gClock));
+  run(gA, gClock + kSettleTicks / 2);
+  TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
+  run(gA, gClock + kSettleTicks);
+  TEST_ASSERT_TRUE(gCard.writes > writes);
+  TEST_ASSERT_TRUE(gB.init(gPsramB, gRam2B, 2000));
+  gB.attachCard(gCard);
+  gB.startBootLoad();
+  run(gB, gClock + 20);
+  uint8_t back[ProductionPersistence::kStateBytes] = {};
+  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(next, back, ProductionPersistence::kStateBytes);
+  // Damaged: nothing restored.
+  const int f = gCard.find("/MidiLooper/engine/surface.mls");
+  gCard.files[f].data[5] ^= 0x01;  // a bit of the state word
+  TEST_ASSERT_TRUE(gB.init(gPsramB, gRam2B, 2000));
+  gB.attachCard(gCard);
+  gB.startBootLoad();
+  run(gB, gClock + 20);
+  TEST_ASSERT_FALSE(gB.persistence().restoredSurfaceState(back));
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -353,6 +394,7 @@ int main(int, char**) {
   RUN_TEST(test_a_second_engine_boots_from_the_card);
   RUN_TEST(test_a_corrupt_file_fails_by_name_and_an_interrupted_save_keeps_the_old_file);
   RUN_TEST(test_an_interrupted_replace_boots_from_the_tmp_file);
+  RUN_TEST(test_the_surface_state_is_saved_and_restored);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

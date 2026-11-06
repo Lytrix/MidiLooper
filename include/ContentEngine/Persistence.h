@@ -22,6 +22,10 @@
 //   passes as runs, legacy note edits discarded and named: `v1EditedMask`); a loop-start-shifted or empty V1 slot is
 //   skipped and named (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved in the new
 //   format once approved; V1 files are never written.
+// * Surface state (owner 2026-11-06, E9.8): the selected track and each track's selected slot, as `kStateBytes` bytes
+//   from the surface (`setSurfaceState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
+//   persistence grain — to `surface.tmp`, renamed over `surface.mls` (magic "MLS1", the state packed in 27 bits, a check word); read once
+//   at boot (`restoredSurfaceState`), a missing or bad file meaning none.
 // `Card` (one file open for reading and one for writing at a time): exists(path), makeDir(path), openRead(path),
 // read(data, n), closeRead(), openWrite(path), write(data, n), closeWrite(), rename(from, to) — rename replaces `to`, removing it first where the card cannot replace (see above).
 // No allocation.
@@ -54,6 +58,7 @@ class Persistence {
  public:
   static constexpr const char* kFolder = "/MidiLooper/engine";
   static constexpr uint32_t kSettleUs = 2000000;  // 2 s without a change
+  static constexpr uint8_t kStateBytes = 9;        // the selected track, then each track's selected slot
   static constexpr uint32_t kChunk = 16384;
   using Reservations = RowReservations<Pool, Runs>;
 
@@ -113,6 +118,10 @@ class Persistence {
       saved_[s] = seen_[s] = Fingerprint{};
       changedUs_[s] = 0;
     }
+    state_ = stateSaved_ = 0;
+    stateRead_ = kNoState;
+    stateDue_ = stateKnown_ = false;
+    stateChangedUs_ = 0;
     stats_ = Stats{};
   }
 
@@ -141,20 +150,44 @@ class Persistence {
         changedUs_[s] = nowUs;
       }
     }
-    if (!approved_ || booting() || saving_ != kNone) return;
+    if (!approved_ || booting() || saving_ != kNone || stateDue_) return;
     for (uint8_t s = 0; s < Slots; ++s) {
       if (seen_[s] == saved_[s] || s == busySlotA || s == busySlotB) continue;
       if (nowUs - changedUs_[s] < kSettleUs) continue;
       startSave(s);
       return;
     }
+    if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && state_ != stateSaved_)
+      stateDue_ = true;  // written by the next persistence grain
   }
-  bool pending() const { return saving_ != kNone || booting(); }
+  bool pending() const { return saving_ != kNone || booting() || stateDue_; }
+
+  // ---- Surface state ----------------------------------------------------------------------------------------------------
+  /// The surface's state now (`kStateBytes`); saved once settled and approved.
+  void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
+    const uint32_t packed = pack(s);
+    if (stateKnown_ && packed == state_) return;
+    state_ = packed;
+    stateKnown_ = true;
+    stateChangedUs_ = nowUs;
+  }
+  /// The state read at boot. False: none (no file, or a bad one).
+  bool restoredSurfaceState(uint8_t* out) const {
+    if (stateRead_ == kNoState) return false;
+    out[0] = stateRead_ & 7;  // the selected track; then track t's slot, t x 8 + its index
+    for (uint8_t t = 0; t < kStateBytes - 1; ++t) out[1 + t] = static_cast<uint8_t>(t * 8 + ((stateRead_ >> (3 + 3 * t)) & 7));
+    return true;
+  }
   /// One persistence grain: a save chunk, or a load grain, or the next boot file opened.
   bool step() {
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
     if (importing_ != kNone) return stepImport();
+    if (stateDue_) {
+      writeState();
+      return false;
+    }
+    if (bootNext_ == 0) readState();  // the boot's first grain
     while (bootNext_ < Slots) {
       const uint8_t s = bootNext_++;
       path(s, ".mle", name_);
@@ -206,6 +239,37 @@ class Persistence {
     f.any = m != kNoManifest || f.redo != 0;
     return f;
   }
+  static constexpr const char* kStateFile = "/MidiLooper/engine/surface.mls";
+  static constexpr const char* kStateTmp = "/MidiLooper/engine/surface.tmp";
+  static constexpr uint32_t kStateMagic = 0x31534C4Du;  // "MLS1"
+  static constexpr uint32_t kNoState = 0xFFFFFFFFu;
+  /// The state packed in 27 bits (persistence state is a fixed PSRAM line): the track, then each track's slot index.
+  static uint32_t pack(const uint8_t* s) {
+    uint32_t v = s[0] & 7u;
+    for (uint8_t t = 0; t < kStateBytes - 1; ++t) v |= static_cast<uint32_t>(s[1 + t] & 7u) << (3 + 3 * t);
+    return v;
+  }
+  static uint32_t stateSum(uint32_t v) { return (v * 2654435761u) ^ 0xA5A5A5A5u; }
+  void writeState() {
+    stateDue_ = false;
+    uint8_t b[12];
+    const uint32_t words[3] = {kStateMagic, state_, stateSum(state_)};
+    for (uint8_t i = 0; i < 12; ++i) b[i] = static_cast<uint8_t>(words[i / 4] >> (8 * (i % 4)));
+    const bool ok = card_->openWrite(kStateTmp) && card_->write(b, sizeof b);
+    const bool closed = card_->closeWrite();
+    if (ok && closed && card_->rename(kStateTmp, kStateFile)) stateSaved_ = state_;
+  }
+  void readState() {
+    uint8_t b[12];
+    if (!card_->exists(kStateFile) || !card_->openRead(kStateFile)) return;
+    const bool ok = card_->read(b, sizeof b);
+    card_->closeRead();
+    uint32_t w[3] = {};
+    for (uint8_t i = 0; i < 12; ++i) w[i / 4] |= static_cast<uint32_t>(b[i]) << (8 * (i % 4));
+    if (!ok || w[0] != kStateMagic || w[2] != stateSum(w[1]) || w[1] >> 27 != 0) return;
+    stateRead_ = stateSaved_ = w[1];
+  }
+
   static void path(uint8_t slot, const char* ext, char* out) {
     const char* f = kFolder;
     uint8_t n = 0;
@@ -289,8 +353,8 @@ class Persistence {
     out[n] = 0;
   }
   bool startImport(uint8_t s) {
-    v1Path(s, v1Name_);
-    const typename Reader::Status st = reader_.start(*card_, v1Name_, import_, *pool_, *runs_, *manifests_, *history_,
+    v1Path(s, name_);  // the reader keeps this path while it imports (no load or save runs meanwhile)
+    const typename Reader::Status st = reader_.start(*card_, name_, import_, *pool_, *runs_, *manifests_, *history_,
                                                       *res_, *ids_, s, importScratch_, kChunk, v1Layout_);
     if (st == Reader::Status::Running) {
       importing_ = s;
@@ -341,11 +405,15 @@ class Persistence {
   Save save_;
   Load load_;
   bool approved_ = false, fromTmp_ = false;
+  bool stateDue_ = false, stateKnown_ = false;
+  uint32_t state_ = 0, stateSaved_ = 0, stateRead_ = 0xFFFFFFFFu, stateChangedUs_ = 0;
   uint8_t saving_ = kNone, loading_ = kNone, bootNext_ = Slots;
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};
   uint32_t changedUs_[Slots] = {};
-  char name_[32] = {};    // "/MidiLooper/engine/slot_NN.tmp": 30 characters
-  char v1Name_[44] = {};  // "/MidiLooper/current/slots/loop_TT_SS.bin": 40 characters
+  // The file in use: an engine slot file ("/MidiLooper/engine/slot_NN.tmp", 30 characters) or, while a V1 slot is
+  // imported, its V1 file ("/MidiLooper/current/slots/loop_TT_SS.bin", 40) — one at a time: boot loads and imports one
+  // slot after another and no save runs while booting.
+  char name_[44] = {};
   uint8_t* importScratch_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   uint8_t importing_ = kNone;

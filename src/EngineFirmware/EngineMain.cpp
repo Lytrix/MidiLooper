@@ -320,7 +320,27 @@ void pollSerial(uint32_t nowUs) {
   }
 }
 
-// After boot load: each track selects its first slot with content (slots T x 8 .. T x 8 + 7).
+void selectFirstSlots();
+// After boot load: the saved selection (selected track, each track's slot), else each track's first slot with content
+// (slots T x 8 .. T x 8 + 7).
+void restoreSelection() {
+  uint8_t state[ProductionPersistence::kStateBytes];
+  if (!gEngine.persistence().restoredSurfaceState(state) || state[0] >= kTrackCount) {
+    selectFirstSlots();
+    return;
+  }
+  gEngine.control().selectTrack(state[0]);
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    if (state[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
+}
+/// The selection as the surface has it now, for saving (selected track, then each track's engine slot).
+void saveSelection(uint32_t nowUs) {
+  uint8_t state[ProductionPersistence::kStateBytes];
+  state[0] = gEngine.control().selectedTrack();
+  for (uint8_t t = 0; t < kTrackCount; ++t) state[1 + t] = gSurface.selectedSlot(t);
+  gEngine.setSurfaceState(state, nowUs);
+}
+
 void selectFirstSlots() {
   for (uint8_t t = 0; t < kTrackCount; ++t)
     for (uint8_t s = 0; s < 8; ++s)
@@ -443,12 +463,13 @@ void loop() {
   if (!gBootReported && gCard.ready() && !gEngine.persistence().booting()) {
     gBootReported = true;
     reportBootLoad();
-    selectFirstSlots();
+    restoreSelection();
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
   crumb(kSurface);
   gSurface.service(millis(), gLastTick, micros());
+  if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   crumb(kLeds);
   if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));

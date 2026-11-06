@@ -1825,6 +1825,12 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
   brightness; a held note reaching the current position, a note across the loop end wrapping while overdubbing), drawn
   by `drawRollBand` at the view's scale. A first take's view grows with the current tick and ends at it (legacy
   `resolveDisplayLoopLength`); the pitch range includes the take's notes. 9,492 B, inside the overlay line.
+- **Selection survives a reboot** (owner 2026-11-06): the selected track and each track's selected slot are
+  `Persistence`'s surface state, saved like a slot — only after approval, 2 s after the last change, as a persistence
+  grain, `surface.tmp` renamed over `surface.mls` (magic "MLS1", the state packed in 27 bits, a check word) — and read
+  in the boot's first grain; the firmware restores it after the boot load, else selects each track's first slot with
+  content. To stay inside the persistence PSRAM line the engine-file and V1-file path buffers are one (they are never
+  in use at once).
 - **Track channels:** each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default),
   set by the firmware with `ClockOutput::setChannel` at boot; live thru follows the selected track's channel. The
   engine's own default stays "as recorded" (its tests).
