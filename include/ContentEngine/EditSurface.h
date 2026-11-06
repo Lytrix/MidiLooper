@@ -12,7 +12,10 @@
 // * F1 select (channel 16 pitch bend): the 16th under the fader within the window (`selectTickFromPitchbend`), then
 //   the notes starting in that 16th, stacked by start and pitch, chosen by the position inside the step
 //   (`selectStackedNoteIndexFromPitchbend`); no note there: the bracket alone (as `SelectNavigation`). A select leaves
-//   length mode and arms the geometry faders at once.
+//   length mode and arms the geometry faders at once. F1 acts only when it moves `kF1Deadband` or more from the value
+//   it last acted on: the DROID repeats a fader at rest and jitters by a few values, and a select at a 16th the moved
+//   note has left would drop it (as legacy `shouldApplySelectionOnNoteIdChange`; owner 2026-11-06: F2–F4 did not move
+//   the selected note).
 // * F2 coarse (channel 14 pitch bend; acts on a movement ≥ 150 or after 1 s at rest): position — the 16th across the
 //   loop (`map`), keeping the start's offset in its 16th; length — the end across the loop
 //   (`lengthEditCoarsePitchbendToLoopTick`), at least a 16th (`applyLengthEndTargetRules`).
@@ -43,6 +46,7 @@ class EditSurface {
   static constexpr int32_t kPbMin = -8192, kPbMax = 8192;
   static constexpr uint32_t kGraceMs = 750, kCoarseRestMs = 1000, kGestureMs = 300, kSnapTicks = 24;
   static constexpr int32_t kCoarseThreshold = 150;
+  static constexpr int32_t kF1Deadband = 96;  // of 16,384: F1's rest test (a 16th of a 16-step window is 1,092)
   enum class Fader : uint8_t { None, Coarse, Fine, Pitch, Delete, Create, Length };
 
   void init(Engine& e) {
@@ -123,6 +127,7 @@ class EditSurface {
     armedMs_ = ms;
     armed_ = false;
     gesture_ = Fader::None;
+    f1Seen_ = false;  // the first F1 message selects
   }
 
   // ---- Faders ---------------------------------------------------------------------------------------------------
@@ -132,6 +137,9 @@ class EditSurface {
     int32_t step = static_cast<int32_t>((static_cast<int64_t>(pb - kPbMin) * (steps - 1)) / (kPbMax - kPbMin));
     if (step < 0) step = 0;
     if (step >= static_cast<int32_t>(steps)) step = static_cast<int32_t>(steps - 1);
+    if (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband) return;  // F1 at rest: the selection stays
+    f1Pb_ = pb;
+    f1Seen_ = true;
     const uint32_t target = first_ + static_cast<uint32_t>(step) * kSixteenth;
     // The notes starting in that 16th, by start then pitch.
     int16_t stack[32];
@@ -385,6 +393,8 @@ class EditSurface {
   uint8_t slot_ = 0;
   uint32_t loop_ = 0, first_ = 0, ticks_ = 0, pos_ = 0, bracket_ = 0, refStep_ = 0, anchor_ = 0;
   int16_t sel_ = -1;
+  int16_t f1Pb_ = 0;     // the F1 value the last select acted on
+  bool f1Seen_ = false;  // ... this session
   bool length_ = false, armed_ = false;
   uint32_t armedMs_ = 0, enteredMs_ = 0;
   int16_t lastCoarse_ = 0;

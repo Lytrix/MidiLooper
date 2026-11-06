@@ -2103,3 +2103,13 @@ on its NoteOn's tick (a press under a tick long) gave length 0, and the lookup n
 one grain looped forever. Such a note is now not selectable, like one with no stored NoteOff (an edited note is at
 least a tick long). `test_content_engine_note_edit` +1 (hung before the fix; mutations 2 / 2). Device `a69d7221…`:
 boot clean; edit mode enters and shows START / NOTE / VELOCITY / LENGTH, and leaves.
+
+**F2–F4 did not move the selected note** (owner 2026-11-06, on the DROID; the same moves sent once each from the host
+moved it). `EditSurface::select` re-selected on every F1 message, and the DROID repeats a fader at rest and jitters
+by a few values: once F2 moved the note out of F1's 16th, the next F1 message selected what was there instead — the
+moved note was dropped and the bracket snapped back. F1 now acts only when it moves `kF1Deadband` (96 of 16,384; a
+16th of a 16-step window is 1,092) from the value it last acted on, as legacy (`shouldApplySelectionOnNoteIdChange`);
+the first F1 message of a session acts. In length mode a resting F1 no longer leaves it. `test_content_engine_edit_surface`
++1 (mutations 3 / 3). `!ENGINE fbdump` now also prints the edit state the frame was drawn with (`#FB,edit,…`). Device
+`b63db4bd…`: boot clean; F2 moves with F1 repeats and jitter between them moved the note 48 → 192 → 384 → 576 and F4
+set its pitch.

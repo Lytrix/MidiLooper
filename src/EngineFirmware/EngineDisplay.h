@@ -115,6 +115,11 @@ class EngineDisplay {
       line[DISPLAY_WIDTH] = 0;
       Serial.printf("#FB,%u,%s\n", y, line);
     }
+    // The NOTE_EDIT state the frame was drawn with.
+    Serial.printf("#FB,edit,active=%u,ready=%u,slot=%u,note=%u,tick=%lu,pitch=%u,len=%lu,bracket=%lu,length=%u\n",
+                  edit_.active, edit_.ready, edit_.slot, edit_.note, static_cast<unsigned long>(edit_.noteTick),
+                  edit_.notePitch, static_cast<unsigned long>(edit_.noteLength), static_cast<unsigned long>(edit_.bracket),
+                  edit_.length);
   }
   /// Holds the screen for `ms` (the next frame waits).
   void hold(uint32_t nowMs, uint32_t ms) { lastFrameMs_ = nowMs + ms - kFrameMs; }

@@ -226,6 +226,39 @@ void test_geometry_faders_move_and_pitch_heard_one_step_a_gesture() {
   TEST_ASSERT_EQUAL_UINT32(485, sel().tick);
 }
 
+// The DROID keeps sending a fader at rest (a repeat, or jitter of a few values): F1 acts only when its position moves,
+// as legacy (`shouldApplySelectionOnNoteIdChange`). Owner 2026-11-06: F2–F4 did not move the selected note — each F1
+// message re-selected at F1's 16th, which the moved note had left.
+void test_f1_at_rest_keeps_the_moved_note_selected() {
+  recordBar({{0, 60}, {100, 64}, {384, 67}});
+  enterEdit();
+  f1(pbFor(2, 16));  // 64 @ 100
+  f2(-8192 + 16384 * 10 / 15 + 20);  // to step 10
+  TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
+  f1(pbFor(2, 16));      // F1 repeats its value
+  f1(pbFor(2, 16) + 3);  // and jitters
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, gS.edit().bracket());
+  ms(400);
+  f2(-8192 + 16384 * 12 / 15 + 20);  // the note keeps moving
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(12 * 48 + 4, sel().tick);
+  ms(400);
+  f4(70);
+  TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
+  f1(pbFor(8, 16));  // F1 moved to another 16th: it selects again
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  // A new session: F1's first message selects, even at the value the last session left it.
+  tap(S::kEditModeNote);
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().editing());
+  enterEdit();
+  f1(pbFor(8, 16));
+  TEST_ASSERT_EQUAL_UINT32(384, gS.edit().bracket());
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+}
+
 void test_geometry_waits_the_grace_period_after_entry() {
   recordBar({{96, 60}});
   enterEdit();  // the bracket at the playhead selects the closest note (60 @ 96)
@@ -261,10 +294,12 @@ void test_length_mode_sets_the_end_at_least_a_sixteenth() {
   ms(450);
   TEST_ASSERT_FALSE(gS.edit().lengthMode());
   TEST_ASSERT_EQUAL_UINT32(96, gS.edit().bracket());
-  tap(S::kLengthNote);  // length mode again; an F1 selection leaves it
+  tap(S::kLengthNote);  // length mode again; F1 at rest keeps it, an F1 move (a selection) leaves it
   ms(450);
   TEST_ASSERT_TRUE(gS.edit().lengthMode());
   f1(pbFor(2, 16));
+  TEST_ASSERT_TRUE(gS.edit().lengthMode());
+  f1(pbFor(3, 16));
   TEST_ASSERT_FALSE(gS.edit().lengthMode());
 }
 
@@ -359,6 +394,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
   RUN_TEST(test_geometry_faders_move_and_pitch_heard_one_step_a_gesture);
+  RUN_TEST(test_f1_at_rest_keeps_the_moved_note_selected);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);
