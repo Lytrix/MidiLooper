@@ -97,6 +97,22 @@ class EngineDisplay {
                   static_cast<unsigned long>(oled_.api.dmaCompletedFrameCount()),
                   static_cast<unsigned long>(oled_.api.dmaBlockingFrameCount()));
   }
+  /// The last frame drawn as 64 lines `#FB,<row>,<256 hex digits>` (4-bit gray, two pixels a byte, high nibble first;
+  /// the legacy `!FB_DUMP` format), for `scripts/render_display_dump.py`. Diagnostics: ~17 KB on the serial port.
+  void dump() {
+    static const char kHex[] = "0123456789abcdef";
+    const uint8_t* f = fb();
+    char line[DISPLAY_WIDTH + 1];
+    for (uint8_t y = 0; y < DISPLAY_HEIGHT; ++y) {
+      for (uint16_t i = 0; i < DISPLAY_WIDTH / 2; ++i) {
+        const uint8_t b = f[y * (DISPLAY_WIDTH / 2) + i];
+        line[2 * i] = kHex[b >> 4];
+        line[2 * i + 1] = kHex[b & 15];
+      }
+      line[DISPLAY_WIDTH] = 0;
+      Serial.printf("#FB,%u,%s\n", y, line);
+    }
+  }
   /// Holds the screen for `ms` (the next frame waits).
   void hold(uint32_t nowMs, uint32_t ms) { lastFrameMs_ = nowMs + ms - kFrameMs; }
 

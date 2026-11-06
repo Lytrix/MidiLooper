@@ -277,6 +277,8 @@ void command(char* line, uint32_t nowUs) {
     report(verb, static_cast<uint8_t>(c.undo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
   } else if (std::strcmp(verb, "redo") == 0) {
     report(verb, static_cast<uint8_t>(c.redo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
+  } else if (std::strcmp(verb, "fbdump") == 0) {  // the last frame drawn: `scripts/render_display_dump.py`
+    gDisplay.dump();
   } else if (std::strcmp(verb, "oled-test") == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes
     gDisplay.selfTest(a != 0);
     gDisplay.hold(millis(), 3000);
