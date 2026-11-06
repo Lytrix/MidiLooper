@@ -1816,7 +1816,9 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
 - **Arm first** (legacy `handleArmedRecordPress`): a Record on a stopped transport only arms; the second press starts
   the transport and the take on its first tick; on a running transport the second record press cancels; a slot's
   second press on a playing track punches in. Every transport start (`Surface::transportStarted`, MIDI Start too)
-  re-queues armed Records on its first tick.
+  re-queues armed Records on its first tick, and starts every track that is not muted and not playing on its selected
+  slot when that slot has content (owner 2026-11-06: a MIDI Start plays all tracks; tracks playing at the stop
+  resume, a muted one silently, as legacy's mute only silences).
 - **Track letters** as legacy `trackStateToLetter` (R, O, A, P, S — the selected slot has content —, -, M), the
   selected track's letter pulsing at 1 Hz (brightness 4–10).
 - **Live notes while recording:** `LiveOverlay` is now a list of the take's notes (768, start / end / pitch /

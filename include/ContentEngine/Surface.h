@@ -32,7 +32,9 @@
 //   - tracks 60–67: short = select; double = mute toggle; long = solo toggle.
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
-//   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick.
+//   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
+//   every track that is not muted and not playing on its selected slot, when that slot has content (owner
+//   2026-11-06: a MIDI Start plays all tracks).
 // * LEDs (channel 15 notes, the legacy `MidiLedManager` / `TrackManagerMidiLedFeedback` velocities), for the selected
 //   track's shown slot: 16th content 0–15 (64) and position 16–31 (127) of the current bar, transport 39 (127), bars
 //   40–47 (current 127, with notes 64, in the loop 32), loop slots 50–57 (taking or armed 96, queued switch blinking
@@ -233,9 +235,17 @@ class Surface {
 
   /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
   void transportStarted(uint32_t firstTick) {
+    auto& x = transport();
     for (uint8_t t = 0; t < kTracks; ++t) {
-      const uint8_t slot = control().queuedRecordSlot(t);
-      if (slot != 0xFF) control().queueRecord(t, slot, firstTick - 1);
+      const uint8_t armed = control().queuedRecordSlot(t);
+      if (armed != 0xFF) {
+        control().queueRecord(t, armed, firstTick - 1);
+        continue;
+      }
+      // Every track not muted and not playing starts its selected slot on the first tick.
+      const uint8_t slot = selectedSlot(t);
+      if (x.playing(t) || x.writingTrack() == t || control().muted(t) || empty(slot)) continue;
+      control().queueSwitch(t, slot, Engine::Control::Quantize::NextGrid, firstTick - 1);
     }
   }
 

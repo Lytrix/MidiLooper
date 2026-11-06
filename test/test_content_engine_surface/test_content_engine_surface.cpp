@@ -312,6 +312,44 @@ void test_transport_and_play_stop_buttons() {
   TEST_ASSERT_TRUE(X().playing(0));
 }
 
+// Owner 2026-11-06: a transport start (the button, MIDI Start) plays every track that is not muted on its selected slot.
+void test_a_transport_start_plays_every_unmuted_track() {
+  recordOneBar(0, 60);  // track 0, slot 0
+  // Track 1 records slot 8, track 2 slot 16 (each from the bar, on the running transport).
+  for (uint8_t t : {1, 2}) {
+    tap(S::kTrackBase + t);
+    ms(400);
+    tap(S::kSlotBase + 0);
+    ms(400);
+    run(gUs + kBarUs);  // the take starts at the next bar
+    TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, X().mode());
+    gE.inputNoteOn(gLast, 0x90, 64, 100, gUs, gClk.usPerTick());
+    run(gUs + 100 * kTick);
+    gE.inputNoteOff(gLast, 0x80, 64, gUs);
+    tap(S::kSlotBase + 0);  // ends at the bar
+    run(gUs + kBarUs);
+  }
+  // Tracks 1 and 2 stopped on their own (play / stop); then the transport stops; track 2 is muted.
+  for (uint8_t t : {1, 2}) {
+    tap(S::kTrackBase + t);
+    ms(400);
+    tap(S::kPlayStopNote);
+    ms(500);
+    TEST_ASSERT_FALSE(X().playing(t));
+  }
+  tap(S::kTransportNote);  // stop: nothing plays
+  ms(400);
+  for (uint8_t t = 0; t < 3; ++t) TEST_ASSERT_FALSE(X().playing(t));
+  C().setMute(2, true, gUs);
+  tap(S::kTransportNote);  // start: track 0 resumes, stopped track 1 starts too; muted, stopped track 2 does not
+  ms(400);
+  run(gUs + 10 * kTick);
+  TEST_ASSERT_TRUE(X().playing(0));
+  TEST_ASSERT_TRUE(X().playing(1));
+  TEST_ASSERT_EQUAL_UINT8(8, X().playingSlot(1));
+  TEST_ASSERT_FALSE(X().playing(2));
+}
+
 void test_leds_follow_and_only_changes_are_sent() {
   recordOneBar(0, 60);
   run(gUs + 100 * kTick);
@@ -356,6 +394,7 @@ int main(int, char**) {
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);
   RUN_TEST(test_track_buttons_select_mute_and_solo);
   RUN_TEST(test_transport_and_play_stop_buttons);
+  RUN_TEST(test_a_transport_start_plays_every_unmuted_track);
   RUN_TEST(test_leds_follow_and_only_changes_are_sent);
   RUN_TEST(test_no_heap);
   return UNITY_END();
