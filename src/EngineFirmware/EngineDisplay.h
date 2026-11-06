@@ -18,7 +18,7 @@
 //   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
 //   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 43–46, three dark rows under the roll)
 //   when the loop is longer than the view: a full-height cell per beat as bright as the pitches sounding in it
-//   (2–9), dimmed (1–4) outside the view's bars.
+//   (2–9), dimmed (2–5) outside the view's bars.
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a

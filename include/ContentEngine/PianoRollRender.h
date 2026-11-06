@@ -40,7 +40,8 @@ constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
 constexpr uint8_t kRollOverviewLow = 2;    // an overview beat with the fewest pitches sounding (one)
 constexpr uint8_t kRollOverviewHigh = 9;   // ... with the most (the loop's busiest beat; owner: 14 was too bright)
-constexpr uint8_t kRollOverviewOutsideHigh = 4;  // the busiest beat outside the detailed view (the fewest: 1)
+constexpr uint8_t kRollOverviewOutsideLow = 2;   // one pitch outside the detailed view (owner: 1 looked black)
+constexpr uint8_t kRollOverviewOutsideHigh = 5;  // the busiest beat outside it
 
 namespace roll {
 
@@ -135,7 +136,7 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
 /// the pitches sounding in that beat (the bar's raster columns of the beat, OR-ed; a bar not swept into a span tile
 /// yet: its density tile's pitches, the same for each beat) from `kRollOverviewLow` (one) to `kRollOverviewHigh` (the
 /// busiest beat); a beat with none stays dark. Beats outside the detailed view's bars [viewFirst, viewFirst +
-/// viewTicks) take the same scale dimmed to 1–4 (viewTicks 0: every bar is in view). A bar 4 px or wider leaves its
+/// viewTicks) take the same scale dimmed to 2–5 (viewTicks 0: every bar is in view). A bar 4 px or wider leaves its
 /// last column dark, so bars read apart. O(bars x 32 raster columns).
 template <typename Store>
 void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t barTicks, int16_t x0, int16_t x1,
@@ -192,7 +193,9 @@ void drawOverviewBand(const Store& store, uint8_t slot, uint32_t loop, uint32_t 
       constexpr uint8_t kSteps = kRollOverviewHigh - kRollOverviewLow;
       uint8_t v = most == 1 ? kRollOverviewHigh
                             : static_cast<uint8_t>(kRollOverviewLow + (kSteps * (c - 1) + (most - 1) / 2) / (most - 1));
-      if (!inView) v = static_cast<uint8_t>(1 + (v - kRollOverviewLow) * (kRollOverviewOutsideHigh - 1) / kSteps);
+      if (!inView)
+        v = static_cast<uint8_t>(kRollOverviewOutsideLow +
+                                 (v - kRollOverviewLow) * (kRollOverviewOutsideHigh - kRollOverviewOutsideLow) / kSteps);
       for (int16_t y = rowFrom; y <= rowTo; ++y)
         for (int16_t x = xa; x <= xb; ++x) roll::pixel(fb, width, x, y, v);
     }
