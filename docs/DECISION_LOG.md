@@ -14713,3 +14713,34 @@ These stay in force on `dev` and the legacy branches until the cutover lands.
 - Terminal sets: 8 × 16 × 12 B = 1,536 B of instances; 2,816 B per 8 tracks with occupancy counts (measured).
 - Evidence: `test_engine_window_bound` 8/8 (tight bound, stream equality, source polyphony 384 > 16 suppressed by
   name); `test_content_engine_terminals` 12/12 (crossing windows, transitions, live NoteOffs, port backpressure).
+
+## DEC-253 — The engine saves into one preallocated store with two copies a slot, written sector by sector
+
+**Date:** 2026-11-06
+**Owner:** `ContentEngine::Persistence` (the store's layout, sequences and boot choice); `EngineFirmware::SdCardIo`
+(the card). OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) E9.8g. Formal
+trigger: persistent state model change (the card format of E9.7a's files). Builds on DEC-252.
+**Status:** Accepted by owner (2026-11-06: "Preallocated A/B files"; card replaced by a 32 GB card for its size).
+
+### Decision
+
+- **One store.** Slots and the surface state live in `/MidiLooper/engine/store.bin`, created with the approval and
+  preallocated contiguous; after that the card is read and written at sector addresses, never through the file
+  system. Reason: every file-system operation took 4–8 ms and a save held the main loop ~30 ms.
+- **Two copies a slot.** A save writes the copy that is not current and writes its header last, with a sequence
+  later than any copy the boot found; boot loads the later valid copy, else the other. An interrupted or failed save
+  never touches the current copy. One sector write a grain at most.
+- **Worst-case size.** Each copy holds the whole content pool and history (~2.17 MB), 277 MB in all; a card without
+  that contiguous room saves nothing (`storeError`). No per-slot cap.
+- **Migration, read only.** Slots without a store copy load from E9.7a's files (`.mle`, a complete `.tmp`) or V1 and
+  are then written into the store; the old files are never written or deleted.
+
+Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.7a and E9.8, marked).
+
+### Evidence
+
+- `test_content_engine_persistence` 12 / 12; mutations 14 of 18 caught (survivors equivalent or unreachable).
+  Native full suite: 4,344 passed, 0 failed. Heap gate OK.
+- Device image `4d89e900…`: store created on the 32 GB card, 22 slots migrated then loaded from the store, 0 failed;
+  worst save grain 2.5–9.8 ms (was ~30 ms), bounded by the card's single-sector write.
+

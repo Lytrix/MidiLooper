@@ -299,6 +299,15 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(gEngine.persistence().stats().saveFailed),
                   static_cast<unsigned long>(gHeartbeats));
     for (uint32_t& m : gStageMaxUs) m = 0;
+    const auto& ct = gCard.times();  // the card operations' worst times (µs)
+    Serial.printf("#ENGINE,card,exists=%lu,open_read=%lu,sector_read=%lu,sector_write=%lu,store_open=%lu,store=%u\n",
+                  static_cast<unsigned long>(ct.exists), static_cast<unsigned long>(ct.openRead),
+                  static_cast<unsigned long>(ct.sectorRead), static_cast<unsigned long>(ct.sectorWrite),
+                  static_cast<unsigned long>(ct.store), gEngine.persistence().stats().store);
+    Serial.printf("#ENGINE,store,error=%u,first_sector=%lu,fat_type=%u,cluster_sectors=%u,clusters=%lu\n",
+                  gCard.storeError(), static_cast<unsigned long>(gCard.storeSector()), SD.sdfs.fatType(),
+                  static_cast<unsigned>(SD.sdfs.sectorsPerCluster()), static_cast<unsigned long>(SD.sdfs.clusterCount()));
+    gCard.clearTimes();
     Serial.printf("#ENGINE,take,pass_max_us=%lu,pulses=%lu,timeouts=%lu,running=%u,external=%u,us_per_tick=%lu,tick=%lu\n",
                   static_cast<unsigned long>(gPassMaxUs), static_cast<unsigned long>(gPulses),
                   static_cast<unsigned long>(gTimeouts), gClock.running(), gClock.external(),
@@ -317,6 +326,12 @@ void command(char* line, uint32_t nowUs) {
                   h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
+  } else if (std::strcmp(verb, "cardfree") == 0) {  // the card's free space (scans the FAT: ~1 s, read only)
+    const uint32_t t = millis();
+    const int32_t free = SD.sdfs.freeClusterCount();
+    Serial.printf("#ENGINE,cardfree,free_clusters=%ld,cluster_sectors=%u,clusters=%lu,ms=%lu\n",
+                  static_cast<long>(free), static_cast<unsigned>(SD.sdfs.sectorsPerCluster()),
+                  static_cast<unsigned long>(SD.sdfs.clusterCount()), static_cast<unsigned long>(millis() - t));
   } else if (std::strcmp(verb, "status") == 0) {
     EditNote n{};
     const bool note = gSurface.edit().selected(n);
@@ -402,12 +417,13 @@ void crumb(uint32_t stage) {
 void reportBootLoad() {
   const auto& st = gEngine.persistence().stats();
   Serial.printf("#CAP,%lu,BOOT,load,ok,card=%u,approved=%u,loads=%lu,load_failed_mask=%llx,v1_imported=%lu,"
-                "v1_skipped_mask=%llx,v1_edited_mask=%llx,v1_failed_mask=%llx,held_whole=%lu,us=%lu\n",
+                "v1_skipped_mask=%llx,v1_edited_mask=%llx,v1_failed_mask=%llx,held_whole=%lu,store=%u,migrated=%lu,us=%lu\n",
                 static_cast<unsigned long>(micros()), gCard.ready(), gEngine.persistence().approved(),
                 static_cast<unsigned long>(st.loads), static_cast<unsigned long long>(st.loadFailedMask),
                 static_cast<unsigned long>(st.v1Imported), static_cast<unsigned long long>(st.v1SkippedMask),
                 static_cast<unsigned long long>(st.v1EditedMask), static_cast<unsigned long long>(st.v1FailedMask),
-                static_cast<unsigned long>(st.v1HeldWhole), static_cast<unsigned long>(micros() - gBootStartUs));
+                static_cast<unsigned long>(st.v1HeldWhole), st.store, static_cast<unsigned long>(st.migrated),
+                static_cast<unsigned long>(micros() - gBootStartUs));
 }
 
 }  // namespace
@@ -450,6 +466,15 @@ void setup() {
     gEngine.startBootLoad();
   } else {
     Serial.println("#CAP,BOOT,card,absent");
+    // Why: the card's own error, then the partition table (sector 0) when the card answered.
+    static uint8_t mbr[512];
+    const unsigned beginError = SD.sdfs.sdErrorCode(), beginData = SD.sdfs.sdErrorData();
+    const bool read = SD.sdfs.card() && SD.sdfs.card()->readSector(0, mbr);
+    Serial.printf("#ENGINE,card,begin_error=%u,begin_data=%u,sd_error=%u,sd_data=%u,mbr_read=%u,sig=%02x%02x,part1_type=%02x,part1_lba=%lu,"
+                  "boot_jump=%02x,fs=%.8s\n",
+                  beginError, beginData, SD.sdfs.sdErrorCode(), SD.sdfs.sdErrorData(), read, mbr[510], mbr[511], mbr[450],
+                  static_cast<unsigned long>(mbr[454] | mbr[455] << 8 | mbr[456] << 16 | uint32_t(mbr[457]) << 24),
+                  mbr[0], reinterpret_cast<const char*>(mbr + 3));
   }
 }
 

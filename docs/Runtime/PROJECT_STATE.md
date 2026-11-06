@@ -1,3 +1,10 @@
+**2026-11-06 — Fixed-memory engine: E9.8g saves write sectors only (the A / B store).**
+- Slots and the selection are saved into one preallocated file, `/MidiLooper/engine/store.bin`, written sector by
+  sector with no file-system work: two copies a slot, a save writes the other one and seals it last, so an interrupted
+  save keeps the current copy (DEC-253). The owner's card moved to 32 GB (the store is 277 MB). On the device the 22
+  slots moved into the store and reload from it; the worst save grain fell from ~30 ms to 2.5–9.8 ms, which is now
+  this card's own sector-write time (open: a non-blocking write).
+
 **2026-11-06 — Fixed-memory engine: E9.8f external-clock stalls fixed.**
 - The stalls and missed notes while recording on Ableton's USB clock were not the engine's loop (every stage stayed
   under 2 ms) nor the feedback loop alone: Ableton's USB stream stalled while the Teensy sent nothing and resumed when

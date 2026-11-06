@@ -32,10 +32,9 @@ struct ReadOnlySdCard : CardIo {
   void closeRead() override {
     if (f) f.close();
   }
-  bool openWrite(const char*) override { return false; }
-  bool write(const uint8_t*, uint32_t) override { return false; }
-  bool closeWrite() override { return false; }
-  bool rename(const char*, const char*) override { return false; }
+  bool openStore(const char*, uint32_t, bool, bool&) override { return false; }  // read only
+  bool readSector(uint32_t, uint8_t*) override { return false; }
+  bool writeSector(uint32_t, const uint8_t*) override { return false; }
 };
 
 EXTMEM static EnginePsram gPsram;

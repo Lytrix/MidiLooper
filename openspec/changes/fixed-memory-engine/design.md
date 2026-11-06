@@ -1594,7 +1594,8 @@ openRead / read / closeRead, openWrite / write / closeWrite, rename that replace
 - **Autosave:** with approval, not booting, one slot at a time: the first changed slot that has settled for 2 s and
   that no take and no NOTE_EDIT session holds. `SaveJob` writes `slot_NN.tmp` in persistence grains (≤ 16 KiB a
   write), then `rename` replaces `slot_NN.mle`, so an interrupted save leaves the previous file whole. A slot changed
-  during its save is saved again later. A slot with no history writes nothing.
+  during its save is saved again later. A slot with no history writes nothing. *Superseded by E9.8g: saves go to
+  the preallocated store; the files are only read (migration).*
 - **Boot load:** `startBootLoad` loads every slot with an engine file (`LoadJob`: admission, CRC, full release on any
   failure); a failed slot stays empty and is named (`loadFailedMask`); loading writes nothing and leaves the slots
   "saved".
@@ -1830,7 +1831,8 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
   grain, `surface.tmp` renamed over `surface.mls` (magic "MLS1", the state packed in 27 bits, a check word) — and read
   in the boot's first grain; the firmware restores it after the boot load, else selects each track's first slot with
   content. To stay inside the persistence PSRAM line the engine-file and V1-file path buffers are one (they are never
-  in use at once). Device (image `d43356b3…`): the owner approved saving on 2026-11-06; after a reboot 22 slots loaded
+  in use at once). *Superseded by E9.8g: the state lives in the store's sectors 0–1; `surface.mls` is read once.*
+  Device (image `d43356b3…`): the owner approved saving on 2026-11-06; after a reboot 22 slots loaded
   from engine files (no V1 import, 0.73 s) and the selected track was restored.
 - **Track channels:** each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default),
   set by the firmware with `ClockOutput::setChannel` at boot; live thru follows the selected track's channel. The
@@ -1845,3 +1847,44 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
 Tests: `test_content_engine_engine_clock` (+5: gap, lone late pulse, bunched pulses, flood), `test_content_engine_surface`
 (+1: arm, start, cancel, re-queue), the overlay tests rewritten for the note list (drawn at two scales, wrapping);
 mutation-checked. Device: each fix verified over USB, then by the owner on the DROID and with Ableton.
+
+## E9.8g — the store (owner 2026-11-06: a save must not hold the main loop; preallocated A / B copies; as built)
+
+Measured first (E9.8f's stage timings): every file-system operation took 4–8 ms on the device — lookup, open, flush,
+close, rename — and a save held the loop ~30 ms; a raw sector write took 0.16 ms on the old card. DEC-253.
+
+- **Layout:** one file, `/MidiLooper/engine/store.bin`, created with the approval (or at the first approved boot
+  without it) and preallocated in one contiguous run (`preAllocate`, `contiguousRange`); after opening, the card is
+  read and written at `first sector + i` (`SdCardIo::readSector` / `writeSector`), never through the file system.
+  Sectors 0–1: the surface state ("MLS2", sequence, state, check), alternating. Slot s, copy c: `kCopySectors` from
+  `2 + (2s + c) × kCopySectors` — a header sector ("MLC1", slot, sequence, bytes, check word) and the E8.1 slot file
+  body. `kCopySectors` holds `kMaxFileBytes` (the whole content pool and history in one slot, ~2.17 MB), so the
+  store is 277 MB at production capacity; a new store's headers are zeroed (its sectors hold old card data).
+- **Save:** the copy that is not current; one sector write a grain at most — body chunks (`SaveJob` through the sector
+  buffer), the last partial sector, then the header with the next sequence. The sequence is one counter set past
+  every valid copy the boot read, so a save reads nothing (a header read took 10 ms on the device). A failed write
+  leaves the copy unsealed; the current copy stays.
+- **Boot:** each slot's valid copy with the later sequence (header check, then `LoadJob`'s CRC); on failure the other
+  valid copy. A slot without a copy is taken from before the store — `slot_NN.mle`, a complete `.tmp`, else V1 — and
+  written into the store (`Stats::migrated`); the old files stay, never written. A slot whose store copies fail is not
+  replaced by an older file.
+- **Card:** the store needs a card with the contiguous room; the owner's 255 MB card (57 MB free) could not hold it
+  (`storeError` 4) and was replaced by a 32 GB card. `!ENGINE take` reports each card operation's worst time and the
+  store's error, first sector and FAT geometry; `!ENGINE cardfree` the free clusters; a card that does not start
+  prints SdFat's error and sector 0 at boot.
+
+Tests (`test_content_engine_persistence`, 12, fake card with sparse sectors that read as old data): no write before
+approval; A, B, A alternation; a second engine boots from the store (at most one sector write a step); a corrupt copy
+falls back, an interrupted save keeps the current copy; a failed last body sector leaves the copy unsealed; a save
+after a boot wins without reading; migration from `.mle`, `.tmp` and V1, a failed store copy not replaced by an older
+file; a new store never loads stale sectors; a copy loads only into its own slot; the surface state in the store and
+from `surface.mls`; no heap. Mutations: 14 of 18 caught; the four survivors are equivalent or unreachable (the slot
+check in the header, also checked by `LoadJob`; migration on approval after a failed open; a store copy falling to the
+file, which `LoadJob::start` never refuses at boot; the body's grain split, timing only, caught on the step count
+since). Native full suite 4,344 passed.
+
+Device (image `4d89e900…`, 32 GB card, FAT32, 16 KiB clusters): the store opened in 6 ms, 22 slots migrated on the
+first boot and loaded from the store after (0.40 s, 0 failed); undo / redo saves: worst grain 2.5–9.8 ms, worst
+sector write 2.5–8.2 ms, no sector read. Open: this card's single-sector write time; SdFat's SDIO write waits for the
+card inside its FIFO handshake and multi-block stop, so a non-blocking write is its own step.
+

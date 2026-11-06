@@ -64,6 +64,8 @@ struct FakeCard : CardIo {
     reading = writing = -1;
     failWriteAfter = 0xFFFFFFFFu;
     writes = 0;
+    sectorCount = 0;
+    storeExists = storeOpen = false;
   }
   int find(const char* p) const {
     for (int i = 0; i < kFiles; ++i)
@@ -92,7 +94,7 @@ struct FakeCard : CardIo {
     return true;
   }
   void closeRead() override { reading = -1; }
-  bool openWrite(const char* p) override {
+  bool openWrite(const char* p) {
     int i = find(p);
     if (i < 0)
       for (i = 0; i < kFiles && files[i].used; ++i) {
@@ -105,22 +107,54 @@ struct FakeCard : CardIo {
     ++writes;
     return true;
   }
-  bool write(const uint8_t* d, uint32_t n) override {
+  bool write(const uint8_t* d, uint32_t n) {
     if (writing < 0 || files[writing].size + n > kBytes || files[writing].size + n > failWriteAfter) return false;
     std::memcpy(files[writing].data + files[writing].size, d, n);
     files[writing].size += n;
     return true;
   }
-  bool closeWrite() override {
+  bool closeWrite() {
     writing = -1;
     return true;
   }
-  bool rename(const char* from, const char* to) override {
-    const int f = find(from);
-    if (f < 0) return false;
-    const int t = find(to);
-    if (t >= 0) files[t].used = false;
-    std::strcpy(files[f].name, to);
+  // The store (E9.8g), sparse: the sectors written so far.
+  struct Sector {
+    uint32_t index;
+    uint8_t data[512];
+  };
+  static constexpr int kSectors = 256;
+  Sector sectors[kSectors];
+  int sectorCount = 0;
+  bool storeExists = false, storeOpen = false;
+  uint8_t* sector(uint32_t i) {
+    for (int k = 0; k < sectorCount; ++k)
+      if (sectors[k].index == i) return sectors[k].data;
+    return nullptr;
+  }
+  bool openStore(const char*, uint32_t, bool create, bool& created) override {
+    created = false;
+    if (!storeExists) {
+      if (!create) return false;
+      storeExists = created = true;
+      ++writes;
+    }
+    return storeOpen = true;
+  }
+  bool readSector(uint32_t i, uint8_t* d) override {
+    if (!storeOpen) return false;
+    const uint8_t* s = sector(i);
+    for (int k = 0; k < 512; ++k) d[k] = s ? s[k] : 0xA5;
+    return true;
+  }
+  bool writeSector(uint32_t i, const uint8_t* d) override {
+    if (!storeOpen) return false;
+    uint8_t* s = sector(i);
+    if (s == nullptr) {
+      if (sectorCount == kSectors) return false;
+      sectors[sectorCount].index = i;
+      s = sectors[sectorCount++].data;
+    }
+    std::memcpy(s, d, 512);
     ++writes;
     return true;
   }
@@ -270,7 +304,8 @@ void test_an_lsv1_slot_imports_its_current_content() {
   // Approved: the slot is saved in the new format; the V1 file is untouched.
   TEST_ASSERT_TRUE(gE.approveSaving());
   run(gClock + ProductionPersistence::kSettleUs / kUsPerTick + 50);
-  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/slot_10.mle"));
+  TEST_ASSERT_TRUE(gE.persistence().savedCurrent(10));  // into the store
+  TEST_ASSERT_EQUAL_UINT32(1, gE.persistence().stats().saves);
   TEST_ASSERT_TRUE(before == get("/MidiLooper/current/slots/loop_01_02.bin"));
 }
 
@@ -381,7 +416,7 @@ void test_a_pass_stream_slot_imports_its_active_passes_as_runs() {
   }
   TEST_ASSERT_TRUE(gE.approveSaving());
   run(gClock + ProductionPersistence::kSettleUs / kUsPerTick + 50);
-  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/slot_12.mle"));
+  TEST_ASSERT_TRUE(gE.persistence().savedCurrent(12));
   TEST_ASSERT_TRUE(before == get("/MidiLooper/current/slots/loop_01_04.bin"));
   TEST_ASSERT_TRUE(gE.reservations().check());
 }
@@ -474,14 +509,14 @@ void test_pass_stream_skips_and_failures_are_named() {
 }
 
 void test_an_engine_file_takes_precedence() {
-  // Slot 3 gets an engine file from a first engine; its V1 file differs.
+  // Slot 3 gets a copy in the store from a first engine; its V1 file differs.
   put("/MidiLooper/current/slots/loop_00_03.bin", lsv1(kLoop, 0, kNotes, kEvents));
   gE.attachCard(gCard);
   gE.startBootLoad();
   run(30);
   gE.approveSaving();
   run(gClock + ProductionPersistence::kSettleUs / kUsPerTick + 50);
-  TEST_ASSERT_TRUE(gCard.exists("/MidiLooper/engine/slot_03.mle"));
+  TEST_ASSERT_TRUE(gE.persistence().savedCurrent(3));  // into the store
   put("/MidiLooper/current/slots/loop_00_03.bin", lsv1(kLoop, 0, {{9, 40, 50, 10, 20}}, {}));
   TEST_ASSERT_TRUE(gE.init(gPsram, gRam2, 2000));
   gE.attachCard(gCard);
