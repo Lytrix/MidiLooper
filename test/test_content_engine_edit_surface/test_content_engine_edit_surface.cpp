@@ -328,9 +328,20 @@ static uint32_t count(const std::vector<Sent>& v, uint8_t status) {
 
 void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   recordBar({{0, 60}, {100, 64}, {384, 67}});
-  enterEdit();
-  std::vector<Sent> v = drainMotors(300);
+  tap(S::kEditModeNote);
+  for (int i = 0; i < 1000 && !gS.edit().editing(); ++i) ms(1);
+  TEST_ASSERT_TRUE(gS.edit().editing());
   const EditNote n0 = sel();
+  // The opening wrote the motors just now: their travel from positions not yet known is not a move.
+  const uint8_t depth = gE.noteEdit().depth();
+  f1(pbFor(12, 16));
+  f2(4000);
+  f3(10);
+  f4(30);
+  TEST_ASSERT_EQUAL_UINT8(depth, gE.noteEdit().depth());
+  TEST_ASSERT_EQUAL_UINT32(n0.tick, sel().tick);
+  TEST_ASSERT_EQUAL_UINT8(n0.pitch, sel().pitch);
+  std::vector<Sent> v = drainMotors(300);
   // The opening: all four, each value before its trigger, the trigger released after the gate.
   TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xEF));
   TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xED));
@@ -349,15 +360,6 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9F, 0));  // F1's trigger (channel 16 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9D, 0));  // F2's (channel 14 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9E, 2));  // F4's (channel 15 note 2)
-  // While the motors travel (within the settle time) every message is theirs, wherever on the way: nothing changes.
-  const uint8_t depth = gE.noteEdit().depth();
-  f1(pbFor(12, 16));
-  f2(4000);
-  f3(10);
-  f4(30);
-  TEST_ASSERT_EQUAL_UINT8(depth, gE.noteEdit().depth());
-  TEST_ASSERT_EQUAL_UINT32(n0.tick, sel().tick);
-  TEST_ASSERT_EQUAL_UINT8(n0.pitch, sel().pitch);
   // The echo of every written value: nothing changes, no undo step.
   f1(pbOf(findStatus(v, 0xEF)));
   f2(pbOf(findStatus(v, 0xED)));
@@ -366,25 +368,45 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_EQUAL_UINT8(depth, gE.noteEdit().depth());
   TEST_ASSERT_EQUAL_UINT32(n0.tick, sel().tick);
   TEST_ASSERT_EQUAL_UINT8(n0.pitch, sel().pitch);
-  // F1 selects 64 @ 100: F2–F4 follow, F1 is not written.
+  // F1 selects 67 @ 384, its motors arrive; then 64 @ 100: F2–F4 follow, F1 is not written.
+  settle();
+  drainMotors(200);
+  f1(pbFor(8, 16));
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  v = drainMotors(5);
+  const int32_t f2at67 = pbOf(findStatus(v, 0xED));
+  const uint8_t f3at67 = findMsg(v, 0xBE, 2)->m.d2;
+  f2(f2at67);  // arrived
+  f3(f3at67);
+  f4(67);
   settle();
   drainMotors(200);
   f1(pbFor(2, 16));
   TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
-  // F2–F4 now travel (armed by the F1 move): their messages on the way are not moves — and a motor still moving past
-  // the settle time keeps its window open.
-  const uint8_t depth2 = gE.noteEdit().depth();
-  f2(4000);
-  f3(10);
-  for (int k = 0; k < 8; ++k) f4(static_cast<uint8_t>(30 + k)), ms(95);  // ~800 ms of F4 travel
-  TEST_ASSERT_EQUAL_UINT32(100, sel().tick);
-  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
-  TEST_ASSERT_EQUAL_UINT8(depth2, gE.noteEdit().depth());
-  v = drainMotors(300);
+  v = drainMotors(5);  // the writes, before the motors move
   TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xEF));
   TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xED));
   TEST_ASSERT_EQUAL_UINT8(64 + 4, findMsg(v, 0xBE, 2)->m.d2);
   TEST_ASSERT_EQUAL_UINT8(64, findMsg(v, 0xBE, 3)->m.d2);
+  // The motors travel from where the faders were (the opening's values) to the new ones: every message on the way is
+  // theirs, and a motor still moving past the settle time keeps its window open.
+  const uint8_t depth2 = gE.noteEdit().depth();
+  const int32_t f2to = pbOf(findStatus(v, 0xED));
+  f2((f2at67 + f2to) / 2);
+  f3(static_cast<uint8_t>((f3at67 + 68) / 2));
+  for (int k = 0; k <= 8; ++k)  // ~850 ms of F4 travel, from 67 to 64
+    f4(static_cast<uint8_t>(67 - 3 * k / 8)), ms(95);
+  TEST_ASSERT_EQUAL_UINT32(100, sel().tick);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT8(depth2, gE.noteEdit().depth());
+  // Arrived: a move away from the written value is the musician's, at once.
+  f4(70);
+  TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
+  ms(400);
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  settle();
+  f3(68);  // F3 rests at the note's offset (its value already)
   // F2's value maps back to the note's 16th: its echo after the settle time does not move the note either.
   const int32_t coarse = pbOf(findStatus(v, 0xED));
   settle();
@@ -405,21 +427,51 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   f1(pbFor(2, 16));  // back to 64
   TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
   settle();
-  // F2 moves the note to step 10: only F3 follows (the offset in its new 16th).
+  // F2 moves the note to step 10: F3 would follow (the offset in its new 16th), but it is there already — not
+  // rewritten, so the musician's F3 move right after acts at once (owner 2026-11-06: a rewrite on every F2 step
+  // swallowed it).
+  f3(68);  // F3 at the offset
   drainMotors(200);
   f2(-8192 + 16384 * 10 / 15 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
-  v = drainMotors(300);
-  TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xBE));
-  TEST_ASSERT_EQUAL_UINT8(64 + 4, findMsg(v, 0xBE, 2)->m.d2);
-  TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xED) + count(v, 0xEF));
+  v = drainMotors(30);
+  TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xBE) + count(v, 0xED) + count(v, 0xEF));
   // F3 moves it within the 16th: F2 follows.
-  ms(400);
   f3(64 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 20, sel().tick);
   v = drainMotors(300);
   TEST_ASSERT_EQUAL_UINT32(1, count(v, 0xED));
   TEST_ASSERT_EQUAL_UINT32(0, count(v, 0xBE));
+  // A hand on a fader the motor was just sent to: a move off the motor's path is the musician's at once, and so is
+  // everything after it, even back near the written value.
+  settle();
+  f4(64);  // F4 rests at 64's pitch
+  drainMotors(200);
+  f1(pbFor(8, 16));  // 67: F4 written 64 -> 67
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  f4(90);  // off the path 64..67
+  TEST_ASSERT_EQUAL_UINT8(90, sel().pitch);
+  ms(400);
+  f4(66);
+  TEST_ASSERT_EQUAL_UINT8(66, sel().pitch);
+}
+
+// F2 back over the note's start within one gesture: the gesture's step is undone and the note is where it began — the
+// bracket goes with it (owner 2026-11-06: it stayed a 16th on, at the note's end) and no step remains.
+void test_f2_back_at_the_start_keeps_the_bracket_on_the_note() {
+  recordBar({{0, 60}, {100, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));  // 64 @ 100
+  settle();
+  const uint8_t depth0 = gE.noteEdit().depth();
+  f2(-8192 + 16384 * 3 / 15 + 20);  // step 3: 148
+  TEST_ASSERT_EQUAL_UINT32(148, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(148, gS.edit().bracket());
+  f2(-8192 + 16384 * 2 / 15 + 20);  // back to step 2 within the gesture: 100
+  TEST_ASSERT_EQUAL_UINT32(100, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(100, gS.edit().bracket());
+  TEST_ASSERT_EQUAL_UINT8(depth0, gE.noteEdit().depth());
 }
 
 void test_geometry_waits_the_grace_period_after_entry() {
@@ -563,6 +615,7 @@ int main(int, char**) {
   RUN_TEST(test_f1_at_rest_keeps_the_moved_note_selected);
   RUN_TEST(test_the_droid_fader_bank_follows_note_edit);
   RUN_TEST(test_motor_faders_follow_the_selection_and_their_echo_changes_nothing);
+  RUN_TEST(test_f2_back_at_the_start_keeps_the_bracket_on_the_note);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);

@@ -2148,3 +2148,15 @@ messages are not moves for `kMotorSettleMs` (500 ms) after the write and until i
 16 / 16 across the slice's two rounds); five tests wait out the motors' window where they moved a fader the motor had
 just written. Device `62a7010e…`: boot clean; entering NOTE_EDIT sends the bank, the four values and triggers, the
 releases 125 ms later; the owner's DROID check pending.
+
+**Motor travel and your hand; the bracket at the gesture's start** (owner 2026-11-06, `captures/session_20261106_232519.log`
+with the trace). (1) F3 was rewritten on every F2 step though it stood at that value already; each write reopened its
+window, the musician's F3 move that followed kept extending it and was swallowed, and when it closed the note jumped
+(the "fine tick reset"). A fader already at the value it would be written to is no longer written; and a message is
+the motor's only while it lies between where the fader was (its last message) and the written value, until it gets
+there, or at that value — any other message is the musician's and ends the window (a fader's position not yet known:
+anything until it arrives). (2) F2 back over the note's starting 16th within a gesture undoes the gesture's step and
+lands on the note as it began, a value that changes nothing: the bracket stayed a 16th on — at the note's end for a
+16th-long note. The bracket now follows the note there too. `EditSurface::init` resets the motors. Tests: the motor
+test's travel runs on the motor's path from 67's values to 64's, an F3 not rewritten after an F2 step, a hand off the
+path acting at once; +1 for the bracket (mutations 9 / 9). Device `5b070ad2…`: boot clean; the owner's check pending.

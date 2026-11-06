@@ -67,6 +67,10 @@ class EditSurface {
     sel_ = -1;
     length_ = false;
     gesture_ = Fader::None;
+    for (Motor& m : motors_) m = Motor{};
+    f1Seen_ = false;
+    why_ = Why::Acted;
+    refusal_ = 0;
   }
   bool editing() const { return state_ == State::Editing; }
   bool entering() const { return state_ == State::Gathering; }
@@ -179,12 +183,13 @@ class EditSurface {
 
   // ---- Faders ---------------------------------------------------------------------------------------------------
   void select(int16_t pb, uint32_t ms) {
+    const bool travel = echo(0, pb, ms);
     if (!editing() || ticks_ < kSixteenth) return;
     const uint32_t steps = ticks_ / kSixteenth;
     int32_t step = static_cast<int32_t>((static_cast<int64_t>(pb - kPbMin) * (steps - 1)) / (kPbMax - kPbMin));
     if (step < 0) step = 0;
     if (step >= static_cast<int32_t>(steps)) step = static_cast<int32_t>(steps - 1);
-    if (echo(0, ms) ||
+    if (travel ||
         (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband)) {  // F1 at rest: the selection stays
       why_ = Why::AtRest;
       return;
@@ -227,9 +232,10 @@ class EditSurface {
     drive(kMotorCoarse | kMotorFine | kMotorPitch, ms);
   }
   void coarse(int16_t pb, uint32_t ms) {
+    const bool travel = echo(1, pb, ms);
     if (!geometryReady(ms)) return;
     const int32_t moved = pb > lastCoarse_ ? pb - lastCoarse_ : lastCoarse_ - pb;
-    if (echo(1, ms) || (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs)) {
+    if (travel || (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs)) {
       why_ = Why::AtRest;
       return;
     }
@@ -254,8 +260,9 @@ class EditSurface {
     if (commit(Fader::Coarse, v, ms)) drive(kMotorFine, ms);
   }
   void fine(uint8_t cc, uint32_t ms) {
+    const bool travel = echo(2, cc, ms);
     if (!geometryReady(ms)) return;
-    if (echo(2, ms) || (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80)) {
+    if (travel || (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80)) {
       why_ = Why::AtRest;
       return;
     }
@@ -278,8 +285,9 @@ class EditSurface {
     if (commit(Fader::Fine, v, ms)) drive(kMotorCoarse, ms);
   }
   void pitch(uint8_t cc, uint32_t ms) {
+    const bool travel = echo(3, cc, ms);
     if (!geometryReady(ms)) return;
-    if (echo(3, ms) || session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) {  // no change
+    if (travel || session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) {  // no change
       why_ = Why::NoChange;
       return;
     }
@@ -406,7 +414,10 @@ class EditSurface {
   /// True: the change was taken as a step.
   bool commit(Fader f, const EditNote& v, uint32_t ms) {
     if (v == session().current(static_cast<uint16_t>(sel_))) {
-      why_ = Why::NoChange;  // a value that changes nothing (a fader's echo at rest) takes no undo step
+      // A value that changes nothing takes no undo step (a fader's echo at rest, or a gesture back at its start —
+      // `base` undid its step): the bracket follows the note (owner 2026-11-06: it stayed a 16th on, at the end).
+      why_ = Why::NoChange;
+      if (!length_) bracket_ = v.tick;
       return false;
     }
     const EditChange c{static_cast<uint16_t>(sel_), v};
@@ -429,11 +440,14 @@ class EditSurface {
   // ---- Motor feedback ------------------------------------------------------------------------------------------------
   struct Motor {
     enum Phase : uint8_t { Idle, On, Gate };
-    int32_t value = 0;
+    int32_t value = 0;         // the value written
+    int32_t from = 0;          // where the fader was when written (its last message)
+    int32_t at = 0;            // the fader's last message
     uint32_t offAt = 0, settleUntil = 0;
     Phase phase = Idle;
-    bool want = false, written = false;
+    bool want = false, written = false, known = false, arrived = false, fromKnown = false;
   };
+  static int32_t slackOf(uint8_t i) { return i < 2 ? kCoarseThreshold : 3; }  // pitch bend / CC jitter
   /// Writes the faders in `mask` to the selection (the bracket alone when nothing is selected: F2 / F3).
   void drive(uint8_t mask, uint32_t ms) {
     EditNote n;
@@ -456,21 +470,42 @@ class EditSurface {
     }
     if ((mask & kMotorPitch) && note) write(3, n.pitch, ms);
   }
+  /// A fader already at `v` (its last message, and `v` written before) is not written again: no motor travel, no
+  /// window that would swallow the musician's next move (owner 2026-11-06: F3, rewritten on every F2 step, ignored a
+  /// move that followed).
   void write(uint8_t i, int32_t v, uint32_t ms) {
     Motor& f = motors_[i];
+    const int32_t slack = slackOf(i);
+    if (f.known && (f.at > v ? f.at - v : v - f.at) < slack && f.value == v && f.written) return;
+    f.from = f.at;
+    f.fromKnown = f.known;
+    f.arrived = f.known && (f.at > v ? f.at - v : v - f.at) < slack;
     f.value = v;
     f.want = true;
     f.written = true;
     f.settleUntil = ms + kMotorSettleMs;
   }
   /// The fader's own messages while its motor travels to a written value (every position on the way, measured on
-  /// the DROID 2026-11-06): not a move. The window lasts `kMotorSettleMs` after the write and `kMotorQuietMs` after the
-  /// fader's last message, whichever is later.
-  bool echo(uint8_t i, uint32_t ms) {
+  /// the DROID 2026-11-06): not a move — a message between where the fader was and the written value (until it gets
+  /// there), or at that value. The window lasts `kMotorSettleMs` after the write and `kMotorQuietMs` after the
+  /// fader's last such message, whichever is later. Any other message is the musician's: the window ends. Records the
+  /// fader's position either way.
+  bool echo(uint8_t i, int32_t v, uint32_t ms) {
     Motor& f = motors_[i];
+    f.at = v;
+    f.known = true;
     if (!f.written || static_cast<int32_t>(ms - f.settleUntil) >= 0) return false;
-    if (static_cast<int32_t>(ms + kMotorQuietMs - f.settleUntil) > 0) f.settleUntil = ms + kMotorQuietMs;
-    return true;
+    const int32_t slack = slackOf(i), to = f.value;
+    const bool there = (v > to ? v - to : to - v) < slack;
+    const int32_t lo = (f.from < to ? f.from : to) - slack, hi = (f.from > to ? f.from : to) + slack;
+    const bool onTheWay = !f.arrived && (!f.fromKnown || (v >= lo && v <= hi));
+    if (there || onTheWay) {
+      if (there) f.arrived = true;
+      if (static_cast<int32_t>(ms + kMotorQuietMs - f.settleUntil) > 0) f.settleUntil = ms + kMotorQuietMs;
+      return true;
+    }
+    f.written = false;  // off the motor's path: the musician's hand
+    return false;
   }
   /// F1's value for the selected note: the centre of its place in its 16th's stack (the inverse of `select`).
   int32_t f1Value(const EditNote& n) {
