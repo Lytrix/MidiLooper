@@ -236,6 +236,8 @@ class Surface {
     edit_.service(ms);
   }
   const EditSurface<Engine>& edit() const { return edit_; }
+  /// The next motor-fader message (NOTE_EDIT feedback), sent like the LEDs.
+  bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) { return edit_.motor(ms, m); }
 
   /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
   void transportStarted(uint32_t firstTick) {
@@ -341,8 +343,8 @@ class Surface {
     const uint8_t slot = selectedSlot(t);
     switch (b) {
       case kRecord:
-        if (p == Press::Double && edit_.editing()) edit_.undo();
-        else if (p == Press::Triple && edit_.editing()) edit_.redo();
+        if (p == Press::Double && edit_.editing()) edit_.undo(nowMs_);
+        else if (p == Press::Triple && edit_.editing()) edit_.redo(nowMs_);
         else if (p == Press::Short) toggleRecord(t);
         else if (p == Press::Double) control().undo(slot, tick_, us_, us());
         else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
@@ -368,7 +370,7 @@ class Surface {
         else if (p == Press::Short || p == Press::Long) edit_.leave();
         return;  // double: the set browser (a later slice)
       case kLength:
-        if (p == Press::Short) edit_.toggleLength();
+        if (p == Press::Short) edit_.toggleLength(nowMs_);
         else if (p == Press::Double) edit_.deleteOrCreate(nowMs_);
         return;
       case kPlayStop:

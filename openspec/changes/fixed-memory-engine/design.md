@@ -2131,3 +2131,20 @@ the current one at boot so the DROID follows a restart — and the main loop sen
 start rather than the session's opening, and `init`'s reset of a member already initialised). Legacy also pulsed a
 trigger note to snap the motor faders; motor feedback stays off (the legacy default). Device `efdbf66a…`: boot clean;
 the owner confirmed F2–F4 move the selected note on the DROID (2026-11-06).
+
+**Motor feedback** (owner 2026-11-06: on; F3 and F4 must follow F1 and F2, and F3 was forced to a wrong position).
+Legacy wrote the motors from `NoteEditDependentFaderSnapshot` (off by default); the engine now always does, from
+`EditSurface::drive`: at the session's opening and after undo, redo, delete or create all four; after an F1 select
+F2–F4; after an F2 move F3; after an F3 move F2; after NOTELEN F2 and F3. The values (legacy): F1 the centre of the
+note's place in its 16th's stack (the inverse of the select); F2 the 16th plus the offset in it
+(`positionModeLoopTickToCoarsePitchbend`, rounded up so the coarse map gives the same 16th back), or the end in
+length mode; F3 64 plus the start's offset in its reference 16th (the end's from its anchor in length mode); F4 the
+pitch. A fader is written as its value, then its trigger note (the patch's `clear`: channel 16 / 14 note 0, channel
+15 note 1 / 2), released after `kMotorGateMs` (125 ms, legacy 24 ticks), sent by the main loop on every port. At the
+opening the bracket moves to the selected note, so F3's reference is the note's 16th (it was the playhead's — the
+wrong F3 position). A motor's travel sends every position on the way (measured on the DROID): a written fader's
+messages are not moves for `kMotorSettleMs` (500 ms) after the write and until it has been quiet `kMotorQuietMs`
+(150 ms); a fader value that changes nothing takes no undo step. `test_content_engine_edit_surface` +1 (mutations
+16 / 16 across the slice's two rounds); five tests wait out the motors' window where they moved a fader the motor had
+just written. Device `62a7010e…`: boot clean; entering NOTE_EDIT sends the bank, the four values and triggers, the
+releases 125 ms later; the owner's DROID check pending.

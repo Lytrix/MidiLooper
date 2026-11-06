@@ -506,6 +506,18 @@ void sendBank(uint8_t program) {
   gHostMidi.sendProgramChange(program, Surface<EngineRoot>::kProgramChannel + 1);
 }
 
+/// A motor-fader message (NOTE_EDIT feedback) on every port, as the LEDs.
+void sendMotor(const EditSurface<EngineRoot>::MotorMsg& m) {
+  sendDin(m.status, m.d1, m.d2);
+  const uint8_t type = m.status & 0xF0, channel = static_cast<uint8_t>((m.status & 0x0F) + 1);
+  usbMIDI.send(type, m.d1, m.d2, channel, 0);
+  usbMIDI.send_now();
+  gLastUsbTxUs = micros();
+  ++gUsbOut;
+  ++gOutThisPass;
+  gHostMidi.send(type, m.d1, m.d2, channel);
+}
+
 void sendLed(uint8_t note, uint8_t velocity) {
   const uint8_t status = static_cast<uint8_t>((velocity != 0 ? 0x90 : 0x80) | Surface<EngineRoot>::kLedChannel);
   sendDin(status, note, velocity);
@@ -649,6 +661,8 @@ void loop() {
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
+  EditSurface<EngineRoot>::MotorMsg motor;
+  if (gSurface.motor(millis(), motor)) sendMotor(motor);  // the DROID's motor faders follow the selection
   if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   EngineFirmware::EditView ev;

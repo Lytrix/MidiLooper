@@ -29,6 +29,14 @@
 //   start; double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
 //   within 24 ticks of it.
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
+// * Motor feedback (owner 2026-11-06; legacy `NoteEditDependentFaderSnapshot`, which was off by default): the DROID's
+//   motor faders follow the selection — at the session's opening and after undo, redo, delete or create all four;
+//   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after an F3 move F2; after
+//   NOTELEN F2 and F3. A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
+//   CC 2 / 3 channel 15), then its trigger note (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released
+//   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). While a written fader's motor travels (`kMotorSettleMs` after the
+//   write, and until it has been quiet `kMotorQuietMs`) its messages are not moves; a fader value that changes nothing
+//   takes no undo step.
 // No allocation; O(selection) a fader move.
 
 #pragma once
@@ -63,6 +71,39 @@ class EditSurface {
   bool editing() const { return state_ == State::Editing; }
   bool entering() const { return state_ == State::Gathering; }
   bool active() const { return state_ != State::Idle; }
+
+  // ---- Motor feedback ------------------------------------------------------------------------------------------------
+  enum : uint8_t { kMotorSelect = 1, kMotorCoarse = 2, kMotorFine = 4, kMotorPitch = 8, kMotorAll = 15 };
+  static constexpr uint32_t kMotorGateMs = 125, kMotorSettleMs = 500, kMotorQuietMs = 150;
+  struct MotorMsg {
+    uint8_t status, d1, d2;
+  };
+  /// The next motor message due at `ms`: a fader's value, then its trigger note on, then off after the gate. False:
+  /// none due.
+  bool motor(uint32_t ms, MotorMsg& m) {
+    for (uint8_t i = 0; i < 4; ++i) {
+      Motor& f = motors_[i];
+      if (f.phase == Motor::Gate) {
+        if (static_cast<int32_t>(ms - f.offAt) < 0) continue;
+        m = trigger(i, false);
+        f.phase = Motor::Idle;
+        return true;
+      }
+      if (f.phase == Motor::On) {
+        m = trigger(i, true);
+        f.offAt = ms + kMotorGateMs;
+        f.phase = Motor::Gate;
+        return true;
+      }
+      if (f.want) {
+        f.want = false;
+        m = value(i, f.value);
+        f.phase = Motor::On;
+        return true;
+      }
+    }
+    return false;
+  }
   uint8_t slot() const { return slot_; }
   uint32_t windowFirst() const { return first_; }
   uint32_t windowTicks() const { return ticks_; }
@@ -127,11 +168,13 @@ class EditSurface {
     bracket_ = b;
     selectAt(bracket_);
     if (sel_ < 0) selectClosest(bracket_);
+    if (sel_ >= 0) bracket_ = session().current(static_cast<uint16_t>(sel_)).tick;  // F3's reference: the note's 16th
     refStep_ = bracket_ / kSixteenth;
     armedMs_ = ms;
     armed_ = false;
     gesture_ = Fader::None;
     f1Seen_ = false;  // the first F1 message selects
+    drive(kMotorAll, ms);
   }
 
   // ---- Faders ---------------------------------------------------------------------------------------------------
@@ -141,7 +184,8 @@ class EditSurface {
     int32_t step = static_cast<int32_t>((static_cast<int64_t>(pb - kPbMin) * (steps - 1)) / (kPbMax - kPbMin));
     if (step < 0) step = 0;
     if (step >= static_cast<int32_t>(steps)) step = static_cast<int32_t>(steps - 1);
-    if (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband) {  // F1 at rest: the selection stays
+    if (echo(0, ms) ||
+        (f1Seen_ && (pb > f1Pb_ ? pb - f1Pb_ : f1Pb_ - pb) < kF1Deadband)) {  // F1 at rest: the selection stays
       why_ = Why::AtRest;
       return;
     }
@@ -180,12 +224,12 @@ class EditSurface {
     refStep_ = bracket_ / kSixteenth;
     armed_ = true;  // an F1 move arms the geometry faders at once
     gesture_ = Fader::None;
-    (void)ms;
+    drive(kMotorCoarse | kMotorFine | kMotorPitch, ms);
   }
   void coarse(int16_t pb, uint32_t ms) {
     if (!geometryReady(ms)) return;
     const int32_t moved = pb > lastCoarse_ ? pb - lastCoarse_ : lastCoarse_ - pb;
-    if (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs) {
+    if (echo(1, ms) || (moved < kCoarseThreshold && hadCoarse_ && ms - lastCoarseMs_ < kCoarseRestMs)) {
       why_ = Why::AtRest;
       return;
     }
@@ -207,11 +251,11 @@ class EditSurface {
       v.tick = start;
       refStep_ = step;
     }
-    commit(Fader::Coarse, v, ms);
+    if (commit(Fader::Coarse, v, ms)) drive(kMotorFine, ms);
   }
   void fine(uint8_t cc, uint32_t ms) {
     if (!geometryReady(ms)) return;
-    if (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80) {
+    if (echo(2, ms) || (hadFine_ && cc == lastFine_ && ms - lastFineMs_ < 80)) {
       why_ = Why::AtRest;
       return;
     }
@@ -231,11 +275,11 @@ class EditSurface {
       const int32_t t = static_cast<int32_t>(refStep_ * kSixteenth) + offset;
       v.tick = t < 0 ? loop_ + static_cast<uint32_t>(t) : static_cast<uint32_t>(t) % loop_;
     }
-    commit(Fader::Fine, v, ms);
+    if (commit(Fader::Fine, v, ms)) drive(kMotorCoarse, ms);
   }
   void pitch(uint8_t cc, uint32_t ms) {
     if (!geometryReady(ms)) return;
-    if (session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) {  // no change
+    if (echo(3, ms) || session().current(static_cast<uint16_t>(sel_)).pitch == (cc & 0x7F)) {  // no change
       why_ = Why::NoChange;
       return;
     }
@@ -246,7 +290,7 @@ class EditSurface {
 
   // ---- Buttons --------------------------------------------------------------------------------------------------
   /// NOTELEN short: start ↔ end editing.
-  void toggleLength() {
+  void toggleLength(uint32_t ms) {
     if (!editing()) return;
     length_ = !length_;
     gesture_ = Fader::None;
@@ -260,6 +304,7 @@ class EditSurface {
       bracket_ = n.tick;
     }
     refStep_ = bracket_ / kSixteenth;
+    drive(kMotorCoarse | kMotorFine, ms);
   }
   /// NOTELEN double: delete the selected note, else create one at the bracket.
   void deleteOrCreate(uint32_t ms) {
@@ -269,7 +314,10 @@ class EditSurface {
     if (selected(n)) {
       n.deleted = 1;
       const EditChange c{static_cast<uint16_t>(sel_), n};
-      if (session().apply(&c, 1, focus()) == EditResult::Ok) sel_ = -1;
+      if (session().apply(&c, 1, focus()) == EditResult::Ok) {
+        sel_ = -1;
+        drive(kMotorAll, ms);
+      }
       return;
     }
     const uint16_t size = session().size();
@@ -289,11 +337,12 @@ class EditSurface {
       sel_ = static_cast<int16_t>(at);
       armedMs_ = ms;  // a new selection: the geometry faders wait the grace period (legacy)
       armed_ = false;
+      drive(kMotorAll, ms);
     }
   }
   /// The record button's double / triple while editing.
-  bool undo() { return step(true); }
-  bool redo() { return step(false); }
+  bool undo(uint32_t ms) { return step(true, ms); }
+  bool redo(uint32_t ms) { return step(false, ms); }
 
  private:
   enum class State : uint8_t { Idle, Gathering, Editing };
@@ -354,14 +403,19 @@ class EditSurface {
     }
     return session().current(static_cast<uint16_t>(sel_));
   }
-  void commit(Fader f, const EditNote& v, uint32_t ms) {
+  /// True: the change was taken as a step.
+  bool commit(Fader f, const EditNote& v, uint32_t ms) {
+    if (v == session().current(static_cast<uint16_t>(sel_))) {
+      why_ = Why::NoChange;  // a value that changes nothing (a fader's echo at rest) takes no undo step
+      return false;
+    }
     const EditChange c{static_cast<uint16_t>(sel_), v};
     const EditResult r = session().apply(&c, 1, focus());
     if (r != EditResult::Ok) {
       gesture_ = Fader::None;
       why_ = Why::Refused;
       refusal_ = static_cast<uint8_t>(r);
-      return;
+      return false;
     }
     why_ = Why::Acted;
     gesture_ = f;
@@ -369,8 +423,103 @@ class EditSurface {
     gestureMs_ = ms;
     gestureDepth_ = session().depth();
     if (!length_) bracket_ = v.tick;
+    return true;
   }
-  bool step(bool back) {
+
+  // ---- Motor feedback ------------------------------------------------------------------------------------------------
+  struct Motor {
+    enum Phase : uint8_t { Idle, On, Gate };
+    int32_t value = 0;
+    uint32_t offAt = 0, settleUntil = 0;
+    Phase phase = Idle;
+    bool want = false, written = false;
+  };
+  /// Writes the faders in `mask` to the selection (the bracket alone when nothing is selected: F2 / F3).
+  void drive(uint8_t mask, uint32_t ms) {
+    EditNote n;
+    const bool note = selected(n);
+    const uint32_t at = note ? (length_ ? (n.tick + n.length) % loop_ : n.tick) : bracket_;
+    if ((mask & kMotorSelect) && note) write(0, f1Value(n), ms);  // its echo is held off by `echo`, not the rest test
+    if (mask & kMotorCoarse) {
+      write(1, length_ ? lengthPb(at) : positionPb(at), ms);
+      lastCoarse_ = static_cast<int16_t>(motors_[1].value);
+      lastCoarseMs_ = ms;
+      hadCoarse_ = true;
+    }
+    if (mask & kMotorFine) {
+      int32_t cc = length_ ? 64 + static_cast<int32_t>(at) - static_cast<int32_t>(anchor_)
+                           : 64 + static_cast<int32_t>(at) - static_cast<int32_t>(refStep_ * kSixteenth);
+      write(2, cc < 0 ? 0 : cc > 127 ? 127 : cc, ms);
+      lastFine_ = static_cast<uint8_t>(motors_[2].value);
+      lastFineMs_ = ms;
+      hadFine_ = true;
+    }
+    if ((mask & kMotorPitch) && note) write(3, n.pitch, ms);
+  }
+  void write(uint8_t i, int32_t v, uint32_t ms) {
+    Motor& f = motors_[i];
+    f.value = v;
+    f.want = true;
+    f.written = true;
+    f.settleUntil = ms + kMotorSettleMs;
+  }
+  /// The fader's own messages while its motor travels to a written value (every position on the way, measured on
+  /// the DROID 2026-11-06): not a move. The window lasts `kMotorSettleMs` after the write and `kMotorQuietMs` after the
+  /// fader's last message, whichever is later.
+  bool echo(uint8_t i, uint32_t ms) {
+    Motor& f = motors_[i];
+    if (!f.written || static_cast<int32_t>(ms - f.settleUntil) >= 0) return false;
+    if (static_cast<int32_t>(ms + kMotorQuietMs - f.settleUntil) > 0) f.settleUntil = ms + kMotorQuietMs;
+    return true;
+  }
+  /// F1's value for the selected note: the centre of its place in its 16th's stack (the inverse of `select`).
+  int32_t f1Value(const EditNote& n) {
+    const uint32_t steps = ticks_ / kSixteenth;
+    if (steps < 2 || n.tick < first_ || n.tick >= first_ + ticks_) return motors_[0].value;
+    const uint32_t step = (n.tick - first_) / kSixteenth;
+    uint32_t count = 0, below = 0;
+    const uint16_t size = session().size();
+    for (uint16_t i = 0; i < size; ++i) {
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < first_ || (e.tick - first_) / kSixteenth != step) continue;
+      ++count;
+      if (before(e, n)) ++below;
+    }
+    if (count == 0) count = 1;
+    const int64_t span = kPbMax - kPbMin;
+    const int64_t pos = static_cast<int64_t>(step) * span + (static_cast<int64_t>(below) * 2 + 1) * span / (count * 2);
+    const int64_t pb = kPbMin + pos / static_cast<int64_t>(steps - 1);
+    return static_cast<int32_t>(pb > kPbMax - 1 ? kPbMax - 1 : pb);
+  }
+  /// F2 at `tick` in position mode (legacy `positionModeLoopTickToCoarsePitchbend`: the 16th plus the offset in it),
+  /// rounded up so `coarse` maps it back into the same 16th.
+  int32_t positionPb(uint32_t tick) const {
+    const uint32_t steps = loop_ / kSixteenth;
+    if (steps <= 1) return 0;
+    const int64_t num = static_cast<int64_t>(tick % loop_) * (kPbMax - kPbMin);
+    const int64_t den = static_cast<int64_t>(kSixteenth) * (steps - 1);
+    const int64_t pb = kPbMin + (num + den - 1) / den;
+    return static_cast<int32_t>(pb > kPbMax - 1 ? kPbMax - 1 : pb);
+  }
+  /// F2 at the end `tick` in length mode (the inverse of `lengthCoarseTick`).
+  int32_t lengthPb(uint32_t tick) const {
+    if (loop_ <= 1) return 0;
+    const int64_t pb = kPbMin + static_cast<int64_t>(tick % loop_) * (kPbMax - kPbMin) / (loop_ - 1);
+    return static_cast<int32_t>(pb > kPbMax - 1 ? kPbMax - 1 : pb);
+  }
+  static MotorMsg value(uint8_t i, int32_t v) {
+    if (i < 2) {  // pitch bend, 14 bits
+      const int32_t raw = v + 8192 < 0 ? 0 : v + 8192 > 16383 ? 16383 : v + 8192;
+      return MotorMsg{static_cast<uint8_t>(i == 0 ? 0xEF : 0xED), static_cast<uint8_t>(raw & 0x7F),
+                      static_cast<uint8_t>(raw >> 7)};
+    }
+    return MotorMsg{0xBE, static_cast<uint8_t>(i == 2 ? 2 : 3), static_cast<uint8_t>(v & 0x7F)};
+  }
+  static MotorMsg trigger(uint8_t i, bool on) {
+    static const uint8_t kChannel[4] = {15, 13, 14, 14}, kNote[4] = {0, 0, 1, 2};
+    return MotorMsg{static_cast<uint8_t>((on ? 0x90 : 0x80) | kChannel[i]), kNote[i], static_cast<uint8_t>(on ? 127 : 0)};
+  }
+  bool step(bool back, uint32_t ms) {
     if (!editing()) return false;
     uint32_t f = 0;
     const EditResult r = back ? session().undo(f) : session().redo(f);
@@ -380,6 +529,7 @@ class EditSurface {
       refStep_ = bracket_ / kSixteenth;
     }
     gesture_ = Fader::None;
+    if (r == EditResult::Ok) drive(kMotorAll, ms);
     return true;
   }
   uint32_t focus() const { return (static_cast<uint32_t>(sel_ + 1) << 21) | (bracket_ & 0x1FFFFFu); }
@@ -417,6 +567,7 @@ class EditSurface {
   uint8_t slot_ = 0;
   uint32_t loop_ = 0, first_ = 0, ticks_ = 0, pos_ = 0, bracket_ = 0, refStep_ = 0, anchor_ = 0;
   int16_t sel_ = -1;
+  Motor motors_[4];
   Why why_ = Why::Acted;
   uint8_t refusal_ = 0;
   int16_t f1Pb_ = 0;     // the F1 value the last select acted on
