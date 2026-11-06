@@ -2188,4 +2188,4 @@ start's offset inside its own 16th. F2 now moves the start in whole 16ths keepin
 (taken before `base` undoes the gesture's last step), so F3's value is unchanged and it is not rewritten. A fader at
 the value it would be written to is not written (its stored value is its position, sent back since the last change),
 and a write still pending is dropped then. `test_content_engine_edit_surface` +2 (mutations 4 / 4; two offset
-normalisations removed as equivalent under the modulo). Device `a7391638…`: the owner's check pending.
+normalisations removed as equivalent under the modulo). Device `a7391638…`: the owner confirmed motor feedback and the four faders on the DROID (2026-11-07).
