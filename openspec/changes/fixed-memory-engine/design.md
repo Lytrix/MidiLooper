@@ -1984,5 +1984,5 @@ the next cycle, a note longer than the loop, every NoteOn ended and nothing soun
 half a bar keeps the next bar and plays its second bar in cycle 1; a 2-bar take stopped exactly half a bar past its
 line trims to 2 bars and plays in phase. Mutations caught 6 / 6 (no trim queued, handoff at position 0, length
 ignored, no bar-line preparation, an uncovering window used, late-join limit applied). RAM2 + 104 B (149,680).
-Device `52246da5…`: boot clean, 22 slots loaded; the musical check is the owner's on the DROID.
+Device `52246da5…`: boot clean, 22 slots loaded; owner confirmed on the DROID (2026-11-06).
 

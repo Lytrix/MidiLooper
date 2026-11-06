@@ -1,7 +1,7 @@
 **2026-11-06 — Fixed-memory engine: E9.8i a late Record Stop ends at the bar just passed.**
 - As legacy: pressing Stop up to half a bar after a bar line ends the loop at that line instead of adding a bar.
   Nothing recorded is removed: notes played after the line come back at the loop start, held notes end in the next
-  cycle, and playback continues in time. Host-tested; waiting for the owner's check on the DROID.
+  cycle, and playback continues in time. Owner confirmed on the DROID.
 
 **2026-11-06 — Fixed-memory engine: DEC-254 deferred; E4.7 history-pressure diagnostics.**
 - The owner deferred DEC-254 (undo on the card) until the engine and A / B persistence are device-qualified; the
