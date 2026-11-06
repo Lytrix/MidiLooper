@@ -1956,3 +1956,33 @@ Device (image `025c14c2…`, the owner's 22 slots after boot): 65 of 99 states h
 step each (their take, undoable to the empty slot); slot 56 holds 44 (37 undo, 7 redo). The "44" the owner saw is one
 slot's history, not about two steps per slot.
 
+## E9.8i — trimmed Record Stop (owner 2026-11-06: legacy behaviour, rows immutable; as built)
+
+Legacy (`RecordStopLength::quantizeTransportRecordLength`): a Record Stop at most half a bar after a bar line ends the
+loop at that line instead of adding a bar. Owner: no row is removed; the loop is only shortened and what was played
+after the line wraps.
+- **`TrackControl::queueStop`:** on a Record take, a press at most `ticksPerBar / 2` after a (global) bar line that lies
+  after the take's start queues a stop with that line as the loop end (`trimEnd`); it runs on the next tick, like
+  every queued gesture. Later than half a bar: the next bar line, unchanged. Overdub and transport stop: unchanged.
+- **`SlotTransport::stop(…, length)`:** the loop is `length` when shorter than the take and the rest fits one loop;
+  every row stays in the take's run. Rows at or past the loop length are the composer's wrap stream: a note played
+  after the line sounds at `tick - loop` from the next cycle on, a note held across the line gets its NoteOff there
+  (`Writer::stop` closes held notes at the stop tick). Saved and loaded as any take (`SetFile` does not bound engine
+  row ticks by the loop).
+- **In phase:** cycle 1 began at the line, so at the stop the take is `raw - loop` into it. `PlaybackTrack::handoff`
+  takes that position: the prepared window 0 starts at cycle 1's start and joins late at the stop tick through the
+  E9.4 late join (what lies before is not played, a note still sounding starts), without the 24-tick limit since no
+  boundary was missed. What was played live in the tail is not repeated in cycle 1.
+- **Window 0 for short takes:** it was prepared only when the take reached the window (2 bars); it is now also
+  prepared at each bar line inside it (`SlotTransport::setBarTicks`, from `TrackControl`'s bar), re-composed at the
+  next, and used at Stop only when prepared at or after min(loop, window) — so a 1-bar trim has its window and an
+  untrimmed 2-bar take never plays the 1-bar prefix.
+
+Tests (`test_content_engine_track_control`, +2): a 1-bar take stopped 200 ticks past its line — loop one bar, cycle 1
+in phase from the take, the tail note from cycle 2 at its wrapped position (not in cycle 1), a held note's NoteOff in
+the next cycle, a note longer than the loop, every NoteOn ended and nothing sounding after transport stop; a stop past
+half a bar keeps the next bar and plays its second bar in cycle 1; a 2-bar take stopped exactly half a bar past its
+line trims to 2 bars and plays in phase. Mutations caught 6 / 6 (no trim queued, handoff at position 0, length
+ignored, no bar-line preparation, an uncovering window used, late-join limit applied). RAM2 + 104 B (149,680).
+Device `52246da5…`: boot clean, 22 slots loaded; the musical check is the owner's on the DROID.
+

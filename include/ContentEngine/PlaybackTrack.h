@@ -57,6 +57,7 @@ class PlaybackTrack {
     uint32_t lateJoinsMissed;   // transitions whose window came after the late-join limit: the boundary rule
     uint32_t lastLateTicks, maxLateTicks;  // ticks after the boundary a late join became audible
     uint32_t joinOverflow;      // join-state entries beyond the prepared lists (not started / not sent)
+    uint32_t trimmedHandoffs;   // Record takes handed off inside cycle 1 (trimmed to the bar line before, E9.8i)
   };
 
   void init(Composer& a, Composer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
@@ -83,6 +84,7 @@ class PlaybackTrack {
     launching_ = false;
     launchLoop_ = 0;
     handoffFinal_ = kNoManifest;
+    late_ = joinUnbounded_ = false;
     transComp_ = 0;
     transTarget_ = steadyTarget_ = 0;
     stats_ = Stats{};
@@ -141,25 +143,39 @@ class PlaybackTrack {
     }
   }
 
-  /// E9.1b, Record Stop before timeline tick `t` is played (`t`: cycle 1, position 0 of `final`, whose loop is now
-  /// known): a complete prepared window becomes the transition for boundary `t`; when it is adopted there, `final` is
-  /// selected for the next boundary and the prepared window's cursor ends (its loop was provisional), so until `final`
-  /// is adopted there is no steady window. Without a complete prepared window: `final` is selected for `t`.
-  void handoff(uint8_t slot, ManifestId final, uint32_t t) {
-    if (!prepared_ || !transActive_ || buf_[trans_].state != State::Complete) {
+  /// E9.1b, Record Stop before timeline tick `t` is played (`t`: cycle 1, position `position` of `final`, whose loop
+  /// is now known): a complete prepared window becomes the transition for cycle 1's start; when it is adopted, `final`
+  /// is selected for the next boundary and the prepared window's cursor ends (its loop was provisional), so until
+  /// `final` is adopted there is no steady window. `position` 0: adopted at `t`, a boundary. Otherwise (E9.8i, a take
+  /// trimmed to the bar line before `t`) cycle 1 began `position` ticks before `t`: the window joins late at `t` —
+  /// what lies before is not played, a note still sounding there starts — with no late-join limit (no boundary was
+  /// missed). Without a complete prepared window, or when `usePrepared` is false (it does not cover `final`'s loop):
+  /// `final` is selected from `t`.
+  void handoff(uint8_t slot, ManifestId final, uint32_t t, uint32_t position = 0, bool usePrepared = true) {
+    if (!usePrepared || !prepared_ || !transActive_ || buf_[trans_].state != State::Complete) {
       select(slot, final, t == 0 ? 0 : t - 1);
       return;
     }
     Buffer& b = buf_[trans_];
-    b.w->cycleBase = t - b.w->start;  // positions stay; this cycle starts at t
-    b.start = t;
-    transTarget_ = t;
+    const uint32_t start = t - position;  // cycle 1's start
+    b.w->cycleBase = start - b.w->start;  // positions stay; this cycle starts there
+    b.start = start;
+    transTarget_ = start;
     loop_ = manifests_->manifest(final).loopLengthTicks;
     prepared_ = false;
     handoffSlot_ = slot;
     handoffFinal_ = final;
     ++stats_.preparedHandoffs;
+    if (position != 0) {
+      late_ = true;
+      lateBoundary_ = start;
+      joinUnbounded_ = true;
+      beginJoin(t);
+      ++stats_.trimmedHandoffs;
+    }
   }
+  /// A Record take's window 0 is prepared (`prepare`) and not yet handed off.
+  bool prepared() const { return prepared_; }
 
   /// E9.4, a slot launch: `manifest` will start from its loop start — a fresh start, nothing carried — when the caller
   /// commits it. Its window 0 composes now, without warm-up, while what plays continues; the transition takes no part
@@ -361,6 +377,7 @@ class PlaybackTrack {
     prepared_ = false;
     launching_ = false;
     late_ = false;
+    joinUnbounded_ = false;
     handoffFinal_ = kNoManifest;
   }
 
@@ -499,11 +516,11 @@ class PlaybackTrack {
   /// Between boundaries while late: adopt the prepared join at its tick, or give up past the limit.
   uint8_t lateStep(uint32_t t, Emit* out, uint8_t max) {
     if (!transActive_) {
-      late_ = false;
+      late_ = joinUnbounded_ = false;
       return 0;
     }
-    if (t > lateBoundary_ + lateLimit_) {  // the boundary rule: counted, aim at the next boundary
-      late_ = false;
+    if (t > lateBoundary_ + (joinUnbounded_ ? window_ : lateLimit_)) {  // the boundary rule: counted, aim on
+      late_ = joinUnbounded_ = false;
       ++stats_.lateJoinsMissed;
       ++transBoundaries_;
       transTarget_ = nextBoundary(t);
@@ -539,6 +556,7 @@ class PlaybackTrack {
     trans_ = kNone;
     transActive_ = false;
     late_ = false;
+    joinUnbounded_ = false;
     steadyTarget_ = nextBoundary(t);
     ++stats_.switches;
     ++stats_.lateJoins;
@@ -581,6 +599,7 @@ class PlaybackTrack {
   static constexpr uint8_t kJoinEvents = 16;
   uint32_t lateLimit_ = 0, lateBoundary_ = 0, lastTick_ = 0, joinTick_ = 0;
   bool late_ = false, joinReady_ = false;
+  bool joinUnbounded_ = false;  // a trimmed take's handoff joins late with no limit (E9.8i)
   uint16_t scanIdx_ = 0, joinIndex_ = kNoIndex;
   uint16_t sound_[2 * T];  // START entries begun before the join and sounding at it
   uint8_t soundCount_ = 0;

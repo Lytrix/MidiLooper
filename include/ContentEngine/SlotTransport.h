@@ -31,7 +31,12 @@
 //   prefix under a provisional loop. One pass: no overlap rule reaches across passes, so window 0 depends only on its
 //   own rows; notes still held then are open and end where the take says, carried by the take's next window. Stop
 //   makes it the transition for the Stop tick (`PlaybackTrack::handoff`). A shorter take composes window 0 at Stop,
-//   aimed at the Stop tick, and plays from the first boundary it is ready for.
+//   aimed at the Stop tick, and plays from the first boundary it is ready for. Within window 0 the prefix is also
+//   prepared at each bar line (`setBarTicks`), so a take trimmed to one of them has its window 0 (E9.8i).
+// * Trimmed Record Stop (E9.8i, legacy `RecordStopLength`, owner 2026-11-06: rows stay immutable): `stop` with a
+//   `length` shorter than the take ends the loop there; the take's rows past it are kept and are the loop's wrap
+//   stream — notes played after the bar line sound from the loop start, a note held across it ends in the next cycle.
+//   Playback goes on in phase: cycle 1 began at the bar line, so the take joins at its position now.
 // * Live occupancy (E6.2f): an accepted overdub NoteOn occupies its pitch on the writing track; its NoteOff, or Stop's
 //   closures, release it.
 // * Undo / Redo: History moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
@@ -92,6 +97,7 @@ class SlotTransport {
     uint32_t emptyTakes;       // Stops that recorded nothing
     uint32_t provisionalSelections;  // wraps prepared with a provisional source (E9.1b)
     uint32_t recordPrepares;         // Record takes whose window 0 was composed ahead
+    uint32_t trimmedTakes;           // Record takes ended at the bar line before their Stop (E9.8i)
   };
 
   void init(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, WriterT& writer, Track* const* tracks) {
@@ -126,7 +132,7 @@ class SlotTransport {
     wTrack_ = track;
     wSlot_ = slot;
     wStart_ = clock;
-    prepared_ = false;
+    preparedLen_ = 0;
     return Result::Ok;
   }
 
@@ -153,11 +159,16 @@ class SlotTransport {
   }
 
   /// Ends the take at `clock`. `out` receives NoteOffs (a track stopped by an empty slot); it must hold `Track::T`.
-  Result stop(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+  /// `length` (a Record take; 0: the take's length): the loop ends there, before `clock` (E9.8i) — at most a loop
+  /// earlier, so the take's rows past it fit the loop's wrap stream.
+  Result stop(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length = 0) {
     emitted = 0;
     if (mode_ == Mode::Idle) return Result::NotWriting;
-    return mode_ == Mode::Recording ? stopRecord(clock, out, max, emitted) : stopOverdub(clock, out, max, emitted);
+    return mode_ == Mode::Recording ? stopRecord(clock, out, max, emitted, length)
+                                    : stopOverdub(clock, out, max, emitted);
   }
+  /// The bar for preparing a Record take's window 0 at bar lines (0: at the window end only).
+  void setBarTicks(uint32_t ticks) { barTicks_ = ticks; }
 
   /// Live input on the writing track. `out` receives the NoteOffs of composed notes the live NoteOn ends (send them
   /// before the live note).
@@ -193,9 +204,9 @@ class SlotTransport {
       const uint32_t pos = local(track, clock) % loop_;
       if (pos == 0 && clock != wStart_) return static_cast<uint8_t>(n + wrap(clock, out + n, static_cast<uint8_t>(max - n)));
       if (pos == prepPosition() && pos != 0) selectProvisional(clock);
-    } else if (mode_ == Mode::Recording && !prepared_ &&
-               clock - wStart_ == tracks_[track]->windowTicks()) {  // rows up to the window end are in
-      prepareRecord();
+    } else if (mode_ == Mode::Recording) {  // rows up to `len` are in: at the window end, and at bar lines inside it
+      const uint32_t len = clock - wStart_, w = tracks_[track]->windowTicks();
+      if (len > preparedLen_ && len <= w && (len == w || (barTicks_ != 0 && len % barTicks_ == 0))) prepareRecord(len);
     }
     return n;
   }
@@ -390,11 +401,11 @@ class SlotTransport {
     manifests_->release(p, *runs_);  // the track's lease holds it while it is composed and played
     ++stats_.provisionalSelections;
   }
-  void prepareRecord() {
-    prepared_ = true;
+  void prepareRecord(uint32_t len) {
+    preparedLen_ = len;
     const RunId r0 = writer_->activeRun();
     if (runs_->run(r0).rowCount == 0 || tracks_[wTrack_]->playingIdentity() != 0 ||
-        tracks_[wTrack_]->transitionPending())
+        (tracks_[wTrack_]->transitionPending() && !tracks_[wTrack_]->prepared()))  // an earlier bar's: composed again
       return;
     const ManifestId p = manifests_->create(wSlot_, ++revision_, kProvisionalLoop, &r0, 1, *runs_);
     if (p == kNoManifest) return;
@@ -403,12 +414,14 @@ class SlotTransport {
     ++stats_.recordPrepares;
   }
 
-  Result stopRecord(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+  Result stopRecord(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length) {
     const uint32_t before = manifests_->nextIdentity();
     writer_->stop(clock);
     releaseAllHeld();
     const RunId r0 = writer_->lastRun();
-    loop_ = clock - wStart_;
+    const uint32_t raw = clock - wStart_;
+    loop_ = length != 0 && length < raw && raw - length < length ? length : raw;
+    if (loop_ != raw) ++stats_.trimmedTakes;
     mode_ = Mode::Idle;
     Result result = Result::Ok;
     if (loop_ == 0 || runs_->run(r0).rowCount == 0) {
@@ -420,7 +433,8 @@ class SlotTransport {
       slot_[wTrack_] = wSlot_;
       origin_[wTrack_] = wStart_;
       playing_[wTrack_] = true;
-      tracks_[wTrack_]->handoff(wSlot_, m, local(wTrack_, clock));
+      const uint32_t w = tracks_[wTrack_]->windowTicks();  // the prepared window 0 holds the rows before `preparedLen_`
+      tracks_[wTrack_]->handoff(wSlot_, m, local(wTrack_, clock), raw - loop_, preparedLen_ >= (loop_ < w ? loop_ : w));
     }
     drainSealed(before, clock);
     return result;
@@ -484,7 +498,8 @@ class SlotTransport {
   Mode mode_ = Mode::Idle;
   uint8_t wTrack_ = 0, wSlot_ = kNoSlot;
   uint32_t wStart_ = 0, loop_ = 0, revision_ = 0;
-  bool prepared_ = false;  // the Record take's window 0 was prepared (or could not be)
+  uint32_t preparedLen_ = 0;  // the Record take's length when its window 0 was last prepared (or could not be)
+  uint32_t barTicks_ = 0;
   uint8_t held_[128] = {};
   Stats stats_{};
 };

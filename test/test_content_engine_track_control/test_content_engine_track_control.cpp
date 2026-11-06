@@ -291,6 +291,92 @@ void test_transport_stop_silences_and_start_plays_from_position_0() {
   TEST_ASSERT_EQUAL_UINT32(start + 400, ons(kPortUsbDevice, 62, start, gClock)[0]);
 }
 
+// ---- E9.8i trimmed Record Stop (legacy `RecordStopLength`; rows stay immutable) ------------------------------------------
+
+/// NoteOffs (or NoteOn velocity 0) of `pitch` on port `p` at Clock ticks in [from, to).
+static std::vector<uint32_t> offs(uint8_t p, uint8_t pitch, uint32_t from, uint32_t to) {
+  std::vector<uint32_t> v;
+  for (const Wire& w : gWire[p])
+    if (w.s.data1 == pitch && w.clock >= from && w.clock < to &&
+        ((w.s.status & 0xF0) == 0x80 || ((w.s.status & 0xF0) == 0x90 && w.s.data2 == 0)))
+      v.push_back(w.clock);
+  return v;
+}
+
+// Stopped 200 ticks past the first bar line: the loop is that bar, and nothing recorded is dropped. Playback goes on
+// in phase (cycle 1 began at the line); the note played after the line comes back at the loop start; the note held
+// across the line ends in the next cycle; a note held longer than the loop leaves nothing sounding.
+void test_a_record_stop_just_past_a_bar_line_ends_the_loop_there() {
+  gClock = 0;
+  C().selectTrack(0);
+  const uint32_t start = recordStart(0);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(0, 0, gClock));
+  const std::vector<Live> take = {
+      {start + 0, start + 40, 60},                  // the downbeat
+      {start + 400, start + 440, 62},               // inside the bar
+      {start + kBar - 50, start + kBar + 150, 66},  // held across the line
+      {start + kBar + 100, start + kBar + 140, 64}, // after the line: wraps to position 100
+      {start + 10, start + kBar + 180, 68},         // held longer than the loop
+  };
+  run(start + kBar + 200, take);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueStop(0, gClock));
+  run(start + kBar + 202, take);
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());
+  TEST_ASSERT_EQUAL_UINT32(kBar, X().loopLength(X().contentOf(0)));  // not two bars
+  TEST_ASSERT_EQUAL_UINT32(start, X().origin(0));
+  TEST_ASSERT_EQUAL_UINT32(1, X().stats().trimmedTakes);
+  run(start + 5 * kBar, take);
+  TEST_ASSERT_EQUAL_UINT32(1, gE.track(0).stats().trimmedHandoffs);
+  // Cycle 1 (from the line): 62 at its position, from the take (live at start + 400 + 1 before).
+  TEST_ASSERT_EQUAL_UINT32(start + kBar + 400, ons(kPortUsbDevice, 62, start + kBar + 1, start + 2 * kBar)[0]);
+  // Every cycle from 2 on: the downbeat, then the wrapped 64 at position 100; 64 never sounds in cycle 1 after the stop.
+  TEST_ASSERT_EQUAL_UINT32(0, ons(kPortUsbDevice, 64, start + kBar + 202, start + 2 * kBar).size());
+  for (uint32_t c = 2; c <= 4; ++c) {
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 60, start + c * kBar, start + c * kBar + 1).size());
+    TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 64, start + c * kBar + 100, start + c * kBar + 101).size());
+  }
+  // 66 starts at position kBar - 50 and ends at 150 in the next cycle (its NoteOff wrapped).
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 66, start + 3 * kBar - 50, start + 3 * kBar - 49).size());
+  TEST_ASSERT_EQUAL_UINT32(1, offs(kPortUsbDevice, 66, start + 4 * kBar + 150, start + 4 * kBar + 151).size());
+  C().transportStop(gClock, us(gClock), kUsPerTick);
+  run(gClock + 10);
+  expectSilentEnd();
+  for (uint8_t pitch : {60, 62, 64, 66, 68})  // every NoteOn sent was ended
+    TEST_ASSERT_EQUAL_UINT32(ons(kPortUsbDevice, pitch, 0, gClock).size(), offs(kPortUsbDevice, pitch, 0, gClock).size());
+}
+
+// Past half a bar the take still ends at the next bar line (as before), and a 2-bar take stopped just past its
+// second line is trimmed to it with its prepared window 0.
+void test_a_record_stop_past_half_a_bar_keeps_the_next_bar_and_longer_takes_trim_too() {
+  gClock = 0;
+  C().selectTrack(0);
+  uint32_t start = recordStart(0);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(0, 0, gClock));
+  std::vector<Live> take = {{start + 0, start + 40, 60}, {start + kBar + 200, start + kBar + 240, 61}};
+  run(start + kBar + kBar / 2 + 1, take);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueStop(0, gClock));
+  run(start + 2 * kBar + 1, take);
+  TEST_ASSERT_EQUAL_UINT32(2 * kBar, X().loopLength(X().contentOf(0)));
+  TEST_ASSERT_EQUAL_UINT32(0, X().stats().trimmedTakes);
+  run(start + 4 * kBar);  // cycle 1 plays bar 2 too: the window prepared at the first bar line was not used
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 61, start + 3 * kBar + 200, start + 3 * kBar + 201).size());
+  C().selectTrack(1);
+  start = recordStart(1);
+  TEST_ASSERT_EQUAL(R::Ok, C().queueRecord(1, 8, gClock));
+  take = {{start + 0, start + 40, 72}, {start + kBar + 300, start + kBar + 340, 74}};
+  run(start + 2 * kBar + kBar / 2, take);  // exactly half a bar past: still trimmed
+  TEST_ASSERT_EQUAL(R::Ok, C().queueStop(1, gClock));
+  run(start + 2 * kBar + kBar / 2 + 2, take);
+  TEST_ASSERT_EQUAL_UINT32(2 * kBar, X().loopLength(X().contentOf(8)));
+  TEST_ASSERT_EQUAL_UINT32(1, X().stats().trimmedTakes);
+  run(start + 6 * kBar);
+  TEST_ASSERT_EQUAL_UINT32(1, gE.track(1).stats().trimmedHandoffs);
+  // Cycle 1 from the line: 74 (position kBar + 300) from the take; then both every cycle.
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 74, start + 3 * kBar + 300, start + 3 * kBar + 301).size());
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 72, start + 4 * kBar, start + 4 * kBar + 1).size());
+  TEST_ASSERT_EQUAL_UINT32(1, ons(kPortUsbDevice, 74, start + 5 * kBar + 300, start + 5 * kBar + 301).size());
+}
+
 void test_live_input_is_heard_on_the_right_tracks_ports_and_recorded() {
   gE.output().setPorts(0, 1u << kPortUsbDevice);
   gE.output().setPorts(1, 1u << kPortUsbHost);
@@ -354,6 +440,8 @@ int main(int, char**) {
   RUN_TEST(test_an_empty_target_stops_the_track_and_clear_is_undoable);
   RUN_TEST(test_mute_and_solo_end_what_sounds_and_silence_a_track);
   RUN_TEST(test_transport_stop_silences_and_start_plays_from_position_0);
+  RUN_TEST(test_a_record_stop_just_past_a_bar_line_ends_the_loop_there);
+  RUN_TEST(test_a_record_stop_past_half_a_bar_keeps_the_next_bar_and_longer_takes_trim_too);
   RUN_TEST(test_live_input_is_heard_on_the_right_tracks_ports_and_recorded);
   RUN_TEST(test_no_heap);
   return UNITY_END();

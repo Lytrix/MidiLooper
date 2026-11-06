@@ -307,7 +307,8 @@ class Surface {
     clock_->stop();
     control().transportStop(tick_, us_, us());
   }
-  /// The take on track `t` ends: a Record at the bar, an overdub at once.
+  /// The take on track `t` ends: a Record at the next bar, or at the bar line just passed when pressed at most half a
+  /// bar after it (E9.8i); an overdub at once.
   void endTake(uint8_t t) {
     if (transport().mode() == X::Mode::Recording)
       control().queueStop(t, tick_);

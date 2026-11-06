@@ -10,7 +10,10 @@
 // * Record (queued): on a track that plays, at its slot's next loop start (phase reference); otherwise at the next bar.
 //   The track's playing slot stops then and the take begins on the queued slot. While another track writes (one
 //   writer) the record stays queued and starts at the first eligible tick after the writer is free.
-// * Stop (queued): the take ends at the next bar. `stopNow` ends it at once.
+// * Stop (queued): the take ends at the next bar. A Record take stopped at most half a bar after a bar line ends at that
+//   line instead (E9.8i, legacy `RecordStopLength::quantizeTransportRecordLength`): it stops on the next tick, its loop
+//   one bar shorter than the next bar would make it, the notes played since kept as the loop's wrap stream
+//   (`SlotTransport::stop`). `stopNow` ends a take at once.
 // * Slot switch: the target composes from the request on (`SlotTransport::launch`, fresh from its loop start) and plays
 //   from the next grid step (`NextGrid`, 16ths by default) or the playing slot's loop end (`LoopEnd`); a take on the
 //   track ends first. An empty target stops the track and takes the slot, ready to record.
@@ -46,6 +49,7 @@ class TrackControl {
     out_ = &output;
     bar_ = ticksPerBar;
     grid_ = gridTicks;
+    x_->setBarTicks(bar_);
     selected_ = 0;
     for (auto& p : pending_) p = Pending{};
     for (auto& m : muted_) m = false;
@@ -57,6 +61,7 @@ class TrackControl {
   void setGrid(uint32_t ticksPerBar, uint32_t gridTicks) {
     bar_ = ticksPerBar;
     grid_ = gridTicks;
+    x_->setBarTicks(bar_);
   }
 
   void selectTrack(uint8_t t) { selected_ = t; }
@@ -71,23 +76,33 @@ class TrackControl {
   }
   Result queueStop(uint8_t t, uint32_t clock) {
     if (x_->writingTrack() != t) return Result::NotWriting;
-    pending_[t].stop = true;
-    pending_[t].stopAt = clock;
+    Pending& p = pending_[t];
+    p.stop = true;
+    p.stopAt = clock;
+    p.trimEnd = 0;
+    if (x_->mode() == Transport::Mode::Recording && bar_ != 0) {  // E9.8i: half a bar past a bar line ends there
+      const uint32_t into = clock % bar_, start = clock - x_->writePosition(clock);
+      if (into != 0 && into <= bar_ / 2 && clock - into > start) p.trimEnd = clock - into;
+    }
     return Result::Ok;
   }
   void cancelQueued(uint8_t t) {
     pending_[t].recordSlot = kNone;
     pending_[t].stop = false;
+    pending_[t].trimEnd = 0;
     if (pending_[t].switchSlot != kNone) x_->stopLaunch(t);
     pending_[t].switchSlot = kNone;
   }
-  Result stopNow(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+  /// `trimEnd` (a Record take; 0: none): the loop ends at that earlier bar line (E9.8i).
+  Result stopNow(uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t trimEnd = 0) {
     const uint8_t w = x_->writingTrack();
     if (w == kNone) return Result::NotWriting;
     pending_[w].stop = false;
+    pending_[w].trimEnd = 0;
+    const uint32_t start = clock - x_->writePosition(clock);
     Emit buf[T];
     uint8_t n;
-    const Result r = x_->stop(clock, buf, T, n);
+    const Result r = x_->stop(clock, buf, T, n, trimEnd > start && trimEnd < clock ? trimEnd - start : 0);
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
@@ -185,9 +200,9 @@ class TrackControl {
   void beforeTick(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     for (uint8_t t = 0; t < Tracks; ++t) {
       Pending& p = pending_[t];
-      if (p.stop && clock != p.stopAt && onBar(clock)) {
+      if (p.stop && clock != p.stopAt && (p.trimEnd != 0 || onBar(clock))) {
         p.stop = false;
-        stopNow(clock, nowUs, usPerTick);
+        stopNow(clock, nowUs, usPerTick, p.trimEnd);
       }
       if (p.switchSlot != kNone && clock != p.switchAt && switchDue(t, p.switchQ, clock)) commitSwitch(t, clock, nowUs, usPerTick);
       if (p.recordSlot != kNone && clock != p.recordAt && recordDue(t, clock)) startRecord(t, clock, nowUs, usPerTick);
@@ -223,6 +238,7 @@ class TrackControl {
     uint32_t recordAt = 0;
     bool stop = false;
     uint32_t stopAt = 0;
+    uint32_t trimEnd = 0;  // a queued Record Stop that ends the loop at this earlier bar line (E9.8i; 0: none)
     uint8_t switchSlot = kNone;
     Quantize switchQ = Quantize::NextGrid;
     uint32_t switchAt = 0;
