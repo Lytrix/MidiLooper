@@ -39,7 +39,7 @@ constexpr uint8_t kRollNoteBrightness = 7;
 constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
 constexpr uint8_t kRollOverviewLow = 2;    // an overview beat with the fewest pitches sounding (one)
-constexpr uint8_t kRollOverviewHigh = 9;   // ... with the most (the loop's busiest beat; owner: 14 was too bright)
+constexpr uint8_t kRollOverviewHigh = 8;   // ... with the most (the loop's busiest beat; owner: 14, then 9, too bright)
 constexpr uint8_t kRollOverviewOutsideLow = 2;   // one pitch outside the detailed view (owner: 1 looked black)
 constexpr uint8_t kRollOverviewOutsideHigh = 5;  // the busiest beat outside it
 

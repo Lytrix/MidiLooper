@@ -138,7 +138,7 @@ void test_dense_raster_density_fallback_overview_and_extent() {
 }
 
 // E9.8k: the overview as a full-height cell per beat, as bright as the pitches sounding in it (a span tile's raster;
-// else the density tile, each beat alike) from 2 (one) to 9 (the busiest beat), dimmed to 2-5 outside the detailed
+// else the density tile, each beat alike) from 2 (one) to 8 (the busiest beat), dimmed to 2-5 outside the detailed
 // view; a dark column between bars.
 void test_the_overview_shows_pitches_per_beat_as_brightness() {
   gStore.setDetail(0, 5);
@@ -149,10 +149,11 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   on(9, 60), on(15, 60);                                                        // beat 2: one
   gStore.header(t) = Store::Header{21, 0, 5, false};
   gStore.publishSpan(0, 0, t);
-  DensityTile two{};  // bar 1: no span tile yet, three pitches
+  DensityTile two{};  // bar 1: no span tile yet, four pitches
   two.counts[48 / 2] |= 1u << ((48 & 1) * 4);
   two.counts[50 / 2] |= 5u << ((50 & 1) * 4);
   two.counts[52 / 2] |= 2u << ((52 & 1) * 4);
+  two.counts[54 / 2] |= 1u << ((54 & 1) * 4);
   gStore.publishDensity(5, 1, two, 21);
   // Two bars over x 0..63 (7.9 px a beat), rows 10..15.
   std::memset(gFb, 0, sizeof gFb);
@@ -162,8 +163,8 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(7, 10));   // one pitch
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewLow, px(14, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(20, 15));                  // nothing sounds in beat 3
-  TEST_ASSERT_EQUAL_UINT8(5, px(31, 10));                  // bar 1: three of six, 2 + 7 x 2 / 5 = 4.8, rounded
-  TEST_ASSERT_EQUAL_UINT8(5, px(61, 15));
+  TEST_ASSERT_EQUAL_UINT8(6, px(31, 10));                  // bar 1: four of six, 2 + 6 x 3 / 5 = 5.6, rounded
+  TEST_ASSERT_EQUAL_UINT8(6, px(61, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(62, 15));                  // the gap after the bar
   TEST_ASSERT_EQUAL_UINT32(0, lit(0, 9) + lit(16, 63));    // only the strip's rows
   // The detailed view on bar 1: bar 0's beats take the same scale dimmed (busiest 5, one pitch 2); bar 1 is unchanged.
@@ -171,12 +172,12 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, kBar, kBar);
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutsideHigh, px(0, 10));
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutsideLow, px(7, 10));
-  TEST_ASSERT_EQUAL_UINT8(5, px(31, 10));
-  // ... on bar 0: bar 1 dims (5 of 9: 2 + 3 x 3 / 7 = 3).
+  TEST_ASSERT_EQUAL_UINT8(6, px(31, 10));
+  // ... on bar 0: bar 1 dims (6 of 8: 2 + 4 x 3 / 6 = 4).
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, 0, kBar);
   TEST_ASSERT_EQUAL_UINT8(kRollOverviewHigh, px(0, 10));
-  TEST_ASSERT_EQUAL_UINT8(3, px(31, 10));
+  TEST_ASSERT_EQUAL_UINT8(4, px(31, 10));
   // A band of rows 10..12 draws only those.
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 12);
@@ -185,12 +186,12 @@ void test_the_overview_shows_pitches_per_beat_as_brightness() {
   // A bar 4 px wide whose last beat is 1 px: that column is the gap.
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 8, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(5, px(6, 15));
+  TEST_ASSERT_EQUAL_UINT8(6, px(6, 15));
   TEST_ASSERT_EQUAL_UINT8(0, px(7, 15));
   // Narrow bars (under 4 px) keep every column.
   std::memset(gFb, 0, sizeof gFb);
   drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 6, 10, 15, gFb, kW, 10, 15);
-  TEST_ASSERT_EQUAL_UINT8(5, px(5, 15));
+  TEST_ASSERT_EQUAL_UINT8(6, px(5, 15));
 }
 
 void test_the_live_overlay_draws_on_top() {
