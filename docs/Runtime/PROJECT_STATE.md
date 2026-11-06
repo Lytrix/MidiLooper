@@ -3,7 +3,7 @@
   row under a wider piano roll — position with save dots and a transport icon, bars, track / slot / port, undo, and
   the tempo under a clock icon. While the clock runs the track column shows each track's note activity; when stopped,
   the state letters. A queued slot counts down to its start; NOTE_EDIT shows the note's start, pitch, velocity and
-  length. Boots clean; the owner's look at the screen is pending.
+  length. Owner confirmed on the device.
 
 **2026-11-06 — Fixed-memory engine: E9.8j notes just before a take's start are kept.**
 - The first note when recording from a stopped external clock is no longer lost: a note arriving with the start is

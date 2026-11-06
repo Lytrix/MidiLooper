@@ -2062,5 +2062,5 @@ Owner's first look: the progress line sat in the roll — the library's `draw_hl
 order wrong; all go through `hline(x0, x1, y)` now, and the progress moved into the dots' row. Device `f6a02aef…`:
 boot clean, worst frame 409 µs running. The values then sat two rows above the bottom (owner): they end on the bottom row now (labels rows
 50–54, values 57–63) and the two rows went to the roll (0–39) and the overview (41–46). Device `8d4883d5…`: boot
-clean. LOOP_EDIT's fields
+clean; owner confirmed (2026-11-06). LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
