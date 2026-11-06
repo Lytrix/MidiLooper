@@ -31,15 +31,17 @@
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Motor feedback (owner 2026-11-06; legacy `NoteEditDependentFaderSnapshot`, which was off by default): the DROID's
 //   motor faders follow the selection — at the session's opening and after undo, redo, delete or create all four;
-//   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after an F3 move F2; after
-//   NOTELEN F2 and F3. A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
+//   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after NOTELEN F2 and F3. An
+//   F3 move writes nothing: F2 shows the reference 16th, which F3 offsets from (owner 2026-11-06: F2 followed F3, its
+//   landing read as a move took the note a 16th on, and F3 was pushed). A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
 //   CC 2 / 3 channel 15), then its trigger note (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released
 //   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). A fader the musician moves has its position sent back as a
 //   value alone (legacy ValueOnly): the DROID's stored start value — where its `clear` sends the motor — stays with
 //   the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4's `clear`, and those are the 16th-step LEDs 2 /
 //   3: a stale stored value sent F4 back to an old pitch whenever those LEDs changed (owner 2026-11-06). While a
 //   written fader's motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its
-//   messages are not moves; a fader value that changes nothing takes no undo step.
+//   messages are not moves, nor where it comes to rest (within `kMotorLandingPb` / `kMotorLandingCc` of the value: the
+//   DROID's motors land a few percent off); a fader value that changes nothing takes no undo step.
 // No allocation; O(selection) a fader move.
 
 #pragma once
@@ -82,6 +84,7 @@ class EditSurface {
   // ---- Motor feedback ------------------------------------------------------------------------------------------------
   enum : uint8_t { kMotorSelect = 1, kMotorCoarse = 2, kMotorFine = 4, kMotorPitch = 8, kMotorAll = 15 };
   static constexpr uint32_t kMotorGateMs = 125, kMotorSettleMs = 500, kMotorQuietMs = 150;
+  static constexpr int32_t kMotorLandingPb = 600, kMotorLandingCc = 4;
   struct MotorMsg {
     uint8_t status, d1, d2;
   };
@@ -291,7 +294,7 @@ class EditSurface {
       const int32_t t = static_cast<int32_t>(refStep_ * kSixteenth) + offset;
       v.tick = t < 0 ? loop_ + static_cast<uint32_t>(t) : static_cast<uint32_t>(t) % loop_;
     }
-    if (commit(Fader::Fine, v, ms)) drive(kMotorCoarse, ms);
+    commit(Fader::Fine, v, ms);  // F2 stays: it shows the reference 16th F3 offsets from
   }
   void pitch(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);
@@ -458,6 +461,9 @@ class EditSurface {
     bool sync = false;  // the musician moved it: its value (no trigger) is due, so the DROID's stored start value follows
   };
   static int32_t slackOf(uint8_t i) { return i < 2 ? kCoarseThreshold : 3; }  // pitch bend / CC jitter
+  /// How far from the written value a motor may come to rest (measured on the DROID 2026-11-06: F2 written −5780 /
+  /// −6940 reported −6162 / −7400, ~2.5 % of the travel).
+  static int32_t landingOf(uint8_t i) { return i < 2 ? kMotorLandingPb : kMotorLandingCc; }
   /// Writes the faders in `mask` to the selection (the bracket alone when nothing is selected: F2 / F3).
   void drive(uint8_t mask, uint32_t ms) {
     EditNote n;
@@ -506,7 +512,7 @@ class EditSurface {
     f.known = true;
     if (f.written && static_cast<int32_t>(ms - f.settleUntil) < 0) {
       const int32_t slack = slackOf(i), to = f.value;
-      const bool there = (v > to ? v - to : to - v) < slack;
+      const bool there = (v > to ? v - to : to - v) <= landingOf(i);
       const int32_t lo = (f.from < to ? f.from : to) - slack, hi = (f.from > to ? f.from : to) + slack;
       const bool onTheWay = !f.arrived && (!f.fromKnown || (v >= lo && v <= hi));
       if (there || onTheWay) {

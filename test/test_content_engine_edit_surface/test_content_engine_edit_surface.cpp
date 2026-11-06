@@ -383,9 +383,14 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   v = drainMotors(5);
   const int32_t f2at67 = pbOf(findStatus(v, 0xED));
   const uint8_t f3at67 = findMsg(v, 0xBE, 2)->m.d2;
-  f2(f2at67);  // arrived
-  f3(f3at67);
+  const uint8_t depth67 = gE.noteEdit().depth();
+  // The motors come to rest past their values (the DROID's land a few percent off): F2 travelled up from 64's 16th and
+  // stops 450 beyond, F3 travelled down from 68 and stops 4 below — not moves.
+  f2(f2at67 + 450);
+  f3(static_cast<uint8_t>(f3at67 - 4));
   f4(67);
+  TEST_ASSERT_EQUAL_UINT32(384, sel().tick);
+  TEST_ASSERT_EQUAL_UINT8(depth67, gE.noteEdit().depth());
   settle();
   drainMotors(200);
   f1(pbFor(2, 16));
@@ -443,12 +448,12 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
   v = drainMotors(30);
   TEST_ASSERT_EQUAL_UINT32(0, written(v, 0) + written(v, 1) + written(v, 2) + written(v, 3));
-  // F3 moves it within the 16th: F2 follows.
+  // F3 moves it within the 16th: nothing is written — F2 shows the reference 16th F3 offsets from (owner 2026-11-06:
+  // F2 followed F3, its landing a little off was read as a move and took the note a 16th on).
   f3(64 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 20, sel().tick);
   v = drainMotors(300);
-  TEST_ASSERT_EQUAL_UINT32(1, written(v, 1));
-  TEST_ASSERT_EQUAL_UINT32(0, written(v, 2));
+  TEST_ASSERT_EQUAL_UINT32(0, written(v, 0) + written(v, 1) + written(v, 2) + written(v, 3));
   // A hand on a fader the motor was just sent to: a move off the motor's path is the musician's at once, and so is
   // everything after it, even back near the written value.
   settle();

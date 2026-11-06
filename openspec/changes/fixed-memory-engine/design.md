@@ -2172,3 +2172,12 @@ Only in NOTE_EDIT; a pending one gives way to a write. Tests: a hand move sends 
 wins over a pending value, nothing outside NOTE_EDIT; the motor test counts writes by their trigger notes (mutations
 7 / 7). Device `82547d71…` (flashed from HalfKay after the GUI loader could not reboot it — a capture held the serial
 port): the owner's check pending.
+
+**F3 pushed after F2 followed it** (owner 2026-11-07, the last minute of `captures/session_20261106_235103.log`). An F3
+move wrote F2; the DROID's motor came to rest a few percent off its value (written −5780 / −6940, reported −6162 /
+−7400) and off its path, so the landing was read as a hand move: F2 acted, took the note a 16th on (106 → 58), and the
+new 16th rewrote F3 under the hand. The same landing after an F1 select moved the note too (893250 ms). Two changes:
+an F3 move writes nothing — F2 shows the reference 16th, which F3 offsets from, so it has nothing to follow (rather
+than narrowing F3's range); and a motor's message within `kMotorLandingPb` (600) / `kMotorLandingCc` (4) of the
+written value is its landing, not a move. Tests: F3 writes nothing; F2 / F3 landings past their values are not moves
+(mutations 2 / 2). Device `ce9490ad…`: the owner's check pending.
