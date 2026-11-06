@@ -181,7 +181,7 @@ class Persistence {
     approved_ = false;
     saving_ = loading_ = kNone;
     bootNext_ = Slots;
-    store_ = sealing_ = fromStore_ = stateHave_ = closing_ = false;
+    store_ = sealing_ = fromStore_ = stateHave_ = closing_ = closingSave_ = false;
     haveCopy_ = copyB_ = 0;
     stateSeq_ = savingSeq_ = 0;
     nextSeq_ = 1;
@@ -239,13 +239,14 @@ class Persistence {
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
-  /// For the display's save dots (E9.8k): a slot or the surface state is being written.
-  bool writing() const { return saving_ != kNone || stateDue_ || closing_; }
-  /// A slot changed since its last save (it is saved once settled), or the surface state is not saved yet.
+  /// For the display's save dots (E9.8k): a slot is being written. The surface state (the selection) is saved
+  /// silently: a track switch must not hide the screen's progress line behind the dots (owner 2026-11-06).
+  bool writing() const { return saving_ != kNone || closingSave_; }
+  /// A slot changed since its last save (it is saved once settled).
   bool unsaved() const {
     for (uint8_t s = 0; s < Slots; ++s)
       if (!(seen_[s] == saved_[s])) return true;
-    return stateKnown_ && state_ != stateSaved_;
+    return false;
   }
 
   // ---- Surface state ----------------------------------------------------------------------------------------------------
@@ -268,7 +269,7 @@ class Persistence {
   bool step() {
     if (closing_) {  // a save or state write is complete only once the card has it programmed
       if (!card_->ready(CardIo::kIdle)) return true;
-      closing_ = false;
+      closing_ = closingSave_ = false;
     }
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
@@ -546,7 +547,7 @@ class Persistence {
         return true;
       }
       saving_ = kNone;
-      closing_ = true;
+      closing_ = closingSave_ = true;
       ++stats_.saveFailed;
       saved_[s] = savingPrint_;
       return false;
@@ -554,7 +555,7 @@ class Persistence {
     if (ioFill_ != 0 && finishBody()) return true;  // `finishBody` empties the buffer: the header next
     sealing_ = false;
     saving_ = kNone;
-    closing_ = true;
+    closing_ = closingSave_ = true;
     if (ioFill_ == 0 && writeHeader(s, savingCopy_, savingSeq_, ioBytes_)) {
       haveCopy_ |= 1ull << s;
       if (savingCopy_) copyB_ |= 1ull << s; else copyB_ &= ~(1ull << s);
@@ -667,6 +668,7 @@ class Persistence {
   bool approved_ = false, fromTmp_ = false;
   bool store_ = false, sealing_ = false, fromStore_ = false, altValid_ = false, stateHave_ = false;
   bool closing_ = false;  // the card is to be left idle (`CardIo::kIdle`) before the next grain's work
+  bool closingSave_ = false;  // ... after a slot's save (the display's dots; not after a state write)
   uint8_t savingCopy_ = 0, loadingCopy_ = 0, stateCopy_ = 0;
   uint64_t haveCopy_ = 0, copyB_ = 0;  // per slot: a valid copy in the store, the current one is B
   uint32_t stateSeq_ = 0, savingSeq_ = 0, nextSeq_ = 1;  // `nextSeq_`: the next save's sequence (any slot)

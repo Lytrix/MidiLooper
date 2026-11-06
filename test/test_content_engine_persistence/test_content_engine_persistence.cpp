@@ -603,10 +603,20 @@ void test_the_surface_state_is_saved_and_restored() {
   gA.setSurfaceState(next, us(gClock));
   run(gA, gClock + kSettleTicks / 2);
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
-  TEST_ASSERT_TRUE(gA.persistence().unsaved());  // the screen's dots: pending (E9.8k)
-  run(gA, gClock + kSettleTicks);
+  TEST_ASSERT_FALSE(gA.persistence().unsaved());  // the screen's dots ignore the selection (E9.8k): no dots
+  bool wrote = false;  // sampled after every grain, so the card's close after the state write is seen too
+  for (const uint32_t end = gClock + kSettleTicks; gClock < end; ++gClock) {
+    gA.submitJobs(gClock, us(gClock), kUsPerTick);
+    while (gA.runGrain(us(gClock))) {
+      wrote |= gA.persistence().writing();
+      gCard.endStep();
+    }
+    wrote |= gA.persistence().writing();
+    gCard.endStep();
+    gA.clockTick(gClock, us(gClock), kUsPerTick);
+  }
+  TEST_ASSERT_FALSE(wrote);
   TEST_ASSERT_EQUAL_UINT32(writes + 1, gCard.writes);
-  TEST_ASSERT_FALSE(gA.persistence().unsaved());
   TEST_ASSERT_NOT_NULL(gCard.sector(1));
   TEST_ASSERT_EQUAL_UINT32(waiting, gCard.waitingWrites);  // each state write waited for a ready card
   TEST_ASSERT_TRUE(gCard.idle());                          // and left it idle

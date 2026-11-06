@@ -2085,5 +2085,12 @@ the rule between the roll and the status band, and the band's cell dividers, are
 brightness (3, from 2) so they read on the panel. Device `3e978100…`: boot clean. Owner (still cramped): the strip is
 3 rows (0–2), the roll rows 5–45, and the rule is gone — four dark rows separate the roll from the band. Device
 `d14a2532…`: boot clean. Owner: the overview strip is removed — too crowded; BARS and the position say where the page
-is. `drawOverviewBand` and its test are gone; the roll takes rows 0–45. Device `8c68241b…`: boot clean. LOOP_EDIT's fields
+is. `drawOverviewBand` and its test are gone; the roll takes rows 0–45. Device `8c68241b…`: boot clean.
+
+**The save dots ignore the selection** (owner 2026-11-06: after a track switch the progress line showed only about a
+bar later). A switch changes the surface state, which is saved after its 2 s settle; the dots showed it as pending and
+then writing, and the progress line gives way to the dots. The selection is now saved silently: `Persistence::unsaved`
+counts slots only, and `writing` is a slot's save and its close (`closingSave_`), not a state write. Persistence test:
+no dots across a selection's settle and write, sampled after every grain (mutations 3 / 3). Device `b9f64bf5…`: boot
+clean; on the external clock, 0.3 s after `!ENGINE select` the line was drawn on each of four switches. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
