@@ -17,7 +17,8 @@
 // * Piano roll (x 22–255, rows 0–39): the shown slot — the whole loop up to 16 bars, else a 16-bar page following the
 //   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
 //   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 41–46) when the loop is longer than the
-//   view: the view's bars by note count, the others dim, a bright bar under the view's range (row 47).
+//   view: a column per beat as high as the pitches sounding in it, the bars outside the view dim, a bright bar under
+//   the view's range (row 47).
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
@@ -360,21 +361,15 @@ class EngineDisplay {
       for (int16_t y = kRollY0; y <= kRollY1; y += 2) oled_.gfx.draw_pixel(fb(), bx, y, 10);
     }
     // Overview: the whole loop, the view's range and the playhead (when the view does not already show it whole).
-    if (loop > viewTicks) drawOverview(e, slot, loop, bars, first, viewTicks, pos, playing || writing, lo, hi);
+    if (loop > viewTicks) drawOverview(e, slot, loop, first, viewTicks, pos, playing || writing);
     return info;
   }
 
-  void drawOverview(ContentEngine::EngineRoot& e, uint8_t slot, uint32_t loop, uint32_t bars, uint32_t first,
-                    uint32_t viewTicks, uint32_t pos, bool moving, uint8_t lo, uint8_t hi) {
+  void drawOverview(ContentEngine::EngineRoot& e, uint8_t slot, uint32_t loop, uint32_t first, uint32_t viewTicks,
+                    uint32_t pos, bool moving) {
     const int32_t w = kX1 - kX0;
-    uint8_t olo, ohi;
-    if (!ContentEngine::pitchExtent(e.tiles(), slot, 0, static_cast<uint8_t>(bars > 64 ? 63 : bars - 1), olo, ohi)) {
-      olo = lo;
-      ohi = hi;
-    }
-    if (ohi == olo) ohi = static_cast<uint8_t>(olo + 1);
-    ContentEngine::drawOverviewBand(e.tiles(), slot, loop, kBar, olo, ohi, kX0, kX1, kOverY0, kOverY1, fb(),
-                                    DISPLAY_WIDTH, kOverY0, kOverY1, first, viewTicks);
+    ContentEngine::drawOverviewBand(e.tiles(), slot, loop, kBar, kX0, kX1, kOverY0, kOverY1, fb(), DISPLAY_WIDTH,
+                                    kOverY0, kOverY1, first, viewTicks, static_cast<uint8_t>(kBar / kQuarter));
     // Under the strip: a bright bar under the detailed view's range, a dim one under the rest.
     const int16_t vx0 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first) * w / loop);
     int16_t vx1 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first + viewTicks) * w / loop);

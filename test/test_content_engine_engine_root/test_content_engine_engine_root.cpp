@@ -294,7 +294,7 @@ void test_two_tracks_record_overdub_and_play_under_the_scheduler() {
     gE.drawRollBand(v, fb, 256, row, static_cast<int16_t>(row + 7));
     if (realMicros() - b0 > maxBandUs) maxBandUs = realMicros() - b0;
   }
-  drawOverviewBand(gE.tiles(), 0, loop0, kBar, 40, 110, 22, 225, 33, 40, fb, 256, 33, 40);
+  drawOverviewBand(gE.tiles(), 0, loop0, kBar, 22, 225, 33, 40, fb, 256, 33, 40);
   const uint32_t frameUs = realMicros() - f0;
   uint32_t litPixels = 0;
   for (uint8_t b : fb) litPixels += (b >> 4 != 0) + ((b & 0x0F) != 0);

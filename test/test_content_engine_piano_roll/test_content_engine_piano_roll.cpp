@@ -126,7 +126,7 @@ void test_dense_raster_density_fallback_overview_and_extent() {
   TEST_ASSERT_EQUAL_UINT8(kRollDensityBrightness, px(22, y60));  // never blank: the density tile, dim
   TEST_ASSERT_EQUAL_UINT8(kRollDensityBrightness, px(22 + 50, y60));
   std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 2, kLoop, kBar, 48, 63, 22, 225, 33, 40, gFb, kW, 33, 40);
+  drawOverviewBand(gStore, 2, kLoop, kBar, 22, 225, 33, 40, gFb, kW, 33, 40);
   TEST_ASSERT_TRUE(lit(33, 40) > 0);
   TEST_ASSERT_EQUAL_UINT32(0, lit(0, 32));
   uint8_t lo, hi;
@@ -136,41 +136,53 @@ void test_dense_raster_density_fallback_overview_and_extent() {
   TEST_ASSERT_FALSE(pitchExtent(gStore, 3, 0, 3, lo, hi));
 }
 
-// E9.8k: the overview's bars by note count, a dark column between them, and the bars outside the view dim.
-void test_the_overview_shows_counts_bar_gaps_and_the_view() {
-  DensityTile one{}, three{};
-  one.counts[60 / 2] |= 1u << ((60 & 1) * 4);
-  three.counts[60 / 2] |= 3u << ((60 & 1) * 4);
-  three.counts[61 / 2] |= 1u << ((61 & 1) * 4);  // the same row (a 2-row strip): the highest count wins
-  gStore.publishDensity(4, 0, one, 11);
-  gStore.publishDensity(4, 1, three, 11);
-  gStore.publishDensity(4, 2, one, 11);
-  gStore.publishDensity(4, 3, one, 11);
+// E9.8k: the overview as a column per beat, as high as the pitches sounding in it (a span tile's raster; else the
+// density tile, each beat alike), scaled to the busiest beat; a dark column between bars; the bars outside the view dim.
+void test_the_overview_draws_pitches_per_beat_and_dims_outside_the_view() {
+  gStore.setDetail(0, 5);
+  const uint16_t t = gStore.takeSpare();
+  std::memset(gStore.tile(t).raster, 0, sizeof gStore.tile(t).raster);
+  auto on = [&](uint8_t col, uint8_t p) { gStore.tile(t).raster[col][p / 8] |= static_cast<uint8_t>(1u << (p % 8)); };
+  on(0, 60), on(3, 62), on(7, 64), on(5, 60), on(2, 66);  // beat 1 of bar 0: four pitches
+  on(9, 60), on(15, 60);                       // beat 2: one
+  gStore.header(t) = Store::Header{21, 0, 5, false};
+  gStore.publishSpan(0, 0, t);
+  DensityTile two{};  // bar 1: no span tile yet, two pitches
+  two.counts[48 / 2] |= 1u << ((48 & 1) * 4);
+  two.counts[50 / 2] |= 5u << ((50 & 1) * 4);
+  gStore.publishDensity(5, 1, two, 21);
+  // Two bars over x 0..63 (7.9 px a beat), rows 10..15; the view is bar 0.
   std::memset(gFb, 0, sizeof gFb);
-  // Four bars over x 0..80: 20 px a bar; the view is bars 0-1.
-  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11, 0, 2 * kBar);
-  const int y = roll::map(60, 60, 70, 11, 10);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(0, y));         // bar 0: one note
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(18, y));
-  TEST_ASSERT_EQUAL_UINT8(0, px(19, y));                              // the gap
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness + 4, px(20, y));    // bar 1: three
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(40, y));           // bar 2: outside the view
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(78, y));
-  TEST_ASSERT_EQUAL_UINT8(0, px(79, y));
-  // A later page (bars 2-3): the bars before it are dim too.
+  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, 0, kBar);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(0, 10));  // the busiest beat fills the strip
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(6, 15));
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(7, 14));  // one pitch of four: 1.5 rows, rounded up
+  TEST_ASSERT_EQUAL_UINT8(0, px(7, 13));
+  TEST_ASSERT_EQUAL_UINT8(0, px(20, 15));                        // nothing sounds in beat 3
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(31, 13));     // bar 1, outside the view: two of four, three rows
+  TEST_ASSERT_EQUAL_UINT8(0, px(31, 12));
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(61, 15));
+  TEST_ASSERT_EQUAL_UINT8(0, px(62, 15));                        // the gap after the bar
+  TEST_ASSERT_EQUAL_UINT32(0, lit(0, 9) + lit(16, 63));          // only the strip's rows
+  // A band of rows 10..12 draws only those.
   std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11, 2 * kBar, 2 * kBar);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(0, y));
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(40, y));
-  // No view given: every bar by its count.
+  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 12, 0, kBar);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(0, 10));
+  TEST_ASSERT_EQUAL_UINT32(0, lit(13, 15));
+  // A later page (bar 1): bar 0 is dim.
   std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 80, 10, 11, gFb, kW, 10, 11);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(40, y));
-  // Narrow bars (under 4 px) keep every column.
+  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 63, 10, 15, gFb, kW, 10, 15, kBar, kBar);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewOutside, px(0, 10));
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(31, 15));
+  // A bar 4 px wide whose last beat is 1 px: that column is the gap.
   std::memset(gFb, 0, sizeof gFb);
-  drawOverviewBand(gStore, 4, 4 * kBar, kBar, 60, 70, 0, 12, 10, 11, gFb, kW, 10, 11);
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(2, y));
-  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness + 4, px(3, y));
+  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 8, 10, 15, gFb, kW, 10, 15);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(6, 15));
+  TEST_ASSERT_EQUAL_UINT8(0, px(7, 15));
+  // No view given: every bar bright. Narrow bars (under 4 px) keep every column.
+  std::memset(gFb, 0, sizeof gFb);
+  drawOverviewBand(gStore, 5, 2 * kBar, kBar, 0, 6, 10, 15, gFb, kW, 10, 15);
+  TEST_ASSERT_EQUAL_UINT8(kRollOverviewBrightness, px(5, 15));
 }
 
 void test_the_live_overlay_draws_on_top() {
@@ -348,7 +360,7 @@ void test_no_heap() {
   gE.control().stopNow(gClock, us(gClock), kUsPerTick);
   run(gClock + 2000);
   gE.drawRollBand(rootView(), gFb, kW, 0, 31);
-  drawOverviewBand(gE.tiles(), 0, 1000, kBar, 48, 63, 22, 225, 33, 40, gFb, kW, 33, 40);
+  drawOverviewBand(gE.tiles(), 0, 1000, kBar, 22, 225, 33, 40, gFb, kW, 33, 40);
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
 }
@@ -358,7 +370,7 @@ int main(int, char**) {
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
   RUN_TEST(test_bands_touch_only_their_rows);
   RUN_TEST(test_dense_raster_density_fallback_overview_and_extent);
-  RUN_TEST(test_the_overview_shows_counts_bar_gaps_and_the_view);
+  RUN_TEST(test_the_overview_draws_pitches_per_beat_and_dims_outside_the_view);
   RUN_TEST(test_the_live_overlay_draws_on_top);
   RUN_TEST(test_root_overlay_then_tiles_then_clear);
   RUN_TEST(test_the_pre_roll_is_drawn_while_the_take_records);

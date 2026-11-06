@@ -2066,9 +2066,12 @@ clean; owner confirmed (2026-11-06).
 
 **The overview's range** (owner 2026-11-06, from a screen capture — `!ENGINE fbdump`, the legacy `#FB` format for
 `scripts/render_display_dump.py`): the view's range marker (brightness 5) sat under a strip drawn at 6 that a busy loop
-fills almost solid, so neither read. `drawOverviewBand` now draws per bar and pitch row one block whose brightness
-follows the row's highest note count (6, 8, 10, 12), leaves a dark column between bars 4 px or wider, and draws the
-bars outside the detailed view at 2; under the strip a bright bar (13) marks the view's range on a dim one (2).
-`test_content_engine_piano_roll` +1 (mutations 6 / 6). Device `ef3491d8…`: boot clean; the capture shows the 16 viewed bars of 31 apart
-from the rest. LOOP_EDIT's fields
+fills almost solid, so neither read. A first try (blocks per bar and pitch row by note count, the bars outside the
+view at 2) read as stacked containers, and 2 did not show on the panel (owner). `drawOverviewBand` now draws a column
+per beat, as high as the pitches sounding in it — the beat's 8 raster columns of the bar's span tile OR-ed (the shown
+slot's tiles cover its whole loop), else the density tile's pitches for each beat — scaled so the busiest beat fills
+the strip (rounded up: a sounding beat is at least a row). The detailed view's bars are drawn at 10, the others at 4;
+a bar 4 px or wider leaves its last column dark (a 1-px last beat is that gap). Under the strip a bright bar (13)
+marks the view's range on a dim one (2). `test_content_engine_piano_roll` +1 (mutations 9 / 9). Device `326f9ccb…`:
+boot clean; the capture shows the 31-bar loop's beats, the 16 viewed bars apart from the rest. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
