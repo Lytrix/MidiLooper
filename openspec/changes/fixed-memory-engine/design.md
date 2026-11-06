@@ -2119,3 +2119,15 @@ could not show the input). `!ENGINE trace 1` prints every control-plane message 
 `#IN,<ms>,<status>,<d1>,<d2>,editing=,sel=,why=,refused=,depth=,tick=,pitch=,bracket=`, with what the edit surface
 did: `EditSurface::lastWhy` (0 acted, 1 not ready — not editing or nothing selected, 2 the selection's grace period, 3
 at rest, 4 no change, 5 refused: `lastRefusal` the `EditResult`). Off at boot; nothing else changes.
+
+**The DROID's fader bank** (owner 2026-11-06; found with the trace in `captures/session_20261106_225918.log`): in
+NOTE_EDIT the DROID sent only pitch bend and CC 101 on channel 16 — its loop-edit bank — never F2's pitch bend on
+channel 14 nor F3 / F4's CC 2 / 3 on channel 15. The patch (`droid/midilooper_v1.ini`) selects the bank with
+`program = _EDIT_NOTE_STATE` on channel 16 (`selectat = 1` note edit, `0` loop edit), and legacy sends that Program
+Change when an edit session opens (`sendEditSessionMidi`); the engine never did. `Surface::bank` now gives the bank
+to send whenever it changes — the note-edit bank (1) while a NOTE_EDIT session is open, else the loop-edit bank (0),
+the current one at boot so the DROID follows a restart — and the main loop sends it on every port, as the LEDs.
+`test_content_engine_edit_surface` +1 (mutations 2 / 4; the two survivors are equivalent: the bank at the gather's
+start rather than the session's opening, and `init`'s reset of a member already initialised). Legacy also pulsed a
+trigger note to snap the motor faders; motor feedback stays off (the legacy default). Device `efdbf66a…`: boot clean;
+the owner's DROID check pending.

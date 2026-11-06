@@ -15,7 +15,9 @@
 //    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop.
 // 5. The control surface (E9.8b-1, `Surface`): the DROID control plane (channels 13–16, never recorded nor thru) as
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
-//    a millisecond (the DROID host's gap). Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
+//    a millisecond (the DROID host's gap); the DROID's fader bank (Program Change 1 / 0 on channel 16, every port) follows
+//    NOTE_EDIT, so its faders send the note-edit messages (E9.8k). Serial commands (`!ENGINE ...`, `!STOP_STATUS`,
+//    `!REBOOT`) remain.
 // 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
 //    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note (start, pitch, velocity,
 //    length in the status band, E9.8k).
@@ -492,6 +494,18 @@ void selectFirstSlots() {
       }
 }
 
+/// The DROID's fader bank (Program Change, channel 16) on every port, as the LEDs.
+void sendBank(uint8_t program) {
+  const uint8_t status = static_cast<uint8_t>(0xC0 | Surface<EngineRoot>::kProgramChannel);
+  sendDin(status, program, 0);
+  usbMIDI.sendProgramChange(program, Surface<EngineRoot>::kProgramChannel + 1, 0);
+  usbMIDI.send_now();
+  gLastUsbTxUs = micros();
+  ++gUsbOut;
+  ++gOutThisPass;
+  gHostMidi.sendProgramChange(program, Surface<EngineRoot>::kProgramChannel + 1);
+}
+
 void sendLed(uint8_t note, uint8_t velocity) {
   const uint8_t status = static_cast<uint8_t>((velocity != 0 ? 0x90 : 0x80) | Surface<EngineRoot>::kLedChannel);
   sendDin(status, note, velocity);
@@ -633,6 +647,8 @@ void loop() {
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   crumb(kLeds);
+  uint8_t bank;
+  if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
   if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   EngineFirmware::EditView ev;

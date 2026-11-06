@@ -259,6 +259,27 @@ void test_f1_at_rest_keeps_the_moved_note_selected() {
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
 }
 
+// The DROID's fader bank (Program Change on channel 16, `_EDIT_NOTE_STATE`) follows NOTE_EDIT, as legacy
+// `sendEditSessionMidi`: owner 2026-11-06 — in NOTE_EDIT F2–F4 sent the loop-edit bank's messages (CC 101 on channel 16).
+void test_the_droid_fader_bank_follows_note_edit() {
+  uint8_t p = 0xEE;
+  TEST_ASSERT_TRUE(gS.bank(p));  // boot: the current bank, so the DROID follows a restart
+  TEST_ASSERT_EQUAL_UINT8(S::kLoopEditBank, p);
+  TEST_ASSERT_FALSE(gS.bank(p));  // once
+  recordBar({{96, 60}});
+  TEST_ASSERT_FALSE(gS.bank(p));
+  enterEdit();
+  TEST_ASSERT_TRUE(gS.bank(p));
+  TEST_ASSERT_EQUAL_UINT8(S::kNoteEditBank, p);
+  TEST_ASSERT_FALSE(gS.bank(p));
+  tap(S::kEditModeNote);  // leave
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  TEST_ASSERT_TRUE(gS.bank(p));
+  TEST_ASSERT_EQUAL_UINT8(S::kLoopEditBank, p);
+  TEST_ASSERT_FALSE(gS.bank(p));
+}
+
 void test_geometry_waits_the_grace_period_after_entry() {
   recordBar({{96, 60}});
   enterEdit();  // the bracket at the playhead selects the closest note (60 @ 96)
@@ -395,6 +416,7 @@ int main(int, char**) {
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
   RUN_TEST(test_geometry_faders_move_and_pitch_heard_one_step_a_gesture);
   RUN_TEST(test_f1_at_rest_keeps_the_moved_note_selected);
+  RUN_TEST(test_the_droid_fader_bank_follows_note_edit);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);

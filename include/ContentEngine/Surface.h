@@ -164,6 +164,9 @@ class Surface {
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
   static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
+  /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
+  static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
+  static constexpr uint8_t kLoopEditBank = 0, kNoteEditBank = 1;
   enum Button : uint8_t {
     kRecord,
     kTrackSwitch,
@@ -193,6 +196,7 @@ class Surface {
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
+    bankSent_ = 0xFF;
     blinkMs_ = 0;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
@@ -252,6 +256,18 @@ class Surface {
   /// The engine slot a track has selected (its slot button's), for the screen.
   uint8_t selectedSlot(uint8_t t) const { return static_cast<uint8_t>(t * kSlotsPerTrack + slot_[t]); }
   void selectSlot(uint8_t t, uint8_t s) { slot_[t] = s; }
+
+  /// The DROID's fader bank when it is to change (owner 2026-11-06: F2–F4 sent the loop-edit bank's messages in
+  /// NOTE_EDIT — the DROID switches banks on a Program Change on channel 16, which the engine never sent): the
+  /// note-edit bank while a NOTE_EDIT session is open (as legacy, at the session's opening), else the loop-edit bank;
+  /// the first call (boot) sends the current one, so the DROID follows a restart too. False: no change.
+  bool bank(uint8_t& program) {
+    const uint8_t want = edit_.editing() ? kNoteEditBank : kLoopEditBank;
+    if (want == bankSent_) return false;
+    bankSent_ = want;
+    program = want;
+    return true;
+  }
 
   /// The LED changes (channel 15 notes), at most `max`: `send(note, velocity)`, velocity 0 = off.
   template <typename Send>
@@ -538,6 +554,7 @@ class Surface {
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t sent_[128] = {};
+  uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 
