@@ -18,7 +18,7 @@
 //   playhead — with bar lines (and beat lines up to 4 bars), the engine's tiles and live overlay
 //   (`EngineRoot::drawRollBand`) and the playhead; the overview strip (rows 43–46, three dark rows under the roll)
 //   when the loop is longer than the view: a full-height cell per beat as bright as the pitches sounding in it
-//   (2–9), a bright bar under the view's range (row 47).
+//   (2–9), dimmed (1–4) outside the view's bars.
 // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
 //   right-aligned, no leading zeros):
 //   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
@@ -369,13 +369,7 @@ class EngineDisplay {
                     uint32_t pos, bool moving) {
     const int32_t w = kX1 - kX0;
     ContentEngine::drawOverviewBand(e.tiles(), slot, loop, kBar, kX0, kX1, kOverY0, kOverY1, fb(), DISPLAY_WIDTH,
-                                    kOverY0, kOverY1, static_cast<uint8_t>(kBar / kQuarter));
-    // Under the strip: a bright bar under the detailed view's range, a dim one under the rest.
-    const int16_t vx0 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first) * w / loop);
-    int16_t vx1 = static_cast<int16_t>(kX0 + static_cast<int64_t>(first + viewTicks) * w / loop);
-    if (vx1 > kX1) vx1 = kX1;
-    hline(kX0, kX1, kOverY1 + 1, 2);
-    hline(vx0, vx1, kOverY1 + 1, 13);
+                                    kOverY0, kOverY1, first, viewTicks, static_cast<uint8_t>(kBar / kQuarter));
     if (moving)
       oled_.gfx.draw_vline(fb(), static_cast<int16_t>(kX0 + static_cast<int64_t>(pos) * w / loop), kOverY0, kOverY1, 12);
   }

@@ -2076,5 +2076,6 @@ beat stays dark. A bar 4 px or wider leaves its last column dark (a 1-px last be
 the bright bar under the strip (13, on a dim 2). `test_content_engine_piano_roll` +1 (mutations 8 / 8). Device
 `a4aec17d…`: boot clean; the capture shows the 31-bar loop's beats by brightness. Owner: too bright and too close
 to the roll — the cells now go up to 9, and the strip is 4 rows (43–46) under 3 dark rows. Device `d514c238…`: boot
-clean. LOOP_EDIT's fields
+clean. Owner: no bright line; the range outside the view dimmed instead — beats outside the detailed view's bars take
+the same scale at 1–4 (`kRollOverviewOutsideHigh`; mutations 4 / 4). Device `82817083…`: boot clean. LOOP_EDIT's fields
 (START / LENGTH, the tempo lit) wait for E9.8b-3.
