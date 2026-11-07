@@ -2195,18 +2195,25 @@ normalisations removed as equivalent under the modulo). Device `a7391638…`: th
 
 EDIT-1 makes an edit run no occluder, so NOTE_EDIT must write its own overlap results — and the edit writer wrote only
 the edited notes' replacements: a note moved onto another of its pitch left both sounding. The owner chose the legacy
-rules (`resolveConstrainedGeometry`, `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`), recomputed at every step.
-`EditWriter::overlapLength`: an edited, live note A is the causing note and never changes; an unedited note B of A's
+rules (`resolveConstrainedGeometry`, `OVERDUB_OVERLAP_RESOLVE_NOTE_EVALUATIONS.md`): a note B of the causing note A's
 pitch (channel does not matter) that starts inside A — at A's start included — is hidden (CompleteCover,
 OverlapNoteOn); one that starts before A and sounds into it ends at A's start (OverlapNoteOff); edges that only touch
-change nothing — on linear spans across the loop's wrap. The results are derived from the session start's geometry
-at every rebuild and written like edits (B's hide row; a shortened B's NoteOn and NoteOff), so moving A away, deleting
-it or undoing brings B back, and each step stays one E: step. Acceptance reserves their rows with the step's own
-(`overlapRows`, the same rule): a hidden note 1, a shortened one 3; only the notes of an edited live note's pitch are
-looked at — O(selection) plus O(those x selection). Notes the musician edited never adapt (two edited notes of one
-pitch may overlap); notes outside the selection (outside the gathered window) are not targets.
-`test_content_engine_edit_writer` +4 (hide, shorten, touch, restore on move-away / undo / redo; the wrap both ways;
-the edges, a deleted causer, an undone created note; unedited recorded overlaps left alone), and the random-sequence
-test now lands a third of its edits on another note's pitch against a reference model written apart (mutations 9 / 9;
-two equivalent: an end-touch "shorten" to the note's own length, and the pitch filter, which only saves work). Device
-`32b258eb…`: boot clean; the owner's check pending.
+change nothing — on linear spans across the loop's wrap.
+
+**The causing note is the selected note** (owner 2026-11-07, second round: a pitch move onto a note did not hide it,
+and a shortening did not persist once the note was deselected — the first version made edited notes immune and kept
+no result). `EditWriter::cause` names it (`NoteEditSession::cause`, from `EditSurface::pick`, the opening, and undo /
+redo with the step's restored selection); it causes once edited and live. Every other live note of its pitch, edited
+or not, is a target. While A stays selected its results are live (`overlapLength`, O(1) per note): moving A on past
+B — a pitch pass-through included — brings B back (owner: "B comes back"). A new selection (F1, delete, create)
+first **settles** A's results (`EditWriter::settle`, DEC-030 sticky): they become the targets' own state, appended
+to the last E: step, so they stay when A later moves away, and undoing that step brings B back; redo is dropped; a
+step that cannot hold them leaves them live. Leaving NOTE_EDIT keeps them as published (the U: step is the rows).
+A selection change without settling rebuilds (the previous results go). Acceptance reserves the results' rows with
+the step's own (`overlapRows`: a hidden unedited note 1, a shortened one 3; an edited target's rows are already
+reserved and given back by `forgive` when hidden). Notes outside the gathered window are not targets.
+`test_content_engine_edit_writer` (hide, shorten, touch, the wrap, edges, an unedited selected note causing nothing,
+a selection change rebuilding, settle kept across a move-away and undone with its step) and
+`test_content_engine_edit_surface` (pitch onto a note hides it, passing on brings it back, deselect settles, leave
+keeps; undo restores the causing note); mutations 13 / 13 after the added tests (the `settle` in `leave` was found
+redundant and removed). Device `562c8cde…`: boot clean; the owner's check pending.

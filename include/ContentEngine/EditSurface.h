@@ -29,6 +29,9 @@
 //   start; double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
 //   within 24 ticks of it.
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
+// * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
+//   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
+//   step); undo / redo restore the step's selection as the causing note; leaving keeps the results as published.
 // * Motor feedback (owner 2026-11-06; legacy `NoteEditDependentFaderSnapshot`, which was off by default): the DROID's
 //   motor faders follow the selection — at the session's opening and after undo, redo, delete or create all four;
 //   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after NOTELEN F2 and F3. An
@@ -185,6 +188,7 @@ class EditSurface {
     selectAt(bracket_);
     if (sel_ < 0) selectClosest(bracket_);
     if (sel_ >= 0) bracket_ = session().current(static_cast<uint16_t>(sel_)).tick;  // F3's reference: the note's 16th
+    session().cause(sel_);
     refStep_ = bracket_ / kSixteenth;
     armedMs_ = ms;
     armed_ = false;
@@ -223,7 +227,7 @@ class EditSurface {
       stack[k] = static_cast<int16_t>(i);
     }
     if (n == 0) {
-      sel_ = -1;
+      pick(-1);
       bracket_ = target;
     } else {
       uint32_t idx = 0;
@@ -234,7 +238,7 @@ class EditSurface {
         idx = static_cast<uint32_t>(rem * n / span);
         if (idx >= n) idx = n - 1u;
       }
-      sel_ = stack[idx];
+      pick(stack[idx]);
       bracket_ = session().current(static_cast<uint16_t>(sel_)).tick;
     }
     length_ = false;  // a new selection leaves length mode
@@ -343,7 +347,7 @@ class EditSurface {
       n.deleted = 1;
       const EditChange c{static_cast<uint16_t>(sel_), n};
       if (session().apply(&c, 1, focus()) == EditResult::Ok) {
-        sel_ = -1;
+        pick(-1);
         drive(kMotorAll, ms);
       }
       return;
@@ -357,12 +361,13 @@ class EditSurface {
       const uint32_t d1 = (e.tick + loop_ - bracket_) % loop_, d2 = (bracket_ + loop_ - e.tick) % loop_;
       if ((d1 < d2 ? d1 : d2) <= kSnapTicks) return;  // a note is there already
     }
+    session().settle();  // the selected note's results stay before the new note's step
     const uint32_t id = e_->noteIds().peek();
     e_->noteIds().advance();
     uint16_t at = 0;
     if (session().create(EditNote{id, bracket_ % loop_, kSixteenth / 2, 60, 80, channel, 0}, focus(), at) ==
         EditResult::Ok) {
-      sel_ = static_cast<int16_t>(at);
+      pick(static_cast<int16_t>(at));
       armedMs_ = ms;  // a new selection: the geometry faders wait the grace period (legacy)
       armed_ = false;
       drive(kMotorAll, ms);
@@ -593,11 +598,19 @@ class EditSurface {
       bracket_ = f & 0x1FFFFFu;
       refStep_ = bracket_ / kSixteenth;
     }
+    if (r == EditResult::Ok) session().cause(sel_);  // the step's own results came back with it
     gesture_ = Fader::None;
     if (r == EditResult::Ok) drive(kMotorAll, ms);
     return true;
   }
   uint32_t focus() const { return (static_cast<uint32_t>(sel_ + 1) << 21) | (bracket_ & 0x1FFFFFu); }
+  /// A new selection: the previous selected note's overlap results become the notes' own (sticky, DEC-030; owner
+  /// 2026-11-07), then the new one causes.
+  void pick(int16_t s) {
+    if (s != sel_) session().settle();
+    sel_ = s;
+    session().cause(sel_);
+  }
 
   // Legacy helpers (`ControlSurfaceColdHelpers`, Arduino `map`).
   static uint32_t arduinoMap(int32_t x, int32_t inMin, int32_t inMax, int32_t outMin, int32_t outMax) {

@@ -554,6 +554,71 @@ void test_a_pending_write_gives_way_to_a_fader_already_there() {
   TEST_ASSERT_EQUAL_UINT32(0, written(drainMotors(300), 3));
 }
 
+/// NoteOns of `pitch` heard at bar position `pos` over the next two bars.
+static uint32_t onsAt(uint8_t pitch, uint32_t pos) {
+  const uint32_t from = gHeardCount;
+  run(gUs + 2 * kBarUs);
+  uint32_t n = 0;
+  for (uint32_t i = from; i < gHeardCount; ++i)
+    if (gHeard[i % 4096].pitch == pitch && (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768 == pos) ++n;
+  return n;
+}
+
+// Overlap through the surface (owner 2026-11-07): F4 moves the selected note onto a stacked note's pitch — it hides it
+// while on it, and brings it back when moved on; deselecting (F1 to another note) settles the hide, so moving the note on
+// afterwards keeps it; leaving NOTE_EDIT keeps it too.
+void test_pitch_onto_a_note_hides_it_and_deselect_settles() {
+  recordBar({{96, 60}, {96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16, 0, 2));  // 60 @ 96
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  settle();
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));  // A alone: B hidden
+  ms(400);
+  f4(66);
+  TEST_ASSERT_EQUAL_UINT32(4, onsAt(64, 96) + onsAt(66, 96));  // B back while A is selected
+  ms(400);
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
+  f1(pbFor(8, 16));  // deselect: 67
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  settle();
+  f1(pbFor(2, 16, 0, 1));  // A again (the only note left at 96)
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  settle();
+  f4(70);
+  TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));  // B stays hidden
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(70, 96));
+  tap(S::kEditModeNote);  // leave
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
+}
+
+// Undo restores the step's selection, and that note causes again.
+void test_undo_restores_the_causing_note() {
+  recordBar({{96, 60}, {96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16, 0, 2));  // 60 @ 96
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  settle();
+  f4(62);  // a first step: its focus is A (the session start records none)
+  ms(400);
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
+  f1(pbFor(8, 16));  // 67: A's results settle
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  dbl(S::kRecordNote);  // undo A's second step: A at 62 and B back, A selected
+  ms(800);
+  TEST_ASSERT_EQUAL_UINT8(62, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(4, onsAt(62, 96) + onsAt(64, 96));
+  settle();
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));  // A causes again: B hidden
+}
+
 void test_geometry_waits_the_grace_period_after_entry() {
   recordBar({{96, 60}});
   enterEdit();  // the bracket at the playhead selects the closest note (60 @ 96)
@@ -698,6 +763,8 @@ int main(int, char**) {
   RUN_TEST(test_f2_back_at_the_start_keeps_the_bracket_on_the_note);
   RUN_TEST(test_f2_keeps_the_offset_f3_set_past_the_16th);
   RUN_TEST(test_a_pending_write_gives_way_to_a_fader_already_there);
+  RUN_TEST(test_pitch_onto_a_note_hides_it_and_deselect_settles);
+  RUN_TEST(test_undo_restores_the_causing_note);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);

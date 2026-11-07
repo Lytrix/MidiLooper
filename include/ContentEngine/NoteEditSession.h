@@ -155,7 +155,14 @@ class NoteEditSession {
     }
     return r;
   }
-  void leave() {
+  /// The selected note (selection index; < 0: none): the overlap results' causing note. Its results follow it live;
+  /// `settle` first keeps the previous selected note's (owner 2026-11-07, DEC-030 sticky).
+  void cause(int32_t index) {
+    writer_->cause(index < 0 ? Writer::kNoCause : static_cast<uint16_t>(index));
+    if (writer_->building()) building_ = true;
+  }
+  void settle() { writer_->settle(); }
+  void leave() {  // the selected note's results stay as published: no settle needed
     writer_->leave();
     building_ = writer_->building();
     if (!building_) published_ = true;

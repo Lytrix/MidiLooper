@@ -21,13 +21,15 @@
 //   that was deleted at its start, and one E: step brings it to life — undo returns it to deleted (nothing written; its
 //   hide row hides nothing), redo brings it back. Its noteId is the caller's (fresh).
 // * `leave` keeps the current state as one U: step (after a running rebuild completes); `abandon` returns to the start.
-// * Overlap (owner 2026-11-07; legacy `resolveConstrainedGeometry`, EDIT-1: an edit run is not an occluder, so NOTE_EDIT
-//   writes its own results): an edited, live note A is the causing note and is never changed. An unedited note B of
-//   A's pitch (channel does not matter) that starts inside A is hidden; one that starts before A and sounds into it
-//   ends at A's start; edges that only touch change nothing — on linear spans across the loop's wrap. Results are
-//   recomputed from the session start's geometry at every step and written like edits (B's hide row, and a shortened
-//   B's replacement rows), so moving A away or undoing brings B back. Acceptance counts their rows too: O(selection)
-//   plus O(selection x edited notes) for the targets of an edited pitch.
+// * Overlap (owner 2026-11-07; legacy `resolveConstrainedGeometry` and DEC-030's sticky end of participation; EDIT-1:
+//   an edit run is not an occluder, so NOTE_EDIT writes its own results): the causing note is the selected note A
+//   (`cause`), once it has been edited and while it lives; it is never changed. Any other live note B of A's pitch
+//   (channel does not matter; edited or not) that starts inside A is hidden; one that starts before A and sounds into
+//   it ends at A's start; edges that only touch change nothing — on linear spans across the loop's wrap. While A stays
+//   selected the results follow it live from B's state (moving A on, by position or pitch, brings B back); they are
+//   written like edits (B's hide row, and a shortened B's replacement rows). `settle` (A deselected, or NOTE_EDIT left)
+//   makes A's results B's own state, recorded in A's last E: step, so undoing that step brings B back. Acceptance
+//   counts the rows: O(selection).
 // No allocation; `init()` writes every field.
 
 #pragma once
@@ -106,6 +108,7 @@ class EditWriter {
     entryHead_ = entryCount_ = 0;
     buildRun_ = kNoRun;
     phase_ = Phase::Idle;
+    causer_ = kNoCause;
     stats_ = Stats{};
   }
 
@@ -132,6 +135,7 @@ class EditWriter {
     entryHead_ = entryCount_ = 0;
     buildRun_ = kNoRun;
     phase_ = Phase::Idle;
+    causer_ = kNoCause;
     return EditResult::Ok;
   }
 
@@ -211,6 +215,54 @@ class EditWriter {
     const EditResult r = swapStep(cursor_);
     if (r == EditResult::Ok) ++cursor_;
     return r;
+  }
+
+  static constexpr uint16_t kNoCause = 0xFFFF;
+  /// The selected note, the causing note of the overlap results (`kNoCause`: none). A different one rebuilds (its
+  /// results replace the previous one's: `settle` first to keep those).
+  void cause(uint16_t index) {
+    if (index >= count_) index = kNoCause;
+    if (index == causer_) return;
+    causer_ = index;
+    if (open_ && !leaving_ && edited_ != 0)
+      admit(0, 0, overlapRows([&](uint16_t j) -> const EditNote& { return cur_[j]; }));
+  }
+  uint16_t causer() const { return causer_; }
+  /// The causing note's results become the other notes' own state (sticky, DEC-030): recorded in the last E: step, so
+  /// undoing it brings them back; redo is dropped. Nothing audible changes. O(selection).
+  void settle() {
+    if (!open_ || leaving_ || cursor_ == 0 || causer_ == kNoCause) return;
+    auto at = [&](uint16_t j) -> const EditNote& { return cur_[j]; };
+    uint16_t k = 0;
+    for (uint16_t j = 0; j < count_; ++j)
+      if (overlapLength(j, at) != cur_[j].length) ++k;
+    if (k == 0) return;
+    stepCount_ = cursor_;
+    entryCount_ = 0;
+    for (uint8_t s = 0; s < stepCount_; ++s) entryCount_ = static_cast<uint16_t>(entryCount_ + steps_[(stepHead_ + s) % MaxSteps].count);
+    Step& last = steps_[(stepHead_ + stepCount_ - 1) % MaxSteps];
+    if (last.count + k > MaxLogEntries) return;  // the step cannot hold them: the results stay live
+    while (entryCount_ + k > MaxLogEntries) forgetOldest();
+    int32_t dEdited = 0, dLive = 0;
+    uint16_t at0 = static_cast<uint16_t>((entryHead_ + entryCount_) % MaxLogEntries);
+    for (uint16_t j = 0; j < count_; ++j) {
+      const uint32_t len = overlapLength(j, at);
+      if (len == cur_[j].length) continue;
+      EditNote v = cur_[j];
+      if (len == 0)
+        v.deleted = 1;
+      else
+        v.length = len;
+      delta(j, v, dEdited, dLive);
+      log_[at0] = EditChange{j, cur_[j]};
+      at0 = static_cast<uint16_t>((at0 + 1) % MaxLogEntries);
+      cur_[j] = v;
+    }
+    last.count = static_cast<uint16_t>(last.count + k);
+    entryCount_ = static_cast<uint16_t>(entryCount_ + k);
+    cursor_ = stepCount_;
+    edited_ = static_cast<uint16_t>(static_cast<int32_t>(edited_) + dEdited);
+    live_ = static_cast<uint16_t>(static_cast<int32_t>(live_) + dLive);
   }
 
   /// Leave NOTE_EDIT keeping the edits: one U: step. Completes after a running rebuild (`step`).
@@ -376,58 +428,39 @@ class EditWriter {
   /// Gather one selected note: an edited note gets its hide row now and, unless deleted, two sort keys.
   void gatherOne(uint16_t i) {
     const EditNote& n = cur_[i];
-    if (!isEdited(i, n)) {  // an unedited note adapts to the edited notes it overlaps
-      if (n.deleted) return;
-      const uint32_t len = overlapLength(i, [&](uint16_t j) -> const EditNote& { return cur_[j]; });
-      if (len == n.length) return;
-      res_->writeOwed(buildRun_, hideRow(n.noteId));
-      if (len == 0) return;
-      keys_[events_++] = key(n.tick, true, i);
-      keys_[events_++] = key(n.tick + len, false, i);
-      return;
-    }
+    const bool edited = isEdited(i, n);
+    const uint32_t len = overlapLength(i, [&](uint16_t j) -> const EditNote& { return cur_[j]; });
+    if (!edited && len == n.length) return;  // as stored
     res_->writeOwed(buildRun_, hideRow(n.noteId));
-    if (n.deleted) return;
+    if (n.deleted || len == 0) return;
     keys_[events_++] = key(n.tick, true, i);
-    keys_[events_++] = key(n.tick + n.length, false, i);
+    keys_[events_++] = key(n.tick + len, false, i);
   }
-  /// The length unedited note `j` plays with the edited notes as `at` gives them (see the header): 0 hidden, its own
-  /// when nothing overlaps it. O(selection).
+  /// The length note `j` plays against the causing note as `at` gives them (see the header): 0 hidden, its own when
+  /// it is not a target or nothing overlaps it. O(1).
   template <typename At>
   uint32_t overlapLength(uint16_t j, At at) const {
     const EditNote& b = at(j);
+    if (causer_ == kNoCause || j == causer_ || b.deleted) return b.length;
+    const EditNote& a = at(causer_);
+    if (a.deleted || a.pitch != b.pitch || !isEdited(causer_, a)) return b.length;
     uint32_t len = b.length;
-    const int64_t loop = loop_;
-    for (uint16_t k = 0; k < count_; ++k) {
-      if (k == j) continue;
-      const EditNote& a = at(k);
-      if (a.deleted || a.pitch != b.pitch || !isEdited(k, a)) continue;
-      const int64_t a0 = a.tick, a1 = a0 + a.length;
-      for (int64_t shift = -loop; shift <= loop; shift += loop) {  // linear spans across the wrap
-        const int64_t b0 = static_cast<int64_t>(b.tick) + shift, b1 = b0 + b.length;
-        if (a0 <= b0 && b0 < a1) return 0;  // starts inside A: hidden
-        if (b0 < a0 && a0 < b1 && static_cast<uint32_t>(a0 - b0) < len) len = static_cast<uint32_t>(a0 - b0);
-      }
+    const int64_t loop = loop_, a0 = a.tick, a1 = a0 + a.length;
+    for (int64_t shift = -loop; shift <= loop; shift += loop) {  // linear spans across the wrap
+      const int64_t b0 = static_cast<int64_t>(b.tick) + shift, b1 = b0 + b.length;
+      if (a0 <= b0 && b0 < a1) return 0;  // starts inside A: hidden
+      if (b0 < a0 && a0 < b1 && static_cast<uint32_t>(a0 - b0) < len) len = static_cast<uint32_t>(a0 - b0);
     }
     return len;
   }
-  /// The rows the overlap results owe in the state `at` gives (a hidden note 1, a shortened one 3): only notes of an
-  /// edited, live note's pitch are looked at. O(selection) + O(those x selection).
+  /// The rows the overlap results owe beyond the edited notes' own in the state `at` gives: an unedited note hidden
+  /// 1, shortened 3 (an edited target only writes fewer of its own). O(selection).
   template <typename At>
   uint32_t overlapRows(At at) const {
-    uint32_t pitches[4] = {};
-    bool any = false;
-    for (uint16_t k = 0; k < count_; ++k) {
-      const EditNote& a = at(k);
-      if (a.deleted || !isEdited(k, a)) continue;
-      pitches[a.pitch >> 5] |= 1u << (a.pitch & 31);
-      any = true;
-    }
-    if (!any) return 0;
     uint32_t rows = 0;
     for (uint16_t j = 0; j < count_; ++j) {
       const EditNote& b = at(j);
-      if (b.deleted || isEdited(j, b) || !((pitches[b.pitch >> 5] >> (b.pitch & 31)) & 1u)) continue;
+      if (isEdited(j, b)) continue;
       const uint32_t len = overlapLength(j, at);
       rows += len == 0 ? 1u : len < b.length ? 3u : 0u;
     }
@@ -473,6 +506,7 @@ class EditWriter {
   }
 
   void publish() {
+    res_->forgive(buildRun_);  // rows reserved for an edited note the causing note hid or shortened
     runs_->seal(buildRun_);
     const auto& base = manifests_->manifest(base_);
     RunId list[Manifests::kMaxRuns];
@@ -514,6 +548,7 @@ class EditWriter {
   uint32_t loop_ = 0;
   uint16_t count_ = 0;
   uint16_t edited_ = 0, live_ = 0;  // notes differing from the admitted selection, and those not deleted
+  uint16_t causer_ = kNoCause;      // the selected note: the overlap results' causing note
   EditNote orig_[MaxSelection];
   EditNote cur_[MaxSelection];
   // E: log (entries in the caller's storage)
