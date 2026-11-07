@@ -1,3 +1,9 @@
+**2026-11-07 — Fixed-memory engine: NOTE_EDIT overlap (legacy rules, sticky).**
+- A note moved in NOTE_EDIT onto another of its pitch — by position or by pitch — hides it, or shortens one that
+  starts before it, as the legacy overlap rules. While the moved note stays selected, moving it on brings the other
+  back; selecting another note (or leaving) keeps the result, and undo brings it back. Owner confirmed on the DROID
+  (image `562c8cde…`).
+
 **2026-11-06 — Fixed-memory engine: E9.8k the new screen layout.**
 - The owner's approved mock-up ("B2 round 6") is on the device: the sidebar is gone and its items sit in one status
   row under a wider piano roll — position with save dots and a transport icon, bars, track / slot / port, undo, and

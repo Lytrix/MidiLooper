@@ -2216,4 +2216,4 @@ reserved and given back by `forgive` when hidden). Notes outside the gathered wi
 a selection change rebuilding, settle kept across a move-away and undone with its step) and
 `test_content_engine_edit_surface` (pitch onto a note hides it, passing on brings it back, deselect settles, leave
 keeps; undo restores the causing note); mutations 13 / 13 after the added tests (the `settle` in `leave` was found
-redundant and removed). Device `562c8cde…`: boot clean; the owner's check pending.
+redundant and removed). Device `562c8cde…`: boot clean; confirmed on the DROID by the owner (2026-11-07: "Works").
