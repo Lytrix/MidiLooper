@@ -1,3 +1,9 @@
+**2026-11-07 — Fixed-memory engine: NOTE_EDIT edits heard at once while playing.**
+- A note moved in NOTE_EDIT is heard in the bar it is moved in, not from the loop's wrap: a note moved just ahead of
+  the playhead plays when it comes, one moved just behind it waits for the next cycle (nothing starts late); a note
+  sounding at that moment keeps sounding when the edit keeps it on its pitch. Owner confirmed on the DROID (image
+  `6938a165…`).
+
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT overlap (legacy rules, sticky).**
 - A note moved in NOTE_EDIT onto another of its pitch — by position or by pitch — hides it, or shortens one that
   starts before it, as the legacy overlap rules. While the moved note stays selected, moving it on brings the other

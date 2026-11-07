@@ -2236,4 +2236,4 @@ late-join limit (24 ticks / 25 ms) does not apply: no boundary was missed. `Stat
 ahead / behind / kept / re-pitched / new-sounding / a passed controller; overtaken; ready at the window's end; a
 selection superseding an edit joins as before; past-window note; boundary) and `test_content_engine_edit_surface`
 (a move heard in the bar it is made in, twice a bar apart); mutations 15 / 15 (a loop-length guard found unreachable —
-an edit keeps the loop — was removed). Device `6938a165…`: boot clean; the owner's check pending.
+an edit keeps the loop — was removed). Device `6938a165…`: boot clean; confirmed on the DROID by the owner (2026-11-07: "Works").
