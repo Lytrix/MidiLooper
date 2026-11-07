@@ -444,7 +444,7 @@ class EditSurface {
       // A value that changes nothing takes no undo step (a fader's echo at rest, or a gesture back at its start —
       // `base` undid its step): the bracket follows the note (owner 2026-11-06: it stayed a 16th on, at the end).
       why_ = Why::NoChange;
-      if (!length_) bracket_ = v.tick;
+      follow(v);
       return false;
     }
     const EditChange c{static_cast<uint16_t>(sel_), v};
@@ -460,9 +460,12 @@ class EditSurface {
     gestureNote_ = sel_;
     gestureMs_ = ms;
     gestureDepth_ = session().depth();
-    if (!length_) bracket_ = v.tick;
+    follow(v);
     return true;
   }
+  /// The bracket follows the edited note: its start, or in length mode its end (owner 2026-11-07: it stayed where
+  /// length mode began).
+  void follow(const EditNote& v) { bracket_ = length_ ? (v.tick + v.length) % loop_ : v.tick; }
 
   // ---- Motor feedback ------------------------------------------------------------------------------------------------
   struct Motor {

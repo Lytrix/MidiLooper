@@ -671,12 +671,14 @@ void test_length_mode_sets_the_end_at_least_a_sixteenth() {
   f2(-8192 + 16384 * 400 / 767);  // the end to tick ~400
   const EditNote a = sel();
   TEST_ASSERT_UINT32_WITHIN(1, 400 - 96, a.length);
+  TEST_ASSERT_EQUAL_UINT32(a.tick + a.length, gS.edit().bracket());  // the bracket follows the end
   ms(400);
   f2(-8192);  // the end to 0: before the start — kept a 16th after it
   TEST_ASSERT_EQUAL_UINT32(48, sel().length);
   settle();  // F3's motor follows the coarse move first
   f3(64 + 20);  // fine: the end anchor — the end the last coarse move left (144, as legacy) — + 20
   TEST_ASSERT_EQUAL_UINT32(164 - 96, sel().length);
+  TEST_ASSERT_EQUAL_UINT32(164, gS.edit().bracket());
   tap(S::kLengthNote);  // back to start editing: the bracket at the start
   ms(450);
   TEST_ASSERT_FALSE(gS.edit().lengthMode());

@@ -1,3 +1,8 @@
+**2026-11-07 — Fixed-memory engine: NOTE_EDIT's bracket follows the end in length mode.**
+- In length mode the bracket stayed at the end it jumped to when the mode began; it now follows the selected note's
+  end as F2 / F3 change the length (`EditSurface::follow`), as it follows the start outside length mode. Image
+  `8f670227…`, boot verified; owner check on the DROID pending.
+
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT's EDIT count counts every step.**
 - The status band's EDIT count stopped at 1: it read History's session depth, but History holds a NOTE_EDIT session
   as one state replaced in place. It now shows the session's own E: level (`EditSurface::steps`), so editing a second
