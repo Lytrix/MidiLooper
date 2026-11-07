@@ -28,6 +28,7 @@ struct RollView {
   uint8_t lowPitch, highPitch;
   int16_t x0, x1, y0, y1;  // the note area, inclusive
   uint32_t highlightTick = 0xFFFFFFFFu;  // a note starting here on `highlightPitch` draws highlighted
+  uint32_t highlightLength = 0;          // with it, its segments in later bars (0: the start segment only)
   uint8_t highlightPitch = 0;
 };
 
@@ -48,6 +49,12 @@ inline void pixel(uint8_t* fb, uint16_t width, int16_t x, int16_t y, uint8_t v) 
     b = static_cast<uint8_t>((b & 0xF0) | (v & 0x0F));
   else
     b = static_cast<uint8_t>((b & 0x0F) | (v << 4));
+}
+/// Whether a segment at loop position `start` belongs to the highlighted note: its start, or a later bar's part of it.
+inline bool highlighted(const RollView& v, uint32_t start, uint8_t pitch) {
+  if (pitch != v.highlightPitch || v.highlightTick == 0xFFFFFFFFu) return false;
+  const uint32_t rel = (start + v.loop - v.highlightTick % v.loop) % v.loop;
+  return rel == 0 || rel < v.highlightLength;
 }
 inline int16_t rowOf(const RollView& v, uint8_t pitch) {
   int32_t y = map(pitch, v.lowPitch, v.highPitch, v.y1, v.y0);
@@ -92,7 +99,7 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
     if (d.kind == Kind::Span) {
       for (uint16_t i = 0; i < d.header->count; ++i) {
         const auto& s = d.span->segments[i];
-        const bool hi = base + s.start == v.highlightTick && s.pitch == v.highlightPitch;
+        const bool hi = roll::highlighted(v, base + s.start, s.pitch);
         roll::span(v, fb, width, rowFrom, rowTo, base + s.start, s.length, s.pitch,
                    hi ? kRollHighlightBrightness : kRollNoteBrightness);
       }

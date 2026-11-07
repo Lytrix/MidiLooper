@@ -353,6 +353,7 @@ class EngineDisplay {
     RollView v{slot, loop, kBar, first, viewTicks, lo, hi, kX0, kX1, kRollY0, kRollY1};
     if (editing && edit_.note) {
       v.highlightTick = edit_.noteTick;
+      v.highlightLength = edit_.noteLength;
       v.highlightPitch = edit_.notePitch;
     }
     e.drawRollBand(v, fb(), DISPLAY_WIDTH, kRollY0, kRollY1);

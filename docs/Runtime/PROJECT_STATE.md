@@ -1,3 +1,9 @@
+**2026-11-07 — Fixed-memory engine: NOTE_EDIT highlight across bar lines.**
+- The selected note in NOTE_EDIT stays bright over its whole length: the part after a bar line (a later bar's tile
+  segment) was drawn at the unselected brightness, so the highlight looked cut at each bar start. The piano roll now
+  highlights every segment of the pitch within the note's length (`RollView::highlightLength`). Image `cf2fc55b…`,
+  boot verified; owner check on the DROID pending.
+
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT edits heard at once while playing.**
 - A note moved in NOTE_EDIT is heard in the bar it is moved in, not from the loop's wrap: a note moved just ahead of
   the playhead plays when it comes, one moved just behind it waits for the next cycle (nothing starts late); a note

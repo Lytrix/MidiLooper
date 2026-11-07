@@ -96,6 +96,32 @@ void test_span_segments_at_the_legacy_geometry() {
   TEST_ASSERT_EQUAL_UINT8(0, px(22 + 60, y55));
 }
 
+void test_a_highlighted_note_stays_bright_across_bar_lines() {
+  gStore.setDetail(0, 1);
+  // Pitch 63 from 600 for 400 (into bar 1), and again at 1200 after it ends; pitch 48 from 2900 across the loop end.
+  span(1, 0, {{600, 168, 63, 100, 0x20, 0}}, 7);
+  span(1, 1, {{0, 232, 63, 100, 0x10, 0}, {432, 96, 63, 100, 0, 0}}, 7);
+  span(1, 3, {{596, 172, 48, 100, 0x20, 0}}, 7);
+  span(1, 0, {{0, 128, 48, 100, 0x10, 0}, {600, 168, 63, 100, 0x20, 0}}, 7);
+  RollView v = view(1);
+  v.highlightTick = 600;
+  v.highlightLength = 400;
+  v.highlightPitch = 63;
+  drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
+  const auto x = [](uint32_t t) { return 22 + roll::map(t, 0, kLoop, 0, 203); };
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(700), 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(800), 0));  // the part after the bar line
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(1250), 0));      // the next note on the pitch
+  std::memset(gFb, 0, sizeof gFb);
+  v.highlightTick = 2900;
+  v.highlightLength = 300;
+  v.highlightPitch = 48;
+  drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(3000), 31));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(50), 31));  // past the loop end
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(700), 0));
+}
+
 void test_bands_touch_only_their_rows() {
   gStore.setDetail(0, 1);
   span(1, 0, {{0, 768, 48, 100, 0, 0}, {0, 768, 63, 100, 0, 0}}, 7);
@@ -314,6 +340,7 @@ void test_no_heap() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
+  RUN_TEST(test_a_highlighted_note_stays_bright_across_bar_lines);
   RUN_TEST(test_bands_touch_only_their_rows);
   RUN_TEST(test_dense_raster_density_fallback_and_extent);
   RUN_TEST(test_the_live_overlay_draws_on_top);
