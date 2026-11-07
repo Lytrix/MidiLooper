@@ -309,9 +309,21 @@ class SlotTransport {
     tracks_[track]->cancelLaunch();
   }
   uint32_t loopLength(ManifestId m) const { return manifests_->manifest(m).loopLengthTicks; }
-  /// The slot's state changed outside the transport (a NOTE_EDIT publish): its playing tracks follow (from the next
-  /// boundary; an empty slot stops them, NoteOffs in `out`).
-  uint8_t follow(uint8_t slot, uint32_t clock, Emit* out, uint8_t max) { return selectSlot(slot, clock, true, out, max); }
+  /// The slot's state changed outside the transport (a NOTE_EDIT publish): its playing tracks follow inside the window
+  /// playing (`PlaybackTrack::edit`; an empty slot stops them, NoteOffs in `out`).
+  uint8_t follow(uint8_t slot, uint32_t clock, Emit* out, uint8_t max) {
+    uint8_t n = 0;
+    const ManifestId m = contentOf(slot);
+    for (uint8_t t = 0; t < Tracks; ++t) {
+      if (slot_[t] != slot || !playing_[t]) continue;
+      if (m == kNoManifest)
+        n = static_cast<uint8_t>(
+            n + stamp(t, out + n, tracks_[t]->stop(local(t, clock), out + n, static_cast<uint8_t>(max - n))));
+      else
+        tracks_[t]->edit(slot, m, local(t, clock));
+    }
+    return n;
+  }
   /// A stopped track takes `slot` (e.g. an empty one, ready to record) without playing it.
   void assign(uint8_t track, uint8_t slot) {
     if (!playing_[track]) slot_[track] = slot;

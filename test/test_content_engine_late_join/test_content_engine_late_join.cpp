@@ -452,6 +452,145 @@ void test_later_cycles_equal_uninterrupted_composition() {
   }
 }
 
+// ---- NOTE_EDIT joins (owner 2026-11-07: "hear the changes instantly") -------------------------------------------------
+// The edited source joins the window playing at the next tick: a note moved just ahead of the playhead plays, one moved
+// just behind it is not heard this cycle, a sounding note the edit keeps on its pitch goes on with its new end, one
+// it moved to another pitch ends at the join, a new note sounding there does not start late. A 1-bar loop (shorter than
+// the window) and the second window of a two-window loop.
+void test_an_edit_joins_the_window_playing() {
+  for (uint32_t loop : {768u, 3072u}) {
+    setUp();
+    const uint32_t o = loop > kWin ? kWin : 0;  // the window the edit lands in
+    const RunId ra = run({{1, 60, o + 100, o + 200}, {2, 62, o + 600, o + 700}, {3, 64, o + 300, o + 700},
+                          {5, 66, o + 300, o + 700}});
+    const RunId rb = run({{1, 60, o + 500, o + 550},    // ahead of the playhead: plays
+                          {2, 62, o + 350, o + 450},    // just behind it: from the next cycle
+                          {3, 64, o + 300, o + 650},    // sounding, kept: the new end
+                          {5, 67, o + 300, o + 700},    // sounding, another pitch: ends at the join
+                          {4, 65, o + 380, o + 600}},   // new, sounding at the join: not started late
+                         {{o + 50, 0xB0, 64, 127}});    // sustain in the passed span: not sent again
+    const ManifestId a = manifest({ra}, loop), e = manifest({rb}, loop);
+    gTick = 0;
+    gTrack.select(0, a, 0);
+    const uint32_t b = 2 * loop, j = b + o + 401;
+    play(j, 0);
+    gTrack.edit(0, e, j - 1);
+    play(b + 2 * loop, 0);
+    TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().editJoins);
+    TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().lateJoins);
+    const uint32_t c = b + o, n = b + loop + o;  // this cycle's and the next's window start
+    auto at = [](const std::vector<std::pair<uint32_t, uint32_t>>& v) { return v.size() == 1 ? v[0] : std::make_pair(0u, 0u); };
+    TEST_ASSERT_EQUAL_UINT32(c + 500, at(notesOf(60, j, b + loop)).first);
+    TEST_ASSERT_EQUAL_UINT32(0, notesOf(62, j, b + loop).size());
+    TEST_ASSERT_EQUAL_UINT32(n + 350, at(notesOf(62, b + loop, b + 2 * loop)).first);
+    TEST_ASSERT_EQUAL_UINT32(c + 650, at(notesOf(64, c, b + loop)).second);
+    TEST_ASSERT_EQUAL_UINT32(j, at(notesOf(66, c, b + loop)).second);
+    TEST_ASSERT_EQUAL_UINT32(0, notesOf(67, c, b + loop).size());
+    TEST_ASSERT_EQUAL_UINT32(0, notesOf(65, c, b + loop).size());
+    TEST_ASSERT_EQUAL_UINT32(n + 380, at(notesOf(65, b + loop, b + 2 * loop)).first);
+    TEST_ASSERT_EQUAL_UINT32(0, eventsOf(64, j, b + loop).size());
+    TEST_ASSERT_EQUAL_UINT32(1, eventsOf(64, b + loop, b + 2 * loop).size());
+    expectNoOrphans();
+  }
+}
+
+// An edit join the window's end overtakes (no worker time until after it) joins inside the next window when ready.
+void test_an_overtaken_edit_joins_the_next_window() {
+  const uint32_t loop = 1536;
+  const RunId ra = run({{1, 60, 100, 200}});
+  const RunId rb = run({{1, 60, 500, 550}});
+  const ManifestId a = manifest({ra}, loop), e = manifest({rb}, loop);
+  gTick = 0;
+  gTrack.select(0, a, 0);
+  const uint32_t b = 3 * loop;
+  play(b - 10, 0);
+  gTrack.edit(0, e, b - 11);
+  play(b + 20, b + 20);  // starved until 20 ticks into the next window
+  play(b + loop, 0);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().editJoins);
+  TEST_ASSERT_EQUAL_UINT32(0, notesOf(60, b + 20, b + 450).size());  // A's note at 100: the edited source plays
+  const auto x = notesOf(60, b, b + loop);
+  TEST_ASSERT_EQUAL_UINT32(1, x.size());
+  TEST_ASSERT_EQUAL_UINT32(b + 500, x[0].first);
+  expectNoOrphans();
+}
+
+// A sounding note that sounds past the window's end ends at the join (its end would come as the edited copy's, which
+// its instance never matches) — never left sounding.
+void test_an_edit_keeps_a_note_sounding_past_the_window() {
+  const uint32_t loop = 3072;
+  const ManifestId a = manifest({run({{6, 69, 200, 1600}})}, loop), e = manifest({run({{6, 69, 200, 1600}, {7, 70, 900, 950}})}, loop);
+  gTick = 0;
+  gTrack.select(0, a, 0);
+  const uint32_t b = 2 * loop;
+  play(b + 401, 0);
+  gTrack.edit(0, e, b + 400);
+  play(b + loop, 0);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().editJoins);
+  const auto x = notesOf(69, b, b + loop);
+  TEST_ASSERT_EQUAL_UINT32(1, x.size());
+  TEST_ASSERT_EQUAL_UINT32(b + 401, x[0].second);
+  TEST_ASSERT_EQUAL_UINT32(b + 900, notesOf(70, b, b + loop)[0].first);
+  expectNoOrphans();
+}
+
+// The window completes just before its end and the join is not ready yet: it joins inside the next window.
+void test_an_edit_ready_at_the_window_end_joins_the_next() {
+  const uint32_t loop = 1536;
+  const ManifestId a = manifest({run({{1, 60, 100, 200}})}, loop), e = manifest({run({{1, 60, 500, 550}})}, loop);
+  gTick = 0;
+  gTrack.select(0, a, 0);
+  const uint32_t b = 3 * loop;
+  for (uint32_t d = 2; d <= 6; ++d) {  // whichever grain lands on the boundary
+    setUp();
+    const ManifestId a2 = manifest({run({{1, 60, 100, 200}})}, loop), e2 = manifest({run({{1, 60, 500, 550}})}, loop);
+    gTick = 0;
+    gTrack.select(0, a2, 0);
+    play(b - d, 0);
+    gTrack.edit(0, e2, b - d - 1);
+    play(b + loop, 0, 256, 1);  // one grain a tick
+    TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().editJoins);
+    TEST_ASSERT_EQUAL_UINT32(0, notesOf(60, b, b + 300).size());
+    TEST_ASSERT_EQUAL_UINT32(b + 500, notesOf(60, b, b + loop)[0].first);
+    expectNoOrphans();
+  }
+  (void)a;
+  (void)e;
+}
+
+// An edit superseded by an ordinary selection: that one's late join is the bounded one (notes start late).
+void test_a_selection_after_an_edit_joins_as_usual() {
+  const uint32_t loop = 1536;
+  const ManifestId a = manifest({run({{1, 60, 100, 200}})}, loop), e = manifest({run({{1, 60, 500, 550}})}, loop),
+                   s = manifest({run({{2, 61, 0, 300}})}, loop);
+  gTrack.setLateJoinLimit(kLimit300);
+  gTick = 0;
+  gTrack.select(0, a, 0);
+  const uint32_t b = 3 * loop;
+  play(b - 100, 0);
+  gTrack.edit(0, e, b - 101);
+  gTrack.select(0, s, b - 101);
+  play(b + 10, b + 10);  // ready 10 ticks into the window
+  play(b + loop, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().editJoins);
+  TEST_ASSERT_EQUAL_UINT32(1, gTrack.stats().lateJoins);
+  TEST_ASSERT_EQUAL_UINT32(b + 10, notesOf(61, b, b + loop)[0].first);  // started late
+  expectNoOrphans();
+}
+
+// An edit published on the tick before a boundary is the ordinary switch there.
+void test_an_edit_before_a_boundary_switches_there() {
+  const uint32_t loop = 1536;
+  const ManifestId a = manifest({run({{1, 60, 100, 200}})}, loop), e = manifest({run({{1, 61, 0, 50}})}, loop);
+  gTick = 0;
+  gTrack.select(0, a, 0);
+  play(2 * loop, 0);
+  gTrack.edit(0, e, 2 * loop - 1);
+  play(3 * loop, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, gTrack.stats().editJoins);
+  TEST_ASSERT_EQUAL_UINT32(2 * loop, notesOf(61, 2 * loop, 3 * loop)[0].first);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_takes_join_late_within_24_ticks_at_300_bpm);
@@ -462,5 +601,11 @@ int main(int, char**) {
   RUN_TEST(test_a_launch_ends_what_sounded_at_its_commit);
   RUN_TEST(test_din_and_usb_diverge_when_din_cannot_admit_the_late_note);
   RUN_TEST(test_later_cycles_equal_uninterrupted_composition);
+  RUN_TEST(test_an_edit_joins_the_window_playing);
+  RUN_TEST(test_an_overtaken_edit_joins_the_next_window);
+  RUN_TEST(test_an_edit_keeps_a_note_sounding_past_the_window);
+  RUN_TEST(test_an_edit_ready_at_the_window_end_joins_the_next);
+  RUN_TEST(test_a_selection_after_an_edit_joins_as_usual);
+  RUN_TEST(test_an_edit_before_a_boundary_switches_there);
   return UNITY_END();
 }

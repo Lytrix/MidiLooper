@@ -619,6 +619,30 @@ void test_undo_restores_the_causing_note() {
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));  // A causes again: B hidden
 }
 
+// While playing, a move is heard in the bar it is made in (owner 2026-11-07), not from the next window: the first time
+// the note's position comes round after the gesture it sounds at its new pitch — twice, a bar apart, so one of the two
+// lies in a window's first bar (where the next boundary is a bar after the note).
+void test_a_move_is_heard_in_the_bar_it_is_made() {
+  recordBar({{96, 60}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(8, 16));  // 67 @ 384
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  settle();
+  for (uint8_t k = 0; k < 2; ++k) {
+    run(gUs + (768 - (gLast - gE.transport().origin(0)) % 768) * kTick);  // to the bar's start
+    const uint32_t from = gHeardCount, at = gLast;
+    f4(static_cast<uint8_t>(70 + 2 * k));
+    run(gUs + 500 * kTick);  // past 384 in this bar
+    uint8_t first = 0;
+    for (uint32_t i = from; i < gHeardCount && first == 0; ++i)
+      if (gHeard[i % 4096].tick > at && (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768 == 384)
+        first = gHeard[i % 4096].pitch;
+    TEST_ASSERT_EQUAL_UINT8(70 + 2 * k, first);
+    ms(400);
+  }
+}
+
 void test_geometry_waits_the_grace_period_after_entry() {
   recordBar({{96, 60}});
   enterEdit();  // the bracket at the playhead selects the closest note (60 @ 96)
@@ -765,6 +789,7 @@ int main(int, char**) {
   RUN_TEST(test_a_pending_write_gives_way_to_a_fader_already_there);
   RUN_TEST(test_pitch_onto_a_note_hides_it_and_deselect_settles);
   RUN_TEST(test_undo_restores_the_causing_note);
+  RUN_TEST(test_a_move_is_heard_in_the_bar_it_is_made);
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);

@@ -204,6 +204,8 @@ class WindowPlayer {
     return n;
   }
 
+  int32_t soundingRun(uint32_t noteId, uint8_t pitch) const { return sched_->soundingRun(noteId, pitch); }
+
   /// Transport stop at timeline tick `t`: every sounding instance ends now (`out` must hold T); nothing plays after.
   uint8_t stopAll(uint32_t t, Emit* out, uint8_t max) {
     typename Scheduler::Out offs[T];

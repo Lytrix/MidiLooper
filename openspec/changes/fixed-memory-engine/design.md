@@ -2217,3 +2217,23 @@ a selection change rebuilding, settle kept across a move-away and undone with it
 `test_content_engine_edit_surface` (pitch onto a note hides it, passing on brings it back, deselect settles, leave
 keeps; undo restores the causing note); mutations 13 / 13 after the added tests (the `settle` in `leave` was found
 redundant and removed). Device `562c8cde…`: boot clean; confirmed on the DROID by the owner (2026-11-07: "Works").
+
+## NOTE_EDIT edits heard at once (owner 2026-11-07: "when moving notes while playing it only is audible after loop wrap")
+
+A NOTE_EDIT publish used `select`: the playing track switched at the next window boundary (2 bars; in a 1- or 2-bar
+loop the wrap). Now `SlotTransport::follow` calls `PlaybackTrack::edit`: the window playing is composed from the
+published state (cold start to its start, as any transition) and joined at the first tick it is ready for, through the
+late-join machinery (`scanJoin` / `adoptLate`, unbounded inside the window) — an **edit join**. Owner's rule: a note
+moved just ahead of the playhead plays when it comes; one moved just behind it is not heard this cycle (nothing starts
+late: no starts, and the passed span's events — sustain, programs — are not sent again). A note sounding at the join
+that the published state sounds there on the same pitch, ending inside the window, keeps sounding on its own instance
+with the new end (`TerminalScheduler::soundingRun`: the edited copy is another run, so its NoteOff still matches what
+the ports opened); any other sounding note ends at the join, including one sounding past the window's end (its end
+would come as the edited copy's, which the old instance never matches — it would stick). An edit published on the tick
+before a boundary is the ordinary switch there; a join the window's end overtakes joins inside the next window. The
+late-join limit (24 ticks / 25 ms) does not apply: no boundary was missed. `Stats::editJoins` counts them (RAM2
++ 32 B, ratchet 150,296 B). `test_content_engine_late_join` +6 (a 1-bar loop and a two-window loop's second window:
+ahead / behind / kept / re-pitched / new-sounding / a passed controller; overtaken; ready at the window's end; a
+selection superseding an edit joins as before; past-window note; boundary) and `test_content_engine_edit_surface`
+(a move heard in the bar it is made in, twice a bar apart); mutations 15 / 15 (a loop-length guard found unreachable —
+an edit keeps the loop — was removed). Device `6938a165…`: boot clean; the owner's check pending.

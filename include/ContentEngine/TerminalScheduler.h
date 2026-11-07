@@ -165,6 +165,14 @@ class TerminalScheduler {
     return n;
   }
 
+  /// The run of the sounding instance of `noteId` on `pitch`, whatever its run (-1: none) — a NOTE_EDIT join keeps a
+  /// note the edited source still sounds there on that instance.
+  int32_t soundingRun(uint32_t noteId, uint8_t pitch) const {
+    for (uint16_t i = 0; i < count_; ++i)
+      if (set_[i].noteId == noteId && set_[i].pitch == pitch) return runIdOf(set_[i].runKey);
+    return -1;
+  }
+
   uint16_t sounding() const { return count_; }
   const Counters& counters() const { return counters_; }
 

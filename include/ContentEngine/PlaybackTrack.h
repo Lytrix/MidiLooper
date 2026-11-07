@@ -58,6 +58,7 @@ class PlaybackTrack {
     uint32_t lastLateTicks, maxLateTicks;  // ticks after the boundary a late join became audible
     uint32_t joinOverflow;      // join-state entries beyond the prepared lists (not started / not sent)
     uint32_t trimmedHandoffs;   // Record takes handed off inside cycle 1 (trimmed to the bar line before, E9.8i)
+    uint32_t editJoins;         // NOTE_EDIT publishes joined inside the playing window
   };
 
   void init(Composer& a, Composer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
@@ -92,7 +93,26 @@ class PlaybackTrack {
 
   /// The slot's current source changed to `manifest` (or it starts playing) at timeline tick `now`. The transition
   /// targets the next boundary after `now`; meanwhile the playing source continues.
-  void select(uint8_t slot, ManifestId manifest, uint32_t now) {
+  void select(uint8_t slot, ManifestId manifest, uint32_t now) { transition(slot, manifest, now, false); }
+
+  /// A NOTE_EDIT publish while playing (owner 2026-11-07: changes heard at once, not from the next boundary): the
+  /// window playing is composed from `manifest` and joined at the first tick after `now` it is ready for. Nothing
+  /// starts late — a note whose start has passed is heard from its next start (a note moved just behind the playhead
+  /// is not heard this cycle; one moved just ahead plays); a sounding note that the edited source sounds there on the
+  /// same pitch and ending inside the window keeps sounding (its own instance, the new end); the others end at the join
+  /// (one sounding past the window's end too: heard again from its next start). Events of the passed span are not sent
+  /// again. A join the window's end overtakes joins inside the next window.
+  void edit(uint8_t slot, ManifestId manifest, uint32_t now) {
+    const uint32_t next = now + 1;
+    if (loop_ == 0 || playing_ == kNone || (next % loop_) % window_ == 0) {  // an edit keeps the loop's length
+      select(slot, manifest, now);
+      return;
+    }
+    transition(slot, manifest, now, true);
+  }
+
+ private:
+  void transition(uint8_t slot, ManifestId manifest, uint32_t now, bool editJoin) {
     const auto& m = manifests_->manifest(manifest);
     wanted_ = manifest;
     wantedIdentity_ = m.identity;
@@ -106,7 +126,7 @@ class PlaybackTrack {
     transBoundaries_ = 0;
     transGrains_ = 0;
     loop_ = m.loopLengthTicks;
-    const uint32_t b = nextBoundary(now);
+    const uint32_t b = editJoin ? now / loop_ * loop_ + now % loop_ / window_ * window_ : nextBoundary(now);  // edit: the window playing
     const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
     trans_ = freeBuffer();
     buf_[trans_].state = State::Filling;
@@ -118,8 +138,17 @@ class PlaybackTrack {
         Cold::Status::Refused) {
       ++stats_.refusedStarts;
       cancelTransition();
+      return;
+    }
+    if (editJoin) {
+      late_ = true;
+      lateBoundary_ = b;
+      joinUnbounded_ = true;
+      editJoin_ = true;
     }
   }
+
+ public:
 
   /// E9.1b, a Record take: window 0 of the take's cycle 1, composed ahead while recording from a provisional source
   /// (the take's prefix, under a loop longer than any of its rows). A single pass carries nothing across its loop end
@@ -378,6 +407,7 @@ class PlaybackTrack {
     launching_ = false;
     late_ = false;
     joinUnbounded_ = false;
+    editJoin_ = false;
     handoffFinal_ = kNoManifest;
   }
 
@@ -403,6 +433,12 @@ class PlaybackTrack {
       } else {  // missed: counted, and aim at the next boundary
         ++transBoundaries_;
         transTarget_ = nextBoundary(t);
+        if (editJoin_) {  // an edit join the window's end overtook: it joins inside this window instead
+          transTarget_ = t;
+          lateBoundary_ = t;
+          joinReady_ = false;
+          if (buf_[trans_].state == State::Complete) buf_[trans_].state = State::Filling;  // compose on to it
+        }
       }
     }
     if (steady_ != kNone && !transition && take == kNone) steadyTarget_ = nextBoundary(t);
@@ -540,8 +576,16 @@ class PlaybackTrack {
     uint8_t nKeep = 0;
     for (uint8_t k = 0; k < w.carryCount && k < 32; ++k)
       if (carryAlive_ & (1u << k)) keep[nKeep++] = {w.carry[k].noteId, runIdOf(w.carry[k].runKey), kOpenEnd};
+    const bool edit = editJoin_;
     for (uint8_t i = 0; i < soundCount_; ++i) {
       const SpanEntry& e = w.entries[sound_[i]];
+      if (edit) {  // the instance sounding (an edited note's earlier copy included) goes on; nothing starts late
+        // Not one whose end lies past the window: the end would come as the edited copy's, which the old instance never
+        // matches (the next window of the same source closes nothing) — it would sound on.
+        const int32_t r = e.length == kOpenLength ? -1 : player_->soundingRun(e.noteId, e.data1);
+        if (r >= 0) keep[nKeep++] = {e.noteId, static_cast<uint16_t>(r), w.cycleBase + e.tick + e.length};
+        continue;
+      }
       keep[nKeep++] = {e.noteId, runIdOf(e.runKey),
                        e.length == kOpenLength ? kOpenEnd : w.cycleBase + e.tick + e.length};
     }
@@ -557,9 +601,10 @@ class PlaybackTrack {
     transActive_ = false;
     late_ = false;
     joinUnbounded_ = false;
+    editJoin_ = false;
     steadyTarget_ = nextBoundary(t);
     ++stats_.switches;
-    ++stats_.lateJoins;
+    ++(edit ? stats_.editJoins : stats_.lateJoins);
     stats_.lastLateTicks = t - lateBoundary_;
     if (stats_.lastLateTicks > stats_.maxLateTicks) stats_.maxLateTicks = stats_.lastLateTicks;
     stats_.lastLatencyTicks = t - selectTick_;
@@ -568,7 +613,8 @@ class PlaybackTrack {
     if (stats_.lastBoundaries > stats_.maxBoundaries) stats_.maxBoundaries = stats_.lastBoundaries;
     if (stats_.lastLatencyTicks > stats_.maxLatencyTicks) stats_.maxLatencyTicks = stats_.lastLatencyTicks;
     const uint8_t n =
-        player_->beginWindowLate(w, joinIndex_, keep, nKeep, sound_, soundCount_, events_, eventCount_, t, out, max);
+        player_->beginWindowLate(w, joinIndex_, keep, nKeep, sound_, edit ? 0 : soundCount_, events_,
+                                 edit ? 0 : eventCount_, t, out, max);
     if (handoffFinal_ != kNoManifest) {
       cold_[steady_].release();
       steady_ = kNone;
@@ -600,6 +646,7 @@ class PlaybackTrack {
   uint32_t lateLimit_ = 0, lateBoundary_ = 0, lastTick_ = 0, joinTick_ = 0;
   bool late_ = false, joinReady_ = false;
   bool joinUnbounded_ = false;  // a trimmed take's handoff joins late with no limit (E9.8i)
+  bool editJoin_ = false;       // the join is a NOTE_EDIT publish's (`edit`): nothing starts late
   uint16_t scanIdx_ = 0, joinIndex_ = kNoIndex;
   uint16_t sound_[2 * T];  // START entries begun before the join and sounding at it
   uint8_t soundCount_ = 0;
