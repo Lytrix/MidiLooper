@@ -1,3 +1,8 @@
+**2026-11-07 — Fixed-memory engine: NOTE_EDIT's EDIT count counts every step.**
+- The status band's EDIT count stopped at 1: it read History's session depth, but History holds a NOTE_EDIT session
+  as one state replaced in place. It now shows the session's own E: level (`EditSurface::steps`), so editing a second
+  note shows 2, and undo / redo count down / up. Image `35781c6d…`, boot verified; owner check on the DROID pending.
+
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT highlight across bar lines.**
 - The selected note in NOTE_EDIT stays bright over its whole length: the part after a bar line (a later bar's tile
   segment) was drawn at the unselected brightness, so the highlight looked cut at each bar start. The piano roll now

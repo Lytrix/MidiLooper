@@ -222,6 +222,7 @@ void test_geometry_faders_move_and_pitch_heard_one_step_a_gesture() {
   f4(70);
   TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
   TEST_ASSERT_EQUAL_UINT32(485, heardAt(70));
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 3, gS.edit().steps());  // the screen's EDIT count: every step
   // Undo (record double) twice: the pitch, then the fine move; redo once.
   dbl(S::kRecordNote);
   ms(500);

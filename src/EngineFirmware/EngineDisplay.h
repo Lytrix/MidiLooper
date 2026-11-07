@@ -62,6 +62,7 @@ struct EditView {
   bool note = false, length = false;
   uint32_t noteTick = 0, noteLength = 0;
   uint8_t notePitch = 0, noteVelocity = 0;
+  uint8_t steps = 0;  // the session's E: level
 };
 
 class EngineDisplay {
@@ -531,7 +532,7 @@ class EngineDisplay {
       steps = h.sessionDepth(ContentEngine::SessionKind::Overdub);
     } else if (info.slot != kNone && h.sessionSlot(ContentEngine::SessionKind::Edit) == info.slot) {
       undoLabel = "EDIT";
-      steps = h.sessionDepth(ContentEngine::SessionKind::Edit);
+      steps = edit_.steps;  // History holds the session as one state: the session counts its steps
     }
     const bool session = undoLabel[0] != 'U';
     label(undoLabel, ux, kLabY, session ? 12 : 5);

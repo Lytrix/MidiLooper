@@ -675,6 +675,7 @@ void loop() {
     ev.ticks = ed.windowTicks();
     ev.bracket = ed.bracket();
     ev.length = ed.lengthMode();
+    ev.steps = ed.steps();
     EditNote n;
     if (ed.selected(n)) {
       ev.note = true;
