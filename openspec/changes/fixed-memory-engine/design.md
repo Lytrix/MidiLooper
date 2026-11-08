@@ -2331,3 +2331,34 @@ empty slot; `Surface::cycleEdit`, `test_edit_button_cycles_note_and_loop_edit`, 
 with `createEmpty`'s own refusal and removed); (6) LOOP_EDIT F4 tempo (as built: legacy pitch bend on channel 15 over 1–300 BPM
 in tenths, the clock's floor 20; the motor parked at the tempo on entry, its landing ignored for `kMotorSettleMs`;
 not on an external clock; `test_loop_edit_f4_sets_the_tempo`, mutations 5 / 5); (7–8) F2 length, F1 start; (9) a loop-length popup.
+
+## Loop length: a play window over immutable runs (owner 2026-11-08: "go for option A"; DEC-257; designed)
+
+The owner's rules: a note keeps its recorded length, and its NoteOff wraps against the loop end in force. Lengthening
+moves a wrapped note's end back into the now longer loop (resolved there, never stretched to fill the new bars).
+Shortening wraps only the notes that cross the new loop end. Notes that start at or past the new end are never deleted:
+they are not played, and come back when the loop is lengthened again (a keep / delete choice may come later in the
+length popup). Undo restores the earlier length.
+
+* **Why runs cannot simply be re-read at another length.** A run's rows lie on its recording timeline: a NoteOff is at
+  NoteOn + length, so one past the loop end is a held note's end, read as the wrap stream and played `tick − loop`
+  into the next cycle (`Composer`). Re-read at a shorter loop, the NoteOns and controller rows past the new end would
+  join that wrap stream and play shifted; NoteOffs of notes that never started would move the overlap counts; and
+  `kOriginHeldLoop` (a note held for at least a loop, Q-LEN-1) was decided against the recorded length.
+* **The fit run.** A resized state lists the content runs unchanged plus one derived run of kind `kFit` (the previous
+  state's fit run left out), built in worker grains from the content runs and the new length P. It holds no MIDI rows,
+  only lookups sorted by (run, noteId): *filter* rows naming each content run whose rows reach P or past it; *cross*
+  rows naming each note of such a run that starts before P and ends at or past P; *held* rows naming each note whose
+  held-loop status differs from its flag at P (length ≥ P without the flag, or flagged and shorter than P). Its size is
+  the crossing and long notes, not the content; past a fixed cap the resize is refused by name.
+* **Composition (`Composer`).** A run the fit run filters has its rows at or past P (wrap and second-wrap streams) read
+  as NoteOffs of its cross notes only: every other row there — NoteOns and controllers past the end, NoteOffs of notes
+  that never start — has no effect, also in the wrap-held counts at a cold start and the held-loop counts at the loop
+  end. The held-loop rule reads the flag through the held rows. Runs added after the resize (overdubs, NOTE_EDIT runs)
+  are native to P and not filtered. The fit run itself plays nothing.
+* **Lengthening.** Rows below the longer P are the main stream, so a wrapped NoteOff now ends its note inside the loop
+  at its recorded length; only held-loop status may change (held rows). Content runs are never extended or copied.
+* **History and persistence.** A resize is one state (one undo step) with the same content runs; the set file stores
+  the fit run like any run (its kind; format version 3, as older firmware would play it as content).
+* **Readers.** NOTE_EDIT, tiles, late join and checkpoints read composed windows, so they follow the window; the edit
+  hide index, compaction and V1 import never take a fit run as content.

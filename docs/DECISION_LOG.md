@@ -14899,3 +14899,28 @@ length is 1 bar").
 - `test_slot_long_press_creates_an_empty_loop` (created, selected not played, one undo step, the manifest the run's
   only reference; NOTE_EDIT opens, a step entered, heard), `test_an_empty_loop_round_trips` (set file). Mutations 4 / 4.
 - Device image `f81e0518…`: boot `crash=0`, 22 slots loaded.
+
+## DEC-257 — Loop length is a play window: content runs stay, a derived fit run re-wraps notes at the new length
+
+**Date:** 2026-11-08
+**Owner:** `ContentEngine::Composer` (filtered streams), a fit-run builder, `SlotTransport` (resize state).
+OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) "Loop length: a play window over
+immutable runs". Formal trigger: persistent state model change (a run kind that is not content; set file version 3)
+and a composition rule change (filtered wrap streams). Builds on DEC-252, DEC-255.
+**Status:** Accepted by owner (2026-11-08: option A, "notes after loop end tick never get deleted", notes keep their
+original lengths and wrap at the loop end in force); implementation in slices.
+
+### Decision
+
+- A resize creates a state with the same content runs and loop length P, plus one fit run (kind `kFit`) of lookups:
+  which runs reach P, which of their notes cross P, which notes' held-loop status differs at P. Nothing is copied,
+  shortened or deleted; lengthening back drops the fit run and builds one for the new length.
+- Composition reads a filtered run's rows at or past P only as NoteOffs of its crossing notes; the held-loop rule reads
+  its flag through the fit run. Unfiltered runs compose exactly as before.
+- Rejected: shortening by NOTE_EDIT-style hide and replacement rows (destructive in effect: notes past the end lost
+  until Undo); a per-run recorded-length field read by the composer (every reader of the wrap stream would change, and
+  NoteOffs of notes past the end still could not be told apart without a per-note lookup).
+
+### Evidence
+
+- To be added per slice.
