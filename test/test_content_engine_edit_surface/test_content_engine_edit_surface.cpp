@@ -725,7 +725,7 @@ void test_f4_with_notelen_held_sets_the_velocity() {
   ms(100);
   f4(30);
   ms(100);
-  f4(0);  // velocity 0 would be a note off: 1
+  f4(1);
   TEST_ASSERT_EQUAL_UINT8(1, sel().velocity);
   TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
   ms(100);
@@ -767,6 +767,53 @@ void test_f4_with_notelen_held_sets_the_velocity() {
   const Sent* toPitch = findMsg(released, 0xBE, 3);
   TEST_ASSERT_NOT_NULL(toPitch);
   TEST_ASSERT_EQUAL_UINT8(64, toPitch->m.d2);
+}
+
+// F4 at 0 with NOTELEN held mutes the note (owner 2026-11-08): it keeps its velocity, is not heard — neither while
+// editing nor after leaving — and is gathered and selectable again; a long hold writes F4's motor to 0; any other value
+// unmutes it there.
+void test_f4_at_zero_mutes_the_note() {
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));
+  settle();
+  drainMotors(800);
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);  // hold
+  ms(100);
+  f4(30);
+  ms(100);
+  f4(0);
+  TEST_ASSERT_EQUAL_UINT8(kVelocityMuted | 30, sel().velocity);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  drainMotors(800);
+  f4(64);  // F4's motor arrives at the pitch
+  TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(67, 384));
+  tap(S::kEditModeNote);  // leave
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(67, 384));
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);  // still there
+  TEST_ASSERT_EQUAL_UINT8(kVelocityMuted | 30, sel().velocity);
+  settle();
+  drainMotors(800);
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);  // long hold: F4's motor to 0
+  ms(S::kVelocityHoldMs - 50);
+  const auto held = drainMotors(100);
+  const Sent* toVel = findMsg(held, 0xBE, 3);
+  TEST_ASSERT_NOT_NULL(toVel);
+  TEST_ASSERT_EQUAL_UINT8(0, toVel->m.d2);
+  drainMotors(800);
+  f4(100);  // unmuted, at 100
+  TEST_ASSERT_EQUAL_UINT8(100, sel().velocity);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  drainMotors(800);
+  f4(64);
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
 }
 
 void test_no_note_is_created_next_to_a_note() {
@@ -874,6 +921,7 @@ int main(int, char**) {
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);
   RUN_TEST(test_f4_with_notelen_held_sets_the_velocity);
+  RUN_TEST(test_f4_at_zero_mutes_the_note);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

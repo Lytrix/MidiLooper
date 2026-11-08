@@ -22,7 +22,7 @@
 // * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end
 //   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
 // * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127; owner 2026-11-08, not in
-//   legacy) — that press is then no short / double. Velocity mode begins with the first F4 move while held, or after
+//   legacy), 0 muting the note (`kVelocityMuted`: drawn, editable, not sent) — that press is then no short / double. Velocity mode begins with the first F4 move while held, or after
 //   `Surface`'s long hold, which writes F4's motor to the velocity; on NOTELEN's release F4's motor goes back to the
 //   pitch.
 // * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
@@ -319,12 +319,14 @@ class EditSurface {
     }
     commit(v);  // F2 stays: it shows the reference 16th F3 offsets from
   }
-  /// F4 while NOTELEN is held: the velocity (1–127; owner 2026-11-08, not in legacy).
+  /// F4 while NOTELEN is held: the velocity (1–127; owner 2026-11-08, not in legacy); 0 mutes the note, keeping its
+  /// velocity, and any other value unmutes it there.
   void velocity(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);
-    const uint8_t vel = (cc & 0x7F) == 0 ? 1 : (cc & 0x7F);
     if (!geometryReady(ms)) return;
-    if (travel || session().current(static_cast<uint16_t>(sel_)).velocity == vel) {
+    const uint8_t was = session().current(static_cast<uint16_t>(sel_)).velocity;
+    const uint8_t vel = (cc & 0x7F) == 0 ? static_cast<uint8_t>(was | kVelocityMuted) : (cc & 0x7F);
+    if (travel || was == vel) {
       why_ = Why::NoChange;
       return;
     }
@@ -538,7 +540,7 @@ class EditSurface {
       lastFineMs_ = ms;
       hadFine_ = true;
     }
-    if ((mask & kMotorPitch) && note) write(3, velocity_ ? n.velocity : n.pitch, ms);
+    if ((mask & kMotorPitch) && note) write(3, !velocity_ ? n.pitch : isMuted(n.velocity) ? 0 : velocityOf(n.velocity), ms);
   }
   /// A fader already at `v` (its last message) is not written: no motor travel, no
   /// window that would swallow the musician's next move (owner 2026-11-06: F3, rewritten on every F2 step, ignored a

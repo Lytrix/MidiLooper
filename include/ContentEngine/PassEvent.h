@@ -36,6 +36,12 @@ constexpr uint8_t kOriginHeldLoop = 0x40u;
 /// sit at the start of their run (tick 0); 0xF4 is an undefined MIDI status, never sent.
 constexpr uint8_t kHideNoteStatus = 0xF4u;
 
+/// A muted note (owner 2026-11-08): bit 7 of its NoteOn row's `data2`, beside the 7-bit velocity. The note is present —
+/// paired, composed, drawn and editable — but `WindowPlayer` never starts it, so nothing of it is sent.
+constexpr uint8_t kVelocityMuted = 0x80u;
+inline bool isMuted(uint8_t data2) { return (data2 & kVelocityMuted) != 0; }
+inline uint8_t velocityOf(uint8_t data2) { return static_cast<uint8_t>(data2 & 0x7Fu); }
+
 /// Run kinds (the RunTable descriptor's `kind`).
 namespace RunKind {
 constexpr uint8_t kRecord = 0;

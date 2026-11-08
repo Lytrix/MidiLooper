@@ -2261,10 +2261,10 @@ On the release F4's motor is written back to the pitch (`EditSurface::velocityDo
 (`Surface::kVelocityHoldMs`, 600 ms) enters velocity mode with F4's motor written to the velocity
 (`EditSurface::velocityBegin`); an F4 move while held enters it without a motor write (the hand is on F4). The status
 band's NOTE_EDIT label bar pulses (1 Hz, 4–10, as the selected track's letter) under VELOCITY in velocity mode and
-under LENGTH in length mode. The range stays 1–127: `EditWriter` refuses velocity 0, a NoteOn that is a note off.
+under LENGTH in length mode. Velocity 0 would be a note off: F4 at 0 mutes the note instead ("Muted note", DEC-255).
 `test_content_engine_edit_surface` +1, extended with the long hold (mutations 5 / 5).
 
-## Muted note (owner 2026-11-08: "a Mute Note sounds most logical"; designed, not built)
+## Muted note (owner 2026-11-08: "a Mute Note sounds most logical"; DEC-255; as built)
 
 The owner asked for F4's velocity range to reach 0. A stored NoteOn at velocity 0 is a note off everywhere in the engine
 (playback, `SpanWindow`, `NoteEditSession`, `DisplayTiles`, `RunTable`, `Composer`), and `SetFile::addNote` refuses it,
@@ -2277,18 +2277,20 @@ later feature that chooses at random which notes play (owner 2026-11-08).
   velocity`. The off row is unchanged. Every `data2 != 0` onset test still sees an onset, so pairing, tiles, the run
   table and the edit session keep the note. No new row, no `PassEvent` size change; `origin` has no free bit (0..5
   ordinal, 6 held loop, 7 closure).
-* **Readers.** Velocity is `data2 & 0x7F` wherever it is read as a value (`NoteEditSession`'s `EditNote`, the tiles,
-  `ClockOutput`'s levels). Exactly one owner admits a note to the output and skips a muted onset together with its
-  off by `noteId` (an unmatched off could cut a sounding note of the same pitch and channel); every other emit path
-  masks `& 0x7F`, so a data byte ≥ 0x80 can never reach a port. Which owner admits is settled by the audit at build.
+* **Readers.** `WindowPlayer` admits notes to the output: it never starts a muted note (`tick`, `beginWindowLate`), so
+  no NoteOn is sent, and no NoteOff either, since the scheduler makes those from started notes only (an unmatched off
+  could cut a sounding note of the same pitch and channel). Its composed end counts as a suppressed terminal. Only
+  started notes are emitted with their velocity, so the bit reaches no port. `ClockOutput`'s levels read emitted
+  notes only. `EditNote::velocity` and tile segments carry the stored byte (`isMuted`, `velocityOf`).
 * **Overlap.** A muted note still takes part in overlap resolve (it is present, only not sent): muting never changes
   which other notes are cut. Open for the owner when built.
-* **Editing.** `EditNote` gains `muted`; `EditWriter` writes and validates it (velocity stays 1–127). In velocity mode
-  (NOTELEN held), F4 at 0 mutes the note and any other value unmutes it at that velocity, so the fader's whole travel
-  is used. A mute is a change of the note's undo step like any other.
-* **Screen.** A muted note is drawn at the dim level (outline when selected); the velocity cell reads `M`.
+* **Editing.** `EditWriter` validates the 7-bit velocity 1–127 beside the bit. In velocity mode (NOTELEN held), F4 at
+  0 mutes the note keeping its velocity, and any other value unmutes it at that value, so the fader's whole travel is
+  used; a long hold writes F4's motor to 0 for a muted note. A mute is a change of the note's undo step like any other.
+* **Screen.** A muted note is drawn at brightness 3 (6 when selected; others 7 / 10); the velocity cell reads `M`.
 * **Set file.** `kSetFileVersion` 2; `LoadJob` accepts 1 and 2 (a version-1 file has no bit 7 set). Older engine
   firmware refuses version 2 by name rather than sending `0x80 | velocity`. V1 import never sets the bit.
-* **Tests at build.** A muted note survives save / load and undo, is drawn and selectable, sends nothing (neither on nor
-  off), does not cut a same-pitch note, and unmutes at F4's value; an emit-path test proves no data byte ≥ 0x80 leaves a
-  port. A `DEC-###` entry records the representation.
+* **Tests.** `test_f4_at_zero_mutes_the_note` (silent while editing and after leaving, the other note heard, gathered
+  and selectable again, motor to 0, unmuted at 100 and heard), `test_a_muted_note_is_drawn_dim`, and in
+  `test_content_engine_set_file` a muted row round-trips, version 1 loads and 3 is refused (mutations 6 / 6;
+  `beginWindowLate`'s skip has no own test).

@@ -49,7 +49,7 @@ struct EditNote {
   uint32_t noteId;
   uint32_t tick;    // NoteOn position in the loop
   uint32_t length;  // NoteOn to NoteOff, ticks (> 0)
-  uint8_t pitch, velocity, channel;  // channel 0..15
+  uint8_t pitch, velocity, channel;  // velocity as stored: 1..127, `kVelocityMuted` set on a muted note; channel 0..15
   uint8_t deleted;
   bool operator==(const EditNote& o) const {
     return noteId == o.noteId && tick == o.tick && length == o.length && pitch == o.pitch && velocity == o.velocity &&
@@ -348,7 +348,7 @@ class EditWriter {
   };
 
   static bool valid(const EditNote& e) {
-    return e.length > 0 && e.length < (1u << 20) && e.pitch < 128 && e.velocity > 0 && e.velocity < 128 && e.channel < 16;
+    return e.length > 0 && e.length < (1u << 20) && e.pitch < 128 && velocityOf(e.velocity) > 0 && e.channel < 16;
   }
   bool isEdited(uint16_t i, const EditNote& v) const { return v != orig_[i]; }
   /// The change of the edited / live counts if note `i` took `v`.

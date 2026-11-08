@@ -27,7 +27,8 @@
 //     the selected note's start (the bracket's in length mode), all bright.
 //   - BARS: the loop's length in bars (a first take: its bars so far).
 //   - the selection: TRACK, SLOT (1–8 within the track) and the port over its channel (`USB1 1`; `ALL` when the track
-//     plays on every port); in NOTE_EDIT, NOTE (C3 = 60), VELOCITY and LENGTH (ticks), their labels inverted.
+//     plays on every port); in NOTE_EDIT, NOTE (C3 = 60), VELOCITY (`M`: muted) and LENGTH (ticks), their labels
+//     inverted.
 //   - UNDO (the slot's undo steps), ODUB (the open overdub's) or EDIT (the open NOTE_EDIT session's).
 //   - the tempo (legacy `120.0`) under the clock icon: dim on the internal clock; an arrow into it, bright, on an
 //     external one.
@@ -501,7 +502,10 @@ class EngineDisplay {
       cells[2] = Cell{"LENGTH", "-", 24};
       if (edit_.ready && edit_.note) {
         st::noteName(edit_.notePitch, cells[0].value);
-        snprintf(cells[1].value, sizeof cells[1].value, "%u", edit_.noteVelocity);
+        if (ContentEngine::isMuted(edit_.noteVelocity))  // owner 2026-11-08: a muted note
+          snprintf(cells[1].value, sizeof cells[1].value, "M");
+        else
+          snprintf(cells[1].value, sizeof cells[1].value, "%u", edit_.noteVelocity);
         snprintf(cells[2].value, sizeof cells[2].value, "%lu", static_cast<unsigned long>(edit_.noteLength));
       }
       const int16_t end = static_cast<int16_t>(x0 + 18 + 32 + 24 + 2 * kGap - 1);

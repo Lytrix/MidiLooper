@@ -7,7 +7,7 @@
 // framebuffer (two pixels a byte, even x in the high nibble), one band of rows at a time, so a frame can be drawn and
 // sent in bands. It reads tiles and the live overlay only: nothing on the draw path composes, allocates or reads pages.
 // The legacy geometry: x = x0 + map(position in the view, 0, view ticks, 0, width), y = map(pitch, low, high, y1, y0),
-// one-row note bars at brightness 7, the highlighted note at 10.
+// one-row note bars at brightness 7, the highlighted note at 10; a muted note at 3, 6 highlighted.
 // * Detailed view (`drawRollBand`): per visible bar its draw source — span segments; a dense bar's 32-column raster;
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
 //   the live overlay's notes (a take being recorded) on top, at the view's scale.
@@ -16,6 +16,8 @@
 #pragma once
 
 #include <cstdint>
+
+#include "ContentEngine/PassEvent.h"
 
 namespace ContentEngine {
 
@@ -35,6 +37,8 @@ struct RollView {
 constexpr uint8_t kRollNoteBrightness = 7;
 constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
+constexpr uint8_t kRollMutedBrightness = 3;           // a muted note (`kVelocityMuted`; owner 2026-11-08)
+constexpr uint8_t kRollMutedHighlightBrightness = 6;  // a muted note selected
 
 namespace roll {
 
@@ -100,8 +104,10 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
       for (uint16_t i = 0; i < d.header->count; ++i) {
         const auto& s = d.span->segments[i];
         const bool hi = roll::highlighted(v, base + s.start, s.pitch);
+        const bool muted = isMuted(s.velocity);
         roll::span(v, fb, width, rowFrom, rowTo, base + s.start, s.length, s.pitch,
-                   hi ? kRollHighlightBrightness : kRollNoteBrightness);
+                   muted ? (hi ? kRollMutedHighlightBrightness : kRollMutedBrightness)
+                         : (hi ? kRollHighlightBrightness : kRollNoteBrightness));
       }
     } else if (d.kind == Kind::Dense) {
       const uint32_t col = v.barTicks / 32 == 0 ? 1 : v.barTicks / 32;

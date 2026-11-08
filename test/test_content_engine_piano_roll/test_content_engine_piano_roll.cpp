@@ -122,6 +122,22 @@ void test_a_highlighted_note_stays_bright_across_bar_lines() {
   TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(700), 0));
 }
 
+// A muted note (owner 2026-11-08: `kVelocityMuted` on its velocity) is drawn dim, brighter when selected.
+void test_a_muted_note_is_drawn_dim() {
+  gStore.setDetail(0, 1);
+  span(1, 0, {{0, 200, 63, 0x80 | 100, 0, 0}, {400, 200, 63, 100, 0, 0}}, 7);
+  RollView v = view(1);
+  drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
+  const auto x = [](uint32_t t) { return 22 + roll::map(t, 0, kLoop, 0, 203); };
+  TEST_ASSERT_EQUAL_UINT8(kRollMutedBrightness, px(x(100), 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(500), 0));
+  v.highlightTick = 0;
+  v.highlightLength = 200;
+  v.highlightPitch = 63;
+  drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
+  TEST_ASSERT_EQUAL_UINT8(kRollMutedHighlightBrightness, px(x(100), 0));
+}
+
 void test_bands_touch_only_their_rows() {
   gStore.setDetail(0, 1);
   span(1, 0, {{0, 768, 48, 100, 0, 0}, {0, 768, 63, 100, 0, 0}}, 7);
@@ -341,6 +357,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
   RUN_TEST(test_a_highlighted_note_stays_bright_across_bar_lines);
+  RUN_TEST(test_a_muted_note_is_drawn_dim);
   RUN_TEST(test_bands_touch_only_their_rows);
   RUN_TEST(test_dense_raster_density_fallback_and_extent);
   RUN_TEST(test_the_live_overlay_draws_on_top);

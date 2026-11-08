@@ -20,6 +20,7 @@
 #include <cstdint>
 
 #include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/PassEvent.h"
 #include "ContentEngine/TerminalScheduler.h"
 
 namespace ContentEngine {
@@ -148,6 +149,7 @@ class WindowPlayer {
     next_ = from;
     for (uint8_t k = 0; k < nStarts; ++k) {
       const SpanEntry& e = w.entries[starts[k]];
+      if (isMuted(e.data2)) continue;  // a muted note is never started: no NoteOn, no NoteOff
       const uint32_t end = e.length == kOpenLength ? kOpenEnd : base_ + e.tick + e.length;
       const uint8_t ch = static_cast<uint8_t>((e.status & 0x0F) + 1);
       if (sched_->start(t, e.noteId, runIdOf(e.runKey), orderOf(e.runKey), ch, e.data1, end) == StartResult::Started &&
@@ -190,6 +192,7 @@ class WindowPlayer {
       ++next_;
       const uint8_t type = e.status & 0xF0;
       if (type == 0x90 && e.data2 != 0) {
+        if (isMuted(e.data2)) continue;  // a muted note is never started: no NoteOn, no NoteOff
         const uint32_t end = e.length == kOpenLength ? kOpenEnd : base_ + e.tick + e.length;
         if (sched_->start(t, e.noteId, runIdOf(e.runKey), orderOf(e.runKey), static_cast<uint8_t>((e.status & 0x0F) + 1),
                           e.data1, end) == StartResult::Started &&

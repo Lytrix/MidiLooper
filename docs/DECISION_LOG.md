@@ -14843,3 +14843,35 @@ device-qualified; then the owner reassesses from history-pressure diagnostics (b
 - **First diagnostic reading** (E4.7, device `025c14c2…`, after boot): 65 of 99 held, none evicted; 21 slots hold one
   step each and slot 56 holds 44 (37 undo, 7 redo) — the 44 retained steps are one slot's history.
 
+
+## DEC-255 — A muted note is bit 7 of its NoteOn velocity: present, drawn and editable, never started
+
+**Date:** 2026-11-08
+**Owner:** `ContentEngine::PassEvent` (`kVelocityMuted`), `WindowPlayer` (start admission), `EditWriter` /
+`EditSurface` (NOTE_EDIT), `SetFile` (format version). OpenSpec:
+[`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) "Muted note". Formal trigger: persistent
+state model change (a meaning for a stored bit; set file version 2). Builds on DEC-252, DEC-253.
+**Status:** Accepted by owner (2026-11-08: "a Mute Note sounds most logical", then "Build it").
+
+### Decision
+
+- **Not velocity 0.** A stored NoteOn of velocity 0 is a note off to every reader (playback, tiles, the edit session,
+  the run table) and the set file refuses it, so a silent note is a flag beside the velocity, as other sequencers do.
+- **Representation.** Bit 7 of the NoteOn row's `data2` (`kVelocityMuted`); the 7-bit velocity stays. Every onset test
+  (`data2 != 0`) still sees the note, so pairing, composition, overlap resolve, tiles and the edit session keep it. No
+  new row and no `PassEvent` change (`origin` has no free bit).
+- **One admission owner.** `WindowPlayer` never starts a muted note (`tick`, `beginWindowLate`): no NoteOn, and no
+  NoteOff since the scheduler makes those from started notes. A muted note's composed end counts as a suppressed
+  terminal. The bit reaches no port: only started notes are emitted with their velocity.
+- **Overlap.** A muted note still takes part in overlap resolve: muting never changes which other notes are cut.
+- **Editing.** In NOTE_EDIT's velocity mode (NOTELEN held), F4 at 0 mutes the note keeping its velocity; any other
+  value unmutes it there. `EditNote::velocity` carries the stored byte; the writer validates its 7-bit velocity 1–127.
+- **Format.** `kSetFileVersion` 2; version 1 (never carrying the bit) still loads; a later version is refused by name.
+
+### Evidence
+
+- `test_content_engine_edit_surface` (`test_f4_at_zero_mutes_the_note`: silent while editing and after leaving, the
+  other note still heard, gathered and selectable again, motor to 0 on a long hold, unmuted at 100 and heard),
+  `test_content_engine_piano_roll` (`test_a_muted_note_is_drawn_dim`), `test_content_engine_set_file` (a muted row
+  round-trips; version 1 loads, 3 refused). Mutations 6 / 6 caught; `beginWindowLate`'s skip has no own test.
+- Device image `8be61b2e…`: boot `crash=0`, 22 slots loaded (version-1 copies), 0 failed.

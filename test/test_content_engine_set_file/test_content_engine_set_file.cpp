@@ -138,7 +138,7 @@ static void buildHistory() {
   const RunId a = run(RunKind::kRecord, {row(100, 1, 0x90, 60, 100), row(300, 1, 0x80, 60, 0), row(400, 2, 0x91, 62, 90),
                                          row(900, 2, 0x81, 62, 0), row(2900, 3, 0x90, 64, 80), row(3500, 3, 0x80, 64, 0)});
   const RunId b = run(RunKind::kOverdub, {row(200, 10, 0x90, 60, 70), row(250, 10, 0x80, 60, 0), row(1500, 11, 0xB0, 7, 99)});
-  const RunId e = run(RunKind::kEdit, {row(0, 2, kHideNoteStatus, 0, 0), row(450, 2, 0x91, 63, 90), row(800, 2, 0x81, 63, 0)});
+  const RunId e = run(RunKind::kEdit, {row(0, 2, kHideNoteStatus, 0, 0), row(450, 2, 0x91, 63, kVelocityMuted | 90), row(800, 2, 0x81, 63, 0)});
   const RunId c = run(RunKind::kOverdub, {row(1000, 20, 0x90, 70, 60), row(1100, 20, 0x80, 70, 0)});
   gH.commit(0, manifest({a}, 1));
   gH.commit(0, manifest({a, b}, 2));
@@ -212,6 +212,32 @@ void test_round_trip_keeps_content_history_and_ids() {
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, gH.current(0));  // down to the empty slot, as saved
   TEST_ASSERT_TRUE(gRes.check());
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
+/// `f` with header version `v` and its CRC trailer recomputed.
+static MemoryFile withVersion(const MemoryFile& f, uint16_t v) {
+  MemoryFile g = f;
+  g.bytes[4] = static_cast<uint8_t>(v & 0xFF);
+  g.bytes[5] = static_cast<uint8_t>(v >> 8);
+  const size_t n = g.bytes.size() - 4;
+  const uint32_t crc = crc32Update(0, g.bytes.data(), static_cast<uint32_t>(n));
+  for (int i = 0; i < 4; ++i) g.bytes[n + i] = static_cast<uint8_t>(crc >> (8 * i));
+  return g;
+}
+
+// Version 2 (owner 2026-11-08: a muted note's NoteOn carries `kVelocityMuted`) is written; a version-1 file — which never
+// carries the bit — still loads; a later version is refused by name.
+void test_version_one_loads_and_a_later_one_is_refused() {
+  buildHistory();
+  MemoryFile f;
+  saveSlot(f);
+  TEST_ASSERT_EQUAL_UINT16(kSetFileVersion, static_cast<uint16_t>(f.bytes[4] | (f.bytes[5] << 8)));
+  TEST_ASSERT_EQUAL_UINT16(2, kSetFileVersion);
+  TEST_ASSERT_TRUE(withVersion(f, kSetFileVersion).bytes == f.bytes);  // the trailer recomputed as the save wrote it
+  initEngine();
+  MemoryFile later = withVersion(f, 3), one = withVersion(f, 1);
+  TEST_ASSERT_EQUAL(Load::Status::BadFormat, loadSlot(later));
+  TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(one));
 }
 
 static void expectNothingHeld(uint16_t freePages, uint16_t freeRuns, uint16_t freeManifests) {
@@ -319,6 +345,7 @@ void test_no_heap() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_round_trip_keeps_content_history_and_ids);
+  RUN_TEST(test_version_one_loads_and_a_later_one_is_refused);
   RUN_TEST(test_failures_are_named_and_release_everything);
   RUN_TEST(test_large_take_round_trips_in_bounded_grains);
   RUN_TEST(test_no_heap);

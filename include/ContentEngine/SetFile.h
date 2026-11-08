@@ -34,7 +34,10 @@
 namespace ContentEngine {
 
 constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
-constexpr uint16_t kSetFileVersion = 1;
+// Version 2 (owner 2026-11-08): a note's NoteOn row may carry `kVelocityMuted`. A version-1 file never does, so it
+// loads as it is; older engine firmware refuses version 2 by name rather than sending the bit.
+constexpr uint16_t kSetFileVersion = 2;
+constexpr uint16_t kSetFileOldestVersion = 1;
 constexpr uint32_t kSetFileRowBytes = 16;
 
 inline uint32_t crc32Update(uint32_t crc, const uint8_t* data, uint32_t n) {
@@ -255,7 +258,8 @@ class LoadJob {
       case Phase::Header: {
         uint8_t h[24];
         if (!read(h, sizeof h)) return fail(Status::IoError);
-        if (get32(h) != kSetFileMagic || get16(h + 4) != kSetFileVersion) return fail(Status::BadFormat);
+        if (get32(h) != kSetFileMagic || get16(h + 4) < kSetFileOldestVersion || get16(h + 4) > kSetFileVersion)
+          return fail(Status::BadFormat);
         emptyBelow_ = (h[7] & 1) != 0;
         loop_ = get32(h + 8);
         runCount_ = get16(h + 12);

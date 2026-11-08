@@ -1,3 +1,10 @@
+**2026-11-08 — Fixed-memory engine: muted notes (DEC-255 — muted note as velocity bit 7).**
+- In NOTE_EDIT's velocity mode (NOTELEN held), F4 at 0 mutes the selected note instead of a velocity 0 (a note off):
+  the note keeps its velocity, stays drawn (dim; brighter when selected) and editable, and is never sent; any other
+  F4 value unmutes it there. The velocity cell shows `M`. Bit 7 of the NoteOn's velocity byte; set file version 2
+  (version 1 still loads). Also the hook for a later random note choice (owner). Image `8be61b2e…`, boot verified
+  (22 slots loaded); owner check on the DROID pending.
+
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT velocity on F4 with NOTELEN held.**
 - Holding NOTELEN (35) makes F4 set the selected note's velocity (1–127) instead of its pitch; that press is then no
   short (length mode) or double (delete / create), and on its release F4's motor goes back to the pitch. Not in
