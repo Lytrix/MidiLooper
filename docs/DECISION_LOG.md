@@ -14989,4 +14989,8 @@ owner's request before implementation).
 
 ### Evidence
 
-- To be added per sub-slice (1c-i format and bounds, 1c-ii snapshot and writer, 1c-iii the card file and commands).
+- 1c-i (format and bounds, `include/ContentEngine/Library.h`): `test_content_engine_library` 6 cases — the layout and
+  the 4,300-sector bound (also a `static_assert`), the A / B index header (the newer valid one current, a torn one
+  ignored), records, blob and checkpoint headers (round trip, damage rejected, a torn newer checkpoint leaves the older
+  one current), `LIBRARY FULL` / index-full / too-large refusals, per-stage numbering within a set. Mutations 6 / 6.
+- To be added: 1c-ii snapshot and writer, 1c-iii the card file and commands.
