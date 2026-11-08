@@ -200,6 +200,20 @@ class TrackControl {
       return atLoopStart(selected_, clock);
     return onBar(clock);
   }
+  /// DEC-261: a staged launch takes over `t` at `clock` (seamless, its position 0).
+  Result commitStaged(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    Emit buf[T];
+    uint8_t n;
+    const Result r = x_->commitStaged(t, clock, buf, T, n);
+    out_->route(buf, n, nowUs, usPerTick);
+    cancelQueued(t);  // after: a queued switch would have dropped the staged launch
+    return r;
+  }
+  /// DEC-261: the tracks playing `slot` follow its (just loaded) current state where they are.
+  void followSlot(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    Emit buf[Tracks * T];
+    out_->route(buf, x_->follow(slot, clock, buf, Tracks * T), nowUs, usPerTick);
+  }
   void resetForLoad() {
     for (uint8_t t = 0; t < Tracks; ++t) {
       cancelQueued(t);

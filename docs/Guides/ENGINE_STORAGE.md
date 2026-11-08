@@ -85,11 +85,14 @@ and reads the milestone. If reading fails, the checkpoint is loaded back. `retur
 nothing. A slot the load left empty is written to the store as an empty file, so the next boot does not bring the old
 content back. While playing (DEC-260), the load writes the checkpoint as the set plays on, then waits for the global switch point —
 the next bar, or the selected track's loop end (`!ENGINE switch-at bar|loop`). There the playing tracks stop, the set is
-replaced, and they resume together at the next bar line on the loaded set's selected slots: a gap of about a bar until
-the seamless staged switch (2b-ii).
+replaced, and they resume together at the next bar line on the loaded set's selected slots: a gap of about a bar.
+To avoid the gap (DEC-261), each playing track's destination slot is first *staged*: its current state is loaded beside
+the playing set and composed ahead, so at the switch point that track takes it at position 0 without stopping; once
+the whole set is loaded the track follows the loaded state in place. Only when staging does not fit does a track take
+the gap. `!ENGINE switch-stage 0|1` turns staging off and on.
 
 ## Serial commands (testing)
 
 `!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
-`load <index>`, `return`, `switch-at bar|loop`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
+`load <index>`, `return`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
 `LIBRARY FULL`, `BUSY`. The browser screen and live switching are later slices of the [sets browser proposal](../Plans/engine_sets_browser_proposal.md).

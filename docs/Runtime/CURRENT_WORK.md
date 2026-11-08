@@ -18,6 +18,9 @@ recovery checkpoint and failure restore (DEC-259). Then 2b: the global switch po
 **2026-11-09 — slice 2b-i (owner: "Short gap" when a switch does not fit):** live load and return at the global
 switch point, resuming on the next bar (DEC-260). Then 2b-ii: staged, gapless switching when the destination fits.
 
+**2026-11-09 — slice 2b-ii (owner: "Staged switch (2b-ii)"):** gapless live switching by staging the playing
+tracks' destination slots (DEC-261). Slice 2 complete; slice 3 (browser screen) on the owner's go.
+
 **Documentation maintenance (2026-11-08, owner requested):** README and the
 [engine guide](../Guides/FIXED_MEMORY_ENGINE.md) refreshed against the engine sources; legacy guides marked by
 runtime. Browser images remain proposal previews. This docs-only work does not expand the browser slice or close

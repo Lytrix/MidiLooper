@@ -15103,3 +15103,45 @@ switch takes until 2b-ii.
   grain by phase — checkpoint 52 µs, clear 69–158 µs, read 521–1,078 µs. Launching three tracks without any load
   already reaches 1,186 µs grains (playback's own launch cost), so the read phase is in that range; both are above the
   ~800 µs grain bound and are revisited with 2b-ii's staging.
+
+## DEC-261 — A live switch stages the destination's playing slots and switches without a gap when they fit (sets browser 2b-ii)
+
+**Status:** Accepted (owner 2026-11-09: "Staged switch (2b-ii)"; owner 2026-11-08: a live switch should be seamless,
+"will it use the prewarm logic"; a switch that does not fit takes the short gap of DEC-260).
+**Context:** DEC-260's live load stops every track at the switch point and resumes on the next bar — about a bar of
+silence although the load takes ~65 ms. Playback already launches a slot seamlessly by composing its first window
+ahead (a queued switch); what is missing is the destination's content before the old set is replaced.
+
+### Decision
+
+- **Staging.** After the checkpoint, the load reads the destination's header and, for each track playing at the request,
+  loads that track's selected slot's **current state** beside the playing set — `LoadJob`'s detached mode: the file's
+  states are built and all but the current released; the slot's history is not touched; the manifest is the load's
+  until it gives it back. Only those slots, only their current state: the histories load after the switch.
+- **Composed ahead.** While the load waits for the switch point, each staged track still playing gets a launch of its
+  staged content (`SlotTransport::launchStaged`), composing its first window as a queued switch does.
+- **The switch.** At the switch point a staged track takes its launch at position 0 on that tick
+  (`commitStaged`: whatever the slot's history holds, which the switch replaces); a playing track without staged
+  content stops and takes DEC-260's gap. Then the old set is cleared, its runs reclaimed before the destination admits
+  its rows, and the destination's histories load.
+- **After the load** each staged track follows its slot's loaded state where it is (`follow`, as a NOTE_EDIT publish:
+  the same content, no restart) and the staged references are given back. If the load did not replace the set as asked
+  (restored, or nothing changed), the staged tracks stop and resume with the gapped ones on the next bar.
+- **Not fitting** — staging refused for capacity or a read error — leaves nothing staged: every track takes the gap.
+  `!ENGINE switch-stage 0|1` turns staging off and on (diagnostics; on by default).
+
+### Evidence
+
+- Host: `test_content_engine_library_loader` (staging loads the selected slot's current state — loop length, runs and
+  rows as at the milestone, an earlier slot skipped on the card — and touches no history; the caller gives the staged
+  manifest back; the cleared set is reclaimed before the read); `test_content_engine_persistence` (EngineRoot): track 1
+  switches on the bar line without stopping (its position 0 on the switch tick, origin unchanged afterwards) to the
+  milestone's slot 9 although the set's own slot 9 had been cleared, track 0 takes the gap, after the load track 1
+  plays the loaded state's identity and no manifest leaks; with staging off the gap path as DEC-260. Mutations
+  10 / 10 (detached ignored or keeping nothing, skipped slots' sectors, no reclaim before the read, the staged launch
+  not prepared, staged tracks stopped, no follow, staged never released, staging ignoring the selection, the commit
+  consulting the slot's history). RAM2 +16 B, PSRAM +192 B (host layout).
+- Device (image `5674d8ec…`, boot `BOOT,load,ok`; tracks 1, 4 and 7 playing): staged — all three switched on the bar
+  (tick 2304, `staged=92`), followed the loaded states 27 ticks later; staging off — the same load stopped them and
+  resumed them a bar later (tick 7680). Worst grain by phase with staging: checkpoint/stage 561 µs, clear 344 µs, read
+  1,195 µs (the read phase includes the staged tracks' own composing; playback's launches alone reach ~1.2 ms).

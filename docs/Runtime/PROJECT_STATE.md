@@ -1,3 +1,12 @@
+**2026-11-09 — Engine sets browser, slice 2b-ii — gapless live switch (DEC-261).**
+- A live load now stages each playing track's destination slot (its current state, loaded beside the playing set and
+  composed ahead); at the switch point those tracks take it at position 0 without stopping, then follow the loaded set
+  in place. Only a track whose staging does not fit takes the bar gap. `!ENGINE switch-stage 0|1`.
+- Device: three tracks switched on the bar with no gap (`staged=92`) and followed the loaded states 27 ticks later;
+  with staging off the same load resumed a bar later. Image `5674d8ec…`, boot verified. Native 4,432 passed;
+  mutations 10 / 10. Owner listening check pending (no stuck or doubled notes at the switch).
+- Next per the proposal: slice 3, the browser screen and controls.
+
 **2026-11-09 — Engine sets browser, slice 2b-i — live load at the switch point (DEC-260).**
 - `load` / `return` now work while playing: the checkpoint is written as the set plays on, the switch happens at the
   global switch point (`!ENGINE switch-at bar|loop`, kept in EEPROM), and the tracks that played resume together on

@@ -151,13 +151,14 @@ struct EngineRam2 {
 // windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
 // tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
-// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,364 (DEC-259: its blob
-// reader and slot-file load job). The line is the host's 64-bit layout, 552 B above the Teensy's 6,821,248. RAM2: the
+// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,552 (DEC-259: its blob
+// reader and slot-file load job; DEC-261: its staged states). The line is the host's 64-bit layout, 560 B above the
+// Teensy's 6,821,432. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6821800u;
-constexpr size_t kRam2Budget = 154400u;  // measured (DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kPsramBudget = 6821992u;
+constexpr size_t kRam2Budget = 154416u;  // measured (DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -235,6 +236,8 @@ class EngineRoot {
     card_ = nullptr;
     persistLive_ = false;
     switched_ = 0;
+    stagedPlaying_ = 0;
+    stagedLaunched_ = false;
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -243,6 +246,8 @@ class EngineRoot {
 
   /// Once per main-loop pass at Clock tick `clock` (`nowUs`, `usPerTick`): the jobs that are due.
   void submitJobs(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    if (p_->setLoad.waiting() && p_->setLoad.stagingDone() && !stagedLaunched_) launchStaged();
+    if (stagedLaunched_ && !p_->setLoad.busy()) endStaged(clock, nowUs, usPerTick);
     if (switched_ != 0 && !p_->setLoad.busy()) resumeSwitched(clock);
     uint32_t now[kTrackCount];
     for (uint8_t t = 0; t < kTrackCount; ++t) now[t] = clock - r_->transport.origin(t);
@@ -379,10 +384,18 @@ class EngineRoot {
   /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends. `live` (the
   /// clock runs, DEC-260): the set plays on until the switch point, where every playing track stops; the loaded set's
   /// tracks resume together at the first bar after the load (a short gap).
+  /// A live load stages the playing tracks' destination slots first (DEC-261): those switch without a gap.
   ProductionSetLoad::Result loadMilestone(uint16_t index, const ProductionLibrary::Checkpoint& c, bool live = false) {
-    return p_->setLoad.beginLoad(index, c, live);
+    return p_->setLoad.beginLoad(index, c, live, live ? stageMask() : 0);
   }
-  ProductionSetLoad::Result returnToCheckpoint(bool live = false) { return p_->setLoad.beginReturn(live); }
+  ProductionSetLoad::Result returnToCheckpoint(bool live = false) {
+    return p_->setLoad.beginReturn(live, live ? stageMask() : 0);
+  }
+  /// Staging on (default) or off (every live switch takes the gap; diagnostics, DEC-261).
+  void setStaging(bool on) { staging_ = on; }
+  bool staging() const { return staging_; }
+  /// The tracks a live switch took over seamlessly (bit t), until they follow the loaded set.
+  uint8_t stagedTracks() const { return stagedPlaying_; }
   /// The global switch point (DEC-260): the next bar, or the selected track's loop end.
   void setSwitchAt(ProductionControl::SwitchAt at) { switchAt_ = at; }
   ProductionControl::SwitchAt switchAt() const { return switchAt_; }
@@ -576,16 +589,55 @@ class EngineRoot {
     e.rebuildLive_ = false;
     return JobStep::Done;
   }
-  /// The switch point of a live load: each playing track stops (its notes end; its slot kept for a load that changes
-  /// nothing), then the load clears and reads.
+  uint8_t stageMask() const {
+    uint8_t mask = 0;
+    for (uint8_t t = 0; t < kTrackCount; ++t)
+      if (staging_ && r_->transport.playing(t)) mask = static_cast<uint8_t>(mask | (1u << t));
+    return mask;
+  }
+  /// The switch point of a live load: a track whose staged launch is ready takes it now, at its position 0 (DEC-261);
+  /// any other playing track stops (its notes end) for the gap. Each keeps its slot for a load that changes nothing.
+  /// Then the load clears and reads.
   void switchSet(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     for (uint8_t t = 0; t < kTrackCount; ++t) {
       if (!r_->transport.playing(t)) continue;
-      switched_ |= static_cast<uint8_t>(1u << t);
       switchedSlot_[t] = r_->transport.playingSlot(t);
+      const uint8_t bit = static_cast<uint8_t>(1u << t);
+      if (r_->transport.stagedLaunch(t) && r_->control.commitStaged(t, clock, nowUs, usPerTick) == ProductionControl::Result::Ok) {
+        stagedPlaying_ |= bit;
+        continue;
+      }
+      switched_ |= bit;
       r_->control.stopTrack(t, clock, nowUs, usPerTick);
     }
     p_->setLoad.release();
+  }
+  /// While a live load waits: its staged content composes ahead on the tracks still playing (as a queued switch).
+  void launchStaged() {
+    stagedLaunched_ = true;
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      const ManifestId m = p_->setLoad.staged(t);
+      if (m != kNoManifest && r_->transport.playing(t)) r_->transport.launchStaged(t, p_->setLoad.stagedSlot(t), m);
+    }
+  }
+  /// After a live load: the tracks that switched seamlessly follow the loaded states where they are (the same content);
+  /// if the load did not replace the set as asked, they stop and resume with the gapped tracks. The staged references
+  /// go back.
+  void endStaged(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    const bool loaded = p_->setLoad.status() == ProductionSetLoad::Status::Done;
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      const uint8_t bit = static_cast<uint8_t>(1u << t);
+      if (!(stagedPlaying_ & bit)) continue;
+      if (loaded) {
+        r_->control.followSlot(r_->transport.playingSlot(t), clock, nowUs, usPerTick);
+      } else {
+        r_->control.stopTrack(t, clock, nowUs, usPerTick);
+        switched_ |= bit;
+      }
+    }
+    stagedPlaying_ = 0;
+    stagedLaunched_ = false;
+    p_->setLoad.releaseStaged();
   }
   /// After a live load: the tracks it stopped resume together at the next bar — the loaded set's selected slot on each
   /// (the checkpoint's after a restore), or the slot it played when the load changed nothing.
@@ -648,6 +700,9 @@ class EngineRoot {
   ProductionControl::SwitchAt switchAt_ = ProductionControl::SwitchAt::NextBar;
   uint8_t switched_ = 0;
   uint8_t switchedSlot_[kTrackCount] = {};
+  // DEC-261: staging on; the staged launches made; the tracks that switched to staged content.
+  bool staging_ = true, stagedLaunched_ = false;
+  uint8_t stagedPlaying_ = 0;
   CardIo* card_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   static constexpr uint32_t kPersistGrains = 2000;

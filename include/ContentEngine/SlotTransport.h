@@ -119,6 +119,7 @@ class SlotTransport {
       origin_[i] = 0;
       playing_[i] = false;
       launchSlot_[i] = kNoSlot;
+      staged_[i] = kNoManifest;
     }
     mode_ = Mode::Idle;
     wTrack_ = 0;
@@ -408,8 +409,34 @@ class SlotTransport {
     return Result::Ok;
   }
   uint8_t launchingSlot(uint8_t track) const { return launchSlot_[track]; }
+  /// Sets browser 2b-ii (DEC-261): `track` composes a launch of `m` — a set switch's staged content, not `slot`'s
+  /// history (which the switch replaces) — for `commitStaged`.
+  void launchStaged(uint8_t track, uint8_t slot, ManifestId m) {
+    tracks_[track]->launch(slot, m);
+    launchSlot_[track] = slot;
+    staged_[track] = m;
+  }
+  bool stagedLaunch(uint8_t track) const { return staged_[track] != kNoManifest && launchSlot_[track] != kNoSlot; }
+  /// The staged launch plays from Clock tick `clock` (its position 0) whatever its slot's history holds then; what
+  /// sounded ends now (`out`, at least T).
+  Result commitStaged(uint8_t track, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    const uint8_t slot = launchSlot_[track];
+    const ManifestId m = staged_[track];
+    if (slot == kNoSlot || m == kNoManifest) return Result::NoChange;
+    if (mode_ != Mode::Idle && wTrack_ == track) return Result::Busy;
+    launchSlot_[track] = kNoSlot;
+    staged_[track] = kNoManifest;
+    if (!tracks_[track]->launchPending()) tracks_[track]->launch(slot, m);
+    emitted = stamp(track, out, tracks_[track]->commitLaunch(out, max));
+    slot_[track] = slot;
+    origin_[track] = clock;
+    playing_[track] = true;
+    return Result::Ok;
+  }
   /// A launch in progress for `track` is dropped (a queued switch cancelled or replaced).
   void stopLaunch(uint8_t track) {
+    staged_[track] = kNoManifest;
     if (launchSlot_[track] == kNoSlot) return;
     launchSlot_[track] = kNoSlot;
     tracks_[track]->cancelLaunch();
@@ -681,6 +708,7 @@ class SlotTransport {
   uint8_t slot_[Tracks] = {};
   bool playing_[Tracks] = {};
   uint8_t launchSlot_[Tracks] = {};  // a launch composing for the track (kNoSlot: none)
+  ManifestId staged_[Tracks] = {};   // DEC-261: that launch is a set switch's staged content (kNoManifest: none)
   uint32_t origin_[Tracks] = {};
   Mode mode_ = Mode::Idle;
   uint8_t wTrack_ = 0, wSlot_ = kNoSlot;

@@ -359,8 +359,9 @@ uint32_t gBase = 0;
 uint16_t gSet = 1;
 ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
 uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work (DEC-260)
-uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint, clear, read
+uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint / stage, clear, read
 uint8_t gSwitchedWas = 0;      // the tracks a live load stopped, as last reported
+uint8_t gStagedWas = 0;        // the tracks it switched without a gap, as last reported (DEC-261)
 
 /// The tempo in tenths of a BPM (as LOOP_EDIT shows it).
 uint16_t tempoTenthsNow() {
@@ -537,13 +538,20 @@ void applyLoaded(const library::BlobHeader& b) {
 void serviceLoad() {
   // The clock stopped while a live load waited for its switch point: it switches now.
   if (!gClock.running() && gEngine.setLoad().waiting()) gEngine.switchNow(gLastTick, micros(), gClock.usPerTick());
-  const uint8_t switched = gEngine.switchedTracks();
-  if (switched != gSwitchedWas) {  // the switch point, and the loaded set resuming (the gap between them)
-    // The resume is queued here and plays from the next bar line (`at=`).
-    Serial.printf("#ENGINE,%s,tick=%lu,tracks=%02x,at=%lu\n", switched != 0 ? "switch" : "resume",
-                  static_cast<unsigned long>(gLastTick), switched != 0 ? switched : gSwitchedWas,
-                  static_cast<unsigned long>(switched != 0 ? gLastTick : (gLastTick / kTicksPerBar + 1) * kTicksPerBar));
-    gSwitchedWas = switched;
+  const uint8_t gapped = gEngine.switchedTracks(), staged = gEngine.stagedTracks();
+  if (gapped != gSwitchedWas || staged != gStagedWas) {
+    // The switch point: `staged` tracks took the loaded set there without a gap (DEC-261), `gapped` ones stopped; then
+    // the staged ones follow the loaded states (`followed`) and the gapped ones resume from the next bar line (`at=`).
+    if ((gSwitchedWas | gStagedWas) == 0)
+      Serial.printf("#ENGINE,switch,tick=%lu,staged=%02x,gapped=%02x\n", static_cast<unsigned long>(gLastTick), staged,
+                    gapped);
+    if (gStagedWas != 0 && staged == 0)
+      Serial.printf("#ENGINE,followed,tick=%lu,tracks=%02x\n", static_cast<unsigned long>(gLastTick), gStagedWas);
+    if (gSwitchedWas != 0 && gapped == 0)
+      Serial.printf("#ENGINE,resume,tick=%lu,tracks=%02x,at=%lu\n", static_cast<unsigned long>(gLastTick), gSwitchedWas,
+                    static_cast<unsigned long>((gLastTick / kTicksPerBar + 1) * kTicksPerBar));
+    gSwitchedWas = gapped;
+    gStagedWas = staged;
   }
   const ProductionSetLoad& l = gEngine.setLoad();
   const ProductionSetLoad::Status st = l.status();
@@ -582,7 +590,7 @@ void serviceLoad() {
     default:
       break;
   }
-  Serial.printf("#ENGINE,%s,grains_us,checkpoint=%lu,clear=%lu,read=%lu\n", verb,
+  Serial.printf("#ENGINE,%s,grains_us,checkpoint_stage=%lu,clear=%lu,read=%lu\n", verb,
                 static_cast<unsigned long>(gLoadPhaseMaxUs[0]), static_cast<unsigned long>(gLoadPhaseMaxUs[1]),
                 static_cast<unsigned long>(gLoadPhaseMaxUs[2]));
   reportLibrary(verb);
@@ -703,6 +711,9 @@ void command(char* line, uint32_t nowUs) {
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeSwitchAt(ProductionControl::SwitchAt::NextBar);
     if (arg != nullptr && std::strcmp(arg, "loop") == 0) storeSwitchAt(ProductionControl::SwitchAt::LoopEnd);
     Serial.printf("#ENGINE,switch-at,%s\n", switchAtName());
+  } else if (std::strcmp(verb, "switch-stage") == 0) {  // switch-stage 0|1: staged (gapless) live switches (DEC-261)
+    if (arg != nullptr) gEngine.setStaging(a != 0);
+    Serial.printf("#ENGINE,switch-stage,%u\n", gEngine.staging() ? 1u : 0u);
   } else if (std::strcmp(verb, "load") == 0 || std::strcmp(verb, "return") == 0) {
     startLoad(verb, arg, nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
@@ -948,7 +959,7 @@ void crumb(uint32_t stage) {
 /// One worker grain; its time counts towards a load's worst grain while the library has card work (DEC-260).
 bool timedGrain() {
   const bool working = gEngine.libraryWorking();
-  const uint8_t phase = gEngine.setLoad().phase();
+  const uint8_t phase = gEngine.setLoad().phase() >= 4 ? 2 : gEngine.setLoad().phase() >= 2 ? 1 : 0;
   const uint32_t t = micros();
   const bool ran = gEngine.runGrain(t);
   if (ran && working) {

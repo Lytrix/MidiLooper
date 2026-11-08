@@ -252,6 +252,7 @@ void test_a_load_brings_the_milestone_back_histories_included() {
   TEST_ASSERT_EQUAL_UINT16(1200, gL.blob().tempoTenths);
   TEST_ASSERT_EQUAL_UINT8(1, gL.blob().surface[0]);
   TEST_ASSERT_TRUE(gRes.check());
+  TEST_ASSERT_EQUAL_UINT16(0, gRuns.reclaimPendingRuns());  // the cleared set reclaimed before the read
 }
 
 void test_the_checkpoint_holds_the_set_before_the_load_and_return_brings_it_back() {
@@ -356,6 +357,34 @@ void test_a_live_load_waits_for_the_switch_point_before_it_clears() {
   TEST_ASSERT_EQUAL(1, gClears);
 }
 
+/// DEC-261: staging loads the selected slot's current state beside the set (slot 0 skipped on the card), detached: the
+/// histories stay as they are until the switch.
+void test_staging_loads_the_selected_slot_beside_the_set() {
+  buildSet();
+  LibWriter::Milestone m = milestone(Stage::Take, 1);
+  m.surface[1] = 2;  // track 0 selects slot 2
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMilestone(gPool, gRuns, gManifests, gH, gIds.peek(), m, gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  changeSet();
+  const auto beforeLoad = setNow();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginLoad(0, before(), true, 0x1));
+  for (int i = 0; i < 100000 && !gL.waiting(); ++i) gL.step();
+  TEST_ASSERT_TRUE(gL.waiting() && gL.stagingDone());
+  const ManifestId staged = gL.staged(0);
+  TEST_ASSERT_TRUE(staged != kNoManifest);
+  TEST_ASSERT_EQUAL_UINT8(2, gL.stagedSlot(0));
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, gManifests.manifest(staged).loopLengthTicks);  // slot 2's, as at the milestone
+  TEST_ASSERT_EQUAL_UINT8(1, gManifests.manifest(staged).runCount);
+  TEST_ASSERT_EQUAL_UINT32(4, gRuns.run(gManifests.manifest(staged).runs[0]).rowCount);
+  TEST_ASSERT_TRUE(setNow() == beforeLoad);  // no history touched
+  gL.release();
+  TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
+  TEST_ASSERT_TRUE(gManifests.manifest(staged).live);  // the caller's until it gives it back
+  const uint16_t free = gManifests.freeCount();
+  gL.releaseStaged();
+  TEST_ASSERT_EQUAL_UINT16(free + 1, gManifests.freeCount());
+}
+
 void test_refusals() {
   buildSet();
   TEST_ASSERT_EQUAL(Loader::Result::NoCheckpoint, gL.beginReturn());
@@ -402,6 +431,7 @@ int main(int, char**) {
   RUN_TEST(test_a_checkpoint_that_cannot_be_written_changes_nothing);
   RUN_TEST(test_a_refused_clear_changes_nothing);
   RUN_TEST(test_a_live_load_waits_for_the_switch_point_before_it_clears);
+  RUN_TEST(test_staging_loads_the_selected_slot_beside_the_set);
   RUN_TEST(test_refusals);
   RUN_TEST(test_clearing_releases_the_set);
   RUN_TEST(test_no_heap);

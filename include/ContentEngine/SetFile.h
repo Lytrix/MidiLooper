@@ -247,9 +247,11 @@ class LoadJob {
   static constexpr uint8_t kMaxStates = Config::kHistoryDepth;
   using Reservations = RowReservations<Pool, Runs>;
 
-  /// Starts loading into `slot`, which must have no history. `scratch` holds ChunkBytes.
+  /// Starts loading into `slot`, which must have no history. `scratch` holds ChunkBytes. `detached` (sets browser 2b-ii,
+  /// DEC-261: a switch's staged content): the slot's history is left as it is; only the file's current state is kept,
+  /// as a manifest the caller owns (`detachedState`, one reference), and the other states are released.
   Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
-               uint8_t slot, Source& source, uint8_t* scratch) {
+               uint8_t slot, Source& source, uint8_t* scratch, bool detached = false) {
     cancel();
     pool_ = &pool;
     runs_ = &runs;
@@ -266,10 +268,12 @@ class LoadJob {
     r_ = 0;
     row_ = 0;
     phase_ = Phase::Header;
+    detached_ = detached;
+    detachedState_ = kNoManifest;
     ManifestId probe[1];
     int16_t cur;
     bool below;
-    if (history.chain(slot, probe, 1, cur, below) != 0) return status_ = Status::DeniedSlot;
+    if (!detached && history.chain(slot, probe, 1, cur, below) != 0) return status_ = Status::DeniedSlot;
     return status_ = Status::Running;
   }
 
@@ -363,6 +367,14 @@ class LoadJob {
         if (get32(t) != computed) return fail(Status::BadCrc);
         for (uint16_t k = 0; k < runCount_; ++k) runs_->release(run_[k]);  // the manifests hold the runs now
         runCount_ = 0;
+        if (detached_) {  // the current state only, the caller's; the others (and runs only they listed) released
+          for (uint8_t i = 0; i < made_; ++i)
+            if (i == current_) detachedState_ = made_list_[i];
+            else manifests_->release(made_list_[i], *runs_);
+          made_ = 0;
+          while (ids_->peek() <= noteIdHigh_) ids_->advance();
+          return status_ = Status::Done;
+        }
         if (!history_->restoreSlot(slot_, made_list_, made_, current_, emptyBelow_)) {
           for (uint8_t i = 0; i < made_; ++i) manifests_->release(made_list_[i], *runs_);
           made_ = 0;
@@ -380,6 +392,8 @@ class LoadJob {
     if (status_ == Status::Running) fail(Status::Idle);
   }
   Status status() const { return status_; }
+  /// A detached load's current state (kNoManifest: the file's current is the empty slot).
+  ManifestId detachedState() const { return detachedState_; }
 
  private:
   enum class Phase : uint8_t { Header, Rows, States, Check };
@@ -416,7 +430,8 @@ class LoadJob {
   uint8_t* scratch_ = nullptr;
   uint8_t slot_ = 0, states_ = 0, made_ = 0;
   int16_t current_ = -1;
-  bool emptyBelow_ = true;
+  bool emptyBelow_ = true, detached_ = false;
+  ManifestId detachedState_ = kNoManifest;
   uint32_t loop_ = 0, crc_ = 0, noteIdHigh_ = 0, row_ = 0;
   uint16_t runCount_ = 0, r_ = 0;
   Phase phase_ = Phase::Header;
