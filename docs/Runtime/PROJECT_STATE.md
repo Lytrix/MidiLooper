@@ -4,7 +4,10 @@
   length large, the gestures small. The button that opened it then taps: one tap adds a bar, a quick burst of n taps
   sets 2^(n−1) bars (2 → 2, 3 → 4, 4 → 8, 5 → 16 … 128); F2 sets the length too, in performance mode as well. It hides
   3 s after the last change; its changes are one undo step. Not done: the encoder (the DROID patch has none; legacy's
-  CC 4 is on channel 1, the recording channel). Image `7f186df8…`, boot verified; the window's look not yet seen.
+  CC 4 is on channel 1, the recording channel). Image `7f186df8…`, boot verified.
+- Then: the drop shadow is dim (level 3; black vanished on the dark screen) and the hint reads "TAP +1" (3 × 5 `+` and
+  `/` added). Seen on the device through MIDI and `!ENGINE fbdump` (owner allowed changing the dev set): a long press
+  on track 2 slot 1 and three taps showed "4 BARS", BARS 4, one undo step. Image `5f00b0d7…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
 - Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or

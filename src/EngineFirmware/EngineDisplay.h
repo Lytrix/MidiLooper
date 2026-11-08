@@ -244,7 +244,7 @@ class EngineDisplay {
   /// Bit 14 is the top-left pixel, rows of 3 (row-major).
   static uint16_t micro(char c) {
     static const struct { char c; uint16_t bits; } kGlyphs[] = {
-        {'-', 0x01C0}, {'0', 0x2B6A}, {'1', 0x2C97}, {'2', 0x62A7}, {'3', 0x628E}, {'4', 0x5BC9}, {'5', 0x798E},
+        {'-', 0x01C0}, {'+', 0x05D0}, {'/', 0x12A4}, {'0', 0x2B6A}, {'1', 0x2C97}, {'2', 0x62A7}, {'3', 0x628E}, {'4', 0x5BC9}, {'5', 0x798E},
         {'6', 0x39AA}, {'7', 0x7292}, {'8', 0x2AAA}, {'9', 0x2ACE}, {'A', 0x2BED}, {'B', 0x6BAE}, {'C', 0x3923},
         {'D', 0x6B6E}, {'E', 0x79A7}, {'F', 0x79A4}, {'G', 0x396B}, {'H', 0x5BED}, {'I', 0x7497}, {'J', 0x126A},
         {'K', 0x5BAD}, {'L', 0x4927}, {'M', 0x5F6D}, {'N', 0x6B6D}, {'O', 0x2B6A}, {'P', 0x6BA4}, {'Q', 0x2B6B},
@@ -306,11 +306,11 @@ class EngineDisplay {
   }
 
   /// The length popup (owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen
-  /// around it): a window over the roll — black drop shadow, bright frame, inverted title bar with the slot, the length
-  /// large in the middle, the gestures in small letters.
+  /// around it): a window over the roll — a dim drop shadow (black would vanish on the dark screen), bright frame,
+  /// inverted title bar with the slot, the length large in the middle, the gestures in small letters.
   void drawPopup() {
     constexpr int16_t x0 = 72, y0 = 6, x1 = 183, y1 = 41, sh = 3;
-    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 0);  // the shadow
+    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 3);  // the shadow: dim, so it reads on black
     oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 1);                      // the window
     oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y0 + 8, 13);                 // the title bar
     for (int16_t x = x0; x <= x1; ++x) {                                      // the frame
@@ -329,7 +329,7 @@ class EngineDisplay {
     snprintf(value, sizeof value, "%s %s", len, edit_.popupLoop > kBar ? "BARS" : "BAR");
     const int16_t w = static_cast<int16_t>(strlen(value)) * 6 - 1;
     text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 22), 15);
-    label("TAP 1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y1 - 7), 6);
+    label("TAP +1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y1 - 7), 6);
   }
 
   /// The legacy track letter for track `t`.
