@@ -118,8 +118,10 @@ return row is one step up.
 
 ## 6. Decided (owner 2026-11-08) and still open
 
-1. **Opening during NOTE_EDIT / LOOP_EDIT is refused.** `HOLD TRACK` there opens nothing; the status band shows
-   `LEAVE EDIT FIRST` for a moment. The edit is untouched.
+1. **The browser always opens, whatever the mode.** `HOLD TRACK` during NOTE_EDIT or LOOP_EDIT first closes the edit
+   and keeps everything in it — NOTE_EDIT's changes as its one undo step, LOOP_EDIT's visit as its one step, a fader
+   still settling applied first — then opens the browser on `+ SAVE VERSION`. So a save from inside an edit includes
+   that edit. After the browser closes the surface is in performance mode.
 2. **Loading while playing switches live**, so songs can be changed in performance: the destination loads in the
    background (the row shows `LOADING`) and switches in at a global **load switch** point — **the next bar** or **the
    loop end** (the next start of the longest playing loop) — one setting for the whole instrument (default: next bar;
