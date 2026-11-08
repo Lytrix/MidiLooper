@@ -3,7 +3,7 @@
   of a step a fader gesture: micro-adjustments no longer pile up steps, and one undo takes back all of a note's edits.
   Image `f6bd255d…`; owner confirmed on the DROID (and the length-mode bracket below). The EDIT count counts a note's
   step once it is deselected (`EditSurface::steps`; owner: it did not change at deselect). Image `59f854c3…`, boot
-  verified; owner check of the count pending.
+  verified; owner confirmed on the DROID.
 
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT's bracket follows the end in length mode.**
 - In length mode the bracket stayed at the end it jumped to when the mode began; it now follows the selected note's
