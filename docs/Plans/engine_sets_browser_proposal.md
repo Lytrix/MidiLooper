@@ -168,9 +168,10 @@ the destination popup, reusing the same list and popup components — the browse
 
 ## 8. Storage and slices
 
-* `/MidiLooper/library/SET####/M####.mlv` — a milestone (header: stage, stage number, parent, RTC time, metrics,
-  mosaic; every slot with its undo history; tempo; surface state); `index.bin` (one record a milestone; the browser
-  reads only this); `recovery/R0001.mlv` (the one checkpoint, same format, never listed as a milestone).
+* Storage (DEC-258, accepted 2026-11-08): one preallocated 1 GiB `/MidiLooper/library/library.bin` — index header
+  A / B, 4,096 index records, two checkpoint regions, an append-only milestone log — whole-set snapshots captured at one
+  instant, a transactionally replaced checkpoint, a durably published index, stopped-only preallocation, a 4,300-sector
+  bound per set and `LIBRARY FULL` refused before writing.
 * The working set's base milestone and the evidence flags for the suggestion live in the store's state record (27 bits
   today: a wider record, a store format change with a DEC).
 * Slices: (1) the RTC (read, validity, `TIME NOT SET`, set-time command, offset), milestone and checkpoint files, index,

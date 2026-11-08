@@ -14935,3 +14935,58 @@ original lengths and wrap at the loop end in force); implementation in slices.
   used instead of a window over the runs, which would have changed the composer's ordering at a moved loop seam.
 - Evidence: `test_loop_edit_f1_rotates_the_loop_start`, mutations 7 / 7; native full suite 4,401 cases, 0 failed;
   device image `c44cc4ea…`, boot `crash=0`, 23 slots loaded.
+
+## DEC-258 — Milestones live in one preallocated library file: whole-set snapshots, a transactional checkpoint, a durably published index
+
+**Date:** 2026-11-08
+**Owner:** a library job inside `ContentEngine::Persistence` (one card cursor with autosave); `SdCardIo` (the file);
+the sets browser (`docs/Plans/engine_sets_browser_proposal.md`, slice 1c). Formal trigger: persistent state model
+change (a new on-card format). Builds on DEC-253 (the store), DEC-256 / DEC-257 (what a slot state can hold).
+**Status:** Accepted by owner (2026-11-08: "comfortable with reserving 1 GB"; the contract below tightened at the
+owner's request before implementation).
+
+### Decision
+
+- **One file, preallocated, sector I/O only.** `/MidiLooper/library/library.bin`, 1 GiB (2,097,152 sectors) in one
+  contiguous run, then only read and written by sector — no file-system work after it is opened, as the store (every
+  file-system operation took 4–8 ms on the device). Layout: sectors 0–1 the index header (A / B), sectors 2–513 the
+  index records (64 B, 8 a sector: 4,096 milestones), then two checkpoint regions (A / B, 4,301 sectors each: a header
+  and the largest set), then the milestone log (2,088,036 sectors), append-only.
+- **Stopped-only preallocation.** Creating and preallocating the file is file-system work that may take seconds; it
+  runs only with the transport stopped and no take open — at boot once saving is approved, or right after the approval
+  — never while playing. A save asked for while the library is not open is refused by name (`LIBRARY NOT READY`), and
+  says why at boot (`#ENGINE,library,...`: no contiguous room, no card, not approved).
+- **A consistent whole-set snapshot.** A milestone is the whole working set at one instant T0: every slot's history
+  chain (its states, current index, empty-below flag) is captured at T0 and every captured manifest pinned until the
+  write ends, with the note-id high-water mark, the tempo and the surface state of T0. Slots are then serialised one
+  after another from that capture (the slot-file format of DEC-253's `SaveJob`, version 3), never from the live
+  history, so changes made while it writes are not in it. Refused while a take records or an overdub session is open
+  (`STOP THE TAKE FIRST`); an open NOTE_EDIT / LOOP_EDIT is closed and kept before the browser opens (owner). Autosave
+  waits while a milestone writes (one card cursor). Capacity: the captured states are at most the 99 history states;
+  states replaced during the write stay pinned, so at most 99 more manifest slots are held — 154 + 99 = 253 ≤ 256
+  (`kManifestCount`); their runs' rows stay allocated until the write ends, so a recording begun meanwhile may be
+  refused for capacity by name.
+- **Complete-set capacity bound.** A set holds at most every content row (134,304 = committed 131,072 + one writer's
+  reserve 160 + the edit reserve 3,072), each of the 520 runs once, 99 states and 64 slot headers: 2,168,181 B of slot
+  files; with each slot sector-aligned and a header sector, **4,300 sectors (2.2 MB)** — a compile-time bound
+  (`static_assert`). The checkpoint regions are sized to it; the log holds at least 485 milestones of that size,
+  thousands of ordinary ones.
+- **Durable index publication.** A milestone becomes visible in one order: its blob (header + slot files, each with its
+  CRC) is written into the log at the append point and programmed (the card idle); then its index record (stage, stage
+  number, set, parent, internal sequence, wall time, metrics, mosaic, log offset and length, CRC); then the index
+  header (count, append point, sequence, CRC) into the A / B sector not current, programmed. Boot reads the valid
+  header with the higher sequence and ignores records and log space beyond it, so an interrupted write leaves no
+  milestone and its space is reused.
+- **One logical checkpoint, replaced transactionally.** Before a load the working set is snapshot (as above) into the
+  checkpoint region not current; its header (sequence, what it was, wall time, CRC) is written last and programmed;
+  only then may the load begin. The previous checkpoint stays valid until the new header is durable, so a failure at
+  any point leaves one valid checkpoint; a checkpoint that cannot be written cancels the load (`COULD NOT KEEP CURRENT
+  - LOAD CANCELLED`).
+- **Disk full.** Preallocation means no write ever extends the file, so the card cannot fill mid-write. Before writing,
+  the blob's exact size is computed from the capture (rows, runs and states are known at T0); a save that does not
+  fit the remaining log, or a 4,097th milestone, is refused before anything is written (`LIBRARY FULL`), nothing
+  changed. A card write error ends the write unpublished (`SAVE FAILED`, nothing changed, the space reused).
+
+### Evidence
+
+- To be added per sub-slice (1c-i format and bounds, 1c-ii snapshot and writer, 1c-iii the card file and commands).
