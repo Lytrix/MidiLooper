@@ -55,6 +55,8 @@ template <typename Pool, typename Runs>
 class Writer {
  public:
   using Reservations = RowReservations<Pool, Runs>;
+  /// The row reservations (a resize's fit run reserves through them, DEC-257).
+  Reservations& reservations() { return *res_; }
   static constexpr uint16_t kMaxOpen = Config::kMaxOpenNotesPerWriter;
   static constexpr uint8_t kMaxClosing = Config::kMaxOpenNotesPerWriter;  // each closing run owes >= 1 NoteOff
   // Stop may seal every closing run and the active run at once.

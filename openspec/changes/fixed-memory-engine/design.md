@@ -2332,7 +2332,7 @@ with `createEmpty`'s own refusal and removed); (6) LOOP_EDIT F4 tempo (as built:
 in tenths, the clock's floor 20; the motor parked at the tempo on entry, its landing ignored for `kMotorSettleMs`;
 not on an external clock; `test_loop_edit_f4_sets_the_tempo`, mutations 5 / 5); (7–8) F2 length, F1 start; (9) a loop-length popup.
 
-## Loop length: a play window over immutable runs (owner 2026-11-08: "go for option A"; DEC-257; designed)
+## Loop length: a play window over immutable runs (owner 2026-11-08: "go for option A"; DEC-257; as built)
 
 The owner's rules: a note keeps its recorded length, and its NoteOff wraps against the loop end in force. Lengthening
 moves a wrapped note's end back into the now longer loop (resolved there, never stretched to fill the new bars).
@@ -2362,3 +2362,14 @@ length popup). Undo restores the earlier length.
   the fit run like any run (its kind; format version 3, as older firmware would play it as content).
 * **Readers.** NOTE_EDIT, tiles, late join and checkpoints read composed windows, so they follow the window; the edit
   hide index, compaction and V1 import never take a fit run as content.
+* **Budget.** The builder's scratch (`FitBuilder`: 256 lookups, 128 open notes) lives in the transport: RAM2 ratchet
+  150,296 → 154,400 B (+ 4,104 B, measured on the Teensy). A resize scans at most 32,768 rows synchronously, in the
+  main loop (its time not yet measured on the device); larger content is refused by name until a grain job takes it.
+
+LOOP_EDIT's F2 (slice 7, as built): pitch bend on channel 14 over 1–128 bars (legacy `handleLoopLengthPitchbend`), its
+motor parked on entry with CC 101 on channel 16 (bars − 1) and its landing ignored for `kMotorSettleMs`; moves apply
+once the fader rests 300 ms (`Surface::settleLength`), one resize and one undo step; the status band's LENGTH shows
+the pending bars. Tests: `test_resize_rewraps_notes_and_keeps_those_past_the_end`, `test_resize_resolves_a_held_loop_note`
+(overdubbed notes crossing the loop end; a recorded take's held notes end at its stop), `test_loop_edit_f2_sets_the_length`;
+mutations 12 of 14 caught — the fit builder's redundant past-end filter (removed) and the cold-start wrap-held count
+(`Composer::bind`, cycle-0 occlusion only; not reached through the surface) survived.

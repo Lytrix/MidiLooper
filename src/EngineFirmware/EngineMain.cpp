@@ -675,6 +675,7 @@ void loop() {
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
   ev.loop = gSurface.loopEdit();
+  ev.loopBars = gSurface.pendingLoopBars();
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();

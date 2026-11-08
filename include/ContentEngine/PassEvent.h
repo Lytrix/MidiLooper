@@ -48,6 +48,14 @@ constexpr uint8_t kRecord = 0;
 constexpr uint8_t kOverdub = 1;
 constexpr uint8_t kCompacted = 2;
 constexpr uint8_t kEdit = 3;  // NOTE_EDIT commit: HideNote rows + replacement notes (EDIT-1: not a derived occluder)
+constexpr uint8_t kFit = 4;   // a resized state's lookups (DEC-257, `FitRun.h`): no MIDI rows, never content
 }  // namespace RunKind
+
+/// Fit run rows (DEC-257), sorted by (tick = the content RunId, status, noteId): the run reaches the loop end (filter;
+/// noteId 0), a note of it crosses the loop end (cross; `seq` its NoteOff's tick), a note's held-loop status differs
+/// from its flag at the loop length (held). Undefined MIDI statuses, never sent.
+constexpr uint8_t kFitFilterStatus = 0xF5u;
+constexpr uint8_t kFitCrossStatus = 0xF6u;
+constexpr uint8_t kFitHeldStatus = 0xF7u;
 
 }  // namespace ContentEngine

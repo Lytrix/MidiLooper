@@ -21,6 +21,11 @@
   `TempoMapping`; the engine clock holds at least 20); its motor is parked at the tempo on entering LOOP_EDIT and the
   landing ignored for the settle time; nothing on an external clock (`Surface::tempo`). Image `1cadee32…`, boot
   verified.
+- Slice 7 (DEC-257 — loop length as a play window): LOOP_EDIT's F2 sets the loop length, 1–128 bars, applied when the
+  fader rests (one undo step). Notes keep their recorded lengths and wrap at the new end; notes past a shorter end are
+  kept, not played, and return when lengthened; content runs never change (a derived fit run, `FitRun.h`, and filtered
+  wrap streams in `Composer`). Set file version 3. RAM2 ratchet 154,400 B. Image `6dfaf762…`, boot verified. Not yet
+  measured on the device: a resize's scan time (synchronous, ≤ 32,768 rows).
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

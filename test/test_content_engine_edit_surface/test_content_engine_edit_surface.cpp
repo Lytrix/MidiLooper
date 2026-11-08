@@ -62,6 +62,8 @@ struct Heard {
 };
 static Heard gHeard[4096];
 static uint32_t gHeardCount = 0;
+static Heard gOff[4096];  // NoteOffs heard on USB
+static uint32_t gOffCount = 0;
 
 static void run(uint32_t toUs) {
   ProductionHub::Sent buf[32];
@@ -78,7 +80,10 @@ static void run(uint32_t toUs) {
     for (uint8_t p = 0; p < 3; ++p) {
       const uint8_t n = gE.transmit(p, gUs, buf, 32);
       for (uint8_t i = 0; p == kPortUsbDevice && i < n; ++i)
-        if ((buf[i].status & 0xF0) == 0x90) gHeard[gHeardCount++ % 4096] = {gLast, buf[i].data1};
+        if ((buf[i].status & 0xF0) == 0x90 && buf[i].data2 != 0)
+          gHeard[gHeardCount++ % 4096] = {gLast, buf[i].data1};
+        else if ((buf[i].status & 0xF0) == 0x80 || (buf[i].status & 0xF0) == 0x90)
+          gOff[gOffCount++ % 4096] = {gLast, buf[i].data1};
     }
     gS.service(gUs / 1000, gLast, gUs);
     for (uint32_t i = 0; i < gLiveCount; ++i) {
@@ -125,6 +130,7 @@ void setUp() {
   gLive = nullptr;
   gLiveCount = 0;
   gHeardCount = 0;
+  gOffCount = 0;
 }
 void tearDown() {}
 
@@ -1025,6 +1031,136 @@ void test_loop_edit_f4_sets_the_tempo() {
   TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9000ull * 192), gClk.usPerTick());
 }
 
+struct NoteSpec {
+  uint32_t pos, length;
+  uint8_t pitch;
+};
+/// An overdub on slot 0 (playing, one bar): `notes` at loop positions from the next loop start, held for their lengths —
+/// across the loop end too (their NoteOffs in the closing run's wrap section).
+static void overdubHeld(std::initializer_list<NoteSpec> notes) {
+  static Live live[64];
+  tap(S::kRecordNote);  // a playing track overdubs at once
+  ms(450);
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Overdubbing, gE.transport().mode());
+  const uint32_t pos = (gLast - gE.transport().origin(0)) % 768;
+  const uint32_t t0 = gUs + (768 - pos) * kTick;
+  uint32_t n = 0, last = 0;
+  for (const auto& x : notes) {
+    live[n++] = {t0 + x.pos * kTick + kTick / 2, t0 + (x.pos + x.length) * kTick + kTick / 2, x.pitch};
+    if (x.pos + x.length > last) last = x.pos + x.length;
+  }
+  gLive = live;
+  gLiveCount = n;
+  run(t0 + (last + 20) * kTick);
+  gLive = nullptr;
+  gLiveCount = 0;
+  tap(S::kRecordNote);  // the overdub ends
+  ms(450);
+  run(gUs + kBarUs);
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, gE.transport().mode());
+}
+/// NoteOns (`ons`) or NoteOffs of `pitch` over the next `loops` loops of `loop` ticks: their positions in the loop.
+static std::vector<uint32_t> positions(bool ons, uint8_t pitch, uint32_t loop, uint32_t loops = 2) {
+  const uint32_t from = ons ? gHeardCount : gOffCount;
+  run(gUs + loops * loop * kTick);
+  std::vector<uint32_t> v;
+  const Heard* h = ons ? gHeard : gOff;
+  const uint32_t to = ons ? gHeardCount : gOffCount;
+  for (uint32_t i = from; i < to; ++i)
+    if (h[i % 4096].pitch == pitch) v.push_back((h[i % 4096].tick - gE.transport().origin(0)) % loop);
+  return v;
+}
+static char gPosText[256];
+static bool all(const std::vector<uint32_t>& v, uint32_t pos) {
+  int k = snprintf(gPosText, sizeof gPosText, "want %u got", static_cast<unsigned>(pos));
+  for (uint32_t x : v)
+    if (k < 240) k += snprintf(gPosText + k, sizeof gPosText - k, " %u", static_cast<unsigned>(x));
+  if (v.empty()) return false;
+  for (uint32_t x : v)
+    if (x != pos) return false;
+  return true;
+}
+#define EXPECT_ALL(v, pos) TEST_ASSERT_TRUE_MESSAGE(all(v, pos), gPosText)
+static ProductionTransport::Result resizeTo(uint32_t loop) {
+  const auto r = gE.control().resize(0, loop, gLast, gUs, gClk.usPerTick());
+  run(gUs + 2 * 768 * kTick);  // the playing track follows from the next boundary
+  return r;
+}
+
+// Loop length is a play window (owner 2026-11-08, DEC-257): lengthened, a note that wrapped ends at its recorded length
+// inside the longer loop (not stretched); shortened, a note crossing the new end wraps, keeping its length, and notes
+// past the end are kept but not played — lengthened again they play as recorded. Undo restores the length.
+void test_resize_rewraps_notes_and_keeps_those_past_the_end() {
+  recordBar({{96, 60}});
+  overdubHeld({{300, 200, 64}, {600, 300, 62}});
+  TEST_ASSERT_TRUE(gE.transport().playing(0));
+  EXPECT_ALL(positions(false, 62, 768), 132);  // recorded: 600 + 300 wraps to 132
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(1536));
+  EXPECT_ALL(positions(true, 62, 1536), 600);
+  EXPECT_ALL(positions(false, 62, 1536), 900);  // resolved inside the longer loop
+  EXPECT_ALL(positions(true, 60, 1536), 96);
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(384));
+  TEST_ASSERT_TRUE(positions(true, 62, 384).empty());  // past the end: not played
+  TEST_ASSERT_TRUE(positions(false, 62, 384).empty());
+  EXPECT_ALL(positions(true, 64, 384), 300);
+  EXPECT_ALL(positions(false, 64, 384), 116);  // 300 + 200 wraps at 384
+  EXPECT_ALL(positions(true, 60, 384), 96);
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(768));  // back: kept notes play again
+  EXPECT_ALL(positions(true, 62, 768), 600);
+  EXPECT_ALL(positions(false, 62, 768), 132);
+  EXPECT_ALL(positions(false, 64, 768), 500);
+  const ManifestId m = gE.transport().contentOf(0);
+  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(m).loopLengthTicks);
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  TEST_ASSERT_EQUAL_UINT32(384, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+}
+
+// A note held for a whole loop (Q-LEN-1: re-struck every loop) keeps its recorded length once the loop is longer than
+// it: lengthened, it ends at its NoteOff inside the loop instead of at its next re-strike.
+void test_resize_resolves_a_held_loop_note() {
+  recordBar({{96, 60}});
+  overdubHeld({{100, 800, 65}});
+  EXPECT_ALL(positions(true, 65, 768), 100);  // re-struck every loop
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(1536));
+  EXPECT_ALL(positions(true, 65, 1536), 100);
+  EXPECT_ALL(positions(false, 65, 1536), 900);
+}
+
+// LOOP_EDIT's F2 sets the loop length (legacy: pitch bend channel 14, 1–128 bars; its motor CC 101 on channel 16): moves
+// within the settle time are one resize, one undo step; notes past the shorter end come back when lengthened.
+void test_loop_edit_f2_sets_the_length() {
+  recordBar({{96, 60}, {600, 62}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kEditModeNote);  // NOTE_EDIT
+  ms(400);
+  tap(S::kEditModeNote);  // LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  const auto sent = drainMotors(100);
+  const Sent* park = findMsg(sent, 0xBF, 101);
+  TEST_ASSERT_NOT_NULL(park);
+  TEST_ASSERT_EQUAL_UINT8(0, park->m.d2);  // 1 bar
+  const auto f2 = [](uint32_t bars) {
+    const int32_t pb = -8192 + static_cast<int32_t>((bars - 1) * 16383 / 127) + 64;
+    pitchBend(13, pb);
+    ms(5);
+  };
+  f2(2);  // the motor landing: no change
+  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopBars());
+  ms(600);
+  f2(2);
+  TEST_ASSERT_EQUAL_UINT16(2, gS.pendingLoopBars());
+  f2(4);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopBars());
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+  f2(1);  // back to a bar: a second step
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1137,6 +1273,9 @@ int main(int, char**) {
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
   RUN_TEST(test_loop_edit_f4_sets_the_tempo);
+  RUN_TEST(test_resize_rewraps_notes_and_keeps_those_past_the_end);
+  RUN_TEST(test_resize_resolves_a_held_loop_note);
+  RUN_TEST(test_loop_edit_f2_sets_the_length);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

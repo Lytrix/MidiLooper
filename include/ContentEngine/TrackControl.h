@@ -150,6 +150,14 @@ class TrackControl {
     return r;
   }
   Result createEmpty(uint8_t slot, uint32_t loop) { return x_->createEmpty(slot, loop); }
+  /// Loop length (DEC-257): a play window over the slot's content.
+  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    Emit buf[Tracks * T];
+    uint8_t n;
+    const Result r = x_->resize(slot, loop, clock, buf, Tracks * T, n);
+    out_->route(buf, n, nowUs, usPerTick);
+    return r;
+  }
   Result undo(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     uint8_t n;

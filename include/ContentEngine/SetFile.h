@@ -36,7 +36,9 @@ namespace ContentEngine {
 constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
 // Version 2 (owner 2026-11-08): a note's NoteOn row may carry `kVelocityMuted`. A version-1 file never does, so it
 // loads as it is; older engine firmware refuses version 2 by name rather than sending the bit.
-constexpr uint16_t kSetFileVersion = 2;
+// Version 3 (DEC-257): a state may list a fit run (kind `kFit`), lookups that are not content; older firmware would
+// compose it as notes.
+constexpr uint16_t kSetFileVersion = 3;
 constexpr uint16_t kSetFileOldestVersion = 1;
 constexpr uint32_t kSetFileRowBytes = 16;
 

@@ -14923,4 +14923,7 @@ original lengths and wrap at the loop end in force); implementation in slices.
 
 ### Evidence
 
-- To be added per slice.
+- Slice 7 (LOOP_EDIT F2): `test_resize_rewraps_notes_and_keeps_those_past_the_end`, `test_resize_resolves_a_held_loop_note`,
+  `test_loop_edit_f2_sets_the_length`; mutations 12 / 14 (the two survivors in design.md). Native full suite 4,400
+  cases, 0 failed; heap gate OK. RAM2 ratchet 154,400 B (+ 4,104 B builder scratch). Device image `6dfaf762…`: boot
+  `crash=0`, 23 slots loaded.

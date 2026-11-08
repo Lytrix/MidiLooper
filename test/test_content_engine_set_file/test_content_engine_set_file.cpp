@@ -225,17 +225,17 @@ static MemoryFile withVersion(const MemoryFile& f, uint16_t v) {
   return g;
 }
 
-// Version 2 (owner 2026-11-08: a muted note's NoteOn carries `kVelocityMuted`) is written; a version-1 file — which never
-// carries the bit — still loads; a later version is refused by name.
+// Version 3 (DEC-257: a state may list a fit run; version 2: a muted note's NoteOn carries `kVelocityMuted`) is
+// written; a version-1 file still loads; a later version is refused by name.
 void test_version_one_loads_and_a_later_one_is_refused() {
   buildHistory();
   MemoryFile f;
   saveSlot(f);
   TEST_ASSERT_EQUAL_UINT16(kSetFileVersion, static_cast<uint16_t>(f.bytes[4] | (f.bytes[5] << 8)));
-  TEST_ASSERT_EQUAL_UINT16(2, kSetFileVersion);
+  TEST_ASSERT_EQUAL_UINT16(3, kSetFileVersion);
   TEST_ASSERT_TRUE(withVersion(f, kSetFileVersion).bytes == f.bytes);  // the trailer recomputed as the save wrote it
   initEngine();
-  MemoryFile later = withVersion(f, 3), one = withVersion(f, 1);
+  MemoryFile later = withVersion(f, 4), one = withVersion(f, 1);
   TEST_ASSERT_EQUAL(Load::Status::BadFormat, loadSlot(later));
   TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(one));
 }

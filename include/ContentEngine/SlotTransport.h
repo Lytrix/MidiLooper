@@ -61,6 +61,7 @@
 #include <cstdint>
 
 #include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/FitRun.h"
 #include "ContentEngine/History.h"
 #include "ContentEngine/Writer.h"
 
@@ -286,6 +287,39 @@ class SlotTransport {
     runs_->release(r);  // the manifest holds it
     if (m == kNoManifest) return Result::DeniedManifest;
     history_->commit(slot, m);
+    return Result::Ok;
+  }
+
+  /// Loop length (DEC-257, owner 2026-11-08: a play window): a state of the slot's content runs at loop `loop`, with a
+  /// fit run re-wrapping them there (the previous one left out); notes keep their lengths, those past a shorter end are
+  /// kept and not played. One undo step; tracks playing the slot follow from the next boundary.
+  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
+    const ManifestId base = contentOf(slot);
+    if (base == kNoManifest) return Result::Empty;
+    const auto& b = manifests_->manifest(base);
+    if (loop == 0 || loop == b.loopLengthTicks) return Result::NoChange;
+    RunId list[Manifests::kMaxRuns];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < b.runCount; ++i)
+      if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
+    RunId fit = kNoRun;
+    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit);
+    if (f == FitResult::DeniedRun) return Result::DeniedRun;
+    if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
+    if (fit != kNoRun) {
+      if (n == Manifests::kMaxRuns) {
+        runs_->release(fit);
+        return Result::Refused;
+      }
+      list[n++] = fit;
+    }
+    const ManifestId m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
+    if (fit != kNoRun) runs_->release(fit);  // the manifest holds it
+    if (m == kNoManifest) return Result::DeniedManifest;
+    history_->commit(slot, m);
+    emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
   }
 
@@ -583,6 +617,7 @@ class SlotTransport {
   }
 
   Pool* pool_ = nullptr;
+  FitBuilder<Pool, Runs, typename WriterT::Reservations> fit_;  // a resize's scratch (DEC-257)
   Runs* runs_ = nullptr;
   Manifests* manifests_ = nullptr;
   HistoryT* history_ = nullptr;

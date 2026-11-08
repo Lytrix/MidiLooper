@@ -69,6 +69,7 @@ struct EditView {
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
+  uint16_t loopBars = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (bars)
 };
 
 class EngineDisplay {
@@ -557,7 +558,8 @@ class EngineDisplay {
       cells[2] = Cell{"BPM", "", 24};
       if (info.loop != 0) {
         strcpy(cells[0].value, "1");
-        snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>((info.loop + kBar - 1) / kBar));
+        const uint32_t bars = edit_.loopBars != 0 ? edit_.loopBars : (info.loop + kBar - 1) / kBar;
+        snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>(bars));
       }
       snprintf(cells[2].value, sizeof cells[2].value, "%u", st::tempoTenths(clock.usPerTick(), kQuarter) / 10);
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1,

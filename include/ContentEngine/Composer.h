@@ -38,6 +38,11 @@
 // repeats every loop and each iteration ends one tick before its successor. The flagged NoteOff is never sent against a
 // newer iteration. Its source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the
 // effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
+// Resized loops (DEC-257, owner 2026-11-08): a state's loop may differ from the length its runs were recorded at; its
+// fit run (`FitRun.h`) names the runs with rows past the end that are not wrapping NoteOffs. Such a run's wrap and
+// second-wrap rows act only as NoteOffs of its crossing notes (`wraps`); NoteOns, controllers and NoteOffs past a
+// shorter end have no effect. The held-loop rule reads `kOriginHeldLoop` through the fit run (`held`). The fit run
+// composes nothing.
 // Edit runs (NOTE_EDIT): their HideNote rows hide every row of the named noteId in earlier runs (lineage: a replacement
 // keeps the noteId and lives in the edit run). The hide index is shared per manifest identity (`EditIndexStore`, E3.3):
 // `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (ratified): an edit run is not a derived occluder; NOTE_EDIT writes its own
@@ -365,12 +370,32 @@ class Composer {
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
     wrapReach_ = 0;
+    fitRun_ = kNoRun;
+    fitRows_ = 0;
+    for (uint8_t r = 0; r < count_; ++r)
+      if (runs_->run(source[r].run).kind == RunKind::kFit) {
+        fitRun_ = source[r].run;
+        fitRows_ = source[r].rowLimit;
+      }
     for (uint8_t r = 0; r < count_; ++r) {
       src_[r] = source[r];
       edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
+      if (runs_->run(src_[r].run).kind == RunKind::kFit) {  // lookups only: every stream empty
+        filtered_[r] = false;
+        wrapStart_[r] = band2Start_[r] = hideEnd_[r] = src_[r].rowLimit;
+        if (fromStart) {
+          cursor_[r] = wrapCursor_[r] = band2Cursor_[r] = src_[r].rowLimit;
+          refreshHeads(r);
+        }
+        continue;
+      }
+      filtered_[r] = fitHas(r, kFitFilterStatus, 0);
       wrapStart_[r] = firstRowAtOrAfter(r, loop_);
       band2Start_[r] = firstRowAtOrAfter(r, 2 * loop_);
-      if (band2Start_[r] < src_[r].rowLimit) {
+      if (filtered_[r]) {
+        const uint32_t reach = crossReach(r);  // the crossing notes, not the rows past the end
+        if (reach > wrapReach_) wrapReach_ = reach;
+      } else if (band2Start_[r] < src_[r].rowLimit) {
         wrapReach_ = loop_;  // a note held past the second wrap: the whole loop
       } else if (wrapStart_[r] < band2Start_[r]) {
         const uint32_t reach = row(r, band2Start_[r] - 1).tick - loop_ + 1;  // rows are in tick order
@@ -387,7 +412,7 @@ class Composer {
       if (fromStart) {
         for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
           const PassEvent& e = row(r, i);
-          if (cls(e) == 0 && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
+          if (cls(e) == 0 && wraps(r, e) && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
         }
       }
       for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
@@ -511,6 +536,46 @@ class Composer {
     return index_ != nullptr && index_->hidden(lease_, noteId, r);
   }
 
+  /// The fit run (DEC-257) holds the row (run `r`, `status`, `noteId`). O(log fit rows).
+  bool fitHas(uint8_t r, uint8_t status, uint32_t noteId) const {
+    if (fitRun_ == kNoRun) return false;
+    const uint32_t i = fitLowerBound(src_[r].run, status, noteId);
+    if (i == fitRows_) return false;
+    const PassEvent& e = runs_->rowAt(fitRun_, i, *pool_);
+    return e.tick == src_[r].run && e.status == status && e.noteId == noteId;
+  }
+  uint32_t fitLowerBound(uint32_t run, uint8_t status, uint32_t noteId) const {
+    uint32_t lo = 0, hi = fitRows_;
+    while (lo < hi) {
+      const uint32_t mid = lo + (hi - lo) / 2;
+      const PassEvent& e = runs_->rowAt(fitRun_, mid, *pool_);
+      if (e.tick < run || (e.tick == run && (e.status < status || (e.status == status && e.noteId < noteId))))
+        lo = mid + 1;
+      else
+        hi = mid;
+    }
+    return lo;
+  }
+  /// The wrap reach of filtered run `r`: its crossing notes' NoteOffs (`seq`), capped at the loop.
+  uint32_t crossReach(uint8_t r) const {
+    uint32_t reach = 0;
+    for (uint32_t i = fitLowerBound(src_[r].run, kFitCrossStatus, 0); i < fitRows_; ++i) {
+      const PassEvent& e = runs_->rowAt(fitRun_, i, *pool_);
+      if (e.tick != src_[r].run || e.status != kFitCrossStatus) break;
+      const uint32_t x = e.seq >= 2 * loop_ ? loop_ : e.seq - loop_ + 1;
+      if (x > reach) reach = x;
+    }
+    return reach;
+  }
+  /// A row at or past the loop end has an effect: in a run the fit run filters, only a crossing note's NoteOff.
+  bool wraps(uint8_t r, const PassEvent& e) const {
+    return !filtered_[r] || (cls(e) == 0 && fitHas(r, kFitCrossStatus, e.noteId));
+  }
+  /// Q-LEN-1's held-loop status: the writer's flag, toggled by the fit run where the loop length changed it.
+  bool held(uint8_t r, const PassEvent& e) const {
+    return ((e.origin & kOriginHeldLoop) != 0) != fitHas(r, kFitHeldStatus, e.noteId);
+  }
+
   bool laterPassSounding(uint8_t r, uint8_t pitch) const {
     for (uint8_t j = static_cast<uint8_t>(r + 1); j < count_; ++j)
       if (active_[pitch & 0x7F][j] > 0) return true;
@@ -564,9 +629,10 @@ class Composer {
     refreshHead(r, s.band);
     const uint16_t runKey = makeRunKey(src_[r].run, r);
     if (e.status == kHideNoteStatus) return;  // collected at begin
+    if (s.band != 0 && !wraps(r, e)) return;  // DEC-257: past a shorter loop end
     const uint8_t c = cls(e);
     if (c == 0) {
-      if (e.origin & kOriginHeldLoop) return;  // Q-LEN-1: the re-strike ends it; its count drops at the sweep end
+      if (held(r, e)) return;  // Q-LEN-1: the re-strike ends it; its count drops at the sweep end
       if (!edit_[r] && active_[e.data1 & 0x7F][r] > 0) --active_[e.data1 & 0x7F][r];
       for (uint8_t i = 0; i < openCount_; ++i)
         if (open_[i].noteId == e.noteId && open_[i].runKey == runKey) {
@@ -651,7 +717,7 @@ class Composer {
     for (uint8_t j = 0; j < count_; ++j)
       for (uint32_t i = wrapStart_[j]; i < src_[j].rowLimit; ++i) {
         const PassEvent& e = row(j, i);
-        if (!edit_[j] && cls(e) == 0 && (e.origin & kOriginHeldLoop) && active_[e.data1 & 0x7F][j] > 0)
+        if (!edit_[j] && cls(e) == 0 && held(j, e) && wraps(j, e) && active_[e.data1 & 0x7F][j] > 0)
           --active_[e.data1 & 0x7F][j];
       }
   }
@@ -671,6 +737,9 @@ class Composer {
   uint32_t hideEnd_[MaxRuns];     // first row after an edit run's leading hide rows (0 for other runs)
   uint8_t count_;
   bool edit_[MaxRuns];
+  bool filtered_[MaxRuns];  // DEC-257: the fit run filters this run's rows past the loop end
+  RunId fitRun_ = kNoRun;   // the state's fit run, or kNoRun
+  uint32_t fitRows_ = 0;
   IndexStore* index_;
   IndexLease lease_;
   IndexResult indexResult_;
