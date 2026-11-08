@@ -268,6 +268,11 @@ class EngineDisplay {
     const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
     return static_cast<uint8_t>(4.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
   }
+  /// The pulsing label square behind dark (0) text: 7–13, so the label stays readable at its darkest.
+  static uint8_t labelPulseAt(uint32_t nowMs) {
+    const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
+    return static_cast<uint8_t>(7.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
+  }
   void drawTracks(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint8_t sel, uint32_t nowMs) {
     char label[2] = {0, 0};
     const uint8_t pulse = pulseAt(nowMs);
@@ -512,11 +517,13 @@ class EngineDisplay {
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1, static_cast<int16_t>(end + 1),
                                  kLabY + 5, 11);
       // The cell F2 / F3 or F4 edits pulses (owner 2026-11-08): LENGTH in length mode, VELOCITY while NOTELEN is held.
+      // Its square spans from the divider on its left to the next divider (VELOCITY) or the bar's end (LENGTH), so no
+      // column of the steady bar is left beside it; its darkest level keeps the label readable (owner 2026-11-08).
       if (edit_.ready && (edit_.length || edit_.velocity)) {
         const int16_t cx = static_cast<int16_t>(edit_.velocity ? x0 + 18 + kGap : x0 + 18 + 32 + 2 * kGap);
-        const int16_t cw = edit_.velocity ? 32 : 24;
-        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - 1), kLabY - 1, static_cast<int16_t>(cx + cw),
-                                   kLabY + 5, pulseAt(nowMs));
+        const int16_t right = static_cast<int16_t>(edit_.velocity ? cx + 32 + kGap / 2 - 1 : end + 1);
+        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - kGap / 2), kLabY - 1, right, kLabY + 5,
+                                   labelPulseAt(nowMs));
       }
     } else {
       cells[0] = Cell{"TRACK", "", 20};

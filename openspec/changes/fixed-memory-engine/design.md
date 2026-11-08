@@ -2260,8 +2260,8 @@ Not in legacy. While NOTELEN (35) is held in NOTE_EDIT, F4 (CC 3 channel 15) set
 On the release F4's motor is written back to the pitch (`EditSurface::velocityDone`). A long hold
 (`Surface::kVelocityHoldMs`, 600 ms) enters velocity mode with F4's motor written to the velocity
 (`EditSurface::velocityBegin`); an F4 move while held enters it without a motor write (the hand is on F4). The status
-band's NOTE_EDIT label bar pulses (1 Hz, 4–10, as the selected track's letter) under VELOCITY in velocity mode and
-under LENGTH in length mode. Velocity 0 would be a note off: F4 at 0 mutes the note instead ("Muted note", DEC-255).
+band's NOTE_EDIT label bar pulses (1 Hz, 7–13, so the dark label stays readable; owner 2026-11-08) under VELOCITY in
+velocity mode and under LENGTH in length mode, from the cell's divider to the next (LENGTH: to the bar's end). Velocity 0 would be a note off: F4 at 0 mutes the note instead ("Muted note", DEC-255).
 `test_content_engine_edit_surface` +1, extended with the long hold (mutations 5 / 5).
 
 ## Muted note (owner 2026-11-08: "a Mute Note sounds most logical"; DEC-255; as built)

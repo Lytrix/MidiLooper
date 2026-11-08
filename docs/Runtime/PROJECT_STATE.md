@@ -3,7 +3,10 @@
   the note keeps its velocity, stays drawn (dim; brighter when selected) and editable, and is never sent; any other
   F4 value unmutes it there. The velocity cell shows `M`. Bit 7 of the NoteOn's velocity byte; set file version 2
   (version 1 still loads). Also the hook for a later random note choice (owner). Image `8be61b2e…`, boot verified
-  (22 slots loaded); owner check on the DROID pending.
+  (22 slots loaded); owner confirmed on the DROID.
+- Then (owner): the pulsing VELOCITY / LENGTH label square runs 7–13 (was 4–10) so its label stays readable, and spans
+  from its divider to the next (LENGTH: to the bar's end), so no steady column is left beside it. Image `a2ed35a2…`,
+  boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT velocity on F4 with NOTELEN held.**
 - Holding NOTELEN (35) makes F4 set the selected note's velocity (1–127) instead of its pitch; that press is then no
