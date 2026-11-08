@@ -739,9 +739,34 @@ void test_f4_with_notelen_held_sets_the_velocity() {
   const Sent* back = findMsg(sent, 0xBE, 3);
   TEST_ASSERT_NOT_NULL(back);
   TEST_ASSERT_EQUAL_UINT8(64, back->m.d2);
+  f4(64);  // the DROID: F4's motor arrives at the pitch
+  TEST_ASSERT_FALSE(gS.edit().velocityMode());
   tap(S::kLengthNote);  // a press without F4: length mode as before
   ms(450);
   TEST_ASSERT_TRUE(gS.edit().lengthMode());
+  TEST_ASSERT_FALSE(gS.edit().velocityMode());
+  tap(S::kLengthNote);
+  ms(450);
+  drainMotors(800);
+  // A long hold, the hand not on F4: velocity mode, F4's motor to the velocity; on the release back to the pitch.
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);
+  ms(S::kVelocityHoldMs - 50);
+  TEST_ASSERT_FALSE(gS.edit().velocityMode());
+  const auto held = drainMotors(100);
+  TEST_ASSERT_TRUE(gS.edit().velocityMode());
+  const Sent* toVel = findMsg(held, 0xBE, 3);
+  TEST_ASSERT_NOT_NULL(toVel);
+  TEST_ASSERT_EQUAL_UINT8(90, toVel->m.d2);
+  drainMotors(800);
+  f4(50);  // ...then moved by hand
+  TEST_ASSERT_EQUAL_UINT8(50, sel().velocity);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  const auto released = drainMotors(800);
+  TEST_ASSERT_FALSE(gS.edit().velocityMode());
+  TEST_ASSERT_FALSE(gS.edit().lengthMode());  // the long hold toggled nothing
+  const Sent* toPitch = findMsg(released, 0xBE, 3);
+  TEST_ASSERT_NOT_NULL(toPitch);
+  TEST_ASSERT_EQUAL_UINT8(64, toPitch->m.d2);
 }
 
 void test_no_note_is_created_next_to_a_note() {

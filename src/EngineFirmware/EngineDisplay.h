@@ -63,6 +63,7 @@ struct EditView {
   uint32_t noteTick = 0, noteLength = 0;
   uint8_t notePitch = 0, noteVelocity = 0;
   uint8_t steps = 0;  // the session's E: level
+  bool velocity = false;  // NOTELEN held: F4 is the velocity
 };
 
 class EngineDisplay {
@@ -261,11 +262,14 @@ class EngineDisplay {
     for (uint8_t i = 0; i < 8; ++i) anySolo |= c.soloed(i);
     return c.muted(t) || (anySolo && !c.soloed(t));
   }
+  /// 1 Hz between 4 and 10 (legacy `minPulse` / `maxPulse`): the selected track's letter, NOTE_EDIT's mode cell.
+  static uint8_t pulseAt(uint32_t nowMs) {
+    const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
+    return static_cast<uint8_t>(4.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
+  }
   void drawTracks(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint8_t sel, uint32_t nowMs) {
     char label[2] = {0, 0};
-    // The selected track's letter pulses: 1 Hz between 4 and 10 (legacy `minPulse` / `maxPulse`).
-    const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
-    const uint8_t pulse = static_cast<uint8_t>(4.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
+    const uint8_t pulse = pulseAt(nowMs);
     const uint32_t nowUs = micros();
     for (uint8_t t = 0; t < 8; ++t) {
       const int16_t y = static_cast<int16_t>(t * 8 + 7);
@@ -503,6 +507,13 @@ class EngineDisplay {
       const int16_t end = static_cast<int16_t>(x0 + 18 + 32 + 24 + 2 * kGap - 1);
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1, static_cast<int16_t>(end + 1),
                                  kLabY + 5, 11);
+      // The cell F2 / F3 or F4 edits pulses (owner 2026-11-08): LENGTH in length mode, VELOCITY while NOTELEN is held.
+      if (edit_.ready && (edit_.length || edit_.velocity)) {
+        const int16_t cx = static_cast<int16_t>(edit_.velocity ? x0 + 18 + kGap : x0 + 18 + 32 + 2 * kGap);
+        const int16_t cw = edit_.velocity ? 32 : 24;
+        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - 1), kLabY - 1, static_cast<int16_t>(cx + cw),
+                                   kLabY + 5, pulseAt(nowMs));
+      }
     } else {
       cells[0] = Cell{"TRACK", "", 20};
       cells[1] = Cell{"SLOT", "-", 16};

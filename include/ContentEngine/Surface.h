@@ -133,6 +133,8 @@ class PressDetector {
     return true;
   }
   bool pressed(uint8_t b) const { return state_[b].pressed; }
+  /// How long `b` has been held at `ms` (0: not pressed).
+  uint32_t heldMs(uint8_t b, uint32_t ms) const { return state_[b].pressed ? ms - state_[b].start : 0; }
   /// The held press of `b` was used with another control: its release is no gesture.
   void consume(uint8_t b) {
     if (state_[b].pressed) state_[b].consumed = true;
@@ -172,6 +174,7 @@ class Surface {
   // Channel 16 button notes (MidiConfig) and their detector indices.
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
   static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
+  static constexpr uint32_t kVelocityHoldMs = 600;  // NOTELEN held this long: velocity mode (the long press)
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
@@ -206,7 +209,6 @@ class Surface {
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
-    velocityHeld_ = false;
     blinkMs_ = 0;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
@@ -226,7 +228,7 @@ class Surface {
         edit_.fine(d2, ms);
       } else if (d1 == 3 && edit_.editing() && press_.pressed(kLength)) {  // NOTELEN held: F4 is the velocity
         press_.consume(kLength);
-        velocityHeld_ = true;
+        edit_.velocityBegin(ms, false);  // the hand is on F4: no motor
         edit_.velocity(d2, ms);
       } else if (d1 == 3) {
         edit_.pitch(d2, ms);
@@ -240,10 +242,7 @@ class Surface {
       press_.down(b, ms);
     } else {
       press_.up(b, ms);
-      if (b == kLength && velocityHeld_) {
-        velocityHeld_ = false;
-        edit_.velocityDone(ms);
-      }
+      if (b == kLength) edit_.velocityDone(ms);
     }
   }
 
@@ -252,6 +251,10 @@ class Surface {
     tick_ = lastTick;
     us_ = nowUs;
     nowMs_ = ms;
+    if (edit_.editing() && !edit_.velocityMode() && press_.heldMs(kLength, ms) >= kVelocityHoldMs) {
+      press_.consume(kLength);  // a long hold: velocity mode, F4's motor to the velocity
+      edit_.velocityBegin(ms, true);
+    }
     uint8_t b;
     Press p;
     while (press_.next(ms, b, p)) dispatch(b, p);
@@ -579,7 +582,6 @@ class Surface {
   uint8_t slot_[kTracks] = {};
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
-  bool velocityHeld_ = false;  // F4 set the velocity while NOTELEN was held
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 

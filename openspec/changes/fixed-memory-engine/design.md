@@ -2257,6 +2257,9 @@ its own, back and forth to its value, and undoes all of the first note's changes
 Not in legacy. While NOTELEN (35) is held in NOTE_EDIT, F4 (CC 3 channel 15) sets the selected note's velocity, 1–127
 (0 would be a note off), as one change of the note's undo step (`EditSurface::velocity`). The press is then used
 (`PressDetector::consume`): its release is no short (length mode) or double (delete / create), nor a tap toward one.
-On the release F4's motor is written back to the pitch (`EditSurface::velocityDone`). F4 is not moved to the velocity
-when NOTELEN goes down, so the velocity follows the fader from wherever it is. `test_content_engine_edit_surface` +1
-(mutations 3 / 3).
+On the release F4's motor is written back to the pitch (`EditSurface::velocityDone`). A long hold
+(`Surface::kVelocityHoldMs`, 600 ms) enters velocity mode with F4's motor written to the velocity
+(`EditSurface::velocityBegin`); an F4 move while held enters it without a motor write (the hand is on F4). The status
+band's NOTE_EDIT label bar pulses (1 Hz, 4–10, as the selected track's letter) under VELOCITY in velocity mode and
+under LENGTH in length mode. The range stays 1–127: `EditWriter` refuses velocity 0, a NoteOn that is a note off.
+`test_content_engine_edit_surface` +1, extended with the long hold (mutations 5 / 5).

@@ -1,8 +1,11 @@
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT velocity on F4 with NOTELEN held.**
 - Holding NOTELEN (35) makes F4 set the selected note's velocity (1–127) instead of its pitch; that press is then no
   short (length mode) or double (delete / create), and on its release F4's motor goes back to the pitch. Not in
-  legacy (owner request). The change joins the note's one undo step. Image `a9ca89e9…`, boot verified; owner check on
-  the DROID pending.
+  legacy (owner request). The change joins the note's one undo step. Image `a9ca89e9…`, boot verified.
+- Then (owner): a long hold (600 ms) enters velocity mode with F4's motor written to the velocity (back to the pitch on
+  release); the status band's VELOCITY label square pulses in velocity mode and LENGTH's in length mode. The range
+  stays 1–127: the writer refuses velocity 0 (a NoteOn with velocity 0 is a note off) — asked the owner. Image
+  `0b5c52b1…`, boot verified; owner check on the DROID pending.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT takes one undo step a note.**
 - Every change to the selected note is one undo step, kept at deselect or when leaving NOTE_EDIT (as legacy), instead
