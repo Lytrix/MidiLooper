@@ -8,8 +8,8 @@
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
 // 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
 // performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08; LOOP_EDIT's F4 is the tempo, pitch
-// bend on channel 15, its motor parked at the tempo on entry; F2 the loop length, 1–128 bars, pitch bend on channel 14,
-// applied at rest as a play window, DEC-257, its motor CC 101 on channel 16), NOTELEN
+// bend on channel 15, its motor parked at the tempo on entry; F2 the loop length, 1–128 bars, CC 101 on channel 16 (or
+// pitch bend on channel 14), applied at rest as a play window, DEC-257, its motor CC 101), NOTELEN
 // 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
 // bend channel 14, F3 / F4 CC 2 / CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
 // buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
@@ -235,6 +235,10 @@ class Surface {
       else if (channel == 13 && loopEdit_) lengthFader(pb, ms);
       else if (channel == 15) edit_.select(pb, ms);
       else if (channel == 13) edit_.coarse(pb, ms);
+      return;
+    }
+    if (type == 0xB0 && channel == 15 && d1 == kLengthCc && loopEdit_) {  // LOOP_EDIT's F2: CC 101, bars − 1
+      lengthBars(static_cast<uint16_t>((d2 & 0x7F) + 1), ms);
       return;
     }
     if (type == 0xB0 && channel == 14) {  // F3 fine CC 2, F4 pitch CC 3 (channel 15)
@@ -507,9 +511,13 @@ class Surface {
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
   /// motor lands.
   void lengthFader(int16_t pb, uint32_t ms) {
+    lengthBars(static_cast<uint16_t>((static_cast<int32_t>(pb) + 8192) * 127 / 16383 + 1), ms);
+  }
+  /// F2 at `bars` (1–128): the DROID's loop bank sends CC 101 on channel 16 (owner capture 2026-11-08; legacy
+  /// `LENGTH_CC_NUMBER`), the pitch bend form is legacy's too.
+  void lengthBars(uint16_t bars, uint32_t ms) {
     if (ms - lengthWrittenMs_ < EditSurface<Engine>::kMotorSettleMs) return;
-    const int32_t c = (static_cast<int32_t>(pb) + 8192) * 127 / 16383;
-    pendingBars_ = static_cast<uint16_t>(c + 1);
+    pendingBars_ = bars;
     pendingMs_ = ms;
   }
   void settleLength(uint32_t ms) {

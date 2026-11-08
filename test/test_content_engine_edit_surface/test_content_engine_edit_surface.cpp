@@ -1140,9 +1140,8 @@ void test_loop_edit_f2_sets_the_length() {
   const Sent* park = findMsg(sent, 0xBF, 101);
   TEST_ASSERT_NOT_NULL(park);
   TEST_ASSERT_EQUAL_UINT8(0, park->m.d2);  // 1 bar
-  const auto f2 = [](uint32_t bars) {
-    const int32_t pb = -8192 + static_cast<int32_t>((bars - 1) * 16383 / 127) + 64;
-    pitchBend(13, pb);
+  const auto f2 = [](uint32_t bars) {  // the DROID's loop bank: CC 101 on channel 16, bars − 1
+    gS.input(0xBF, 101, static_cast<uint8_t>(bars - 1), gUs / 1000);
     ms(5);
   };
   f2(2);  // the motor landing: no change
@@ -1159,6 +1158,9 @@ void test_loop_edit_f2_sets_the_length() {
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+  pitchBend(13, -8192 + 3 * 16383 / 127 + 64);  // the pitch bend form: 4 bars
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
 }
 
 void test_no_note_is_created_next_to_a_note() {

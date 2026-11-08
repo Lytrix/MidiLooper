@@ -26,6 +26,9 @@
   kept, not played, and return when lengthened; content runs never change (a derived fit run, `FitRun.h`, and filtered
   wrap streams in `Composer`). Set file version 3. RAM2 ratchet 154,400 B. Image `6dfaf762…`, boot verified. Not yet
   measured on the device: a resize's scan time (synchronous, ≤ 32,768 rows).
+- Fix (owner: "I tried F2 but it changes nothing", capture `session_20261108_162349`): the DROID's loop bank sends F2
+  as CC 101 on channel 16 (bars − 1, legacy `LENGTH_CC_NUMBER`), not the pitch bend on channel 14; both are taken now
+  (`Surface::lengthBars`). Image `8e04b478…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

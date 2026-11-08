@@ -2366,7 +2366,8 @@ length popup). Undo restores the earlier length.
   150,296 → 154,400 B (+ 4,104 B, measured on the Teensy). A resize scans at most 32,768 rows synchronously, in the
   main loop (its time not yet measured on the device); larger content is refused by name until a grain job takes it.
 
-LOOP_EDIT's F2 (slice 7, as built): pitch bend on channel 14 over 1–128 bars (legacy `handleLoopLengthPitchbend`), its
+LOOP_EDIT's F2 (slice 7, as built): CC 101 on channel 16, bars − 1 — what the DROID's loop bank sends (owner capture
+2026-11-08) — or pitch bend on channel 14 over 1–128 bars (both legacy forms), its
 motor parked on entry with CC 101 on channel 16 (bars − 1) and its landing ignored for `kMotorSettleMs`; moves apply
 once the fader rests 300 ms (`Surface::settleLength`), one resize and one undo step; the status band's LENGTH shows
 the pending bars. Tests: `test_resize_rewraps_notes_and_keeps_those_past_the_end`, `test_resize_resolves_a_held_loop_note`
