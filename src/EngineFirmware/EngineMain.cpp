@@ -674,6 +674,7 @@ void loop() {
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
+  ev.loop = gSurface.loopEdit();
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();

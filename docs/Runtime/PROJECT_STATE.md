@@ -13,6 +13,10 @@
 - Slice 4: a slot's double press is Clear (undoable); the long press on a filled slot does nothing until the length
   popup (slice 9); overdub stays on record's short press (the slot double no longer overdubs). Image `346a7c75…`, boot
   verified.
+- Slice 5: the edit button's short press goes from performance to NOTE_EDIT (LOOP_EDIT when the shown slot is empty),
+  then NOTE ↔ LOOP; its long press leaves (`Surface::cycleEdit`). LOOP_EDIT so far: the DROID's loop bank (0), the
+  status band's START / LENGTH (bars) / BPM cells with inverted labels, NOTELEN (short or long) creating an empty loop
+  on an empty slot. Image `5a7e7f05…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

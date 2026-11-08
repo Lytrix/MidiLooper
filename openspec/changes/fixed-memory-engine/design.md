@@ -2325,5 +2325,7 @@ as built, `test_notelen_long_press_creates`, mutations 3 / 4, the fourth equival
 selected note, where a note already blocks the create); (3) a slot long press on an empty slot creates a 1-bar
 empty loop (the length a global setting later; DEC-256: one sealed run without rows, so "no runs" stays empty;
 as built, `test_slot_long_press_creates_an_empty_loop`, `test_an_empty_loop_round_trips`, mutations 4 / 4); (4) a slot double press is Clear (as built: overdub stays on record's short press, a filled slot's long press waits
-for the popup; `test_slot_double_press_clears`, mutations 2 / 2); (5) the edit button cycles NOTE ↔
-LOOP and a long press leaves; (6–8) LOOP_EDIT F4 tempo, F2 length, F1 start; (9) a loop-length popup.
+for the popup; `test_slot_double_press_clears`, mutations 2 / 2); (5) the edit button cycles NOTE ↔ LOOP and a long press leaves (as built: from performance
+LOOP_EDIT when the shown slot is empty; LOOP_EDIT shows START / LENGTH / BPM and NOTELEN creates an empty loop on an
+empty slot; `Surface::cycleEdit`, `test_edit_button_cycles_note_and_loop_edit`, mutations 4 / 5, the fifth redundant
+with `createEmpty`'s own refusal and removed); (6–8) LOOP_EDIT F4 tempo, F2 length, F1 start; (9) a loop-length popup.

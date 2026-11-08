@@ -6,7 +6,8 @@
 //
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
-// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: enter / leave on the shown slot, long: leave), NOTELEN
+// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
+// performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08), NOTELEN
 // 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
 // bend channel 14, F3 / F4 CC 2 / CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
 // buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
@@ -264,6 +265,8 @@ class Surface {
     edit_.service(ms);
   }
   const EditSurface<Engine>& edit() const { return edit_; }
+  /// LOOP_EDIT is open (the edit button's cycle; its faders in later slices).
+  bool loopEdit() const { return loopEdit_; }
   /// The next motor-fader message (NOTE_EDIT feedback), sent like the LEDs.
   bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) { return edit_.motor(ms, m); }
 
@@ -394,10 +397,15 @@ class Surface {
         }
         return;
       case kEditMode:
-        if (p == Press::Short && !edit_.active()) enterEdit(t);
-        else if (p == Press::Short || p == Press::Long) edit_.leave();
+        if (p == Press::Short) cycleEdit(t);
+        else if (p == Press::Long) leaveEdit();
         return;  // double: the set browser (a later slice)
       case kLength:
+        if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long; a filled one: the popup, later)
+          if (p == Press::Short || p == Press::Long)
+            control().createEmpty(shownSlot(t), kNewLoopBars * EditSurface<Engine>::kBar);  // refused when filled
+          return;
+        }
         if (p == Press::Short) edit_.lengthOrCreate(nowMs_);
         else if (p == Press::Double) edit_.deleteOrCreate(nowMs_);
         return;
@@ -444,10 +452,31 @@ class Surface {
     edit_.leave();
     enterEdit(tt);
   }
+  /// The edit button's short press (owner 2026-11-08, as legacy): from performance NOTE_EDIT, or LOOP_EDIT when the
+  /// shown slot has no notes to edit; then NOTE ↔ LOOP (NOTE only on content; CC later). The long press leaves.
+  void cycleEdit(uint8_t t) {
+    if (edit_.active()) {
+      edit_.leave();
+      loopEdit_ = true;
+      return;
+    }
+    loopEdit_ = false;
+    enterEdit(t);
+    if (!edit_.active()) loopEdit_ = true;
+  }
+  void leaveEdit() {
+    edit_.leave();
+    loopEdit_ = false;
+  }
+  /// The track's shown slot: the playing one, else the selected one.
+  uint8_t shownSlot(uint8_t t) {
+    auto& x = transport();
+    return x.playing(t) ? x.playingSlot(t) : selectedSlot(t);
+  }
   /// NOTE_EDIT on the shown slot (the playing or selected one), the window at the playhead.
   void enterEdit(uint8_t t) {
     auto& x = transport();
-    const uint8_t slot = x.playing(t) ? x.playingSlot(t) : selectedSlot(t);
+    const uint8_t slot = shownSlot(t);
     const ManifestId m = x.contentOf(slot);
     if (m == kNoManifest || x.writingSlot() == slot) return;
     const uint32_t loop = e_->manifests().manifest(m).loopLengthTicks;
@@ -590,6 +619,7 @@ class Surface {
   uint8_t slot_[kTracks] = {};
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
+  bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 

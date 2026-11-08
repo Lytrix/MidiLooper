@@ -30,8 +30,8 @@
 //     the selected note's start (the bracket's in length mode), all bright.
 //   - BARS: the loop's length in bars (a first take: its bars so far).
 //   - the selection: TRACK, SLOT (1–8 within the track) and the port over its channel (`USB1 1`; `ALL` when the track
-//     plays on every port); in NOTE_EDIT, NOTE (C3 = 60), VELOCITY (`M`: muted) and LENGTH (ticks), their labels
-//     inverted.
+//     plays on every port); in NOTE_EDIT, NOTE (C3 = 60), VELOCITY (`M`: muted) and LENGTH (ticks); in LOOP_EDIT, START
+//     (bar), LENGTH (bars) and BPM; their labels inverted.
 //   - UNDO (the slot's undo steps), ODUB (the open overdub's) or EDIT (the open NOTE_EDIT session's).
 //   - the tempo (legacy `120.0`) under the clock icon: dim on the internal clock; an arrow into it, bright, on an
 //     external one.
@@ -68,6 +68,7 @@ struct EditView {
   uint8_t notePitch = 0, noteVelocity = 0;
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
+  bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
 };
 
 class EngineDisplay {
@@ -441,6 +442,7 @@ class EngineDisplay {
     auto& c = e.control();
     const auto& p = e.persistence();
     const bool noteEdit = edit_.active && edit_.slot == info.slot;
+    const bool loopEdit = edit_.loop && !edit_.active;
     char buf[12];
     // ---- The current tick ----
     int16_t x0 = kX0;
@@ -549,6 +551,17 @@ class EngineDisplay {
         oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - kGap / 2), kLabY - 1, right, kLabY + 5,
                                    pulseAt(nowMs));
       }
+    } else if (loopEdit) {  // LOOP_EDIT (owner 2026-11-08): the shown loop's start, length (bars) and the tempo
+      cells[0] = Cell{"START", "-", 24};
+      cells[1] = Cell{"LENGTH", "-", 32};
+      cells[2] = Cell{"BPM", "", 24};
+      if (info.loop != 0) {
+        strcpy(cells[0].value, "1");
+        snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>((info.loop + kBar - 1) / kBar));
+      }
+      snprintf(cells[2].value, sizeof cells[2].value, "%u", st::tempoTenths(clock.usPerTick(), kQuarter) / 10);
+      oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1,
+                                 static_cast<int16_t>(x0 + 24 + 32 + 24 + 2 * kGap), kLabY + 5, 11);
     } else {
       cells[0] = Cell{"TRACK", "", 20};
       cells[1] = Cell{"SLOT", "-", 16};
@@ -563,8 +576,8 @@ class EngineDisplay {
     }
     for (uint8_t i = 0; i < 3; ++i) {
       if (i) separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
-      label(cells[i].label, x0, kLabY, noteEdit ? 0 : 5);
-      rtext(cells[i].value, static_cast<int16_t>(x0 + cells[i].width - 1), noteEdit || i < 2 ? 13 : 11);
+      label(cells[i].label, x0, kLabY, noteEdit || loopEdit ? 0 : 5);
+      rtext(cells[i].value, static_cast<int16_t>(x0 + cells[i].width - 1), noteEdit || loopEdit || i < 2 ? 13 : 11);
       x0 = static_cast<int16_t>(x0 + cells[i].width + kGap);
     }
     // ---- Undo: the slot's steps, or the open overdub's / NOTE_EDIT session's ----

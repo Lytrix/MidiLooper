@@ -968,6 +968,37 @@ void test_slot_long_press_creates_an_empty_loop() {
   TEST_ASSERT_EQUAL_UINT32(192, heardAt(60));
 }
 
+// The edit button cycles NOTE_EDIT ↔ LOOP_EDIT and its long press leaves (owner 2026-11-08); from performance an empty
+// slot opens LOOP_EDIT, where NOTELEN creates an empty loop; NOTE_EDIT then opens on it.
+void test_edit_button_cycles_note_and_loop_edit() {
+  tap(S::kEditModeNote);  // slot 0 empty: LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  TEST_ASSERT_FALSE(gS.edit().active());
+  tap(S::kEditModeNote);  // still empty: stays in LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  tap(S::kLengthNote);  // an empty loop
+  ms(450);
+  TEST_ASSERT_TRUE(gE.transport().contentOf(0) != kNoManifest);
+  tap(S::kEditModeNote);  // NOTE_EDIT on it
+  ms(400);
+  for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  tap(S::kEditModeNote);  // LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  tap(S::kLengthNote);  // a filled slot: no second loop
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(1, gE.history().undoDepth(0));
+  tap(S::kEditModeNote, 700);  // long: performance
+  ms(400);
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  TEST_ASSERT_FALSE(gS.edit().active());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1078,6 +1109,7 @@ int main(int, char**) {
   RUN_TEST(test_notelen_short_on_an_empty_step_creates);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
+  RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);
