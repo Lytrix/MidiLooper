@@ -1,3 +1,13 @@
+**2026-11-08 — Engine sets browser, slice 1a–1b (branch `feature/engine-sets-browser`).**
+- 1a: wall-clock time. The engine reads the Teensy RTC; a time is valid only from 2025 to 2099 (`wallclock::valid`) and
+  otherwise shows `TIME NOT SET` — never the build time (legacy `RtcTime` seeded an invalid clock from `__DATE__`).
+  Measured: the Teensy loader sets the RTC to the computer's **local** time at each upload (one hour ahead of UTC in
+  CET), so the RTC is read as local time with a shown offset of 0 (EEPROM bytes 0–3). `!ENGINE time [unix]`,
+  `!ENGINE tz [minutes]`, `scripts/engine_set_time.py`; `#ENGINE,time,...` at boot. Native
+  `test_content_engine_wall_clock` (mutations 3 / 4; the pre-1970 branch unreachable by valid times).
+- 1b: the store's completed writes are stamped with the wall time (`last_save=…,saved=22:17` in `!ENGINE time`), for
+  the browser's `SAVED 14:32`. Seen on the device after a loop resize. Image `3c20915b…`, boot verified.
+
 **2026-11-08 — Fixed-memory engine: the loop length popup (slice 9 of 9).**
 - A long press on a slot (an empty one gets its empty loop first) or NOTELEN's in LOOP_EDIT opens a length popup on that
   slot: a window over the roll with a black drop shadow, bright frame and inverted title bar (Atari / Cubase), the

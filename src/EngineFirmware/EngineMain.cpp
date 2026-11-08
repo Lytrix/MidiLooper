@@ -256,17 +256,28 @@ void storeTzOffset(int16_t minutes) {
   EEPROM.update(2, static_cast<uint8_t>(gTzOffset & 0xFF));
   EEPROM.update(3, static_cast<uint8_t>((gTzOffset >> 8) & 0xFF));
 }
-/// The RTC's UTC time, or 0 when it is not valid (`wallclock::valid`).
+uint32_t gLastSaveWall = 0;   // the wall time of the store's last completed slot write (0: none this boot, or no clock)
+uint32_t gSavesSeen = 0;      // `Persistence::stats().saves` when last looked at
+/// The RTC's time, or 0 when it is not valid (`wallclock::valid`).
 uint32_t wallTime() {
   const uint32_t t = static_cast<uint32_t>(rtc_get());
   return wallclock::valid(t) ? t : 0;
 }
 void reportTime() {
   const uint32_t raw = static_cast<uint32_t>(rtc_get());
-  char stamp[24];
+  char stamp[24], saved[8];
   wallclock::formatStamp(raw, gTzOffset, stamp, sizeof stamp);
-  Serial.printf("#ENGINE,time,unix=%lu,valid=%u,offset_min=%d,local=%s\n", static_cast<unsigned long>(raw),
-                wallclock::valid(raw) ? 1u : 0u, gTzOffset, stamp);
+  wallclock::formatClock(gLastSaveWall, gTzOffset, saved, sizeof saved);
+  Serial.printf("#ENGINE,time,unix=%lu,valid=%u,offset_min=%d,local=%s,last_save=%lu,saved=%s\n",
+                static_cast<unsigned long>(raw), wallclock::valid(raw) ? 1u : 0u, gTzOffset, stamp,
+                static_cast<unsigned long>(gLastSaveWall), saved);
+}
+/// A completed store write (a slot copy) is stamped with the wall time: `SAVED 14:32` (sets browser slice 1).
+void stampSaves() {
+  const uint32_t saves = gEngine.persistence().stats().saves;
+  if (saves == gSavesSeen) return;
+  gSavesSeen = saves;
+  gLastSaveWall = wallTime();
 }
 
 void report(const char* what, uint8_t result) {
@@ -708,6 +719,7 @@ void loop() {
   crumb(kSurface);
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
+  stampSaves();
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
