@@ -58,6 +58,8 @@ struct FakeCard : CardIo {
   Sector sectors[kSectors];
   int sectorCount = 0;
   bool storeExists = false, storeOpen = false;
+  bool libraryExists = false, libraryOpen = false;  // DEC-258: its sectors kept apart from the store's
+  static constexpr uint32_t kLibraryAt = 0x40000000u;
   uint32_t storeSectors = 0;
   uint32_t writes = 0;                    // any mutation of the card by the engine
   uint32_t sectorWrites = 0, sectorReads = 0;
@@ -79,6 +81,7 @@ struct FakeCard : CardIo {
     reading = -1;
     sectorCount = 0;
     storeExists = storeOpen = false;
+    libraryExists = libraryOpen = false;
     storeSectors = 0;
     failSectorWritesAfter = failOneSectorWrite = 0xFFFFFFFFu;
     writes = sectorWrites = sectorReads = stepWrites = mostStepWrites = 0;
@@ -137,6 +140,23 @@ struct FakeCard : CardIo {
   }
   bool readSector(uint32_t i, uint8_t* d) override {
     if (!storeOpen || i >= storeSectors) return false;
+    return readAbs(i, d);
+  }
+  bool openLibrary(const char* p, uint32_t, bool create, bool& created) override {
+    TEST_ASSERT_EQUAL_STRING("/MidiLooper/library/library.bin", p);
+    created = false;
+    if (!libraryExists) {
+      if (!create) return false;
+      libraryExists = created = true;
+      ++writes;
+    }
+    libraryOpen = true;
+    return true;
+  }
+  bool readLibrarySector(uint32_t i, uint8_t* d) override { return libraryOpen && readAbs(kLibraryAt + i, d); }
+  bool writeLibrarySector(uint32_t i, const uint8_t* d) override { return libraryOpen && writeAbs(kLibraryAt + i, d); }
+  bool libraryReady(uint32_t i) override { return ready(i == kIdle ? kIdle : kLibraryAt + i); }
+  bool readAbs(uint32_t i, uint8_t* d) {
     ++sectorReads;
     if (streaming) ++readsWhileStreaming;  // the adapter stops the stream and waits
     streaming = false;
@@ -146,7 +166,10 @@ struct FakeCard : CardIo {
     return true;
   }
   bool writeSector(uint32_t i, const uint8_t* d) override {
-    if (!storeOpen || i >= storeSectors || sectorWrites >= failSectorWritesAfter) return false;
+    return storeOpen && i < storeSectors && writeAbs(i, d);
+  }
+  bool writeAbs(uint32_t i, const uint8_t* d) {
+    if (sectorWrites >= failSectorWritesAfter) return false;
     if (busy > 0 || (streaming && i != next)) ++waitingWrites;
     busy = 0;
     if (sectorWrites == failOneSectorWrite) {
@@ -663,6 +686,54 @@ void test_the_state_file_of_before_the_store_is_restored() {
   TEST_ASSERT_NOT_NULL(gCard.sector(0));  // in the store
 }
 
+/// Sets browser 2a (DEC-259): a load replaces the set, histories included; a slot it leaves without history is written
+/// empty into the store (else the next boot brings the old content back); return brings the set before it back.
+static void runLibrary(EngineRoot& e) {
+  for (int i = 0; i < 20000 && e.libraryBusy(); ++i) run(e, gClock + 1);
+  TEST_ASSERT_FALSE(e.libraryBusy());
+}
+void test_a_load_replaces_the_set_and_the_store_follows() {
+  gA.approveSaving();
+  bool created = false;
+  TEST_ASSERT_TRUE(gA.openLibrary("/MidiLooper/library/library.bin", true, created));
+  TEST_ASSERT_TRUE(created);
+  record(gA, 1, 9, 72);
+  ProductionLibrary::Milestone m;
+  m.set = 1;
+  m.stage = library::Stage::Take;
+  m.stageNumber = 1;
+  m.tempoTenths = 1200;
+  TEST_ASSERT_EQUAL(ProductionLibrary::Result::Ok, gA.saveMilestone(m));
+  runLibrary(gA);
+  TEST_ASSERT_EQUAL(ProductionLibrary::Status::Done, gA.library().status());
+  record(gA, 0, 0, 60);  // after the milestone
+  gA.control().transportStop(gClock, us(gClock), kUsPerTick);
+  TEST_ASSERT_EQUAL_UINT8(0, gA.transport().launchingSlot(0));  // ready to start from 0
+  run(gA, gClock + kSettleTicks + 100);
+  TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0) && gA.persistence().savedCurrent(9));
+  TEST_ASSERT_NULL(gA.loadRefusal(true));
+  TEST_ASSERT_EQUAL_STRING("STOP FIRST", gA.loadRefusal(false));
+  ProductionLibrary::Checkpoint c;
+  c.set = 1;
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Result::Ok, gA.loadMilestone(0, c));
+  runLibrary(gA);
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Status::Done, gA.setLoad().status());
+  TEST_ASSERT_EQUAL(kNoManifest, gA.transport().contentOf(0));  // the milestone had no slot 0
+  TEST_ASSERT_EQUAL_UINT8(0, gA.history().undoDepth(0));
+  TEST_ASSERT_TRUE(gA.transport().contentOf(9) != kNoManifest);
+  for (uint8_t t = 0; t < 2; ++t)  // the launches the stop prepared (the old content's windows) are dropped
+    TEST_ASSERT_EQUAL_UINT8(ProductionTransport::kNoSlot, gA.transport().launchingSlot(t));
+  run(gA, gClock + kSettleTicks + 100);
+  TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0));
+  bootB();  // the store holds the loaded set: slot 0 empty, not its old take
+  TEST_ASSERT_EQUAL(kNoManifest, gB.transport().contentOf(0));
+  TEST_ASSERT_TRUE(gB.transport().contentOf(9) != kNoManifest);
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Result::Ok, gA.returnToCheckpoint());
+  runLibrary(gA);
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Status::Done, gA.setLoad().status());
+  TEST_ASSERT_TRUE(gA.transport().contentOf(0) != kNoManifest);  // the take after the milestone, back
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -694,6 +765,7 @@ int main(int, char**) {
   RUN_TEST(test_a_copy_loads_only_into_its_own_slot);
   RUN_TEST(test_the_surface_state_is_saved_and_restored);
   RUN_TEST(test_the_state_file_of_before_the_store_is_restored);
+  RUN_TEST(test_a_load_replaces_the_set_and_the_store_follows);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

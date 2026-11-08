@@ -77,8 +77,16 @@ autosave starts (it follows when the milestone is done); a slot save already on 
 (`Persistence::onCard`). The library file is created only with the transport stopped, saving approved and no take open
 — at boot or right after `!ENGINE approve-saving` — because preallocating it is file-system work.
 
+## Loading and returning (DEC-259)
+
+A load replaces the whole working set with a milestone, undo histories included, and is not an undo step. It first
+writes the working set as the recovery checkpoint (if that fails, nothing changes), then clears every slot's history
+and reads the milestone. If reading fails, the checkpoint is loaded back. `return` loads the checkpoint again and writes
+nothing. A slot the load left empty is written to the store as an empty file, so the next boot does not bring the old
+content back. Slice 2a loads only while stopped; live switching is 2b.
+
 ## Serial commands (testing)
 
-`!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`. Refusals:
-`STOP THE TAKE FIRST`, `LIBRARY NOT READY`, `LIBRARY FULL`, `BUSY`. Loading a milestone and the browser screen are later
-slices of the [sets browser proposal](../Plans/engine_sets_browser_proposal.md).
+`!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
+`load <index>`, `return`. Refusals: `STOP FIRST`, `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
+`LIBRARY FULL`, `BUSY`. The browser screen and live switching are later slices of the [sets browser proposal](../Plans/engine_sets_browser_proposal.md).

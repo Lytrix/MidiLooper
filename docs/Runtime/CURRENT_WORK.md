@@ -12,6 +12,9 @@ slice: loading, the browser screen, the save popup, live switching, loop retriev
 **2026-11-08 — slice 1 done (1a–1c):** time, stamped saves, the milestone library and its serial commands are built and
 verified on the device (DEC-258 evidence). Next, on the owner's go: slice 2 (loading, checkpoint / return).
 
+**2026-11-08 — slice 2a (owner: "continue with stage 2"):** load a milestone and return, stopped only, with the
+recovery checkpoint and failure restore (DEC-259). Then 2b: the global switch point and staged live switching.
+
 **Documentation maintenance (2026-11-08, owner requested):** README and the
 [engine guide](../Guides/FIXED_MEMORY_ENGINE.md) refreshed against the engine sources; legacy guides marked by
 runtime. Browser images remain proposal previews. This docs-only work does not expand the browser slice or close

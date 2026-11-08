@@ -171,6 +171,8 @@ class LibraryWriter {
     return mounted_ && i < header_.count && card_->readLibrarySector(library::recordSector(i), s) &&
            library::decode(s + library::recordOffset(i), r);
   }
+  /// The region (0 / 1) holding the current checkpoint.
+  uint8_t checkpointRegion() const { return region_; }
   bool busy() const { return status_ == Status::Running; }
   Status status() const { return status_; }
   /// The record of the milestone the last job published.

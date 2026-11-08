@@ -1,3 +1,17 @@
+**2026-11-08 — Engine sets browser, slice 2a — load and return (branch `feature/engine-sets-browser`, DEC-259).**
+- `!ENGINE load <index>` replaces the whole set with a milestone, undo histories, tempo and selection included, after
+  writing the working set as the recovery checkpoint; a failed read restores the set from it; `!ENGINE return` brings
+  the set before the load back. Stopped only (`STOP FIRST`); also refused during a take or NOTE_EDIT.
+- The store follows a load: a slot left empty is now written empty (before, the next boot would have brought its old
+  content back). The base milestone (parent of the next save) is kept for the boot only.
+- Device: load 129–155 ms, return 64 ms, the set equal to the milestone; after load → reboot the set is the loaded one
+  (two rounds); return works after a reboot. Worst grain 1,086 µs during a load (stopped; to bound in 2b). Image
+  `8b368431…`, boot verified. Native 4,423 passed; mutations 10 / 10.
+- Seen once: a hang after a reboot in the LED stage — the USB host MIDI driver spinning while the DROID takes no
+  packets (known hazard, not the load). Follow-up.
+- Next: 2b — the global switch point and staged live switching (open owner choice: refuse or a short gap when the
+  destination does not fit).
+
 **2026-11-08 — Engine sets browser, slice 1c — milestone storage (branch `feature/engine-sets-browser`, DEC-258).**
 - 1c-i: the library's on-card format and bounds (`Library.h`): 1 GiB `/MidiLooper/library/library.bin`, A / B index
   header, 4,096 records, two checkpoint regions, an append-only log; the largest set 4,300 sectors (asserted).

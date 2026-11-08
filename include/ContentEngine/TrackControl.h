@@ -190,6 +190,15 @@ class TrackControl {
     applyAudible(nowUs);
   }
 
+  /// Sets browser 2a (DEC-259): a load is about to replace the set (stopped) — nothing stays queued, no launch prepared
+  /// (its window holds the old content), nothing resumes at Start.
+  void resetForLoad() {
+    for (uint8_t t = 0; t < Tracks; ++t) {
+      cancelQueued(t);
+      x_->stopLaunch(t);
+      wasPlaying_[t] = false;
+    }
+  }
   void transportStop(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     for (uint8_t t = 0; t < Tracks; ++t) cancelQueued(t);
     if (x_->writingTrack() != kNone) stopNow(clock, nowUs, usPerTick);

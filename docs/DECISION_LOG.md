@@ -15019,3 +15019,51 @@ owner's request before implementation).
   heap gate OK.
 - Open for the browser slice: the next stage number is found by reading the index on the command (≤ 512 sector
   reads; ~2 ms with 4 milestones, the serial stage's worst) — the browser keeps the index in memory instead.
+
+## DEC-259 — A load replaces the whole set, histories included, behind the recovery checkpoint (sets browser 2a)
+
+**Status:** Accepted (owner 2026-11-08: "continue with stage 2"; behaviour per the sets browser proposal's owner
+decisions — one recovery checkpoint, `< RETURN TO PREVIOUS`, failure keeps or restores the working set).
+**Context:** DEC-258 stores milestones and one checkpoint. A load must turn a milestone back into the working set
+without leaving it half-replaced, and the autosave store (DEC-253) must follow, or the next boot brings the old set
+back.
+
+### Decision
+
+- **What a load is.** Every slot's history is forgotten (`History::clearSlot`) and the milestone's slot files are loaded
+  in its place, undo history included; slots the milestone did not have end empty with no history. Its tempo and
+  surface state (selected track and slots) are applied. Loading is not an undo step: the way back is the checkpoint.
+- **Order.** (1) The working set is written as the recovery checkpoint (DEC-258's transaction; if that fails nothing
+  changed: `CHECKPOINT NOT WRITTEN, NOTHING CHANGED`). (2) The tracks are reset — nothing queued, no prepared launch
+  (its window holds the old content), nothing resumes at Start — and every history cleared. (3) The milestone is read,
+  one library sector a grain. (4) If it fails, the set is cleared again and the checkpoint loaded back (`RESTORED`);
+  only if that fails too is the set left as far as it got (`SET NOT RESTORED`).
+- **Return** clears and loads the checkpoint and writes nothing; the checkpoint stays (a later load replaces it). A
+  failed load also replaces it, with the set it restored.
+- **Slice 2a: stopped only.** A load or return is refused while playing (`STOP FIRST`), during a take (`STOP THE TAKE
+  FIRST`), with NOTE_EDIT open (`CLOSE THE EDIT FIRST`), or while the library or a boot load is busy. Live switching at
+  the global switch point is slice 2b.
+- **The store follows.** A slot left without history is written to the store as an empty file when the store held a
+  copy of it (`Persistence::startSave`); every loaded slot is a new state and is saved once settled.
+- **One card job at a time.** While a load runs, no slot save starts and a milestone save is refused (`BUSY`).
+- **The base milestone** (a later save's parent, a checkpoint's base) is kept for the boot only; persisting it is a
+  store format change for a later slice.
+
+### Evidence
+
+- Host: `test_content_engine_library_loader` 10 cases — a load brings every slot's file back as at the milestone
+  (states, current, runs, undo depth), tempo and surface; the checkpoint holds the set before it and return brings that
+  back; a damaged slot file, or one shorter than the blob header says, fails the load and restores the set; a
+  checkpoint that cannot be written, or a refused clear, changes nothing; refusals; `clearSlot` releases every
+  manifest and run; no heap. `test_content_engine_persistence` (EngineRoot end to end): a load empties slot 0, drops
+  the prepared launches, the store writes slot 0 empty and a second engine boots without it; return brings the take
+  back; `STOP FIRST` while playing. Mutations 10 / 10. Full native suite 4,423 passed, 0 failed (192 suites); heap
+  gate OK.
+- Device (image `8b368431…`, boot `crash=0`, `BOOT,load,ok`): a load of SET 02 E01 (509 sectors) in 129–155 ms gave
+  every slot's history as at the save; return in 64 ms gave the set before the load exactly; refused while playing.
+  Two rounds of load → settle → reboot: the set after the reboot equal to the loaded one; return after a reboot works
+  (the checkpoint is on the card). Worst grain during a load 1,086 µs (above the ~800 µs grain bound; acceptable while
+  stopped, to be bounded for live switching in 2b).
+- Seen once: after a reboot the loop hung in the LED stage (`prev_crumbs stage=8`) — the USB host driver's
+  `write_packed` spinning while the DROID took no packets (the hazard noted in `EngineMain.cpp`). Not caused by the
+  load (two further load → reboot rounds clean); recorded as a follow-up.

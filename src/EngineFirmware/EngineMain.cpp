@@ -286,6 +286,11 @@ constexpr const char* kLibraryFile = "/MidiLooper/library/library.bin";
 ProductionLibrary::Status gLibraryWas = ProductionLibrary::Status::Idle;
 bool gLibraryCheckpoint = false;  // the job running writes the checkpoint (else a milestone)
 uint32_t gLibraryStartUs = 0;
+// The working set's base milestone (its sequence; 0: none) and set number (DEC-259): a save's parent, a load's
+// checkpoint. Held this boot only (keeping them across a reboot is a store format change, a later slice).
+uint32_t gBase = 0;
+uint16_t gSet = 1;
+ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
 
 /// The tempo in tenths of a BPM (as LOOP_EDIT shows it).
 uint16_t tempoTenthsNow() {
@@ -364,12 +369,12 @@ void saveMilestone(const char* arg, uint32_t nowUs) {
     return;
   }
   const char* setArg = std::strchr(arg, ' ');
-  const uint16_t set = static_cast<uint16_t>(setArg != nullptr ? std::atoi(setArg + 1) : 1);
+  const uint16_t set = static_cast<uint16_t>(setArg != nullptr ? std::atoi(setArg + 1) : gSet);
   auto& l = gEngine.library();
   const char* refused = nullptr;
   if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) refused = "STOP THE TAKE FIRST";
   else if (!l.mounted()) refused = "LIBRARY NOT READY";
-  else if (l.busy()) refused = "BUSY";
+  else if (gEngine.libraryBusy()) refused = "BUSY";
   if (refused != nullptr) {
     Serial.printf("#ENGINE,milestone,refused,why=%s\n", refused);
     return;
@@ -383,7 +388,7 @@ void saveMilestone(const char* arg, uint32_t nowUs) {
     if (l.readRecord(i, r) && r.set == set && r.stage == m.stage && r.stageNumber >= m.stageNumber)
       m.stageNumber = static_cast<uint8_t>(r.stageNumber + 1);
   }
-  m.parent = 0;
+  m.parent = gBase;
   m.wallTime = wallTime();
   m.tempoTenths = tempoTenthsNow();
   surfaceNow(m.surface);
@@ -394,8 +399,20 @@ void saveMilestone(const char* arg, uint32_t nowUs) {
   }
   gLibraryCheckpoint = false;
   gLibraryStartUs = nowUs;
+  gBase = l.published().sequence;  // the working set now descends from it
+  gSet = set;
   Serial.printf("#ENGINE,milestone,begin,id=SET %02u %c%02u,sectors=%lu\n", set, kLetters[at - kLetters],
                 m.stageNumber, static_cast<unsigned long>(l.published().logSectors));
+}
+/// The checkpoint a load writes first: the working set as it is now.
+ProductionLibrary::Checkpoint checkpointNow() {
+  ProductionLibrary::Checkpoint c;
+  c.wallTime = wallTime();
+  c.base = gBase;
+  c.set = gSet;
+  c.tempoTenths = tempoTenthsNow();
+  surfaceNow(c.surface);
+  return c;
 }
 /// checkpoint: replaces the recovery checkpoint with the whole set as it is now (diagnostics until loading, DEC-258).
 void saveCheckpoint(uint32_t nowUs) {
@@ -403,14 +420,7 @@ void saveCheckpoint(uint32_t nowUs) {
     Serial.println("#ENGINE,checkpoint,refused,why=STOP THE TAKE FIRST");
     return;
   }
-  ProductionLibrary::Checkpoint c;
-  c.wallTime = wallTime();
-  c.base = 0;
-  c.set = 0;
-  c.loaded = 0;
-  c.tempoTenths = tempoTenthsNow();
-  surfaceNow(c.surface);
-  const ProductionLibrary::Result r = gEngine.saveCheckpoint(c);
+  const ProductionLibrary::Result r = gEngine.saveCheckpoint(checkpointNow());
   if (r != ProductionLibrary::Result::Ok) {
     Serial.printf("#ENGINE,checkpoint,refused,why=%s\n", libraryRefusal(r));
     return;
@@ -419,11 +429,83 @@ void saveCheckpoint(uint32_t nowUs) {
   gLibraryStartUs = nowUs;
   Serial.println("#ENGINE,checkpoint,begin");
 }
+/// load <index>: milestone `index` (0-based, as `milestones` lists it) replaces the set; stopped only (slice 2a).
+/// return: back to the set before the last load.
+void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
+  const bool load = verb[0] == 'l';
+  if (const char* why = gEngine.loadRefusal(!gClock.running())) {
+    Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
+    return;
+  }
+  if (load && arg == nullptr) {
+    Serial.println("#ENGINE,load,refused,why=WHICH");
+    return;
+  }
+  const ProductionSetLoad::Result r =
+      load ? gEngine.loadMilestone(static_cast<uint16_t>(std::atoi(arg)), checkpointNow()) : gEngine.returnToCheckpoint();
+  static const char* const kWhy[] = {"OK", "LIBRARY NOT READY", "BUSY", "NO SUCH MILESTONE", "NOTHING TO RETURN TO",
+                                     "SET TOO LARGE"};
+  if (r != ProductionSetLoad::Result::Ok) {
+    Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, kWhy[static_cast<uint8_t>(r)]);
+    return;
+  }
+  gLibraryStartUs = nowUs;
+  gLoadWas = ProductionSetLoad::Status::Running;
+  Serial.printf("#ENGINE,%s,begin\n", verb);
+}
+/// The loaded set's tempo and selection (as the boot restores the saved selection).
+void applyLoaded(const library::BlobHeader& b) {
+  if (b.tempoTenths != 0 && !gClock.external()) gClock.setTempo(static_cast<uint32_t>(b.tempoTenths) * 10u);
+  if (b.surface[0] < kTrackCount) gEngine.control().selectTrack(b.surface[0]);
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    if (b.surface[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(b.surface[1 + t] % 8));
+}
+/// A load's or return's end, reported once.
+void serviceLoad() {
+  const ProductionSetLoad& l = gEngine.setLoad();
+  const ProductionSetLoad::Status st = l.status();
+  if (st == gLoadWas || st == ProductionSetLoad::Status::Running) return;
+  gLoadWas = st;
+  const bool load = l.kind() == ProductionSetLoad::Kind::Load;
+  const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
+  const char* verb = load ? "load" : "return";
+  switch (st) {
+    case ProductionSetLoad::Status::Done:
+      applyLoaded(l.blob());
+      if (load) {
+        gBase = l.record().sequence;
+        gSet = l.record().set;
+        Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu\n", l.record().set,
+                      library::stageLetter(l.record().stage), l.record().stageNumber,
+                      static_cast<unsigned long>(l.record().sequence), ms);
+      } else {
+        gBase = l.checkpoint().base;
+        gSet = l.checkpoint().set;
+        Serial.printf("#ENGINE,return,done,base=%lu,set=%u,ms=%lu\n", static_cast<unsigned long>(gBase), gSet, ms);
+      }
+      break;
+    case ProductionSetLoad::Status::Unchanged:
+      Serial.printf("#ENGINE,%s,failed,why=CHECKPOINT NOT WRITTEN,NOTHING CHANGED,ms=%lu\n", verb, ms);
+      break;
+    case ProductionSetLoad::Status::Restored:
+      applyLoaded(l.blob());
+      Serial.printf("#ENGINE,load,failed,why=SLOT %u UNREADABLE (%u),RESTORED,ms=%lu\n", l.failedSlot(),
+                    static_cast<unsigned>(l.failedWhy()), ms);
+      break;
+    case ProductionSetLoad::Status::Lost:
+      Serial.printf("#ENGINE,%s,failed,why=SET NOT RESTORED,ms=%lu\n", verb, ms);
+      break;
+    default:
+      break;
+  }
+  reportLibrary(verb);
+}
 /// A library job's end, reported once.
 void serviceLibrary() {
   const ProductionLibrary::Status st = gEngine.library().status();
   if (st == gLibraryWas) return;
   gLibraryWas = st;
+  if (gEngine.setLoad().busy()) return;  // the checkpoint a load writes: the load reports
   if (st != ProductionLibrary::Status::Done && st != ProductionLibrary::Status::Failed) return;
   const bool ok = st == ProductionLibrary::Status::Done;
   const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
@@ -530,6 +612,8 @@ void command(char* line, uint32_t nowUs) {
     listMilestones();
   } else if (std::strcmp(verb, "checkpoint") == 0) {
     saveCheckpoint(nowUs);
+  } else if (std::strcmp(verb, "load") == 0 || std::strcmp(verb, "return") == 0) {
+    startLoad(verb, arg, nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
     auto& x = gEngine.transport();
     const uint8_t w = x.writingSlot();
@@ -892,6 +976,7 @@ void loop() {
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   stampSaves();
   serviceLibrary();
+  serviceLoad();
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT

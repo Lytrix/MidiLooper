@@ -302,6 +302,24 @@ class History {
     s.current = currentIndex < 0 ? kNone : e;
     return true;
   }
+  /// Sets browser 2a (DEC-259): forgets the slot's whole history — a load replaces the set, histories included. The
+  /// states' references are released (a pinned one lives until its reader unpins it). False while a session is open on
+  /// the slot.
+  bool clearSlot(uint8_t slot) {
+    if (slot >= Slots) return false;
+    for (const Session& x : sessions_)
+      if (x.slot == slot) return false;
+    Slot& s = slots_[slot];
+    for (uint8_t e = s.oldest; e != kNone;) {
+      const uint8_t next = entries_[e].newer;
+      freeEntry(e);
+      e = next;
+    }
+    s.oldest = s.newest = s.current = kNone;
+    s.emptyBelow = true;
+    lost_[slot] = 0;
+    return true;
+  }
   const Stats& stats() const { return stats_; }
   /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
   uint16_t lostSteps(uint8_t slot) const { return slot < Slots ? lost_[slot] : 0; }

@@ -527,7 +527,9 @@ class Persistence {
   }
 
   void startSave(uint8_t s) {
-    if (!seen_[s].any) {  // nothing to keep (never recorded)
+    // Nothing to keep (never recorded) — unless the store holds a copy: a slot a load left without history (DEC-259)
+    // is written empty, else the next boot would bring the old content back.
+    if (!seen_[s].any && !((haveCopy_ >> s) & 1)) {
       saved_[s] = seen_[s];
       return;
     }

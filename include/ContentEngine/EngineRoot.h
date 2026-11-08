@@ -34,6 +34,7 @@
 #include "ContentEngine/PianoRollRender.h"
 #include "ContentEngine/Persistence.h"
 #include "ContentEngine/History.h"
+#include "ContentEngine/LibraryLoader.h"
 #include "ContentEngine/LibraryWriter.h"
 #include "ContentEngine/OutputPort.h"
 #include "ContentEngine/PlaybackJobs.h"
@@ -76,6 +77,8 @@ using ProductionPersistence = Persistence<CardIo, ProductionPool, ProductionRuns
                                           ProductionHistory, Config::kSlotCount>;
 using ProductionLibrary = LibraryWriter<CardIo, ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                         Config::kSlotCount>;
+using ProductionSetLoad = SetLoad<CardIo, ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
+                                  Config::kSlotCount>;
 using ProductionNoteEdit = NoteEditSession<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                            ProductionDisplayComposer, ProductionWindow, ProductionEditWriter>;
 using ProductionEmit = ProductionPlayer::Emit;
@@ -113,7 +116,9 @@ struct EnginePsram {
   ProductionPersistence persistence;
   // DEC-258: the milestone library's writer (its whole-set snapshot, slot-file job and sector) and its save chunk.
   ProductionLibrary libraryWriter;
-  uint8_t libraryScratch[ProductionPersistence::kSector];
+  uint8_t libraryScratch[ProductionPersistence::kSector];  // the writer's, then the load's (one runs at a time)
+  // DEC-259: loading a milestone and returning (its blob reader and slot-file load job).
+  ProductionSetLoad setLoad;
 };
 
 /// DMAMEM.
@@ -146,12 +151,12 @@ struct EngineRam2 {
 // windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
 // tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
-// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job; the line is the host's
-// 64-bit layout, 440 B above the Teensy's 6,816,880). RAM2: the
+// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,364 (DEC-259: its blob
+// reader and slot-file load job). The line is the host's 64-bit layout, 552 B above the Teensy's 6,821,248. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6817320u;
+constexpr size_t kPsramBudget = 6821800u;
 constexpr size_t kRam2Budget = 154400u;  // measured (DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -254,8 +259,8 @@ class EngineRoot {
     if (card_ != nullptr) {
       const uint8_t editing = r_->noteEdit.editing() ? r_->noteEdit.slot() : ProductionTransport::kNoSlot;
       // While a milestone writes, no save starts (DEC-258: the slots' saves follow it; the card has one stream).
-      if (!p_->libraryWriter.busy()) p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
-      if (!persistLive_ && (p_->persistence.pending() || p_->libraryWriter.busy()) &&
+      if (!libraryBusy()) p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
+      if (!persistLive_ && (p_->persistence.pending() || libraryBusy()) &&
           r_->scheduler.submit(JobSpec{JobClass::Persistence, nowUs, kPersistGrains, &persistStep, this}, id))
         persistLive_ = true;
     }
@@ -320,6 +325,8 @@ class EngineRoot {
     p_->persistence.init(card, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
                          p_->persistScratch[0], p_->persistScratch[1], p_->persistScratch[2], v1Layout_);
     p_->persistence.probe();
+    p_->setLoad.bind(card, p_->libraryWriter, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
+                     p_->libraryScratch, &clearSet, this);
   }
   /// Tests: the `MidiEvent` layout V1 files were written with (the Teensy's by default).
   void setV1Layout(MidiEventLayout l) { v1Layout_ = l; }
@@ -345,17 +352,34 @@ class EngineRoot {
   }
   /// Starts writing milestone `m`: the whole set as it is now. The caller refuses it while a take is open.
   ProductionLibrary::Result saveMilestone(const ProductionLibrary::Milestone& m) {
-    if (card_ == nullptr || p_->persistence.booting()) return ProductionLibrary::Result::Busy;
+    if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginMilestone(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), m,
                                             p_->libraryScratch);
   }
   /// Starts replacing the recovery checkpoint with the whole set as it is now.
   ProductionLibrary::Result saveCheckpoint(const ProductionLibrary::Checkpoint& c) {
-    if (card_ == nullptr || p_->persistence.booting()) return ProductionLibrary::Result::Busy;
+    if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginCheckpoint(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), c,
                                              p_->libraryScratch);
   }
   ProductionLibrary& library() { return p_->libraryWriter; }
+  /// Why a load or return cannot start now (DEC-259, slice 2a: stopped only), or nullptr. `stopped`: the clock.
+  const char* loadRefusal(bool stopped) const {
+    if (card_ == nullptr || !p_->libraryWriter.mounted()) return "LIBRARY NOT READY";
+    if (r_->transport.writingSlot() != ProductionTransport::kNoSlot) return "STOP THE TAKE FIRST";
+    if (r_->noteEdit.editing()) return "CLOSE THE EDIT FIRST";
+    if (!stopped) return "STOP FIRST";
+    if (libraryBusy() || p_->persistence.booting()) return "BUSY";
+    return nullptr;
+  }
+  /// Loads milestone `index` (the caller checked `loadRefusal`): the working set becomes the checkpoint `c`, then is
+  /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends.
+  ProductionSetLoad::Result loadMilestone(uint16_t index, const ProductionLibrary::Checkpoint& c) {
+    return p_->setLoad.beginLoad(index, c);
+  }
+  ProductionSetLoad::Result returnToCheckpoint() { return p_->setLoad.beginReturn(); }
+  const ProductionSetLoad& setLoad() const { return p_->setLoad; }
+  bool libraryBusy() const { return p_->libraryWriter.busy() || p_->setLoad.busy(); }
 
   // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
   /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).
@@ -535,14 +559,28 @@ class EngineRoot {
     e.rebuildLive_ = false;
     return JobStep::Done;
   }
+  /// A load's clear (DEC-259): the tracks reset, then every slot's history forgotten. Refused while a take or an edit is
+  /// open (the caller checked; a session would refuse its slot).
+  static bool clearSet(void* ctx) {
+    EngineRoot& e = *static_cast<EngineRoot*>(ctx);
+    if (e.r_->transport.writingSlot() != ProductionTransport::kNoSlot || e.r_->noteEdit.editing()) return false;
+    e.r_->control.resetForLoad();
+    for (uint8_t s = 0; s < Config::kSlotCount; ++s)
+      if (!e.r_->history.clearSlot(s)) return false;
+    return true;
+  }
   static JobStep persistStep(void* ctx) {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
-    // A milestone waits for a save already on the card, then has the card to itself (DEC-258).
-    if (e.p_->persistence.onCard() || !e.p_->libraryWriter.busy()) {
+    // A milestone or a load waits for a save already on the card, then has the card to itself (DEC-258); a load drives
+    // its own checkpoint write.
+    if (e.p_->persistence.onCard() || !e.libraryBusy()) {
       if (e.p_->persistence.step()) return JobStep::Continue;
     }
-    if (e.p_->libraryWriter.busy() && e.p_->libraryWriter.step() == ProductionLibrary::Status::Running)
+    if (e.p_->setLoad.busy()) {
+      if (e.p_->setLoad.step() == ProductionSetLoad::Status::Running) return JobStep::Continue;
+    } else if (e.p_->libraryWriter.busy() && e.p_->libraryWriter.step() == ProductionLibrary::Status::Running) {
       return JobStep::Continue;
+    }
     e.persistLive_ = false;
     return JobStep::Done;
   }
