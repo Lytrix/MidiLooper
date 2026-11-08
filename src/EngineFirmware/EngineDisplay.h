@@ -130,8 +130,13 @@ class EngineDisplay {
   /// frame is written): `reg` 0xB3 front clock (high nibble oscillator, low nibble divide − 1; boot 0x91) or 0xB1
   /// phase lengths (boot 0xE2), `value` its byte, sent once the frame in flight is done; 0 leaves it. `frameMs` the
   /// frame period (0 leaves it). Not kept over a reboot.
-  void tune(uint8_t clock, uint8_t phase, uint32_t frameMs) {
+  /// `flip` 1 / 0: off-screen frames (`SSD1322_API::setPageFlip`), anything else leaves it.
+  void tune(uint8_t clock, uint8_t phase, uint32_t frameMs, int flip = -1) {
     while (oled_.api.isDisplayTransferActive()) oled_.api.pollDisplayTransfer();
+    if (flip == 0 || flip == 1) {
+      oled_.api.setPageFlip(flip == 1);
+      sendBlocking();  // both pages agree at once
+    }
     if (clock != 0) {
       oled_.api.SSD1322_API_command(0xB3);
       oled_.api.SSD1322_API_data(clock);
@@ -143,8 +148,8 @@ class EngineDisplay {
       phase_ = phase;
     }
     if (frameMs != 0) frameMs_ = frameMs;
-    Serial.printf("#ENGINE,oled,clock=0x%02X,phase=0x%02X,frame_ms=%lu\n", clock_, phase_,
-                  static_cast<unsigned long>(frameMs_));
+    Serial.printf("#ENGINE,oled,clock=0x%02X,phase=0x%02X,frame_ms=%lu,flip=%u\n", clock_, phase_,
+                  static_cast<unsigned long>(frameMs_), oled_.api.pageFlip());
   }
 
   /// The slot a track shows while it plays nothing (the last one launched or recorded on it).
@@ -187,11 +192,7 @@ class EngineDisplay {
   };
 
   uint8_t* fb() { return oled_.api.getFrameBuffer(); }
-  void sendBlocking() {
-    oled_.api.SSD1322_API_set_window(0, 63, 0, 63);
-    oled_.api.SSD1322_API_command(SSD1322_WRITE_RAM);
-    oled_.api.SSD1322_API_send_buffer(fb(), FRAMEBUFFER_SIZE);
-  }
+  void sendBlocking() { oled_.api.displayBlocking(); }
   void text(const char* s, int16_t x, int16_t y, uint8_t brightness) { oled_.gfx.draw_text(fb(), s, x, y, brightness); }
   void px(int16_t x, int16_t y, uint8_t v) {
     if (x >= 0 && x < DISPLAY_WIDTH && y >= 0 && y < DISPLAY_HEIGHT) oled_.gfx.draw_pixel(fb(), x, y, v);

@@ -4,7 +4,12 @@
   / `oled-phase <v>` set the SSD1322's front clock (0xB3, boot 0x91) / phase lengths (0xB1, boot 0xE2) live, and
   `frame-ms <n>` the frame period (33); no argument reports. Not kept over a reboot. Goal: a panel scan as fast as the
   ~3.3 ms frame write, so the two rarely cross; the chosen value then goes into the boot sequence. Image
-  `551eeb80…`, boot verified; owner tuning by eye pending.
+  `551eeb80…`, boot verified. Owner: a faster clock dims the screen (0xF1 on too dim) and the tear comes and goes, so
+  the clock cannot remove it; the boot value stays.
+- Then: off-screen frames, opt-in (`!ENGINE oled-flip 1 / 0`, default off; `SSD1322_API::setPageFlip`): each frame is
+  written to the 64 GRAM rows not shown and the display start line (0xA1) moved to them once complete. Tear-free only
+  if the controller applies the start line at its next frame (not in the datasheet). Legacy (`teensy41-capture-serial`)
+  still builds; it never turns it on. Image `b20f4a6f…`, boot verified; owner check by eye pending.
 
 **2026-11-08 — Fixed-memory engine: note starts on the piano roll.**
 - Each note's first pixel is drawn brighter than its bar (13; 15 selected; 6 / 9 muted), after every bar so a touching

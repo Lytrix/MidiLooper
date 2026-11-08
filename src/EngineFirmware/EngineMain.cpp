@@ -300,11 +300,12 @@ void command(char* line, uint32_t nowUs) {
     gDisplay.selfTest(a != 0);
     gDisplay.hold(millis(), 3000);
   } else if (std::strcmp(verb, "oled-clock") == 0 || std::strcmp(verb, "oled-phase") == 0 ||
-             std::strcmp(verb, "frame-ms") == 0) {  // panel timing (diagnostics): oled-clock 0xF1; frame-ms 16; no arg reports
+             std::strcmp(verb, "frame-ms") == 0 || std::strcmp(verb, "oled-flip") == 0) {
+    // Panel timing (diagnostics): oled-clock 0xB1; frame-ms 16; oled-flip 1 / 0 (off-screen frames); no arg reports.
     const long v = arg != nullptr ? std::strtol(arg, nullptr, 0) : 0;
-    const bool clock = verb[5] == 'c', phase = verb[5] == 'p';
+    const bool clock = verb[5] == 'c', phase = verb[5] == 'p', flip = verb[5] == 'f';
     gDisplay.tune(clock ? static_cast<uint8_t>(v) : 0, phase ? static_cast<uint8_t>(v) : 0,
-                  !clock && !phase ? static_cast<uint32_t>(v) : 0);
+                  !clock && !phase && !flip ? static_cast<uint32_t>(v) : 0, flip && arg != nullptr ? static_cast<int>(v) : -1);
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
