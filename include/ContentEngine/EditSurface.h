@@ -30,7 +30,8 @@
 //   owner 2026-11-08: a fader is never exact, so a step a move was too many): a later change replaces the note's
 //   step, and one back at the note's value before it takes the step away.
 // * NOTELEN 35: short = start ↔ end (length) editing — the bracket and the reference 16th move to the note's end or
-//   start; double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
+//   start; with no note selected (an empty 16th) it creates one there instead (owner 2026-11-08: nothing to lengthen);
+//   double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
 //   within 24 ticks of it.
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
@@ -376,6 +377,15 @@ class EditSurface {
     refStep_ = bracket_ / kSixteenth;
     drive(kMotorCoarse | kMotorFine, ms);
   }
+  /// NOTELEN short: length mode on the selected note; with none selected (an empty 16th) a note is created at the
+  /// bracket instead (owner 2026-11-08).
+  void lengthOrCreate(uint32_t ms) {
+    EditNote n;
+    if (editing() && !selected(n))
+      create(ms);
+    else
+      toggleLength(ms);
+  }
   /// NOTELEN double: delete the selected note, else create one at the bracket.
   void deleteOrCreate(uint32_t ms) {
     if (!editing()) return;
@@ -390,6 +400,12 @@ class EditSurface {
       }
       return;
     }
+    create(ms);
+  }
+  /// A note at the bracket (C3, velocity 80, a 32nd; the window's channel), unless one starts within `kSnapTicks`.
+  void create(uint32_t ms) {
+    if (!editing()) return;
+    open_ = false;
     const uint16_t size = session().size();
     uint8_t channel = 0;
     for (uint16_t i = 0; i < size; ++i) {

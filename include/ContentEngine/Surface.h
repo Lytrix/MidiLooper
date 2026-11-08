@@ -395,7 +395,7 @@ class Surface {
         else if (p == Press::Short || p == Press::Long) edit_.leave();
         return;  // double: the set browser (a later slice)
       case kLength:
-        if (p == Press::Short) edit_.toggleLength(nowMs_);
+        if (p == Press::Short) edit_.lengthOrCreate(nowMs_);
         else if (p == Press::Double) edit_.deleteOrCreate(nowMs_);
         return;
       case kPlayStop:

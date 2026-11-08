@@ -1,3 +1,10 @@
+**2026-11-08 — Fixed-memory engine: creation and LOOP_EDIT, slice 1 of 9 (owner plan).**
+- Plan (owner): 1 NOTELEN short on an empty 16th creates; 2 NOTELEN long press released creates; 3 slot long press on
+  an empty slot creates a 1-bar loop; 4 slot double = Clear; 5 edit button cycles NOTE ↔ LOOP, long leaves; 6–8
+  LOOP_EDIT tempo F4, length F2, start F1; 9 the loop-length popup.
+- Slice 1: NOTELEN short with no note selected (an empty 16th) creates a note at the bracket instead of toggling
+  length mode (`EditSurface::lengthOrCreate`). Image `ff47ef51…`, boot verified.
+
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo
   step on its slot, as leaving — and opens NOTE_EDIT on the new track's shown slot, or ends it when that slot is empty

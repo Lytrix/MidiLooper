@@ -877,6 +877,28 @@ void test_note_edit_follows_the_track() {
   TEST_ASSERT_EQUAL_UINT8(8, gS.edit().slot());
 }
 
+// NOTELEN short on an empty 16th creates a note there (owner 2026-11-08: there is no note to lengthen); on a note it
+// still toggles length mode.
+void test_notelen_short_on_an_empty_step_creates() {
+  recordBar({{96, 64}});
+  enterEdit();
+  settle();
+  f1(pbFor(12, 16));  // an empty 16th (576)
+  EditNote n;
+  TEST_ASSERT_FALSE(gS.edit().selected(n));
+  const uint16_t size = gE.noteEdit().size();
+  tap(S::kLengthNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(576, sel().tick);
+  TEST_ASSERT_FALSE(gS.edit().lengthMode());
+  tap(S::kLengthNote);  // the new note is selected: length mode
+  ms(450);
+  TEST_ASSERT_TRUE(gS.edit().lengthMode());
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -984,6 +1006,7 @@ int main(int, char**) {
   RUN_TEST(test_f4_with_notelen_held_sets_the_velocity);
   RUN_TEST(test_f4_at_zero_mutes_the_note);
   RUN_TEST(test_note_edit_follows_the_track);
+  RUN_TEST(test_notelen_short_on_an_empty_step_creates);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

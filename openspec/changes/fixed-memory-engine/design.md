@@ -2314,3 +2314,12 @@ the session is left, its edits one undo step on its slot as when leaving, and NO
 slot (the playing, else the selected one) as its entry does — bracket at the playhead, length and velocity mode off —
 or ends when that slot is empty or being written. Outside NOTE_EDIT a select opens nothing.
 `test_note_edit_follows_the_track` (mutations 5 / 5).
+
+## Creation gestures and LOOP_EDIT (owner 2026-11-08; slices, built one at a time)
+
+The edit button switches edit modes (NOTE ↔ LOOP, later CC); creating notes and loops is NOTELEN's (and a slot's
+long press). Slices: (1) NOTELEN short with no note selected creates one at the bracket — there is nothing to
+lengthen (`EditSurface::lengthOrCreate`; as built, `test_notelen_short_on_an_empty_step_creates`, mutations 2 / 2);
+(2) a NOTELEN long press released without F4 moved creates; (3) a slot long press on an empty slot creates a 1-bar
+empty loop (the length a global setting later); (4) a slot double press is Clear; (5) the edit button cycles NOTE ↔
+LOOP and a long press leaves; (6–8) LOOP_EDIT F4 tempo, F2 length, F1 start; (9) a loop-length popup.
