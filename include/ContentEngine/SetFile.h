@@ -62,6 +62,21 @@ class SaveJob {
   Status start(Pool& pool, Runs& runs, Manifests& manifests, const HistoryT& history, uint8_t slot, Sink& sink,
                uint32_t noteIdHigh, uint8_t* scratch) {
     cancel();
+    ManifestId chain[kMaxStates];
+    int16_t current;
+    bool emptyBelow;
+    const uint8_t n = history.chain(slot, chain, kMaxStates, current, emptyBelow);
+    for (uint8_t i = 0; i < n; ++i) manifests.pin(chain[i]);
+    const Status st = startChain(pool, runs, manifests, slot, chain, n, current, emptyBelow, sink, noteIdHigh, scratch);
+    ownPins_ = true;
+    return st;
+  }
+  /// Starts saving `slot` from a captured chain (sets browser 1c-ii, DEC-258: a whole-set snapshot taken at one
+  /// instant, whose owner holds the pins) instead of the live history. The job pins nothing itself.
+  Status startChain(Pool& pool, Runs& runs, Manifests& manifests, uint8_t slot, const ManifestId* chain, uint8_t n,
+                    int16_t current, bool emptyBelow, Sink& sink, uint32_t noteIdHigh, uint8_t* scratch) {
+    cancel();
+    ownPins_ = false;
     pool_ = &pool;
     runs_ = &runs;
     manifests_ = &manifests;
@@ -69,8 +84,10 @@ class SaveJob {
     scratch_ = scratch;
     slot_ = slot;
     noteIdHigh_ = noteIdHigh;
-    states_ = history.chain(slot, state_, kMaxStates, current_, emptyBelow_);
-    for (uint8_t i = 0; i < states_; ++i) manifests.pin(state_[i]);
+    states_ = n > kMaxStates ? kMaxStates : n;
+    for (uint8_t i = 0; i < states_; ++i) state_[i] = chain[i];
+    current_ = current;
+    emptyBelow_ = emptyBelow;
     // The directory: each run once, in first-use order.
     for (auto& x : index_) x = kNoIndex;
     runCount_ = 0;
@@ -197,8 +214,10 @@ class SaveJob {
   }
 
   Status end(Status s) {
-    for (uint8_t i = 0; i < states_; ++i) manifests_->unpin(state_[i], *runs_);
+    if (ownPins_)
+      for (uint8_t i = 0; i < states_; ++i) manifests_->unpin(state_[i], *runs_);
     states_ = 0;
+    ownPins_ = false;
     return status_ = s;
   }
 
@@ -210,6 +229,7 @@ class SaveJob {
   uint8_t slot_ = 0, states_ = 0;
   int16_t current_ = -1;
   bool emptyBelow_ = true;
+  bool ownPins_ = false;  // `start` pinned the chain (`startChain`: the snapshot's owner did)
   uint32_t noteIdHigh_ = 0, loop_ = 0, totalRows_ = 0, crc_ = 0, used_ = 0, row_ = 0;
   uint16_t runCount_ = 0, r_ = 0;
   Phase phase_ = Phase::Header;

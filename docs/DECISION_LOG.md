@@ -14993,4 +14993,14 @@ owner's request before implementation).
   the 4,300-sector bound (also a `static_assert`), the A / B index header (the newer valid one current, a torn one
   ignored), records, blob and checkpoint headers (round trip, damage rejected, a torn newer checkpoint leaves the older
   one current), `LIBRARY FULL` / index-full / too-large refusals, per-stage numbering within a set. Mutations 6 / 6.
-- To be added: 1c-ii snapshot and writer, 1c-iii the card file and commands.
+- 1c-ii (snapshot and writer, `include/ContentEngine/LibraryWriter.h`; `SaveJob::startChain` writes a chain the caller
+  pinned): `test_content_engine_library_writer` 7 cases on a fake card whose failing write tears its sector and whose
+  writes stay in flight until a `kIdle` poll — a milestone reads back after a remount with the slot files a save at
+  T0 writes, its metrics and mosaic, and only its own pins released (another reader's pin kept); an undo, a new take
+  and a replaced slot after the request are not in it; an interrupted blob publishes nothing and its space is reused;
+  a record written but its header torn is not published (from a remounted writer); `LIBRARY FULL` and index-full
+  refuse with zero writes and the pins released; a failed checkpoint replacement leaves the previous one current, and
+  the next succeeds; blob → record → header each programmed before the next (no out-of-order publication); no heap.
+  Mutations 9 / 9 (snapshot pins, header or checkpoint written in place, append not advanced, fit ignored, pins kept
+  on failure or refusal, record before the blob is programmed, `SaveJob` unpinning a chain it did not pin).
+- To be added: 1c-iii the card file and commands.

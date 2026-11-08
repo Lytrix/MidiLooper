@@ -69,6 +69,26 @@ struct CardIo {
     (void)i;
     return true;
   }
+  // The milestone library (DEC-258): a second preallocated contiguous file, sector I/O only, opened once and only with
+  // the transport stopped (`create` preallocates it: file-system work that may take seconds). `libraryReady` as
+  // `ready`, for the library's sectors (`kIdle`: everything programmed). Defaults: no library.
+  virtual bool openLibrary(const char* path, uint32_t sectors, bool create, bool& created) {
+    (void)path, (void)sectors, (void)create;
+    created = false;
+    return false;
+  }
+  virtual bool readLibrarySector(uint32_t i, uint8_t* data) {
+    (void)i, (void)data;
+    return false;
+  }
+  virtual bool writeLibrarySector(uint32_t i, const uint8_t* data) {
+    (void)i, (void)data;
+    return false;
+  }
+  virtual bool libraryReady(uint32_t i) {
+    (void)i;
+    return true;
+  }
   virtual ~CardIo() = default;
 };
 
@@ -239,6 +259,8 @@ class Persistence {
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
+  /// A save or state write is on the card and not yet programmed (the milestone library waits for it, DEC-258).
+  bool onCard() const { return saving_ != kNone || closing_; }
   /// For the display's save dots (E9.8k): a slot is being written. The surface state (the selection) is saved
   /// silently: a track switch must not hide the screen's progress line behind the dots (owner 2026-11-06).
   bool writing() const { return saving_ != kNone || closingSave_; }
