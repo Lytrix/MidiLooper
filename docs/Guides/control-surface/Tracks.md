@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** the reference below describes legacy v3, built by `teensy41-capture-serial`. For the current fixed-memory runtime (`teensy41-engine`), use the [engine guide](../FIXED_MEMORY_ENGINE.md). In particular, engine slot double clears, slot long opens length, and the legacy jam/overlay gestures are unavailable.
+
 # Tracks (control surface)
 
 **Applies to:** v3 (`dev`) — DROID 8×8 grid, track row.

@@ -11,6 +11,13 @@
   4,413 passed.
 - Next (slice 2, per the proposal): loading a milestone with the checkpoint / return, then the browser screen.
 
+**2026-11-08 — Documentation refresh for the fixed-memory engine (docs only).**
+README and the new engine guide now describe current slot gestures, note/loop editing, motor faders, display,
+shared history limits, A/B autosave and RTC. Entry-point and legacy guides identify their runtime scope.
+Browser walkthrough images are explicitly proposal previews. Source/environment checks and local Markdown-link
+validation performed; no firmware build, upload, device/SD action or acceptance-gate change in this documentation slice.
+
+
 **2026-11-08 — Engine sets browser, slice 1a–1b (branch `feature/engine-sets-browser`).**
 - 1a: wall-clock time. The engine reads the Teensy RTC; a time is valid only from 2025 to 2099 (`wallclock::valid`) and
   otherwise shows `TIME NOT SET` — never the build time (legacy `RtcTime` seeded an invalid clock from `__DATE__`).

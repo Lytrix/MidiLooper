@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** this guide documents the legacy runtime and its owners. The fixed-memory engine has a separate content, input, display and persistence path; start with [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) for current behavior and source entry points. Legacy APIs and memory claims below must not be applied to the engine.
+
 # Runtime storage and persistence
 
 Agent-oriented map of how loop MIDI lives in RAM (chunk pool + passes) and how it reaches SD (deferred writer). Read this **first** when changing persistence scheduling, long-record save starvation, or the continuous-runtime-persistence track.

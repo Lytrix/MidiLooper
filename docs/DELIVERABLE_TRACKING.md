@@ -1,3 +1,9 @@
+**2026-11-08 — Fixed-memory engine documentation refreshed (docs only).**
+The [README](../README.md) and [engine guide](Guides/FIXED_MEMORY_ENGINE.md) now cover the current runtime,
+controls, display, storage and limits. Legacy references are scoped explicitly. Sets-browser screenshots remain
+labelled proposal walkthroughs; no browser feature or firmware acceptance is claimed by this refresh.
+
+
 **2026-10-30 — realtime idle-owner admission bound: live-window device oracle accepted and ARCHIVED (2026-10-30).**
 The deferred idle-owner turn now dispatches only declared, enforced children while a track is timing-critical;
 the overdub source is one touched-coverage producer with a read-only overlap cut, the display has a separate

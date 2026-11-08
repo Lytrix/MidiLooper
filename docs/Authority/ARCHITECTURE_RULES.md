@@ -1,3 +1,5 @@
+> **Runtime applicability (2026-11-08):** the fixed-memory content ownership transfer was accepted in [DEC-252 — fixed pages, immutable runs and versioned manifests](../DECISION_LOG.md#dec-252--one-bounded-content-engine-direct-cutover-to-fixed-pages-immutable-runs-and-versioned-manifests), with subsequent storage and loop-window amendments in the decision log and [engine OpenSpec](../../openspec/changes/fixed-memory-engine/design.md). The manager ownership table and legacy API examples below apply to the retained legacy runtime. Use the [engine guide](../Guides/FIXED_MEMORY_ENGINE.md#engine-structure-and-limits) to navigate the engine's implemented owners; general intent, ownership discipline and execution-bound rules still apply. This note records the accepted transfer, without authorizing another architecture change.
+
 # Architecture rules
 
 Contract for agents and humans: who owns what, how modules are named, what is forbidden, and when a new abstraction is justified.

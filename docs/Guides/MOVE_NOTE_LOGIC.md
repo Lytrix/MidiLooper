@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** this guide documents the legacy runtime and its owners. The fixed-memory engine has a separate content, input, display and persistence path; start with [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) for current behavior and source entry points. Legacy APIs and memory claims below must not be applied to the engine.
+
 # Move / note-edit geometry logic
 
 Living guide for NOTE_EDIT move, length, pitch, overlap hide/shorten/restore, and commit.

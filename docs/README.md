@@ -1,3 +1,7 @@
+> **Current development runtime (2026-11-08):** start with the [fixed-memory engine guide](Guides/FIXED_MEMORY_ENGINE.md) and [README](../README.md). `teensy41-engine` builds the engine; `teensy41-capture-serial` builds the retained legacy runtime. The v1/v2/v3 branch descriptions below are historical firmware references. Current checkout: `feature/engine-sets-browser`, from `rewrite/fixed-memory-engine`.
+>
+> The [Sets browser walkthroughs](Plans/engine_sets_browser_proposal.md#5-walkthroughs-initial-browser), including `walk_4_long_history.png`, illustrate a proposed UI. Consult [CURRENT_WORK](Runtime/CURRENT_WORK.md) for what is being implemented.
+
 # Documentation index
 
 The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links).

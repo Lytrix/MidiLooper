@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** this guide documents the legacy runtime and its owners. The fixed-memory engine has a separate content, input, display and persistence path; start with [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) for current behavior and source entry points. Legacy APIs and memory claims below must not be applied to the engine.
+
 # Deferred runtime persistence and chunk-bounded SD save
 
 Agent-oriented map of how loop state is written to SD after runtime events (record/overdub stop, undo, clear, autosave). Read this before changing `StorageManager`, `StorageLoopIo`, or any call site that used to invoke synchronous `saveState()`.

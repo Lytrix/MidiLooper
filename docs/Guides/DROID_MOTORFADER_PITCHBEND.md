@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** this guide documents the legacy runtime and its owners. The fixed-memory engine has a separate content, input, display and persistence path; start with [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) for current behavior and source entry points. Legacy APIs and memory claims below must not be applied to the engine.
+
 # DROID motorfader pitchbend — scale, NOTE_EDIT arm, HITL probe
 
 Non-obvious behavior for motorized faders on the DROID patch (`droid/midilooper_v1.ini`) and the host

@@ -22,6 +22,12 @@ Everything in the firmware exists to serve this loop:
 
 Steps 1, 2, and 4 are the identity of the device. Step 3 exists *in service of the groove* — the editor is a tool inside the instrument, not the product. Step 5 is where Phase 3 (jam/arrangement capture) is headed.
 
+## Keep playing, keep the vibe
+
+Record, overdub, undo and redo belong to the same continuous act of playing. Finishing a take means letting it loop and making room for the next idea while the music keeps running. Try a phrase, undo it, bring it back, refine a note or reshape a loop while listening. The goal is to keep the vibe of the music through those changes, without needing to stop the transport to move between capturing, layering and refining.
+
+Undo is part of that musical freedom: changing your mind should be as immediate as putting the idea in. The piano roll and detailed edits serve the groove, so small corrections do not pull attention away from playing. The same intent applies to the four-button-and-encoder base module and richer MIDI extension surfaces.
+
 ## The core question this project answers
 
 **What is the smallest control surface that makes full song creation feel like playing?**

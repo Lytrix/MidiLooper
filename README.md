@@ -2,248 +2,158 @@
 
 # Midi Looper Droid
 
-![midilooper_droid.jpg](Images/midilooper_droid.jpg)
+![Teensy MIDI looper with DROID controls](Images/midilooper_droid.jpg)
 
-## Midi Looper with Droid MotoFader and B24
+A hands-on, eight-track MIDI looper for Teensy 4.1, with eight loop slots per track, a 192 PPQN clock, a piano roll on a 256×64 OLED, and hands-on MIDI control. Record, overdub, switch loops, edit notes and reshape loop boundaries while playing. The DROID button grid and four motorized faders shown above are one implementation of the MIDI controller interface.
 
-This is the codebase to run a **multi-track MIDI looper** on a **Teensy 4.1** with live loop jaming manipulations, piano-roll note/cc editing, tight hardware serial timing via minijack midi outs and usb on a 192 PPQN clock with hands on control workflow. It is built for **live performance**: record and layer multiple loop slots per track, remix them by quantized slot switching into new jams **while the music never needs to stop running** to keep into the vibe of the music with undo/redo capabilities.
+## Keep playing, keep the vibe
 
-The **base configuration** of this device is a minimal **encoder-and-4-buttons** module that must carry the full core workflow on its own (it exists physically but is currently dormant in the firmware — see [`docs/Authority/PROJECT_INTENT.md`](docs/Authority/PROJECT_INTENT.md) for the project goal and decision log).
+**A song creation device that feels like playing an instrument, not operating software.**
 
-### Firmware versions
+The reference feeling is **Cubase on an Atari**: you sat down, ideas went in immediately, and the machine sort of disappeared. Only notes and parts to arrange, nothing more. One hand on the device, attention on the music.
 
-| Version | Branch | Control surface | README |
-|---------|--------|-----------------|--------|
-| **v1** | `main` | 2 buttons + encoder, 16×2 LCD | [v1 README](https://github.com/Lytrix/MidiLooper/blob/main/README.md) |
-| **v2** | `midi-faders` | DROID / iPad MIDI, basic SD save, no PSRAM required | [v2 README](https://github.com/Lytrix/MidiLooper/blob/midi-faders/README.md) |
-| **v3** | `dev` | DROID 8×8 + 4 motorized faders, Sets/revisions, multi-slot (**this document**) | — |
+The goal is to record MIDI the moment the idea happens, layer another part, overdub, undo something that did not work, redo it if you miss it, and keep playing. Finishing a recording or an overdub should be part of the performance: the loop carries on, ready for the next idea. **The music never needs to stop running to keep you in the vibe of the music.**
 
-Branch policy and local archive refs: [`docs/BRANCHING.md`](docs/BRANCHING.md).
+Undo and redo belong inside that flow. Try a phrase, take it away, bring it back; adjust a note or a loop boundary while listening to what the change does to the groove. The piano roll and editing controls are there to fix small mistakes on the fly and fine-tune grooves, with attention staying on the music.
 
-**v3 (`dev`)** drives the DROID **extension surface**: an **8×8 button grid with 4 motorized faders**. Underneath, everything stays **MIDI-addressable**, so another controller can be made into a dedicated controller for this midi looper by updating [`include/MidiConfig.h`](include/MidiConfig.h) to your controller setup.
+Build variations in loop slots, bring tracks in and out, and remix earlier recorded loops into new jams. The longer-term aim is to capture that jam itself, then massage the captured vibe with the parts at hand into a finished song. **Building a song should feel like playing.** Jam/arrangement capture remains future work; see [what is available and what is next](#what-is-available-and-what-is-next).
 
----
+This is the [project's guiding intent](docs/Authority/PROJECT_INTENT.md), shared by the minimal module and MIDI controller setup.
 
-## Hardware & first-time setup
+## Two control setups
 
-Built around a **[Teensy 4.1](https://www.pjrc.com/store/teensy41.html)**. PJRC documents the board, memory expansion, RTC, and programming flow on that page — summary for this project below.
+### Minimal setup: four buttons and one encoder
 
-### Required / recommended parts
+The base module uses **4 physical buttons and 1 rotary encoder**, connected directly to the looper through GPIO. This is the compact, standalone control setup: the intended core workflow is recording, overdubbing, undo, track/slot navigation and basic editing through button gestures and the encoder. It does not require a DROID or another MIDI controller.
 
-| Part | Why |
-|------|-----|
-| **Teensy 4.1** | Main processor (600 MHz Cortex-M7, built-in micro SD socket, USB host). |
-| **Micro SD card** | Loop data, **Current** workspace, and **Set** revision history (`SD.begin(BUILTIN_SDCARD)` — native 4-bit SDIO on the board socket). |
-| **8 MB PSRAM** (QSPI, bottom of board) | **Strongly recommended.** Long loops store MIDI events in the **external memory pool** (`extmem_malloc` / PSRAM). Without a chip soldered, allocation falls back to internal RAM2 and long-record headroom is limited. PJRC: [PSRAM chip](https://www.pjrc.com/store/psram.html); if you fit **one** chip, use the **smaller** QSPI pads on the underside ([Teensy 4.1 memory section](https://www.pjrc.com/store/teensy41.html)). |
-| **CR2032 coin cell** on **VBAT** + **GND** | Keeps the **RTC** (real-time clock) running when main power is off so revision **save timestamps** and boot recovery metadata stay meaningful. A 3 V coin cell is fine; CR2032 is what PJRC recommends. |
-| **SSD1322 OLED** (256×64) or 16×2 LCD | Piano roll and load/save overlay UI. |
-| **6N137 MIDI in**, USB / DIN MIDI out | Clock and note I/O (see [PJRC MIDI library wiring](https://www.pjrc.com/teensy/td_libs_MIDI.html)). |
-| **DROID M4 + 2× B32 + moto faders** (this build) | Button grid and faders — [DROID product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). |
+The hardware exists, but its GPIO control path is currently dormant and has not been connected to the fixed-memory engine. The full minimal-control workflow remains the [base-module goal](docs/Authority/PROJECT_INTENT.md); the MIDI mappings and four-fader controls below describe the currently active extension setup.
 
-### RTC, date/time, and battery wiring
+### MIDI controller setup: extra buttons and faders
 
-Teensy 4.1 has a **32.768 kHz crystal** for the RTC. With a coin cell on **VBAT**, date/time is kept while USB/VIN power is removed ([Timing → Real Time Clock](https://www.pjrc.com/store/teensy41.html)).
+An external MIDI controller gives direct access to tracks, slots and editing parameters. **DROID is the implementation example used here:** a button grid plus four motorized faders, configured with the supplied patch. Another controller can provide the same controls by sending the documented MIDI notes, CCs and pitch-bend messages.
 
-- Solder **VBAT** (positive) and **GND** to a **CR2032 holder** (or compatible 3 V cell).
-- On first **upload**, **Teensy Loader** (via PlatformIO / Teensyduino) sets the RTC from your **PC clock** — set the host time correctly before flashing.
-- After that, timestamps on saved **Set revisions** use RTC time when the cell is present; without VBAT, time resets when power cycles.
+The workflow, button table and fader table below apply to this MIDI controller setup. They describe looper actions; the later mapping tables explain how to assign those actions to your controller. The four faders belong to the extension setup, while the minimal setup uses its single encoder.
 
-### First flash & run
+## Playing the looper
 
-1. Install [PlatformIO](https://platformio.org/) (this repo: `platformio.ini`, board **Teensy 4.1**).
-2. Format an SD card (FAT32), insert in the Teensy socket.
-3. Solder **PSRAM** (if used) and connect **VBAT** battery before or after first flash.
-4. Build and upload (default env with serial capture for development):
+1. **Choose a track and an empty slot.** Press the slot to arm recording. With transport stopped, start transport to begin the take; on a running track, press the armed slot again to punch in.
+2. **Record a loop.** Play your MIDI instrument, then press Record to finish the take at a bar boundary and keep listening as it loops.
+3. **Layer more notes.** Press Record on the playing track to overdub; press again to finish the overdub while playback continues. Double Record undoes; triple redoes—try ideas and change your mind while the groove keeps running.
+4. **Build variations.** Record into another slot, then press a filled slot to queue it at the playing loop's end. Select other tracks to build the arrangement; use mute and solo to bring parts in and out.
+5. **Edit while listening.** Press Edit for NOTE_EDIT, press again for LOOP_EDIT, and hold Edit to return to performance. Use the four faders as described below.
 
-   ```bash
-   pio run -e teensy41-capture-serial -t upload
-   ```
+Settled changes autosave once saving has been enabled during setup. See the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md) for recording states, editing details and storage behavior.
 
-5. On upload, Teensy enters **program mode** automatically when USB serial is listening; if a bad sketch blocks USB, use the **Program** button on the board ([Programming → Program pushbutton](https://www.pjrc.com/store/teensy41.html)).
-6. Power the DROID (or your MIDI controller), wire MIDI to the Teensy, start transport — **Current** workspace is created on SD under `/MidiLooper/current/` as you record; **Save** in the load/save overlay appends **Set** revisions under `/MidiLooper/sets/`.
+## MIDI controller: button gestures
 
----
+The same buttons provide their main action with a short press and secondary actions with double, triple or long presses. A short press can wait for the double-press window; a long press is normally at least 600 ms.
 
-## How it’s meant to be played
+| Control | Short press | Double press | Triple press | Long press / hold |
+|---------|-------------|--------------|--------------|-------------------|
+| **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute | Clear slot (undoable) | Redo | Open length popup; an empty slot first becomes a one-bar loop |
+| **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear |
+| **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
+| **Next track** | Select next track | Undo | Redo | Mute / unmute current track |
+| **Transport** | Global start / stop | Return to loop start | — | — |
+| **Track play/stop** | Play / stop selected track | — | — | — |
+| **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
+| **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
+| **NOTELEN in LOOP_EDIT** | Create a one-bar loop if empty | — | — | Open length popup |
 
-### Gesture-first
+Changing track during NOTE_EDIT keeps the previous session as one undo step and follows the new track. External clock controls transport when present.
 
-The looper assumes **intent from how you press**, not from hunting through menus. Every button has the same 5 gestures to get to any function FAST!
-**short**
-**long**
-**double**
-**triple**
-**hold + second press**
+### Loop-length popup
 
-The **primary** action is always a **short** press; extremer edits like delete or undo actions use **long** / **double**.
+Long-press a slot, or long-press NOTELEN in LOOP_EDIT. While the popup is open:
 
-### Remix loops into a song by jamming
+| Control | Action |
+|---------|--------|
+| Opening button: single press | Step to the next length: 1–8, 16, 32, 64, 128 bars, wrapping at the end |
+| Opening button: double press | Step to the previous length |
+| Opening button: hold | Cancel and restore the length from when the popup opened |
+| F2 | Choose length using the fader scale below |
+| No change for three seconds | Close the popup, keeping changes as one undo step |
 
-**Loops** are **immediate**—punch in, overdub, slice, retrigger. 
-**Notes** are **detailed**—timing, length, velocity—on the **piano roll** and faders. 
-**Jam regions** (bars and 16ths in **LOOP_EDIT**) let you **zoom** playback into a new Loop, practice it, or perform inside a subset of the full loop and recording this jam into a new loop. The aim is **flow**: building a song feels like **playing**, not like operating a spreadsheet.
-
-### Jams vs Loops
-
-**Loops** means **per-track loop slots**: eight buffers per track for record, overdub, clear, and undo—see [**Loops**](docs/Guides/control-surface/Loops.md). Slot switching is quantized and each track can run a multi-slot enabled set with per-slot mute/enable states.
-
-**Remixes** of earlier recorded loops is where **jam performance** comes alive. In **Loop edit** the **Bars** and **16ths** buttons can be triggered/looped and recorded into new loops.
-
----
-
-## Buttons
-
-This cheat sheet and all [`docs/Guides/control-surface/`](docs/Guides/control-surface/) guides apply to **v3 (`dev`)** only. v1 and v2 use different mappings — see their branch READMEs in [Firmware versions](#firmware-versions) above.
-
-The current setup is based on Droid using this config file: [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini). To **remap**, edit [`include/MidiConfig.h`](include/MidiConfig.h) and [`src/Utils/MidiButtonConfig.cpp`](src/Utils/MidiButtonConfig.cpp). More info can be found in the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md) and the [**config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) for Channel 16.
-
-Below is the **cheat sheet** of all available button gestures.
-
-| Row | Short | Long | Double | Triple | Hold / two-step |
-|-----|-------|------|--------|--------|-----------------|
-| [**Scenes**](docs/Guides/control-surface/Scenes.md) | — | — | — | — | Not in firmware yet — roadmap / Phase 3 snapshots |
-| [**Tracks**](docs/Guides/control-surface/Tracks.md) | Select that track | Exclusive solo | Mute / unmute | — | — |
-| [**Jams**](docs/Guides/control-surface/Jams.md) | — | — | — | — | Not in firmware yet — target row for jam capture (jam today via Bars/16ths) |
-| [**Loops**](docs/Guides/control-surface/Loops.md) | Select/record slot; when playing, switch slot quantized to next 16th (`projectionCycleStartTick` + `queuedStartTick` on commit); selected slot toggles mute | If pressed slot is selected and filled: clear slot. If not selected and filled: queue single-slot switch at loop end | Slot undo | Slot redo | Hold one or more slots, release to commit multi-slot enabled set on next 16th |
-| [**Bars**](docs/Guides/control-surface/Bars-and-16ths.md) | LOOP_EDIT: seek bar / jam. **Playing (non-edit):** queue playback restart at bar on next 16th | Enter one-bar or two-bar jam | Exit jam | Undo loop start edit | Hold bar A → press bar B for range |
-| [**16ths**](docs/Guides/control-surface/Bars-and-16ths.md) | LOOP_EDIT: seek 16th in jam. **Playing (non-edit):** queue playback restart at 16th on next grid | 16th jam / seek | Exit jam | Undo loop start | Hold 16th A → press 16th B for range |
-| [**Main controls**](docs/Guides/control-surface/Main-controls.md) | **35** NOTELEN: start vs end · **36** record/play · **37** next track · **38** enter / cycle edit · **39** transport | **36** clear · **37** mute · **38** exit edit | **35** delete/create · **36** undo overdub · **37** undo clear · **38** load/save overlay | **36** redo overdub · **37** redo clear | **40** play/stop: long = snap window · hold = track playhead (long loops) · **41–48** extended transport |
-
-**Main controls detail (channel 16):**
-
-| Note | Short | Long | Double | Triple |
-|------|-------|------|--------|--------|
-| **35** NOTELEN | Toggle note start vs end editing | — | Delete selected note, or create at bracket when empty | — |
-| **36** REC/PLAY | Record / play / overdub | Clear track (with data) | Undo overdub | Redo overdub |
-| **37** MUTE/DE | Next track | Mute current track | Undo clear | Redo clear |
-| **38** Edit | Enter edit / cycle NOTE_EDIT ↔ LOOP_EDIT | Exit edit | **Toggle load/save overlay** | — |
-| **39** Transport | Global start/stop | — | Reset to loop start | — |
-
-**Extended transport (channel 16, notes 40–47):**
-
-| Note | Short | Long | Hold (while pressed) |
-|------|-------|------|----------------------|
-| **40** Play/Stop | Toggle play/stop on selected track | Center detailed piano-roll window on current playhead (loops **>16 bars**) | Window and playhead track current tick (same as playback auto-follow; restores during NOTE_EDIT) |
-| **41** | Set loop start | — | — |
-| **42** | Set loop end | — | — |
-| **43** | Quantize | — | — |
-| **44** Copy/Paste | Copy note | Paste note | — |
-| **45–48** | Move current tick (beat / 16th nudge) | — | — |
-
-During **NOTE_EDIT** on long loops, the detailed window stays fixed until you **long-press** or **hold** play/stop (note 40). Short press still toggles play. See [**Display**](docs/Guides/control-surface/Display.md#long-loop-bounded-window).
-
-### Load / save overlay (Sets & revisions)
-
-**Enter / exit:** **Edit mode** (note **38**) **double-press** toggles the overlay. While open, record / track gestures scroll the list; **confirm** is **Edit short** or **encoder short** only (not NOTELEN).
-
-**On SD card** ([`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md)):
-
-| Area | Path | Role |
-|------|------|------|
-| **Current** | `/MidiLooper/current/` | Mutable live workspace (auto-saved while playing). |
-| **Sets** | `/MidiLooper/sets/S####/revisions/v####.bin` | Immutable **revision** snapshots (REVPK02). **Save** appends a revision; **Current** is unchanged after save. |
-
-**Overlay controls** (while overlay is open):
-
-| Control | Short | Long | Double |
-|---------|-------|------|--------|
-| **REC/PLAY** (36) | Scroll list **down** | — | — |
-| **Track / MUTE** (37) | Scroll list **up** | — | — |
-| **Edit mode** (38) | **Confirm** focused row (save, load, dirty-prompt choice) | At **root**: exit overlay · In **revision history**: back to Set list | Exit overlay |
-| **NOTELEN** (35) | — (suppressed) | — | Toggle **favorite** on focused **Set** row (root list) |
-
-GPIO **encoder** (when enabled): rotate = scroll; **short press** = confirm (same as Edit **38** short).
-
-**Root list rows:** **Save** → **Edit short** or **encoder short** queues a **revision commit** (background, chunk-bounded) and closes the overlay. **Current** → detail only. **Set** folder (e.g. `S0001`) → **Edit short** loads **latest validated revision** into Current; **Edit long** opens **revision history**; **NOTELEN double** toggles **favorite**.
-
-**Revision history:** scroll with record/track (or encoder); **Edit short** or **encoder short** loads the focused revision; **Edit long** goes back.
-
-**Dirty workspace:** **Yes / No / Cancel** prompt — **Edit short** or **encoder short** confirms the highlighted choice; **Edit long** cancels.
-
-Detail panel shows Set id, revision, track/loop counts, BPM, bars, per-track slot bars, and **RTC date/time** when the revision was saved. More: [`docs/Guides/control-surface/Main-controls.md`](docs/Guides/control-surface/Main-controls.md), handoff [`docs/Plans/set_revision_persistence_handoff.md`](docs/Plans/set_revision_persistence_handoff.md).
-
-## Faders
-
-The four faders sit beside the button grid. Their role changes depending on whether you are in **NOTE_EDIT** or **LOOP_EDIT**.
+## MIDI controller: fader usage
 
 | Fader | NOTE_EDIT | LOOP_EDIT |
 |-------|-----------|-----------|
-| **Fader 1** | Note selector | Loop start point |
-| **Fader 2** | 16th coarse position | Loop length / loop end |
-| **Fader 3** | 16th fine offset | — |
-| **Fader 4** | Note pitch | — |
+| **F1** | Select a note or an empty 16th for creation | Rotate loop start in 16ths |
+| **F2** | Coarse note position; note end in length mode | Loop length, from 1/16 to 128 bars |
+| **F3** | Fine note timing | Fine tempo, 0.1 BPM steps around the centre |
+| **F4** | Note pitch; velocity while NOTELEN is held (zero mutes the note) | Whole tempo, 20–300 BPM; recentres F3 |
 
-Midi channels, CCs, and pitchbend mappings can be found in [`include/MidiConfig.h`](include/MidiConfig.h) and the [**MIDI config guide**](docs/Guides/MIDI_CONFIG_GUIDE.md). Motorized DROID faders: [**DROID motorfader pitchbend**](docs/Guides/DROID_MOTORFADER_PITCHBEND.md) (select/geometry sync, feedback ignore). More detail: [**Faders**](docs/Guides/control-surface/Faders.md), [loop start editing](docs/Guides/LOOP_START_EDITING.md), and [fader state](docs/Guides/FADER_STATE_SYSTEM.md).
+NOTELEN switches F2/F3 between start and end editing. Shortening a loop keeps notes beyond the new end so they return when lengthened. F2's loop-length scale has 25 positions: 1/16, 1/8, 1/4, 1/2, 3/4 bar; 1–16 bars; 32, 64, 96, 128 bars. Local tempo editing is inactive on external clock.
 
-## Display
+## MIDI controller example: DROID
 
-The display is built around the **piano roll** with loop and current note played information and **track status strip**. After recording a first loop you often want to edit small parts in detail or shift notes. It also shows what part of the loop is active, selected slot focus, and what you are editing right now. That means the display is not just “status”; it is part of how you shape your groove, ofsett start end boundaries, all while the loop is running.
+The pictured DROID implementation uses a button grid, four motorized faders and the supplied [midilooper_v1.ini patch](droid/midilooper_v1.ini). The patch changes fader banks between NOTE_EDIT and LOOP_EDIT, and the firmware sends motor positions and button LED feedback. [Detailed fader and motor setup](docs/Guides/control-surface/Faders.md).
 
-The **track column** gives a quick status for each track using letters such as `-` Empty, `P(lay)`, `O(verdub)`, `R(ecord)`, `M(uted)`, `S(topped)` and `A(rmed)`.
+You can configure another MIDI controller to send the same messages. Button mappings below are **MIDI note numbers on channel 16**, with channels numbered 1–16. Use momentary buttons: NoteOn when pressed, NoteOff when released. The firmware detects the gestures; the controller does not need separate mappings for short, double or long presses.
 
-For more detail: [**Display**](docs/Guides/control-surface/Display.md).
+| Looper control | MIDI note number | MIDI channel |
+|----------------|------------------|--------------|
+| NOTELEN | 35 | 16 |
+| Record | 36 | 16 |
+| Next track | 37 | 16 |
+| Edit | 38 | 16 |
+| Transport | 39 | 16 |
+| Track play/stop | 40 | 16 |
+| Slots 1–8 on the selected track | 50–57 | 16 |
+| Tracks 1–8 | 60–67 | 16 |
 
----
+For example, configure eight buttons to send notes 50–57 on channel 16 to control slots 1–8. These note numbers are controller messages, not the pitches recorded into the loop. Channels 13–16 are reserved for the engine control plane.
 
-## Technical features
+| Fader | NOTE_EDIT message | LOOP_EDIT message |
+|-------|-------------------|-------------------|
+| **F1** | Pitch bend, channel 16 | Pitch bend, channel 16 |
+| **F2** | Pitch bend, channel 14 | CC 101, channel 16 (pitch bend on channel 14 also accepted) |
+| **F3** | CC 2, channel 15 | CC 100, channel 16 |
+| **F4** | CC 3, channel 15 | Pitch bend, channel 15 |
 
-**Hardware** is Teensy 4.1 (see [**Hardware & first-time setup**](#hardware--first-time-setup) for PSRAM, VBAT battery, SD, and first flash), SSD1322 256×64 OLED or 16×2 LCD, 6N137 MIDI in, and in this case a **DROID** M4 + 2× B32—[product page](https://shop.dermannmitdermaschine.de/pages/droid-universal-cv-processor). MIDI wiring follows the [PJRC MIDI library](https://www.pjrc.com/teensy/td_libs_MIDI.html) pattern.
+For the DROID's notched loop-length fader, use the scaling in the supplied patch; see the [fader guide](docs/Guides/control-surface/Faders.md#loop_edit).
 
-**External-clock sync (DAW master → Teensy slave → MIDI recorded back):** steady-state notes can sit late on the grid until you compensate. That offset comes from the DAW + driver round-trip (and whether notes return over **DIN** or **Teensy USB**), not from the looper firmware. Re-measure if your audio buffer, interface, MIDI route, or clock source changes.
+## Hardware and setup
 
-- **Ableton:** on the MIDI **Out** port that sends clock to the Teensy, set **MIDI Clock Sync Delay** (Preferences → Link/Tempo/MIDI → Output → Sync). In the tested setup, steady-state recorded notes landed on-grid at **-11 ms** when notes return over **DIN**, and **-9 ms** when they return over **Teensy USB**.
-- **Bitwig:** there is no per-port MIDI clock sync delay. Send clock via **Settings → Controllers → Generic → MIDI Clock Transmitter** (or **HW Instrument → Send MIDI Clock**). Compensate on **each track** that sends clock or notes to the Teensy: set **Track Delay** (note offset) to about **-11 ms** (DIN return) or **-9 ms** (USB return) and fine-tune by recording a known pattern. Apply the same offset on every outbound track in the chain.
+Use a Teensy 4.1 with 8 MB external PSRAM, a microSD card in the built-in socket, and the SSD1322 256×64 OLED. The engine uses a statically reserved external-memory arena; the legacy allocator's RAM2 fallback is not an engine setup option. A CR2032 connected to VBAT and GND keeps the RTC running without main power.
 
-For more details on the logic: [loop start / length](docs/Guides/LOOP_START_EDITING.md), [jam phases](docs/Guides/jam-bar-step-phases.md), [note moves](docs/Guides/MOVE_NOTE_LOGIC.md), [DROID motor faders](docs/Guides/DROID_MOTORFADER_PITCHBEND.md), [fader state](docs/Guides/FADER_STATE_SYSTEM.md). A compact **Channel 16** listing lives under [**Config summary**](docs/Guides/MIDI_CONFIG_GUIDE.md#config-summary-default-droid-mapping) in the MIDI guide.
+Choose the **minimal GPIO module (4 buttons + 1 encoder)** or a **MIDI extension controller** as the control hardware. The current engine implements the MIDI controller setup; the minimal GPIO path still needs to be reconnected. For the DROID example, use [midilooper_v1.ini](droid/midilooper_v1.ini).
 
-State persistence uses storage **version 4+** on loop slots (**passes** timeline per slot: record, overdub, and edit passes), plus **CurrentSet v6** workspace files and **Set revision** packs on SD. Runtime auto-save writes **Current**; explicit **Save** in the overlay commits an immutable revision without clearing Current. See [**Load / save overlay**](#load--save-overlay-sets--revisions) and [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md).
+Install PlatformIO and consult [platformio.ini](platformio.ini) before building. The fixed-memory runtime has its own explicit environment:
 
-### Loop storage vocabulary (code)
+```sh
+pio run -e teensy41-engine
+pio run -e teensy41-engine -t upload
+```
 
-Canonical glossary: **[`docs/Authority/NAMING.md`](docs/Authority/NAMING.md)** § Domain vocabulary.
+The repository's agent build/upload default remains `teensy41-capture-serial`; that environment builds the legacy runtime. Select `teensy41-engine` explicitly when you intend to build the engine. See the [upload guide](docs/Guides/TEENSY_FIRMWARE_UPLOAD.md) for macOS programming and independent boot verification.
 
-Quick reference — each **loop slot** (`Loop`) separates live **Capture** from committed timeline **passes** (`LoopPasses`: recordPass, overdubPasses, editPasses). Live note edit uses **NoteEditSession.store**; committed rows are **editPass** entries via `saveNoteEditPass()`. **merge** replays active capture passes; **materialize** replays full passes to a MIDI vector. Memory tiers: **internal heap** (fast RAM) and **external memory pool** (external RAM / PSRAM).
+On a fresh card, the engine reads without writing until the owner enables saving with `!ENGINE approve-saving`. That approval is remembered by the engine folder. Once enabled, settled changes autosave into `/MidiLooper/engine/store.bin`. Existing legacy workspace files remain untouched. See [storage and migration](docs/Guides/FIXED_MEMORY_ENGINE.md#storage-and-migration) before relying on imported content.
 
-Full storage rules: [`docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md`](docs/Guides/LOOP_MIDI_STORAGE_AND_VALIDATION.md).
+## What is available, and what is next
 
-**How the system works (record → memory → playback → display → SD):** [`docs/Plans/record_overdub_memory_display_timeline_enhancement.md`](docs/Plans/record_overdub_memory_display_timeline_enhancement.md) — end-to-end timeline with Mermaid diagrams (external memory pool chunks, play-ahead, deferred save, boot reload). Pair with [`docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md`](docs/Guides/DEFERRED_RUNTIME_PERSISTENCE.md) for save FSM detail.
+The engine supports record/overdub, quantized slot switching, track mute/solo, undo/redo, note creation/deletion and geometry/velocity editing, loop start/length editing, and autosave/boot restore. Shortening a loop keeps notes beyond its end for later lengthening.
 
-**Read the numbers first:** [`include/MidiConfig.h`](include/MidiConfig.h) — channels, notes, CCs, LED bases.
+The legacy Bars/16ths jam controls, multi-slot layering gestures, extended edit buttons 41–48 and load/save overlay are not available in the engine. Scene and jam capture remain future work.
 
-**Remap any controller:** [`docs/Guides/MIDI_CONFIG_GUIDE.md`](docs/Guides/MIDI_CONFIG_GUIDE.md) — checklist, tables, `MidiButtonConfig.cpp`, and matching `droid/midilooper_v1.ini` if you want to make your own Droid setup.
+A new **Sets browser** is in progress. Its milestones, save popup, live loads, return point and loop retrieval are proposed workflows, not shipped controls. The images below are design walkthroughs, not captures proving implemented browser behavior.
 
-**Full capability list:** [`docs/FEATURES.md`](docs/FEATURES.md).
+![Proposed browser: browsing a long milestone history and loading an earlier take](docs/Plans/images/walk_4_long_history.png)
 
-**Naming authority:** [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md). **Code layout:** [`docs/Guides/CODE_STRUCTURE.md`](docs/Guides/CODE_STRUCTURE.md).
+See the [browser proposal and all walkthroughs](docs/Plans/engine_sets_browser_proposal.md), and the [current implementation scope](docs/Runtime/CURRENT_WORK.md).
 
-**Build:** [PlatformIO](https://platformio.org/) — `platformio.ini`, board **Teensy 4.1**.
+## Firmware and development
 
-**Documentation index:** [`docs/README.md`](docs/README.md) — guides, refinements, archived plans.
+The fixed-memory engine is the current development runtime. Its content lives in fixed PSRAM pages, immutable runs and versioned manifests; playback and display read bounded derived windows. The legacy firmware remains in the repository and builds in separate environments.
 
-**Feature conventions / Phase 3 pointer:** [`docs/FEATURE_PLANS.md`](docs/FEATURE_PLANS.md). Exported design plans: [`docs/Plans/README.md`](docs/Plans/README.md).
+The current checkout is `feature/engine-sets-browser`, branched from `rewrite/fixed-memory-engine`. `dev` is the stable integration reference; its legacy UI and storage descriptions do not describe the engine. See [current work](docs/Runtime/CURRENT_WORK.md) and [project state](docs/Runtime/PROJECT_STATE.md) for progress.
 
----
+Start with the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md). It covers recording, editing, memory limits, autosave and the current feature boundary. The [documentation index](docs/README.md) separates current engine guides from legacy references.
 
-## Credits and inspiration
+### Development and older versions
 
-Inspiration: [4×8 — minimal 4-track looper](https://iestyn-lewis.github.io/4by8/).
+[Engine architecture and limits](docs/Guides/FIXED_MEMORY_ENGINE.md#engine-structure-and-limits) · [native test workflow](.cursor/rules/Testing-Workflow.mdc) · [architecture authority](docs/Authority/README.md) · [license](LICENSE)
 
-**Development tooling:** Early exploration used ChatGPT; most of the current structure and refactors were done with **Cursor** (Claude and similar models)—useful for navigating large C++ modules and keeping docs in sync with behavior.
+Run the host suite with `python scripts/test_native.py full`. Firmware changes also need the applicable device verification; a successful upload alone does not prove boot or content parity.
 
-**Chat logs (historical):**  
-[MidiLooper (V1)](https://chatgpt.com/share/680a4839-6720-800b-ae73-9aff16f6e41f) · [MidiLooperV2](https://chatgpt.com/share/680e999a-c860-800b-a079-9862a59f1e89) · [MidiLooperV3](https://chatgpt.com/share/680e98f9-2a64-800b-abb2-4e1bd359c90f)
-
-SSD1322 circular DMA bring-up was prototyped with Cursor against existing driver code.
-
----
-
-## Examples
-
-- [`examples/ButtonConfiguration40Example.cpp`](examples/ButtonConfiguration40Example.cpp) — MIDI button mapping example  
-- [`droid/midilooper_v1.ini`](droid/midilooper_v1.ini) — Reference DROID patch  
-
----
-
-© 2025 Lytrix (Eelke Jager)  
-Licensed under the [PolyForm Noncommercial 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0/).  
-Private use for further development with attribution is allowed. For commercial use or distribution, contact the author for a separate license.
+Older firmware: [v1 (`main`)](https://github.com/Lytrix/MidiLooper/blob/main/README.md), [v2 (`midi-faders`)](https://github.com/Lytrix/MidiLooper/blob/midi-faders/README.md), and the legacy v3 runtime on `dev`. Legacy technical guides are retained for those code paths and explicitly marked where they differ from the engine.

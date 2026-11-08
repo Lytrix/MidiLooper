@@ -1,3 +1,5 @@
+> **Runtime scope (2026-11-08):** this guide documents the legacy runtime and its owners. The fixed-memory engine has a separate content, input, display and persistence path; start with [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) for current behavior and source entry points. Legacy APIs and memory claims below must not be applied to the engine.
+
 # Fader State System Documentation
 
 > **NOTE_EDIT motorized faders (2026):** Authoritative behavior for DROID motor sync, split select/geometry queues, and F1 inbound guards is in [**DROID_MOTORFADER_PITCHBEND.md**](DROID_MOTORFADER_PITCHBEND.md). Bugfix handoff: [`note_edit_geometry_f1_selection_guard_bugfix.md`](../Plans/note_edit_geometry_f1_selection_guard_bugfix.md). The V2 sections below describe the generic `MidiFaderProcessor` pipeline; **timing and feedback rules for NOTE_EDIT** are owned by `ControlSurfaceManager` (see § NOTE_EDIT motor feedback below).
