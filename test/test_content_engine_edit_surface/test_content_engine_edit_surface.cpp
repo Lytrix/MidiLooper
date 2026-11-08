@@ -1293,6 +1293,88 @@ void test_loop_edit_f1_rotates_the_loop_start() {
   EXPECT_ALL(positions(true, 60, 384), 0);  // 96 − 96
 }
 
+// The length popup (owner 2026-11-08): a slot's long press opens it on that slot; its button then taps — one tap adds a
+// bar, a quick burst of n taps sets 2^(n−1) bars — and F2 sets the length too, also outside LOOP_EDIT. It hides 3 s
+// after the last change, its changes one undo step; the slot button is the slot's again after.
+static uint32_t loopOf(uint8_t slot) {
+  return gE.manifests().manifest(gE.transport().contentOf(slot)).loopLengthTicks;
+}
+static void taps(uint8_t note, uint8_t n) {
+  for (uint8_t i = 0; i < n; ++i) {
+    tap(note, 40);
+    ms(80);
+  }
+  ms(500);  // the burst is over
+}
+void test_length_popup_taps_and_f2() {
+  recordBar({{96, 60}, {600, 62}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kSlotBase + 0, 700);  // long: the popup
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
+  const auto sent = drainMotors(300);
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0xBF, 101));  // F2 parked on the length
+  taps(S::kSlotBase + 0, 1);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
+  taps(S::kSlotBase + 0, 3);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(0));
+  taps(S::kSlotBase + 0, 5);
+  TEST_ASSERT_EQUAL_UINT32(16 * 768, loopOf(0));
+  TEST_ASSERT_TRUE(gS.popup());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2: notch 8, 4 bars
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // the popup's one step
+  TEST_ASSERT_TRUE(gE.transport().playing(0));  // the slot's taps never toggled it
+  ms(3100);
+  TEST_ASSERT_FALSE(gS.popup());
+  tap(S::kSlotBase + 0);  // the slot button again: the playing slot's toggle mutes the track
+  ms(450);
+  TEST_ASSERT_TRUE(gE.control().muted(0));
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+}
+
+// An empty slot's long press creates its empty loop and opens the popup on it; NOTELEN's long press in LOOP_EDIT opens
+// it on the shown slot.
+void test_length_popup_on_a_new_loop_and_from_loop_edit() {
+  recordBar({{96, 60}});  // slot 0 plays
+  tap(S::kSlotBase + 1, 700);  // an empty slot: its loop, then the popup on it
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT8(1, gS.popupSlot());
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(1));
+  taps(S::kSlotBase + 1, 2);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(1));
+  ms(600);
+  gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2 sets the popup's slot, not the playing one
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(1));
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  ms(3100);
+  TEST_ASSERT_FALSE(gS.popup());
+  // From LOOP_EDIT (on the playing slot 0): a visit's change, then NOTELEN's long press — the popup's own step.
+  tap(S::kEditModeNote);  // NOTE_EDIT
+  ms(400);
+  tap(S::kEditModeNote);  // LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  drainMotors(800);
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  gS.input(0xBF, 101, (6 * 127 + 12) / 24, gUs / 1000);  // notch 6: 2 bars
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
+  tap(S::kLengthNote, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
+  taps(S::kLengthNote, 1);
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1409,6 +1491,8 @@ int main(int, char**) {
   RUN_TEST(test_resize_resolves_a_held_loop_note);
   RUN_TEST(test_loop_edit_f2_sets_the_length);
   RUN_TEST(test_loop_edit_f1_rotates_the_loop_start);
+  RUN_TEST(test_length_popup_taps_and_f2);
+  RUN_TEST(test_length_popup_on_a_new_loop_and_from_loop_edit);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

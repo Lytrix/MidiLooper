@@ -194,6 +194,7 @@ class Surface {
   static constexpr uint8_t kStartTrigger = 100, kLengthTrigger = 101;  // channel 16 notes: F1 / F2 `clear`
   static constexpr uint8_t kFineTrigger = 1, kCoarseTrigger = 2;       // channel 15 notes: F3 / F4 `clear`
   static constexpr uint32_t kCoarseMinBpm = 20, kCoarseMaxBpm = 300;
+  static constexpr uint32_t kPopupMs = 3000, kPopupTapMs = 400;  // the popup hides; a tap burst ends
   static constexpr uint32_t kLengthSettleMs = 300;
   enum Button : uint8_t {
     kRecord,
@@ -226,7 +227,8 @@ class Surface {
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
     blinkMs_ = 0;
-    loopEdit_ = loopPark_ = false;
+    loopEdit_ = loopPark_ = popup_ = false;
+    popupTaps_ = 0;
     loopMotorCount_ = 0;
     for (uint32_t& w : loopWrittenMs_) w = 0;
     pendingMs_ = 0;
@@ -245,12 +247,12 @@ class Surface {
       const int16_t pb = static_cast<int16_t>(static_cast<int32_t>(d1 | (d2 << 7)) - 8192);
       if (channel == 15 && loopEdit_) startFader(pb, ms);
       else if (channel == 14 && loopEdit_) coarseTempo(pb, ms);
-      else if (channel == 13 && loopEdit_) lengthFader(pb, ms);
+      else if (channel == 13 && (loopEdit_ || popup_)) lengthFader(pb, ms);
       else if (channel == 15) edit_.select(pb, ms);
       else if (channel == 13) edit_.coarse(pb, ms);
       return;
     }
-    if (type == 0xB0 && channel == 15 && d1 == kLengthCc && loopEdit_) {  // LOOP_EDIT's F2: CC 101, bars − 1
+    if (type == 0xB0 && channel == 15 && d1 == kLengthCc && (loopEdit_ || popup_)) {  // LOOP_EDIT's F2: CC 101, bars − 1
       lengthAt(notchOfCc(d2), ms);
       return;
     }
@@ -273,6 +275,10 @@ class Surface {
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     const uint8_t b = buttonOf(d1);
     if (b == 0xFF) return;
+    if (popup_ && b == popupButton_) {  // the length popup takes the button that opened it: taps
+      popupPress(type == 0x90 && d2 != 0, ms);
+      return;
+    }
     if (type == 0x90 && d2 != 0) {
       press_.down(b, ms);
     } else {
@@ -297,12 +303,21 @@ class Surface {
     edit_.service(ms);
     settleLength(ms);
     settleStart(ms);
+    servicePopup(ms);
   }
   const EditSurface<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
   /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in ticks (0: none).
   uint32_t pendingLoopTicks() const { return pendingLoop_; }
+  /// The length popup is shown: its slot, and the length it shows (F2's pending one, else the slot's).
+  bool popup() const { return popup_; }
+  uint8_t popupSlot() const { return popupSlot_; }
+  uint32_t popupLoop() const {
+    if (pendingLoop_ != 0) return pendingLoop_;
+    const ManifestId c = e_->transport().contentOf(popupSlot_);
+    return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
+  }
   /// LOOP_EDIT's loop start, in ticks from the content as LOOP_EDIT found it (F1; pending while it settles).
   uint32_t loopStart() const { return startPending_ ? pendingStart_ : appliedStart_; }
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
@@ -450,9 +465,10 @@ class Surface {
         else if (p == Press::Long) leaveEdit();
         return;  // double: the set browser (a later slice)
       case kLength:
-        if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long; a filled one: the popup, later)
+        if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
           if (p == Press::Short || p == Press::Long)
             control().createEmpty(shownSlot(t), kNewLoopBars * EditSurface<Engine>::kBar);  // refused when filled
+          if (p == Press::Long) openPopup(shownSlot(t), kLength, nowMs_);
           return;
         }
         if (p == Press::Short) edit_.lengthOrCreate(nowMs_);
@@ -477,9 +493,10 @@ class Surface {
       } else if (p == Press::Triple) {
         slot_[t] = s;
         control().redo(target, tick_, us_, us());
-      } else {  // long: an empty loop on an empty slot (a filled slot: the length popup, a later slice)
+      } else {  // long: the length popup — on an empty slot after its empty loop (owner 2026-11-08)
         slot_[t] = s;
         if (empty(target)) control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);
+        openPopup(target, static_cast<uint8_t>(kSlot0 + s), nowMs_);
       }
       return;
     }
@@ -618,9 +635,52 @@ class Surface {
     if (pendingLoop_ == 0 || ms - pendingMs_ < kLengthSettleMs) return;
     const uint32_t loop = pendingLoop_;
     pendingLoop_ = 0;
-    if (!loopEdit_) return;
-    const uint8_t slot = shownSlot(selected());
+    if (!loopEdit_ && !popup_) return;
+    resizeTo(popup_ ? popupSlot_ : shownSlot(selected()), loop);
+  }
+  void resizeTo(uint8_t slot, uint32_t loop) {
     if (control().resize(slot, loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
+  }
+
+  // ---- The length popup (owner 2026-11-08) ---------------------------------------------------------------------------
+  /// Opened by a long press on a slot (an empty one gets its empty loop first) or NOTELEN's in LOOP_EDIT, on `slot`;
+  /// `button` (the one that opened it) is then the popup's: a tap adds a bar, a quick burst of n taps sets 2^(n−1)
+  /// bars (2 → 2, 3 → 4, 4 → 8, 5 → 16 …, up to 128). F2 sets the length as in LOOP_EDIT. It hides `kPopupMs` after
+  /// the last change; its changes are one undo step (a visit, as LOOP_EDIT's). F2's motor is parked on opening.
+  void openPopup(uint8_t slot, uint8_t button, uint32_t ms) {
+    if (empty(slot)) return;
+    popup_ = true;
+    popupSlot_ = slot;
+    popupButton_ = button;
+    popupTaps_ = 0;
+    popupUntil_ = ms + kPopupMs;
+    visitState_ = 0;
+    const uint32_t loop = e_->manifests().manifest(transport().contentOf(slot)).loopLengthTicks;
+    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
+  }
+  /// A press of the popup's button: its release is a tap (the opening long press fired at its own release).
+  void popupPress(bool down, uint32_t ms) {
+    popupUntil_ = ms + kPopupMs;
+    if (down) return;
+    ++popupTaps_;
+    popupTapMs_ = ms;
+  }
+  void servicePopup(uint32_t ms) {
+    if (!popup_) return;
+    if (popupTaps_ != 0 && ms - popupTapMs_ >= kPopupTapMs) {  // the burst is over
+      const uint32_t bar = EditSurface<Engine>::kBar;
+      const uint32_t loop = e_->manifests().manifest(transport().contentOf(popupSlot_)).loopLengthTicks;
+      uint32_t bars = popupTaps_ == 1 ? loop / bar + 1 : 1u << (popupTaps_ - 1 < 7 ? popupTaps_ - 1 : 7);
+      if (bars > 128) bars = 128;
+      popupTaps_ = 0;
+      resizeTo(popupSlot_, bars * bar);
+      popupUntil_ = ms + kPopupMs;
+    }
+    if (pendingLoop_ != 0) popupUntil_ = ms + kPopupMs;
+    if (popupTaps_ == 0 && static_cast<int32_t>(ms - popupUntil_) >= 0) {
+      popup_ = false;
+      visitState_ = 0;
+    }
   }
   /// One undo step a LOOP_EDIT visit (owner 2026-11-08: the steps exploded): a later change replaces the state the
   /// visit's last one made, while that is still the slot's current. Leaving LOOP_EDIT or switching track ends it.
@@ -826,6 +886,9 @@ class Surface {
   uint32_t pendingMs_ = 0;
   uint32_t visitState_ = 0;  // identity of the state this LOOP_EDIT visit's last change made (0: none)
   uint32_t pendingLoop_ = 0;  // LOOP_EDIT's F2 moved: the length it will take (ticks)
+  bool popup_ = false;  // the length popup
+  uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
+  uint32_t popupUntil_ = 0, popupTapMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0, appliedStart_ = 0;
   bool startPending_ = false;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;

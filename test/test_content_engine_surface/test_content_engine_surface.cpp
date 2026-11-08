@@ -203,7 +203,8 @@ void test_slot_buttons_record_play_switch_and_mute() {
   TEST_ASSERT_FALSE(C().muted(0));
 }
 
-// A slot's double press clears it (owner 2026-11-08), undoably; its long press no longer clears a filled slot.
+// A slot's double press clears it (owner 2026-11-08), undoably; its long press no longer clears a filled slot (it opens
+// the length popup, which owns the slot button until it hides).
 void test_slot_double_press_clears() {
   recordOneBar(0, 60);
   const ManifestId m = X().contentOf(0);
@@ -213,6 +214,9 @@ void test_slot_double_press_clears() {
   ms(400);
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());  // no overdub either
+  TEST_ASSERT_TRUE(gS.popup());
+  ms(3100);  // the popup hides: the slot button is the slot's again
+  TEST_ASSERT_FALSE(gS.popup());
   tap(S::kSlotBase + 0);
   ms(100);
   tap(S::kSlotBase + 0);

@@ -71,6 +71,9 @@ struct EditView {
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
+  bool popup = false;      // the length popup (owner 2026-11-08)
+  uint8_t popupSlot = 0;
+  uint32_t popupLoop = 0;  // the length it shows (ticks)
 };
 
 class EngineDisplay {
@@ -299,6 +302,34 @@ class EngineDisplay {
       info = drawSlot(e, sel, slot, lastTick);
     }
     drawStatus(e, clock, sel, info, lastTick, nowMs);
+    if (edit_.popup) drawPopup();
+  }
+
+  /// The length popup (owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen
+  /// around it): a window over the roll — black drop shadow, bright frame, inverted title bar with the slot, the length
+  /// large in the middle, the gestures in small letters.
+  void drawPopup() {
+    constexpr int16_t x0 = 72, y0 = 6, x1 = 183, y1 = 41, sh = 3;
+    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 0);  // the shadow
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 1);                      // the window
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y0 + 8, 13);                 // the title bar
+    for (int16_t x = x0; x <= x1; ++x) {                                      // the frame
+      px(x, y0, 15);
+      px(x, y1, 15);
+    }
+    for (int16_t y = y0; y <= y1; ++y) {
+      px(x0, y, 15);
+      px(x1, y, 15);
+    }
+    char title[24];
+    snprintf(title, sizeof title, "LOOP LENGTH T%u S%u", edit_.popupSlot / 8 + 1, edit_.popupSlot % 8 + 1);
+    label(title, static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y0 + 2), 0);
+    char value[16], len[8];
+    lengthText(edit_.popupLoop, len, sizeof len);
+    snprintf(value, sizeof value, "%s %s", len, edit_.popupLoop > kBar ? "BARS" : "BAR");
+    const int16_t w = static_cast<int16_t>(strlen(value)) * 6 - 1;
+    text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 22), 15);
+    label("TAP 1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y1 - 7), 6);
   }
 
   /// The legacy track letter for track `t`.

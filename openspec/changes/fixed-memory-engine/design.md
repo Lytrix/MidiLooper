@@ -2426,3 +2426,18 @@ this, F2 and F4 were written without triggers and F1 with the note bank's (note 
 * `test_loop_edit_f2_sets_the_length` (the scale, sub-bar lengths, one step across many changes, an undo inside a visit,
   a second visit, undo restoring each visit); `test_loop_edit_f1_rotates_the_loop_start` (one step for two rotations);
   mutations 9 of 10 (the last a redundant clamp, removed).
+
+## The loop length popup (owner 2026-11-08; slice 9; as built)
+
+Opened by a slot's long press (an empty slot first gets its empty loop, DEC-256) or NOTELEN's long press in LOOP_EDIT,
+on that slot (`Surface::openPopup`). While open, the button that opened it is the popup's: each release is a tap (the
+opening long press fired at its own release); 400 ms after the last tap one tap adds a bar (whole bars above the
+current length), a burst of n taps sets 2^(n−1) bars up to 128. F2 (CC 101 / pitch bend channel 14) sets the length
+as in LOOP_EDIT, outside LOOP_EDIT too, on the popup's slot; its motor is parked on opening. The popup hides
+`kPopupMs` (3 s) after the last change and its changes are one undo step (a visit: opening starts one, so it never
+replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`): a 3-pixel black drop
+shadow, a level-15 frame, an inverted title bar "LOOP LENGTH Tt Ss", the length in the 5 × 7 font ("4 BARS", "3/4
+BAR"), the gestures in 3 × 5 letters; the screen stays visible around it. Not built: the encoder — the DROID patch
+has none, and legacy's default (CC 4, channel 1) is on the recording channel, not the control plane.
+`test_length_popup_taps_and_f2`, `test_length_popup_on_a_new_loop_and_from_loop_edit`; `test_slot_double_press_clears`
+waits for the popup to hide; mutations 7 of 8 (the last a redundant guard, removed).

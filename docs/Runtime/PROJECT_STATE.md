@@ -1,3 +1,11 @@
+**2026-11-08 — Fixed-memory engine: the loop length popup (slice 9 of 9).**
+- A long press on a slot (an empty one gets its empty loop first) or NOTELEN's in LOOP_EDIT opens a length popup on that
+  slot: a window over the roll with a black drop shadow, bright frame and inverted title bar (Atari / Cubase), the
+  length large, the gestures small. The button that opened it then taps: one tap adds a bar, a quick burst of n taps
+  sets 2^(n−1) bars (2 → 2, 3 → 4, 4 → 8, 5 → 16 … 128); F2 sets the length too, in performance mode as well. It hides
+  3 s after the last change; its changes are one undo step. Not done: the encoder (the DROID patch has none; legacy's
+  CC 4 is on channel 1, the recording channel). Image `7f186df8…`, boot verified; the window's look not yet seen.
+
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
 - Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or
   start change replaces the state the visit's previous change made while that is still the slot's current (its

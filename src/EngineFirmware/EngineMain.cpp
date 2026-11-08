@@ -677,6 +677,9 @@ void loop() {
   ev.loop = gSurface.loopEdit();
   ev.loopTicks = gSurface.pendingLoopTicks();
   ev.loopStart = gSurface.loopStart();
+  ev.popup = gSurface.popup();
+  ev.popupSlot = gSurface.popupSlot();
+  ev.popupLoop = gSurface.popupLoop();
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();
