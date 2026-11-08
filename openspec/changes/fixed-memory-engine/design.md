@@ -2435,7 +2435,7 @@ opening long press fired at its own release); 400 ms after the last tap one tap 
 current length), a burst of n taps sets 2^(n−1) bars up to 128. F2 (CC 101 / pitch bend channel 14) sets the length
 as in LOOP_EDIT, outside LOOP_EDIT too, on the popup's slot; its motor is parked on opening. The popup hides
 `kPopupMs` (3 s) after the last change and its changes are one undo step (a visit: opening starts one, so it never
-replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`): a 3-pixel black drop
+replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`): a 3-pixel dim (level 3; black vanished on the dark screen) drop
 shadow, a level-15 frame, an inverted title bar "LOOP LENGTH Tt Ss", the length in the 5 × 7 font ("4 BARS", "3/4
 BAR"), the gestures in 3 × 5 letters; the screen stays visible around it. Not built: the encoder — the DROID patch
 has none, and legacy's default (CC 4, channel 1) is on the recording channel, not the control plane.
