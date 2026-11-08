@@ -8,6 +8,10 @@
 - Then: the drop shadow is dim (level 3; black vanished on the dark screen) and the hint reads "TAP +1" (3 × 5 `+` and
   `/` added). Seen on the device through MIDI and `!ENGINE fbdump` (owner allowed changing the dev set): a long press
   on track 2 slot 1 and three taps showed "4 BARS", BARS 4, one undo step. Image `5f00b0d7…`, boot verified.
+- Then (owner: "when the popup shows, the screen gets all dimmed"): not two frames — five dumps in a row all held the
+  popup — but the panel dimming as a whole under load: the frame's summed levels went from ~5,000 to ~25,000 (a bright
+  filled title bar and a grey interior). Redrawn GEM-style and light: black interior, hatched title bar with the title
+  in its own box, frame 10, shadow 2: ~13,600. Image `0956e8b9…`, boot verified; owner check pending.
 
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
 - Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or

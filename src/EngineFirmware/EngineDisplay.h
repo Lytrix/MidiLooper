@@ -306,30 +306,36 @@ class EngineDisplay {
   }
 
   /// The length popup (owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen
-  /// around it): a window over the roll — a dim drop shadow (black would vanish on the dark screen), bright frame,
-  /// inverted title bar with the slot, the length large in the middle, the gestures in small letters.
+  /// around it): a window over the roll — a dim drop shadow (black would vanish on the dark screen), a frame, a GEM
+  /// title bar (hatched rows, the title in its own black box), the length large, the gestures in small letters. Kept
+  /// light (owner 2026-11-08: "the screen gets all dimmed"): the panel dims as a whole as its total load rises — a
+  /// filled bright title bar and grey interior took the frame's summed levels from ~5,000 to ~25,000.
   void drawPopup() {
     constexpr int16_t x0 = 72, y0 = 6, x1 = 183, y1 = 41, sh = 3;
-    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 3);  // the shadow: dim, so it reads on black
-    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 1);                      // the window
-    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y0 + 8, 13);                 // the title bar
-    for (int16_t x = x0; x <= x1; ++x) {                                      // the frame
-      px(x, y0, 15);
-      px(x, y1, 15);
+    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 2);  // the shadow
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 0);                      // the window: black
+    for (int16_t y = static_cast<int16_t>(y0 + 2); y < y0 + 9; y += 2)        // the title bar: hatched
+      for (int16_t x = static_cast<int16_t>(x0 + 1); x < x1; ++x) px(x, y, 5);
+    for (int16_t x = x0; x <= x1; ++x) {                                      // the frame and the title rule
+      px(x, y0, 10);
+      px(x, static_cast<int16_t>(y0 + 9), 10);
+      px(x, y1, 10);
     }
     for (int16_t y = y0; y <= y1; ++y) {
-      px(x0, y, 15);
-      px(x1, y, 15);
+      px(x0, y, 10);
+      px(x1, y, 10);
     }
     char title[24];
     snprintf(title, sizeof title, "LOOP LENGTH T%u S%u", edit_.popupSlot / 8 + 1, edit_.popupSlot % 8 + 1);
-    label(title, static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y0 + 2), 0);
+    const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
+    oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
+    label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
     char value[16], len[8];
     lengthText(edit_.popupLoop, len, sizeof len);
     snprintf(value, sizeof value, "%s %s", len, edit_.popupLoop > kBar ? "BARS" : "BAR");
     const int16_t w = static_cast<int16_t>(strlen(value)) * 6 - 1;
-    text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 22), 15);
-    label("TAP +1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y1 - 7), 6);
+    text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 23), 15);
+    label("TAP +1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y1 - 7), 5);
   }
 
   /// The legacy track letter for track `t`.

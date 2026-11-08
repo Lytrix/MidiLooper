@@ -2435,9 +2435,11 @@ opening long press fired at its own release); 400 ms after the last tap one tap 
 current length), a burst of n taps sets 2^(n−1) bars up to 128. F2 (CC 101 / pitch bend channel 14) sets the length
 as in LOOP_EDIT, outside LOOP_EDIT too, on the popup's slot; its motor is parked on opening. The popup hides
 `kPopupMs` (3 s) after the last change and its changes are one undo step (a visit: opening starts one, so it never
-replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`): a 3-pixel dim (level 3; black vanished on the dark screen) drop
-shadow, a level-15 frame, an inverted title bar "LOOP LENGTH Tt Ss", the length in the 5 × 7 font ("4 BARS", "3/4
-BAR"), the gestures in 3 × 5 letters; the screen stays visible around it. Not built: the encoder — the DROID patch
+replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`), light — the panel dims as a whole under load, and a bright
+filled title bar with a grey interior took a frame's summed levels from ~5,000 to ~25,000 (owner: "the screen gets all
+dimmed"; five dumps in a row showed no frames fighting): a dim 3-pixel drop shadow, a level-10 frame, a black interior,
+a GEM title bar (hatched rows at level 5, "LOOP LENGTH Tt Ss" in its own black box), the length in the 5 × 7 font
+("4 BARS", "3/4 BAR"), the gestures in 3 × 5 letters; the screen stays visible around it. Not built: the encoder — the DROID patch
 has none, and legacy's default (CC 4, channel 1) is on the recording channel, not the control plane.
 `test_length_popup_taps_and_f2`, `test_length_popup_on_a_new_loop_and_from_loop_edit`; `test_slot_double_press_clears`
 waits for the popup to hide; mutations 7 of 8 (the last a redundant guard, removed).
