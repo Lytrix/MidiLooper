@@ -899,6 +899,45 @@ void test_notelen_short_on_an_empty_step_creates() {
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
 }
 
+// A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor
+// arriving at the velocity is not a move; moved by hand, the hold edits the velocity and creates nothing.
+void test_notelen_long_press_creates() {
+  recordBar({{96, 64}});
+  enterEdit();
+  settle();
+  f1(pbFor(12, 16));  // an empty 16th (576)
+  settle();
+  const uint16_t size = gE.noteEdit().size();
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);
+  ms(S::kVelocityHoldMs + 100);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT32(576, sel().tick);
+  TEST_ASSERT_FALSE(gS.edit().lengthMode());
+  // On the new note: the motor goes to its velocity and lands there — still a long press; a note is there already.
+  settle();
+  drainMotors(800);
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);
+  ms(S::kVelocityHoldMs + 50);
+  drainMotors(100);
+  f4(80);  // the DROID: F4's motor arrives at the velocity
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT8(80, sel().velocity);
+  // Moved by hand: velocity, no note.
+  f1(pbFor(14, 16));  // another empty 16th (672)
+  settle();
+  drainMotors(800);
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);
+  ms(S::kVelocityHoldMs + 50);
+  f4(30);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1007,6 +1046,7 @@ int main(int, char**) {
   RUN_TEST(test_f4_at_zero_mutes_the_note);
   RUN_TEST(test_note_edit_follows_the_track);
   RUN_TEST(test_notelen_short_on_an_empty_step_creates);
+  RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

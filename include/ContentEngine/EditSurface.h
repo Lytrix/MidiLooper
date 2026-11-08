@@ -24,7 +24,8 @@
 // * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127; owner 2026-11-08, not in
 //   legacy), 0 muting the note (`kVelocityMuted`: drawn, editable, not sent) — that press is then no short / double. Velocity mode begins with the first F4 move while held, or after
 //   `Surface`'s long hold, which writes F4's motor to the velocity; on NOTELEN's release F4's motor goes back to the
-//   pitch.
+//   pitch. A long hold released without F4 moved by hand is a long press: a note is created at the bracket (owner
+//   2026-11-08).
 // * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
 //   change to the selected note is one undo step, kept when the note is deselected or NOTE_EDIT is left (as legacy;
 //   owner 2026-11-08: a fader is never exact, so a step a move was too many): a later change replaces the note's
@@ -324,6 +325,7 @@ class EditSurface {
   /// velocity, and any other value unmutes it there.
   void velocity(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);
+    if (!travel) velocityMoved_ = true;
     if (!geometryReady(ms)) return;
     const uint8_t was = session().current(static_cast<uint16_t>(sel_)).velocity;
     const uint8_t vel = (cc & 0x7F) == 0 ? static_cast<uint8_t>(was | kVelocityMuted) : (cc & 0x7F);
@@ -339,13 +341,16 @@ class EditSurface {
   void velocityBegin(uint32_t ms, bool motor) {
     if (!editing() || velocity_) return;
     velocity_ = true;
+    velocityMoved_ = false;
     if (motor) drive(kMotorPitch, ms);
   }
-  /// NOTELEN released: F4 is the pitch again, its motor back there.
-  void velocityDone(uint32_t ms) {
-    if (!velocity_) return;
+  /// NOTELEN released: F4 is the pitch again, its motor back there. True: velocity mode ended without F4 moved by
+  /// hand (a long press: `Surface` creates a note; owner 2026-11-08).
+  bool velocityDone(uint32_t ms) {
+    if (!velocity_) return false;
     velocity_ = false;
     if (editing()) drive(kMotorPitch, ms);
+    return !velocityMoved_;
   }
   bool velocityMode() const { return velocity_; }
   void pitch(uint8_t cc, uint32_t ms) {
@@ -709,7 +714,7 @@ class EditSurface {
   uint8_t refusal_ = 0;
   int16_t f1Pb_ = 0;     // the F1 value the last select acted on
   bool f1Seen_ = false;  // ... this session
-  bool length_ = false, armed_ = false, velocity_ = false;
+  bool length_ = false, armed_ = false, velocity_ = false, velocityMoved_ = false;
   uint32_t armedMs_ = 0, enteredMs_ = 0;
   int16_t lastCoarse_ = 0;
   uint32_t lastCoarseMs_ = 0;

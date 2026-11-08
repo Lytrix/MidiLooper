@@ -242,7 +242,8 @@ class Surface {
       press_.down(b, ms);
     } else {
       press_.up(b, ms);
-      if (b == kLength) edit_.velocityDone(ms);
+      // A long press — velocity mode, F4 not moved by hand — creates a note (owner 2026-11-08).
+      if (b == kLength && edit_.velocityDone(ms)) edit_.create(ms);
     }
   }
 

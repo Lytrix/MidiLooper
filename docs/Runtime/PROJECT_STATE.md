@@ -4,6 +4,9 @@
   LOOP_EDIT tempo F4, length F2, start F1; 9 the loop-length popup.
 - Slice 1: NOTELEN short with no note selected (an empty 16th) creates a note at the bracket instead of toggling
   length mode (`EditSurface::lengthOrCreate`). Image `ff47ef51…`, boot verified.
+- Slice 2: a NOTELEN long press (velocity mode by the long hold) released without F4 moved by hand creates a note at
+  the bracket (`EditSurface::velocityDone` → `create`); F4 moved by hand edits the velocity instead. Image
+  `f4e6ba5a…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo
