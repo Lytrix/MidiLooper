@@ -30,7 +30,9 @@ fact, not a "furthest" one.
    The suggestion is marked `SUGGESTED`; moving the highlight never moves the mark. Opening a screen is not evidence.
 3. **TRACK does what the hint line says for the selected row** — `CHOOSE STAGE`, `SAVE`, `OPEN S07`, `LOAD V09`,
    `RETURN`, `TRY AGAIN`. **HOLD TRACK closes or cancels**, everywhere, and changes nothing.
-4. **RECORD moves up, EDIT moves down** (one row a press, repeating while held); the list stops at both ends.
+4. **RECORD moves up, EDIT moves down** (one row a press, repeating while held); the list stops at both ends. The
+   buttons sit in a row — `REC  TRK  EDIT  PLAY` (owner) — so the outer two either side of TRACK step, TRACK in the
+   middle selects, and PLAY at the end stays the transport.
 5. **A successful save, load or return closes the browser** and shows one line on the performance screen (`SAVED  S02
    V04  EXPLORATION`, `LOADED  S07 V09  TAKE`, `RETURNED  S02 AS AT 14:57`). Nothing stays open half-done.
 6. **A failure keeps the screen and the selection:** the large word says what failed, the next line why, then
@@ -114,12 +116,16 @@ return row is one step up.
   proposed default).
 * Legacy's auto-save-before-load (a new set on every load) and its dirty prompt are not ported.
 
-## 6. Still open
+## 6. Decided (owner 2026-11-08) and still open
 
-1. Opening the browser during NOTE_EDIT / LOOP_EDIT: leave the edit keeping it (proposed) or refuse.
-2. Loading while playing: switch at the next bar line once loaded (proposed) or stop the transport.
-3. RECORD above EDIT on the hardware (assumed for up / down).
-4. Recovery depth (4 proposed).
+1. **Opening during NOTE_EDIT / LOOP_EDIT is refused.** `HOLD TRACK` there opens nothing; the status band shows
+   `LEAVE EDIT FIRST` for a moment. The edit is untouched.
+2. **Loading while playing switches live**, so songs can be changed in performance: the destination loads in the
+   background (the row shows `LOADING`) and switches in at a global **load switch** point — **the next bar** or **the
+   loop end** (the next start of the longest playing loop) — one setting for the whole instrument (default: next bar;
+   a settings screen later, a serial command until then). With the transport stopped the load is immediate.
+3. **The buttons sit in a row: `REC  TRK  EDIT  PLAY`.** RECORD (left of TRACK) moves up, EDIT (right) moves down.
+4. **Still open:** how many recovery checkpoints to keep (4 proposed).
 
 ## 7. Storage and slices (after the paths above are agreed)
 
