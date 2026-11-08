@@ -24,8 +24,8 @@
 //     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
 //     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
 //     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
-//     overdub the slot (when it plays, else the short gesture); triple = redo; long = clear, or on an empty slot an
-//     empty loop of `kNewLoopBars` bars (owner 2026-11-08: for step entry in NOTE_EDIT; selected, not played);
+//     clear (owner 2026-11-08; overdub stays on record's short press); triple = redo; long = on an empty slot an empty
+//     loop of `kNewLoopBars` bars (owner 2026-11-08: for step entry in NOTE_EDIT; selected, not played);
 //   - track switch 37: short = the next track; double = undo; triple = redo; long = mute toggle;
 //   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
 //     back to the loop start (stop, then start at the next bar line);
@@ -414,23 +414,15 @@ class Surface {
       const uint8_t target = static_cast<uint8_t>(t * kSlotsPerTrack + s);
       if (p == Press::Short) {
         slotToggle(t, s);
-      } else if (p == Press::Double) {
-        if (!empty(target) && transport().playing(t) && transport().playingSlot(t) == target &&
-            transport().writingTrack() == 0xFF) {
-          slot_[t] = s;
-          control().startOverdub(t, tick_);
-        } else {
-          slotToggle(t, s);
-        }
+      } else if (p == Press::Double) {  // Clear (owner 2026-11-08: the long press creates; overdub is Record's)
+        slot_[t] = s;
+        control().clear(target, tick_, us_, us());
       } else if (p == Press::Triple) {
         slot_[t] = s;
         control().redo(target, tick_, us_, us());
-      } else {
+      } else {  // long: an empty loop on an empty slot (a filled slot: the length popup, a later slice)
         slot_[t] = s;
-        if (empty(target))
-          control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);
-        else
-          control().clear(target, tick_, us_, us());
+        if (empty(target)) control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);
       }
       return;
     }

@@ -10,6 +10,9 @@
 - Slice 3 (DEC-256 — empty loop as one run without rows): a long press on an empty slot creates an empty 1-bar loop,
   selected and not played (`SlotTransport::createEmpty`; `Surface::kNewLoopBars`); on a filled slot it is still Clear
   until slice 4. Image `f81e0518…`, boot verified.
+- Slice 4: a slot's double press is Clear (undoable); the long press on a filled slot does nothing until the length
+  popup (slice 9); overdub stays on record's short press (the slot double no longer overdubs). Image `346a7c75…`, boot
+  verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

@@ -203,6 +203,29 @@ void test_slot_buttons_record_play_switch_and_mute() {
   TEST_ASSERT_FALSE(C().muted(0));
 }
 
+// A slot's double press clears it (owner 2026-11-08), undoably; its long press no longer clears a filled slot.
+void test_slot_double_press_clears() {
+  recordOneBar(0, 60);
+  const ManifestId m = X().contentOf(0);
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // long: a filled slot stays
+  ms(700);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());  // no overdub either
+  tap(S::kSlotBase + 0);
+  ms(100);
+  tap(S::kSlotBase + 0);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(0));
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());
+  tap(S::kRecordNote);  // undo
+  ms(100);
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -389,6 +412,7 @@ int main(int, char**) {
   RUN_TEST(test_press_timing_matches_the_legacy_processor);
   RUN_TEST(test_the_control_plane_is_the_surfaces);
   RUN_TEST(test_slot_buttons_record_play_switch_and_mute);
+  RUN_TEST(test_slot_double_press_clears);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);
