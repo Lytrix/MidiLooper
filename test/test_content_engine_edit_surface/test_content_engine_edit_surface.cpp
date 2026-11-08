@@ -938,6 +938,36 @@ void test_notelen_long_press_creates() {
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
 }
 
+// A long press on an empty slot creates an empty 1-bar loop (owner 2026-11-08), selected and not played; NOTE_EDIT
+// opens on it, a step is entered with NOTELEN, and it plays; Undo takes the loop back.
+void test_slot_long_press_creates_an_empty_loop() {
+  TEST_ASSERT_TRUE(gE.transport().contentOf(0) == kNoManifest);
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(700);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(100);
+  const ManifestId m = gE.transport().contentOf(0);
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(m).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT16(1, gE.runs().run(gE.manifests().manifest(m).runs[0]).refs);  // the manifest's alone
+  TEST_ASSERT_FALSE(gE.transport().playing(0));
+  TEST_ASSERT_EQUAL_UINT8(1, gE.history().undoDepth(0));
+  enterEdit();
+  TEST_ASSERT_EQUAL_UINT16(0, gE.noteEdit().size());
+  settle();
+  f1(pbFor(4, 16));  // 192
+  tap(S::kLengthNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT32(192, sel().tick);
+  tap(S::kEditModeNote);  // leave
+  ms(400);
+  tap(S::kPlayStopNote);  // the selected slot plays
+  ms(500);
+  TEST_ASSERT_TRUE(gE.transport().playing(0));
+  TEST_ASSERT_EQUAL_UINT32(192, heardAt(60));
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1047,6 +1077,7 @@ int main(int, char**) {
   RUN_TEST(test_note_edit_follows_the_track);
   RUN_TEST(test_notelen_short_on_an_empty_step_creates);
   RUN_TEST(test_notelen_long_press_creates);
+  RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

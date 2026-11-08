@@ -240,6 +240,24 @@ void test_version_one_loads_and_a_later_one_is_refused() {
   TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(one));
 }
 
+// An empty loop (owner 2026-11-08: one run without rows) round-trips: its loop length and its run.
+void test_an_empty_loop_round_trips() {
+  const RunId r = run(RunKind::kRecord, {});
+  gH.commit(0, manifest({r}, 1));
+  gRuns.release(r);
+  MemoryFile f;
+  saveSlot(f);
+  initEngine();
+  TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(f));
+  const ManifestId m = gH.current(0);
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  TEST_ASSERT_EQUAL_UINT32(kLoop, gManifests.manifest(m).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(1, gManifests.manifest(m).runCount);
+  TEST_ASSERT_EQUAL_UINT32(0, gRuns.run(gManifests.manifest(m).runs[0]).rowCount);
+  TEST_ASSERT_TRUE(gRes.check());
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
 static void expectNothingHeld(uint16_t freePages, uint16_t freeRuns, uint16_t freeManifests) {
   while (gRuns.reclaimPendingRuns() != 0) gRuns.reclaim(gPool, 64);
   TEST_ASSERT_EQUAL_UINT16(freePages, gPool.freeCount());
@@ -346,6 +364,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_round_trip_keeps_content_history_and_ids);
   RUN_TEST(test_version_one_loads_and_a_later_one_is_refused);
+  RUN_TEST(test_an_empty_loop_round_trips);
   RUN_TEST(test_failures_are_named_and_release_everything);
   RUN_TEST(test_large_take_round_trips_in_bounded_grains);
   RUN_TEST(test_no_heap);

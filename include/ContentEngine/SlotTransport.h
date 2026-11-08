@@ -272,6 +272,23 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  /// An empty loop (owner 2026-11-08: a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
+  /// and loop `loop` ticks, on top of the slot's history (undoable). A slot holds content while its state lists a run,
+  /// so the loop plays, is edited and saved like a recorded one. Only on an empty slot.
+  Result createEmpty(uint8_t slot, uint32_t loop) {
+    if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
+    if (contentOf(slot) != kNoManifest) return Result::DeniedSlot;
+    if (loop == 0) return Result::NoChange;
+    const RunId r = runs_->allocate(slot, RunKind::kRecord);
+    if (r == kNoRun) return Result::DeniedRun;
+    runs_->seal(r);
+    const ManifestId m = manifests_->create(slot, ++revision_, loop, &r, 1, *runs_);
+    runs_->release(r);  // the manifest holds it
+    if (m == kNoManifest) return Result::DeniedManifest;
+    history_->commit(slot, m);
+    return Result::Ok;
+  }
+
   /// Starts composing `slot` for `track` from its loop start; `commitLaunch` makes it play.
   Result launch(uint8_t track, uint8_t slot) {
     if (mode_ != Mode::Idle && wTrack_ == track) return Result::Busy;

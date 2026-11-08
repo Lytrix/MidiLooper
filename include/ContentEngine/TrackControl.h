@@ -149,6 +149,7 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
+  Result createEmpty(uint8_t slot, uint32_t loop) { return x_->createEmpty(slot, loop); }
   Result undo(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     uint8_t n;

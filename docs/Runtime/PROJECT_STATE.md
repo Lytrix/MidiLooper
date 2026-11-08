@@ -7,6 +7,9 @@
 - Slice 2: a NOTELEN long press (velocity mode by the long hold) released without F4 moved by hand creates a note at
   the bracket (`EditSurface::velocityDone` → `create`); F4 moved by hand edits the velocity instead. Image
   `f4e6ba5a…`, boot verified.
+- Slice 3 (DEC-256 — empty loop as one run without rows): a long press on an empty slot creates an empty 1-bar loop,
+  selected and not played (`SlotTransport::createEmpty`; `Surface::kNewLoopBars`); on a filled slot it is still Clear
+  until slice 4. Image `f81e0518…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

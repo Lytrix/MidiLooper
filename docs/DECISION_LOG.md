@@ -14875,3 +14875,27 @@ state model change (a meaning for a stored bit; set file version 2). Builds on D
   `test_content_engine_piano_roll` (`test_a_muted_note_is_drawn_dim`), `test_content_engine_set_file` (a muted row
   round-trips; version 1 loads, 3 refused). Mutations 6 / 6 caught; `beginWindowLate`'s skip has no own test.
 - Device image `8be61b2e…`: boot `crash=0`, 22 slots loaded (version-1 copies), 0 failed.
+
+## DEC-256 — An empty loop is a state listing one run without rows
+
+**Date:** 2026-11-08
+**Owner:** `ContentEngine::SlotTransport::createEmpty`; `Surface` (a slot's long press). OpenSpec:
+[`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) "Creation gestures and LOOP_EDIT", slice 3.
+Formal trigger: persistent state model change (a saved state may list a run with no rows). Builds on DEC-252.
+**Status:** Accepted by owner (2026-11-08: "long press on a slot button 1-8 can also create an empty loop. default
+length is 1 bar").
+
+### Decision
+
+- A slot holds content while its current state lists a run (`contentOf`); Clear's empty state lists none (loop 0).
+  An empty loop — for step entry in NOTE_EDIT — is a state of loop length L listing one sealed Record run with no rows,
+  committed on top of the slot's history (undoable). It plays (silently), is edited and saved like a recorded loop.
+- Not a state with no runs and L > 0: "no runs" stays the one meaning of empty, so no reader of `contentOf`,
+  `NoteEditSession::gather` or the set file changes.
+- The length is `Surface::kNewLoopBars` (1 bar), to become a global setting.
+
+### Evidence
+
+- `test_slot_long_press_creates_an_empty_loop` (created, selected not played, one undo step, the manifest the run's
+  only reference; NOTE_EDIT opens, a step entered, heard), `test_an_empty_loop_round_trips` (set file). Mutations 4 / 4.
+- Device image `f81e0518…`: boot `crash=0`, 22 slots loaded.

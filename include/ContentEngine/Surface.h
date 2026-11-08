@@ -24,7 +24,8 @@
 //     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
 //     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
 //     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
-//     overdub the slot (when it plays, else the short gesture); triple = redo; long = clear;
+//     overdub the slot (when it plays, else the short gesture); triple = redo; long = clear, or on an empty slot an
+//     empty loop of `kNewLoopBars` bars (owner 2026-11-08: for step entry in NOTE_EDIT; selected, not played);
 //   - track switch 37: short = the next track; double = undo; triple = redo; long = mute toggle;
 //   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
 //     back to the loop start (stop, then start at the next bar line);
@@ -174,7 +175,8 @@ class Surface {
   // Channel 16 button notes (MidiConfig) and their detector indices.
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
   static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
-  static constexpr uint32_t kVelocityHoldMs = 600;  // NOTELEN held this long: velocity mode (the long press)
+  static constexpr uint32_t kVelocityHoldMs = 600;
+  static constexpr uint32_t kNewLoopBars = 1;  // an empty loop's length (owner 2026-11-08: a global setting later)  // NOTELEN held this long: velocity mode (the long press)
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
@@ -425,7 +427,10 @@ class Surface {
         control().redo(target, tick_, us_, us());
       } else {
         slot_[t] = s;
-        control().clear(target, tick_, us_, us());
+        if (empty(target))
+          control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);
+        else
+          control().clear(target, tick_, us_, us());
       }
       return;
     }

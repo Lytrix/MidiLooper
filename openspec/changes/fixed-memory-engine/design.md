@@ -2323,5 +2323,6 @@ lengthen (`EditSurface::lengthOrCreate`; as built, `test_notelen_short_on_an_emp
 (2) a NOTELEN long press released without F4 moved by hand creates (`EditSurface::velocityDone`;
 as built, `test_notelen_long_press_creates`, mutations 3 / 4, the fourth equivalent: a motor landing only follows a
 selected note, where a note already blocks the create); (3) a slot long press on an empty slot creates a 1-bar
-empty loop (the length a global setting later); (4) a slot double press is Clear; (5) the edit button cycles NOTE ↔
+empty loop (the length a global setting later; DEC-256: one sealed run without rows, so "no runs" stays empty;
+as built, `test_slot_long_press_creates_an_empty_loop`, `test_an_empty_loop_round_trips`, mutations 4 / 4); (4) a slot double press is Clear; (5) the edit button cycles NOTE ↔
 LOOP and a long press leaves; (6–8) LOOP_EDIT F4 tempo, F2 length, F1 start; (9) a loop-length popup.
