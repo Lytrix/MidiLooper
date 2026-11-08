@@ -1,3 +1,9 @@
+**2026-11-08 — Fixed-memory engine: note starts on the piano roll.**
+- Each note's first pixel is drawn brighter than its bar (13; 15 selected; 6 / 9 muted), after every bar so a touching
+  neighbour's last pixel cannot cover it; a part continued from the previous bar has none. Notes touching on a pitch
+  read as separate (owner 2026-11-08, option 1 of 4 proposed; velocity goes to a later controller view). Image
+  `939c57f4…`, boot verified; owner check on the DROID pending.
+
 **2026-11-08 — Fixed-memory engine: muted notes (DEC-255 — muted note as velocity bit 7).**
 - In NOTE_EDIT's velocity mode (NOTELEN held), F4 at 0 mutes the selected note instead of a velocity 0 (a note off):
   the note keeps its velocity, stays drawn (dim; brighter when selected) and editable, and is never sent; any other

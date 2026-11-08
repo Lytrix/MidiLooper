@@ -2294,3 +2294,14 @@ later feature that chooses at random which notes play (owner 2026-11-08).
   and selectable again, motor to 0, unmuted at 100 and heard), `test_a_muted_note_is_drawn_dim`, and in
   `test_content_engine_set_file` a muted row round-trips, version 1 loads and 3 is refused (mutations 6 / 6;
   `beginWindowLate`'s skip has no own test).
+
+## Note starts on the piano roll (owner 2026-11-08: "on the piano roll you cannot distinguish they are 2 separate notes"; as built)
+
+A note is a one-row bar; at a 16-bar view a 16th is under a pixel, so notes touching on a pitch merged into one bar.
+Of four proposals (a bright start pixel, a dark gap before a touching note, alternating brightness, brightness from
+velocity) the owner chose the first; velocity will have a controller view under a smaller roll later. `drawRollBand`
+draws each span segment's first pixel at a start brightness — 13, 15 highlighted, 6 / 9 muted — in a pass after every
+bar's bodies, so the previous note's last pixel (the same column) cannot cover it; a segment continued from the
+previous bar (flags bit 4) has none. Dense rasters and the live overlay are unchanged.
+`test_content_engine_piano_roll`: the geometry test's first pixels, and `test_touching_notes_show_each_start`
+(mutations 4 / 4).

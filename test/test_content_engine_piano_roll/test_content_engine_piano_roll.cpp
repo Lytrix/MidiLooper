@@ -82,14 +82,17 @@ void test_span_segments_at_the_legacy_geometry() {
   v.highlightPitch = 63;
   drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
   // Pitch 48 -> row 31 (low at the bottom), x from 22 for 192 / 3072 of 203 columns.
-  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(22, 31));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteStartBrightness, px(22, 31));  // the note's first pixel
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(23, 31));
   TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(22 + 12, 31));
   TEST_ASSERT_EQUAL_UINT8(0, px(22 + 14, 31));
   // Pitch 63 -> row 0, highlighted.
-  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(22 + 25, 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightStartBrightness, px(22 + 25, 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(22 + 26, 0));
   // Bar 2's whole-bar note: x 22 + map(1536) .. 22 + map(2304).
   const int y55 = roll::map(55, 48, 63, 31, 0);
-  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(22 + 101, y55));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteStartBrightness, px(22 + 101, y55));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(22 + 102, y55));
   TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(22 + 152, y55));
   TEST_ASSERT_EQUAL_UINT8(0, px(22 + 154, y55));
   // Bars 1 and 3 were never swept: nothing there.
@@ -120,6 +123,31 @@ void test_a_highlighted_note_stays_bright_across_bar_lines() {
   TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(3000), 31));
   TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(50), 31));  // past the loop end
   TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(700), 0));
+}
+
+// Notes that touch on a pitch read as separate (owner 2026-11-08): each note's first pixel is brighter, drawn over the
+// previous note's last; a segment continued from the previous bar has no start.
+void test_touching_notes_show_each_start() {
+  gStore.setDetail(0, 1);
+  // Pitch 63: 0–300 and 300–600 touching; 600 into bar 1 (continued there); pitch 48: a muted note at 0, then 300.
+  span(1, 0, {{0, 300, 63, 100, 0, 0}, {0, 300, 48, 0x80 | 100, 0, 0}, {300, 300, 63, 100, 0, 0},
+              {300, 200, 48, 100, 0, 0}, {600, 168, 63, 100, 0x20, 0}}, 7);
+  span(1, 1, {{0, 200, 63, 100, 0x10, 0}}, 7);
+  RollView v = view(1);
+  v.highlightTick = 300;
+  v.highlightLength = 300;
+  v.highlightPitch = 48;
+  drawRollBand(gStore, static_cast<const Overlay*>(nullptr), v, gFb, kW, 0, 31);
+  const auto x = [](uint32_t t) { return static_cast<uint16_t>(22 + roll::map(t, 0, kLoop, 0, 203)); };
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteStartBrightness, px(x(0), 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(150), 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteStartBrightness, px(x(300), 0));  // the second note, not the first's last pixel
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteStartBrightness, px(x(600), 0));
+  TEST_ASSERT_EQUAL_UINT8(kRollNoteBrightness, px(x(768), 0));  // bar 1's part of the note: no start
+  TEST_ASSERT_EQUAL_UINT8(kRollMutedStartBrightness, px(x(0), 31));
+  TEST_ASSERT_EQUAL_UINT8(kRollMutedBrightness, px(x(150), 31));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightStartBrightness, px(x(300), 31));
+  TEST_ASSERT_EQUAL_UINT8(kRollHighlightBrightness, px(x(400), 31));
 }
 
 // A muted note (owner 2026-11-08: `kVelocityMuted` on its velocity) is drawn dim, brighter when selected.
@@ -357,6 +385,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_span_segments_at_the_legacy_geometry);
   RUN_TEST(test_a_highlighted_note_stays_bright_across_bar_lines);
+  RUN_TEST(test_touching_notes_show_each_start);
   RUN_TEST(test_a_muted_note_is_drawn_dim);
   RUN_TEST(test_bands_touch_only_their_rows);
   RUN_TEST(test_dense_raster_density_fallback_and_extent);

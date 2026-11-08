@@ -7,7 +7,8 @@
 // framebuffer (two pixels a byte, even x in the high nibble), one band of rows at a time, so a frame can be drawn and
 // sent in bands. It reads tiles and the live overlay only: nothing on the draw path composes, allocates or reads pages.
 // The legacy geometry: x = x0 + map(position in the view, 0, view ticks, 0, width), y = map(pitch, low, high, y1, y0),
-// one-row note bars at brightness 7, the highlighted note at 10; a muted note at 3, 6 highlighted.
+// one-row note bars at brightness 7, the highlighted note at 10; a muted note at 3, 6 highlighted. A note's first pixel
+// is brighter (13, 15 highlighted, 6 / 9 muted; owner 2026-11-08), so notes that touch on a pitch read as separate.
 // * Detailed view (`drawRollBand`): per visible bar its draw source — span segments; a dense bar's 32-column raster;
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
 //   the live overlay's notes (a take being recorded) on top, at the view's scale.
@@ -39,6 +40,11 @@ constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
 constexpr uint8_t kRollMutedBrightness = 3;           // a muted note (`kVelocityMuted`; owner 2026-11-08)
 constexpr uint8_t kRollMutedHighlightBrightness = 6;  // a muted note selected
+// A note's first pixel, brighter than its bar (owner 2026-11-08: notes touching on a pitch read as one).
+constexpr uint8_t kRollNoteStartBrightness = 13;
+constexpr uint8_t kRollHighlightStartBrightness = 15;
+constexpr uint8_t kRollMutedStartBrightness = 6;
+constexpr uint8_t kRollMutedHighlightStartBrightness = 9;
 
 namespace roll {
 
@@ -120,6 +126,22 @@ void drawRollBand(const Store& store, const Overlay* overlay, const RollView& v,
         const uint8_t n = (d.density->counts[p / 2] >> ((p & 1) * 4)) & 0x0F;
         if (n != 0) roll::span(v, fb, width, rowFrom, rowTo, base, v.barTicks, p, kRollDensityBrightness);
       }
+    }
+  }
+  // Note starts, after every bar so a touching neighbour's last pixel cannot cover one; a segment continued from the
+  // previous bar (flags bit 4) has none.
+  for (uint32_t k = 0; k <= viewBars && k < bars; ++k) {
+    const uint8_t bar = static_cast<uint8_t>((firstBar + k) % bars);
+    const auto d = store.drawSource(v.slot, bar);
+    if (d.kind != Store::Kind::Span) continue;
+    for (uint16_t i = 0; i < d.header->count; ++i) {
+      const auto& s = d.span->segments[i];
+      if (s.flags & 0x10) continue;
+      const uint32_t at = bar * v.barTicks + s.start;
+      const bool hi = roll::highlighted(v, at, s.pitch);
+      roll::span(v, fb, width, rowFrom, rowTo, at, 0, s.pitch,
+                 isMuted(s.velocity) ? (hi ? kRollMutedHighlightStartBrightness : kRollMutedStartBrightness)
+                                     : (hi ? kRollHighlightStartBrightness : kRollNoteStartBrightness));
     }
   }
   if (overlay == nullptr) return;
