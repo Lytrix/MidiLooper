@@ -1,3 +1,13 @@
+**2026-11-09 — Engine sets browser, slice 2b-i — live load at the switch point (DEC-260).**
+- `load` / `return` now work while playing: the checkpoint is written as the set plays on, the switch happens at the
+  global switch point (`!ENGINE switch-at bar|loop`, kept in EEPROM), and the tracks that played resume together on
+  the next bar with the loaded set's selection. The gap is about a bar (the load itself ~65 ms).
+- Device: switch on a bar line, resume on the next; load grains by phase checkpoint 52 µs, clear ≤158 µs, read ≤1,078 µs
+  (launching tracks alone already reaches 1,186 µs). Image `fde9b8ab…` + phase timing, boot verified. Native 4,430
+  passed; mutations 7 / 7.
+- The DROID host sends no longer block (other session, `a437083a`).
+- Next: 2b-ii — stage the destination's playing content so a switch that fits has no gap.
+
 **2026-11-08 — Engine sets browser, slice 2a — load and return (branch `feature/engine-sets-browser`, DEC-259).**
 - `!ENGINE load <index>` replaces the whole set with a milestone, undo histories, tempo and selection included, after
   writing the working set as the recovery checkpoint; a failed read restores the set from it; `!ENGINE return` brings

@@ -172,7 +172,9 @@ class SetLoad {
 
   /// Starts loading milestone `index`. `c` describes the checkpoint written first (the working set's base, its set,
   /// the time, tempo and surface state); its `loaded` is set to the milestone's sequence here.
-  Result beginLoad(uint16_t index, typename Writer::Checkpoint c) {
+  /// `atSwitch` (a live load, DEC-260): after the checkpoint the load waits for `release` — the switch point — before
+  /// anything is cleared.
+  Result beginLoad(uint16_t index, typename Writer::Checkpoint c, bool atSwitch = false) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
     if (!writer_->readRecord(index, record_)) return Result::NoMilestone;
@@ -183,15 +185,17 @@ class SetLoad {
     if (r != Writer::Result::Ok) return Result::Busy;
     kind_ = Kind::Load;
     phase_ = Phase::Checkpoint;
+    hold_ = atSwitch;
     return start();
   }
   /// Starts returning to the checkpoint (the working set before the last load).
-  Result beginReturn() {
+  Result beginReturn(bool atSwitch = false) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
     if (!writer_->checkpoint(checkpoint_)) return Result::NoCheckpoint;
     kind_ = Kind::Return;
     phase_ = Phase::Clear;
+    hold_ = atSwitch;
     return start();
   }
 
@@ -207,6 +211,7 @@ class SetLoad {
         return status_;
       }
       case Phase::Clear:
+        if (hold_) return status_;  // until the switch point
         if (!clear_(ctx_)) return status_ = (kind_ == Kind::Load ? Status::Unchanged : Status::Lost);
         if (kind_ == Kind::Load)
           read(library::kLogBase + record_.logSector, record_.sequence);
@@ -232,6 +237,11 @@ class SetLoad {
   }
 
   bool busy() const { return status_ == Status::Running; }
+  /// Ready to clear, waiting for the switch point (`release`).
+  bool waiting() const { return status_ == Status::Running && phase_ == Phase::Clear && hold_; }
+  void release() { hold_ = false; }
+  /// Diagnostics: 0 checkpoint, 1 clear (or waiting), 2 read; a restore reads again.
+  uint8_t phase() const { return static_cast<uint8_t>(phase_); }
   Status status() const { return status_; }
   Kind kind() const { return kind_; }
   /// The milestone being loaded, and the checkpoint written before it (or returned to).
@@ -274,7 +284,7 @@ class SetLoad {
   library::CheckpointHeader checkpoint_{};
   Phase phase_ = Phase::Checkpoint;
   Kind kind_ = Kind::Load;
-  bool restoring_ = false;
+  bool restoring_ = false, hold_ = false;
   typename Reader::Why failedWhy_ = Reader::Why::None;
   uint8_t failedSlot_ = 0;
   Status status_ = Status::Idle;

@@ -15,6 +15,9 @@ verified on the device (DEC-258 evidence). Next, on the owner's go: slice 2 (loa
 **2026-11-08 — slice 2a (owner: "continue with stage 2"):** load a milestone and return, stopped only, with the
 recovery checkpoint and failure restore (DEC-259). Then 2b: the global switch point and staged live switching.
 
+**2026-11-09 — slice 2b-i (owner: "Short gap" when a switch does not fit):** live load and return at the global
+switch point, resuming on the next bar (DEC-260). Then 2b-ii: staged, gapless switching when the destination fits.
+
 **Documentation maintenance (2026-11-08, owner requested):** README and the
 [engine guide](../Guides/FIXED_MEMORY_ENGINE.md) refreshed against the engine sources; legacy guides marked by
 runtime. Browser images remain proposal previews. This docs-only work does not expand the browser slice or close

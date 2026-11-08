@@ -42,7 +42,8 @@ template <typename Transport, typename Output, typename Emit, uint8_t Tracks, ui
 class TrackControl {
  public:
   using Result = typename Transport::Result;
-  enum class Quantize : uint8_t { NextGrid, LoopEnd };
+  enum class Quantize : uint8_t { NextGrid, LoopEnd, NextBar };  // NextBar: a set's tracks resume together (DEC-260)
+  enum class SwitchAt : uint8_t { NextBar, LoopEnd };             // the global set switch point (DEC-260)
   static constexpr uint8_t kNone = 0xFF;
 
   struct Stats {
@@ -192,6 +193,13 @@ class TrackControl {
 
   /// Sets browser 2a (DEC-259): a load is about to replace the set (stopped) — nothing stays queued, no launch prepared
   /// (its window holds the old content), nothing resumes at Start.
+  /// The global switch point at `clock` (DEC-260): a bar line, or the selected track's loop start (a bar line when it
+  /// plays nothing).
+  bool switchPoint(SwitchAt at, uint32_t clock) const {
+    if (at == SwitchAt::LoopEnd && x_->playing(selected_) && x_->contentOf(x_->playingSlot(selected_)) != kNoManifest)
+      return atLoopStart(selected_, clock);
+    return onBar(clock);
+  }
   void resetForLoad() {
     for (uint8_t t = 0; t < Tracks; ++t) {
       cancelQueued(t);
@@ -360,6 +368,7 @@ class TrackControl {
     return x_->playing(t) && x_->contentOf(x_->playingSlot(t)) != kNoManifest ? atLoopStart(t, clock) : onBar(clock);
   }
   bool switchDue(uint8_t t, Quantize q, uint32_t clock) const {
+    if (q == Quantize::NextBar) return onBar(clock);
     if (q == Quantize::LoopEnd && x_->playing(t) && x_->contentOf(x_->playingSlot(t)) != kNoManifest)
       return atLoopStart(t, clock);
     return grid_ != 0 && clock % grid_ == 0;

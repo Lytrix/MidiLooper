@@ -15067,3 +15067,39 @@ back.
 - Seen once: after a reboot the loop hung in the LED stage (`prev_crumbs stage=8`) — the USB host driver's
   `write_packed` spinning while the DROID took no packets (the hazard noted in `EngineMain.cpp`). Not caused by the
   load (two further load → reboot rounds clean); recorded as a follow-up.
+
+## DEC-260 — A live load switches at the global switch point and resumes on the next bar (sets browser 2b-i)
+
+**Status:** Accepted (owner 2026-11-08: "switch so you can live switch songs. next bar or end of loop needs to be a
+global flag"; 2026-11-09: a switch that does not fit takes "Short gap").
+**Context:** DEC-259 loads only while stopped. Songs change in performance: a load must be possible while playing,
+switching at a musically chosen point. A seamless switch needs the destination's playing content staged beside the
+old set (slice 2b-ii); when it does not fit, the owner accepts a short gap. 2b-i builds the gap path, which every live
+switch takes until 2b-ii.
+
+### Decision
+
+- **The global switch point** (`!ENGINE switch-at bar|loop`, EEPROM bytes 4–5): the next bar line, or the selected
+  track's loop end (a bar line when it plays nothing).
+- **A live load** (the clock runs) writes the checkpoint while the set plays on, then waits — taking no grains, autosave
+  continuing — for the switch point. There, before that tick plays, every playing track stops (its notes end); the
+  load clears and reads; the tracks it stopped resume **together at the next bar line**, each on the loaded set's
+  selected slot (the checkpoint's after a restore; the slot it played when nothing changed). Resuming on a bar keeps
+  the new set's bar 1 on the bar grid, so later takes stay aligned. Return works the same way.
+- **The gap** is therefore the rest of the bar the load finishes in: about a bar when switching at a bar line (the load
+  itself took ~65 ms on the device). 2b-ii removes it when the destination fits.
+- If the clock stops while a live load waits, it switches at once.
+
+### Evidence
+
+- Host: `test_content_engine_library_loader` (a live load writes the checkpoint, then clears nothing until released);
+  `test_content_engine_persistence` (EngineRoot): two tracks play on until the bar line, both stop on it, the loaded
+  set's selected slot (not the one playing) resumes on a later bar, a slot the milestone lacks stays stopped; at loop
+  end the switch waits two bar lines for the selected 4-bar loop's start. Mutations 7 / 7 (no hold, switch on any
+  tick, tracks not stopped, no resume, resume on the 16th grid, resume the old slot, loop end ignored). Full native
+  suite 4,430 passed, 0 failed (193 suites); heap gate OK.
+- Device (image `fde9b8ab…` plus per-phase grain timing, boot `crash=0`, `BOOT,load,ok`; three tracks playing):
+  switch at tick 2304 (a bar line), the load done 26 ticks later, resume queued for tick 3072 (the next bar); worst
+  grain by phase — checkpoint 52 µs, clear 69–158 µs, read 521–1,078 µs. Launching three tracks without any load
+  already reaches 1,186 µs grains (playback's own launch cost), so the read phase is in that range; both are above the
+  ~800 µs grain bound and are revisited with 2b-ii's staging.

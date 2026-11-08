@@ -711,8 +711,7 @@ void test_a_load_replaces_the_set_and_the_store_follows() {
   TEST_ASSERT_EQUAL_UINT8(0, gA.transport().launchingSlot(0));  // ready to start from 0
   run(gA, gClock + kSettleTicks + 100);
   TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0) && gA.persistence().savedCurrent(9));
-  TEST_ASSERT_NULL(gA.loadRefusal(true));
-  TEST_ASSERT_EQUAL_STRING("STOP FIRST", gA.loadRefusal(false));
+  TEST_ASSERT_NULL(gA.loadRefusal());
   ProductionLibrary::Checkpoint c;
   c.set = 1;
   TEST_ASSERT_EQUAL(ProductionSetLoad::Result::Ok, gA.loadMilestone(0, c));
@@ -732,6 +731,79 @@ void test_a_load_replaces_the_set_and_the_store_follows() {
   runLibrary(gA);
   TEST_ASSERT_EQUAL(ProductionSetLoad::Status::Done, gA.setLoad().status());
   TEST_ASSERT_TRUE(gA.transport().contentOf(0) != kNoManifest);  // the take after the milestone, back
+}
+
+/// DEC-260: a live load. The set plays on until the switch point (here the bar line), where every playing track stops;
+/// the loaded set's tracks resume together at the first bar after the load — its selected slots (a short gap).
+/// The milestone holds slot 9 (track 1 selects it); after it, track 1 plays a new slot 10 and track 0 slot 0.
+static void liveSet() {
+  gA.approveSaving();
+  bool created = false;
+  TEST_ASSERT_TRUE(gA.openLibrary("/MidiLooper/library/library.bin", true, created));
+  record(gA, 1, 9, 72);
+  ProductionLibrary::Milestone m;
+  m.set = 1;
+  m.stage = library::Stage::Sketch;
+  m.stageNumber = 1;
+  m.surface[0] = 1;
+  for (uint8_t t = 0; t < 8; ++t) m.surface[1 + t] = static_cast<uint8_t>(t * 8);
+  m.surface[2] = 9;  // track 1 on slot 9
+  TEST_ASSERT_EQUAL(ProductionLibrary::Result::Ok, gA.saveMilestone(m));
+  runLibrary(gA);
+  gA.control().stopTrack(1, gClock, us(gClock), kUsPerTick);
+  record(gA, 1, 10, 74);  // after the milestone
+  record(gA, 0, 0, 60);
+  TEST_ASSERT_TRUE(gA.transport().playing(0) && gA.transport().playing(1));
+  TEST_ASSERT_EQUAL_UINT8(10, gA.transport().playingSlot(1));
+}
+void test_a_live_load_switches_at_the_bar_and_resumes_together() {
+  liveSet();
+  run(gA, (gClock / kBar + 1) * kBar + kBar / 2);  // mid-bar
+  ProductionLibrary::Checkpoint c;
+  c.set = 1;
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Result::Ok, gA.loadMilestone(0, c, true));
+  uint32_t switchedAt = 0;
+  for (int i = 0; i < 4 * int(kBar) && gA.switchedTracks() == 0; ++i) {
+    TEST_ASSERT_TRUE(gA.transport().playing(0) && gA.transport().playing(1));  // plays on until the switch point
+    switchedAt = gClock;
+    run(gA, gClock + 1);
+  }
+  TEST_ASSERT_EQUAL_UINT8(0x3, gA.switchedTracks());
+  TEST_ASSERT_EQUAL_UINT32(0, switchedAt % kBar);  // on the bar line
+  TEST_ASSERT_FALSE(gA.transport().playing(0) || gA.transport().playing(1));
+  runLibrary(gA);
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Status::Done, gA.setLoad().status());
+  uint32_t resumedAt = 0;
+  for (int i = 0; i < 4 * int(kBar) && !gA.transport().playing(1); ++i) {
+    resumedAt = gClock;
+    run(gA, gClock + 1);
+  }
+  TEST_ASSERT_TRUE(gA.transport().playing(1));
+  TEST_ASSERT_EQUAL_UINT8(9, gA.transport().playingSlot(1));  // the loaded set's selection, not the slot it played
+  TEST_ASSERT_EQUAL_UINT32(0, resumedAt % kBar);  // together, on a bar
+  TEST_ASSERT_TRUE(resumedAt > switchedAt);
+  TEST_ASSERT_TRUE(resumedAt - switchedAt <= 2 * kBar);  // the gap: the rest of the bar the load ends in
+  TEST_ASSERT_FALSE(gA.transport().playing(0));  // the milestone has no slot 0
+  TEST_ASSERT_EQUAL_UINT8(0, gA.switchedTracks());
+}
+
+/// The loop-end switch point: the selected track's loop start (4 bars), not the next bar line.
+void test_a_live_load_at_loop_end_waits_for_the_selected_loop() {
+  liveSet();  // track 0 selected, its 4-bar loop playing
+  gA.setSwitchAt(ProductionControl::SwitchAt::LoopEnd);
+  const uint32_t loop = 4 * kBar, origin = gA.transport().origin(0);
+  while ((gClock - origin) % loop != kBar + kBar / 2) run(gA, gClock + 1);  // in the loop's second bar
+  ProductionLibrary::Checkpoint c;
+  TEST_ASSERT_EQUAL(ProductionSetLoad::Result::Ok, gA.loadMilestone(0, c, true));
+  uint32_t switchedAt = 0;
+  for (int i = 0; i < 8 * int(kBar) && gA.switchedTracks() == 0; ++i) {
+    switchedAt = gClock;
+    run(gA, gClock + 1);
+  }
+  TEST_ASSERT_EQUAL_UINT8(0x3, gA.switchedTracks());
+  TEST_ASSERT_EQUAL_UINT32(0, (switchedAt - origin) % loop);  // two bar lines passed: the loop's start
+  runLibrary(gA);
+  gA.setSwitchAt(ProductionControl::SwitchAt::NextBar);
 }
 
 void test_no_heap() {
@@ -766,6 +838,8 @@ int main(int, char**) {
   RUN_TEST(test_the_surface_state_is_saved_and_restored);
   RUN_TEST(test_the_state_file_of_before_the_store_is_restored);
   RUN_TEST(test_a_load_replaces_the_set_and_the_store_follows);
+  RUN_TEST(test_a_live_load_switches_at_the_bar_and_resumes_together);
+  RUN_TEST(test_a_live_load_at_loop_end_waits_for_the_selected_loop);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

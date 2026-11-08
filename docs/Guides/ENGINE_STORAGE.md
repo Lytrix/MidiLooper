@@ -83,10 +83,13 @@ A load replaces the whole working set with a milestone, undo histories included,
 writes the working set as the recovery checkpoint (if that fails, nothing changes), then clears every slot's history
 and reads the milestone. If reading fails, the checkpoint is loaded back. `return` loads the checkpoint again and writes
 nothing. A slot the load left empty is written to the store as an empty file, so the next boot does not bring the old
-content back. Slice 2a loads only while stopped; live switching is 2b.
+content back. While playing (DEC-260), the load writes the checkpoint as the set plays on, then waits for the global switch point —
+the next bar, or the selected track's loop end (`!ENGINE switch-at bar|loop`). There the playing tracks stop, the set is
+replaced, and they resume together at the next bar line on the loaded set's selected slots: a gap of about a bar until
+the seamless staged switch (2b-ii).
 
 ## Serial commands (testing)
 
 `!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
-`load <index>`, `return`. Refusals: `STOP FIRST`, `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
+`load <index>`, `return`, `switch-at bar|loop`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
 `LIBRARY FULL`, `BUSY`. The browser screen and live switching are later slices of the [sets browser proposal](../Plans/engine_sets_browser_proposal.md).

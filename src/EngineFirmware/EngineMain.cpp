@@ -312,6 +312,17 @@ void storeTzOffset(int16_t minutes) {
   EEPROM.update(2, static_cast<uint8_t>(gTzOffset & 0xFF));
   EEPROM.update(3, static_cast<uint8_t>((gTzOffset >> 8) & 0xFF));
 }
+// The global set switch point (DEC-260), kept in EEPROM bytes 4-5 ('W', 0 next bar / 1 loop end).
+void loadSwitchAt() {
+  if (EEPROM.read(4) != 'W') return;
+  gEngine.setSwitchAt(EEPROM.read(5) == 1 ? ProductionControl::SwitchAt::LoopEnd : ProductionControl::SwitchAt::NextBar);
+}
+void storeSwitchAt(ProductionControl::SwitchAt at) {
+  gEngine.setSwitchAt(at);
+  EEPROM.update(4, 'W');
+  EEPROM.update(5, at == ProductionControl::SwitchAt::LoopEnd ? 1 : 0);
+}
+const char* switchAtName() { return gEngine.switchAt() == ProductionControl::SwitchAt::LoopEnd ? "loop" : "bar"; }
 uint32_t gLastSaveWall = 0;   // the wall time of the store's last completed slot write (0: none this boot, or no clock)
 uint32_t gSavesSeen = 0;      // `Persistence::stats().saves` when last looked at
 /// The RTC's time, or 0 when it is not valid (`wallclock::valid`).
@@ -347,6 +358,9 @@ uint32_t gLibraryStartUs = 0;
 uint32_t gBase = 0;
 uint16_t gSet = 1;
 ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
+uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work (DEC-260)
+uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint, clear, read
+uint8_t gSwitchedWas = 0;      // the tracks a live load stopped, as last reported
 
 /// The tempo in tenths of a BPM (as LOOP_EDIT shows it).
 uint16_t tempoTenthsNow() {
@@ -489,7 +503,7 @@ void saveCheckpoint(uint32_t nowUs) {
 /// return: back to the set before the last load.
 void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
   const bool load = verb[0] == 'l';
-  if (const char* why = gEngine.loadRefusal(!gClock.running())) {
+  if (const char* why = gEngine.loadRefusal()) {
     Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
     return;
   }
@@ -497,8 +511,9 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
     Serial.println("#ENGINE,load,refused,why=WHICH");
     return;
   }
-  const ProductionSetLoad::Result r =
-      load ? gEngine.loadMilestone(static_cast<uint16_t>(std::atoi(arg)), checkpointNow()) : gEngine.returnToCheckpoint();
+  const bool live = gClock.running();  // DEC-260: plays on to the switch point, a short gap, then the loaded set
+  const ProductionSetLoad::Result r = load ? gEngine.loadMilestone(static_cast<uint16_t>(std::atoi(arg)), checkpointNow(), live)
+                                           : gEngine.returnToCheckpoint(live);
   static const char* const kWhy[] = {"OK", "LIBRARY NOT READY", "BUSY", "NO SUCH MILESTONE", "NOTHING TO RETURN TO",
                                      "SET TOO LARGE"};
   if (r != ProductionSetLoad::Result::Ok) {
@@ -506,8 +521,10 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
     return;
   }
   gLibraryStartUs = nowUs;
+  gLoadGrainMaxUs = 0;
+  gLoadPhaseMaxUs[0] = gLoadPhaseMaxUs[1] = gLoadPhaseMaxUs[2] = 0;
   gLoadWas = ProductionSetLoad::Status::Running;
-  Serial.printf("#ENGINE,%s,begin\n", verb);
+  Serial.printf("#ENGINE,%s,begin,live=%u,at=%s\n", verb, live ? 1u : 0u, switchAtName());
 }
 /// The loaded set's tempo and selection (as the boot restores the saved selection).
 void applyLoaded(const library::BlobHeader& b) {
@@ -518,6 +535,16 @@ void applyLoaded(const library::BlobHeader& b) {
 }
 /// A load's or return's end, reported once.
 void serviceLoad() {
+  // The clock stopped while a live load waited for its switch point: it switches now.
+  if (!gClock.running() && gEngine.setLoad().waiting()) gEngine.switchNow(gLastTick, micros(), gClock.usPerTick());
+  const uint8_t switched = gEngine.switchedTracks();
+  if (switched != gSwitchedWas) {  // the switch point, and the loaded set resuming (the gap between them)
+    // The resume is queued here and plays from the next bar line (`at=`).
+    Serial.printf("#ENGINE,%s,tick=%lu,tracks=%02x,at=%lu\n", switched != 0 ? "switch" : "resume",
+                  static_cast<unsigned long>(gLastTick), switched != 0 ? switched : gSwitchedWas,
+                  static_cast<unsigned long>(switched != 0 ? gLastTick : (gLastTick / kTicksPerBar + 1) * kTicksPerBar));
+    gSwitchedWas = switched;
+  }
   const ProductionSetLoad& l = gEngine.setLoad();
   const ProductionSetLoad::Status st = l.status();
   if (st == gLoadWas || st == ProductionSetLoad::Status::Running) return;
@@ -531,13 +558,14 @@ void serviceLoad() {
       if (load) {
         gBase = l.record().sequence;
         gSet = l.record().set;
-        Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu\n", l.record().set,
+        Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu,worst_grain_us=%lu\n", l.record().set,
                       library::stageLetter(l.record().stage), l.record().stageNumber,
-                      static_cast<unsigned long>(l.record().sequence), ms);
+                      static_cast<unsigned long>(l.record().sequence), ms, static_cast<unsigned long>(gLoadGrainMaxUs));
       } else {
         gBase = l.checkpoint().base;
         gSet = l.checkpoint().set;
-        Serial.printf("#ENGINE,return,done,base=%lu,set=%u,ms=%lu\n", static_cast<unsigned long>(gBase), gSet, ms);
+        Serial.printf("#ENGINE,return,done,base=%lu,set=%u,ms=%lu,worst_grain_us=%lu\n", static_cast<unsigned long>(gBase),
+                      gSet, ms, static_cast<unsigned long>(gLoadGrainMaxUs));
       }
       break;
     case ProductionSetLoad::Status::Unchanged:
@@ -554,6 +582,9 @@ void serviceLoad() {
     default:
       break;
   }
+  Serial.printf("#ENGINE,%s,grains_us,checkpoint=%lu,clear=%lu,read=%lu\n", verb,
+                static_cast<unsigned long>(gLoadPhaseMaxUs[0]), static_cast<unsigned long>(gLoadPhaseMaxUs[1]),
+                static_cast<unsigned long>(gLoadPhaseMaxUs[2]));
   reportLibrary(verb);
 }
 /// A library job's end, reported once.
@@ -668,6 +699,10 @@ void command(char* line, uint32_t nowUs) {
     listMilestones();
   } else if (std::strcmp(verb, "checkpoint") == 0) {
     saveCheckpoint(nowUs);
+  } else if (std::strcmp(verb, "switch-at") == 0) {  // switch-at bar|loop: where a live load switches (DEC-260)
+    if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeSwitchAt(ProductionControl::SwitchAt::NextBar);
+    if (arg != nullptr && std::strcmp(arg, "loop") == 0) storeSwitchAt(ProductionControl::SwitchAt::LoopEnd);
+    Serial.printf("#ENGINE,switch-at,%s\n", switchAtName());
   } else if (std::strcmp(verb, "load") == 0 || std::strcmp(verb, "return") == 0) {
     startLoad(verb, arg, nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
@@ -910,6 +945,20 @@ void crumb(uint32_t stage) {
   CrashReport.breadcrumb(2, gLastTick);
 }
 
+/// One worker grain; its time counts towards a load's worst grain while the library has card work (DEC-260).
+bool timedGrain() {
+  const bool working = gEngine.libraryWorking();
+  const uint8_t phase = gEngine.setLoad().phase();
+  const uint32_t t = micros();
+  const bool ran = gEngine.runGrain(t);
+  if (ran && working) {
+    const uint32_t d = micros() - t;
+    if (d > gLoadGrainMaxUs) gLoadGrainMaxUs = d;
+    if (gEngine.setLoad().busy() && phase < 3 && d > gLoadPhaseMaxUs[phase]) gLoadPhaseMaxUs[phase] = d;
+  }
+  return ran;
+}
+
 void reportBootLoad() {
   const auto& st = gEngine.persistence().stats();
   Serial.printf("#CAP,%lu,BOOT,load,ok,card=%u,approved=%u,loads=%lu,load_failed_mask=%llx,v1_imported=%lu,"
@@ -954,6 +1003,7 @@ void setup() {
   // note was recorded on; live thru follows the selected track's channel.
   for (uint8_t t = 0; t < kTrackCount; ++t) gEngine.output().setChannel(t, static_cast<uint8_t>(t + 1));
   gClock.init(kDefaultTempo, kTicksPerBar);
+  loadSwitchAt();
   gSurface.init(gEngine, gClock);
   gDisplay.begin();
   Serial8.begin(31250);
@@ -1005,7 +1055,7 @@ void loop() {
   crumb(kJobs);
   gEngine.submitJobs(gLastTick, now, gClock.usPerTick());
   crumb(kGrains);
-  for (uint8_t g = 0; g < kGrainsPerPass && gEngine.runGrain(micros()); ++g) {
+  for (uint8_t g = 0; g < kGrainsPerPass && timedGrain(); ++g) {
     uint8_t c2 = 0;
     if (gClock.due(micros(), tick, c2)) {  // a tick came due: play it before the next grain
       gEngine.clockTick(tick, micros(), gClock.usPerTick());

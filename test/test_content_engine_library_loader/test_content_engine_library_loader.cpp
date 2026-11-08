@@ -338,6 +338,24 @@ void test_a_refused_clear_changes_nothing() {
   TEST_ASSERT_TRUE(setNow() == beforeLoad);
 }
 
+void test_a_live_load_waits_for_the_switch_point_before_it_clears() {
+  buildSet();
+  saveMilestone();
+  changeSet();
+  const auto beforeLoad = setNow();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginLoad(0, before(), true));
+  for (int i = 0; i < 100000 && !gL.waiting(); ++i) TEST_ASSERT_EQUAL(Loader::Status::Running, gL.step());
+  TEST_ASSERT_TRUE(gL.waiting());
+  CheckpointHeader h;
+  TEST_ASSERT_TRUE(gW.checkpoint(h));  // the checkpoint is written ...
+  for (int i = 0; i < 50; ++i) TEST_ASSERT_EQUAL(Loader::Status::Running, gL.step());
+  TEST_ASSERT_EQUAL(0, gClears);  // ... but nothing cleared until the switch point
+  TEST_ASSERT_TRUE(setNow() == beforeLoad);
+  gL.release();
+  TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
+  TEST_ASSERT_EQUAL(1, gClears);
+}
+
 void test_refusals() {
   buildSet();
   TEST_ASSERT_EQUAL(Loader::Result::NoCheckpoint, gL.beginReturn());
@@ -383,6 +401,7 @@ int main(int, char**) {
   RUN_TEST(test_a_slot_file_shorter_than_its_header_says_fails_the_load);
   RUN_TEST(test_a_checkpoint_that_cannot_be_written_changes_nothing);
   RUN_TEST(test_a_refused_clear_changes_nothing);
+  RUN_TEST(test_a_live_load_waits_for_the_switch_point_before_it_clears);
   RUN_TEST(test_refusals);
   RUN_TEST(test_clearing_releases_the_set);
   RUN_TEST(test_no_heap);

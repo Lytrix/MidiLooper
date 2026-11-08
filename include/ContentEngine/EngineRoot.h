@@ -234,6 +234,7 @@ class EngineRoot {
     overlayUntil_ = 0;
     card_ = nullptr;
     persistLive_ = false;
+    switched_ = 0;
     sweeping_ = false;
     sweepNext_ = 0;
     stats_ = Stats{};
@@ -242,6 +243,7 @@ class EngineRoot {
 
   /// Once per main-loop pass at Clock tick `clock` (`nowUs`, `usPerTick`): the jobs that are due.
   void submitJobs(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    if (switched_ != 0 && !p_->setLoad.busy()) resumeSwitched(clock);
     uint32_t now[kTrackCount];
     for (uint8_t t = 0; t < kTrackCount; ++t) now[t] = clock - r_->transport.origin(t);
     r_->jobs.service(now, nowUs, usPerTick);
@@ -259,8 +261,8 @@ class EngineRoot {
     if (card_ != nullptr) {
       const uint8_t editing = r_->noteEdit.editing() ? r_->noteEdit.slot() : ProductionTransport::kNoSlot;
       // While a milestone writes, no save starts (DEC-258: the slots' saves follow it; the card has one stream).
-      if (!libraryBusy()) p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
-      if (!persistLive_ && (p_->persistence.pending() || libraryBusy()) &&
+      if (!libraryWorking()) p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
+      if (!persistLive_ && (p_->persistence.pending() || libraryWorking()) &&
           r_->scheduler.submit(JobSpec{JobClass::Persistence, nowUs, kPersistGrains, &persistStep, this}, id))
         persistLive_ = true;
     }
@@ -273,6 +275,8 @@ class EngineRoot {
   /// The Clock tick `clock` at `nowUs`: the gestures due (E9.4), then every track plays; its events go to the hub on
   /// its ports.
   void clockTick(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    // A live load at the switch point (DEC-260): every playing track stops before this tick plays.
+    if (p_->setLoad.waiting() && r_->control.switchPoint(switchAt_, clock)) switchSet(clock, nowUs, usPerTick);
     r_->control.beforeTick(clock, nowUs, usPerTick);
     // Bounded late join (owner ruling 2026-11-05): the earlier of 24 ticks and 25 ms at this tempo.
     const uint32_t lateTicks = usPerTick == 0 ? 0 : (kLateJoinUs / usPerTick < kLateJoinTicks ? kLateJoinUs / usPerTick : kLateJoinTicks);
@@ -363,23 +367,36 @@ class EngineRoot {
                                              p_->libraryScratch);
   }
   ProductionLibrary& library() { return p_->libraryWriter; }
-  /// Why a load or return cannot start now (DEC-259, slice 2a: stopped only), or nullptr. `stopped`: the clock.
-  const char* loadRefusal(bool stopped) const {
+  /// Why a load or return cannot start now (DEC-259), or nullptr.
+  const char* loadRefusal() const {
     if (card_ == nullptr || !p_->libraryWriter.mounted()) return "LIBRARY NOT READY";
     if (r_->transport.writingSlot() != ProductionTransport::kNoSlot) return "STOP THE TAKE FIRST";
     if (r_->noteEdit.editing()) return "CLOSE THE EDIT FIRST";
-    if (!stopped) return "STOP FIRST";
     if (libraryBusy() || p_->persistence.booting()) return "BUSY";
     return nullptr;
   }
   /// Loads milestone `index` (the caller checked `loadRefusal`): the working set becomes the checkpoint `c`, then is
-  /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends.
-  ProductionSetLoad::Result loadMilestone(uint16_t index, const ProductionLibrary::Checkpoint& c) {
-    return p_->setLoad.beginLoad(index, c);
+  /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends. `live` (the
+  /// clock runs, DEC-260): the set plays on until the switch point, where every playing track stops; the loaded set's
+  /// tracks resume together at the first bar after the load (a short gap).
+  ProductionSetLoad::Result loadMilestone(uint16_t index, const ProductionLibrary::Checkpoint& c, bool live = false) {
+    return p_->setLoad.beginLoad(index, c, live);
   }
-  ProductionSetLoad::Result returnToCheckpoint() { return p_->setLoad.beginReturn(); }
+  ProductionSetLoad::Result returnToCheckpoint(bool live = false) { return p_->setLoad.beginReturn(live); }
+  /// The global switch point (DEC-260): the next bar, or the selected track's loop end.
+  void setSwitchAt(ProductionControl::SwitchAt at) { switchAt_ = at; }
+  ProductionControl::SwitchAt switchAt() const { return switchAt_; }
+  /// The switch, now (the clock stopped while a live load waited for it).
+  void switchNow(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    if (p_->setLoad.waiting()) switchSet(clock, nowUs, usPerTick);
+  }
+  /// The tracks a live load stopped, until they resume (bit t).
+  uint8_t switchedTracks() const { return switched_; }
   const ProductionSetLoad& setLoad() const { return p_->setLoad; }
   bool libraryBusy() const { return p_->libraryWriter.busy() || p_->setLoad.busy(); }
+  /// A library job has card work now (a live load waiting for its switch point has none: it takes no grains, and
+  /// autosave goes on meanwhile).
+  bool libraryWorking() const { return p_->libraryWriter.busy() || (p_->setLoad.busy() && !p_->setLoad.waiting()); }
 
   // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
   /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).
@@ -559,6 +576,31 @@ class EngineRoot {
     e.rebuildLive_ = false;
     return JobStep::Done;
   }
+  /// The switch point of a live load: each playing track stops (its notes end; its slot kept for a load that changes
+  /// nothing), then the load clears and reads.
+  void switchSet(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      if (!r_->transport.playing(t)) continue;
+      switched_ |= static_cast<uint8_t>(1u << t);
+      switchedSlot_[t] = r_->transport.playingSlot(t);
+      r_->control.stopTrack(t, clock, nowUs, usPerTick);
+    }
+    p_->setLoad.release();
+  }
+  /// After a live load: the tracks it stopped resume together at the next bar — the loaded set's selected slot on each
+  /// (the checkpoint's after a restore), or the slot it played when the load changed nothing.
+  void resumeSwitched(uint32_t clock) {
+    const ProductionSetLoad::Status st = p_->setLoad.status();
+    const bool replaced = st == ProductionSetLoad::Status::Done || st == ProductionSetLoad::Status::Restored;
+    for (uint8_t t = 0; t < kTrackCount; ++t) {
+      if (!(switched_ & (1u << t))) continue;
+      const uint8_t sel = p_->setLoad.blob().surface[1 + t];
+      const uint8_t slot = replaced ? (sel / 8 == t ? sel : ProductionTransport::kNoSlot) : switchedSlot_[t];
+      if (slot != ProductionTransport::kNoSlot && r_->transport.contentOf(slot) != kNoManifest)
+        r_->control.queueSwitch(t, slot, ProductionControl::Quantize::NextBar, clock);
+    }
+    switched_ = 0;
+  }
   /// A load's clear (DEC-259): the tracks reset, then every slot's history forgotten. Refused while a take or an edit is
   /// open (the caller checked; a session would refuse its slot).
   static bool clearSet(void* ctx) {
@@ -573,10 +615,10 @@ class EngineRoot {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
     // A milestone or a load waits for a save already on the card, then has the card to itself (DEC-258); a load drives
     // its own checkpoint write.
-    if (e.p_->persistence.onCard() || !e.libraryBusy()) {
+    if (e.p_->persistence.onCard() || !e.libraryWorking()) {
       if (e.p_->persistence.step()) return JobStep::Continue;
     }
-    if (e.p_->setLoad.busy()) {
+    if (e.p_->setLoad.busy() && !e.p_->setLoad.waiting()) {
       if (e.p_->setLoad.step() == ProductionSetLoad::Status::Running) return JobStep::Continue;
     } else if (e.p_->libraryWriter.busy() && e.p_->libraryWriter.step() == ProductionLibrary::Status::Running) {
       return JobStep::Continue;
@@ -602,6 +644,10 @@ class EngineRoot {
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
   bool gatherLive_ = false, rebuildLive_ = false, persistLive_ = false;
+  // DEC-260: the set switch point; the tracks a live load stopped (bit t) and the slots they played.
+  ProductionControl::SwitchAt switchAt_ = ProductionControl::SwitchAt::NextBar;
+  uint8_t switched_ = 0;
+  uint8_t switchedSlot_[kTrackCount] = {};
   CardIo* card_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   static constexpr uint32_t kPersistGrains = 2000;
