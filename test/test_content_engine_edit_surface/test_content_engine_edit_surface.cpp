@@ -1293,18 +1293,19 @@ void test_loop_edit_f1_rotates_the_loop_start() {
   EXPECT_ALL(positions(true, 60, 384), 0);  // 96 − 96
 }
 
-// The length popup (owner 2026-11-08): a slot's long press opens it on that slot; its button then taps — one tap adds a
-// bar, a quick burst of n taps sets 2^(n−1) bars — and F2 sets the length too, also outside LOOP_EDIT. It hides 3 s
-// after the last change, its changes one undo step; the slot button is the slot's again after.
+// The length popup (owner 2026-11-08): a slot's long press opens it on that slot; its button then steps through 1, 2, 3,
+// 4, 5, 6, 7, 8, 16, 32, 64, 128 bars from the loop's length — a single press forward, a double press back, round at
+// the ends — and F2 sets the length too, also outside LOOP_EDIT. It hides 3 s after the last change, its changes one
+// undo step; the slot button is the slot's again after.
 static uint32_t loopOf(uint8_t slot) {
   return gE.manifests().manifest(gE.transport().contentOf(slot)).loopLengthTicks;
 }
-static void taps(uint8_t note, uint8_t n) {
+static void taps(uint8_t note, uint8_t n) {  // 1: a single press, 2: a double
   for (uint8_t i = 0; i < n; ++i) {
     tap(note, 40);
     ms(80);
   }
-  ms(500);  // the burst is over
+  ms(400);  // past the double window
 }
 void test_length_popup_taps_and_f2() {
   recordBar({{96, 60}, {600, 62}});
@@ -1317,9 +1318,13 @@ void test_length_popup_taps_and_f2() {
   TEST_ASSERT_NOT_NULL(findMsg(sent, 0xBF, 101));  // F2 parked on the length
   taps(S::kSlotBase + 0, 1);
   TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
-  taps(S::kSlotBase + 0, 3);
-  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(0));
-  taps(S::kSlotBase + 0, 5);
+  for (int i = 0; i < 6; ++i) taps(S::kSlotBase + 0, 1);  // 3 … 8
+  TEST_ASSERT_EQUAL_UINT32(8 * 768, loopOf(0));
+  taps(S::kSlotBase + 0, 1);  // after 8: 16
+  TEST_ASSERT_EQUAL_UINT32(16 * 768, loopOf(0));
+  taps(S::kSlotBase + 0, 2);  // a double: back to 8
+  TEST_ASSERT_EQUAL_UINT32(8 * 768, loopOf(0));
+  taps(S::kSlotBase + 0, 1);
   TEST_ASSERT_EQUAL_UINT32(16 * 768, loopOf(0));
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_FALSE(gS.loopEdit());
@@ -1346,7 +1351,11 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(1, gS.popupSlot());
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(1));
-  taps(S::kSlotBase + 1, 2);
+  taps(S::kSlotBase + 1, 2);  // a double from 1 bar: round to 128
+  TEST_ASSERT_EQUAL_UINT32(128 * 768, loopOf(1));
+  taps(S::kSlotBase + 1, 1);  // a single from 128: round to 1
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(1));
+  taps(S::kSlotBase + 1, 1);
   TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(1));
   ms(600);
   gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2 sets the popup's slot, not the playing one
@@ -1370,8 +1379,16 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   ms(50);
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
-  taps(S::kLengthNote, 1);
+  taps(S::kLengthNote, 1);  // from 2 bars: 3
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
+  gS.input(0xBF, 101, (4 * 127 + 12) / 24, gUs / 1000);  // F2: notch 4, 3/4 bar — off the popup's list
+  ms(400);
+  taps(S::kLengthNote, 1);  // the next above 3/4 bar: 1
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  gS.input(0xBF, 101, (17 * 127 + 12) / 24, gUs / 1000);  // F2: notch 17, 13 bars
+  ms(400);
+  taps(S::kLengthNote, 2);  // the one below 13: 8
+  TEST_ASSERT_EQUAL_UINT32(8 * 768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
 }
 

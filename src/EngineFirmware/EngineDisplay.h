@@ -335,7 +335,9 @@ class EngineDisplay {
     snprintf(value, sizeof value, "%s %s", len, edit_.popupLoop > kBar ? "BARS" : "BAR");
     const int16_t w = static_cast<int16_t>(strlen(value)) * 6 - 1;
     text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 23), 15);
-    label("TAP +1  TAPS 2 4 8 16  F2", static_cast<int16_t>(x0 + 4), static_cast<int16_t>(y1 - 7), 5);
+    static const char kHint[] = "PRESS +   DOUBLE -   F2";  // single: the next length, double: the one before
+    label(kHint, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(sizeof kHint - 1) * 4) / 2),
+          static_cast<int16_t>(y1 - 7), 5);
   }
 
   /// The legacy track letter for track `t`.

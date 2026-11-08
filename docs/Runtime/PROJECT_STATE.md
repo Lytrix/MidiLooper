@@ -12,6 +12,10 @@
   popup — but the panel dimming as a whole under load: the frame's summed levels went from ~5,000 to ~25,000 (a bright
   filled title bar and a grey interior). Redrawn GEM-style and light: black interior, hatched title bar with the title
   in its own box, frame 10, shadow 2: ~13,600. Image `0956e8b9…`, boot verified; owner check pending.
+- Then (owner: the fast presses were annoying, no way back): in the popup a single press steps to the next of 1, 2, 3, 4,
+  5, 6, 7, 8, 16, 32, 64, 128 bars above the loop's length (8 → 16), a double press to the one below, round at the ends
+  (`Surface::popupStep`; the step lands after the 300 ms double window). Hint "PRESS +  DOUBLE -  F2". Image
+  `a30b9841…`, boot verified; seen on the device (a press showed "8 BARS").
 
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
 - Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or
