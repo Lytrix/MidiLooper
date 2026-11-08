@@ -1,119 +1,178 @@
-# Engine sets browser: manual versions, background recovery, graphical timeline (proposal)
+# Engine sets browser: musical milestones, background recovery, timeline (proposal, revision 2)
 
-Status: proposal for the owner (2026-11-08), not implementation authority. Supersedes the earlier chat proposals
-("timeline of all versions", "step sizes"). Fixed-memory engine (`openspec/changes/fixed-memory-engine`), DEC-253 store.
+Status: proposal for the owner (2026-11-08), not implementation authority. Revision 2 follows the owner's brief on the
+musical workflow, labels and usability goals; it replaces revision 1 (actions "above CURRENT" drawn below the list,
+Play/Stop as select, Set / Version modes). Interaction paths come first; implementation slices last.
 
-## What exists (checked, not assumed)
+## 1. The workflow and its labels
 
-* **The engine has no sets or versions yet.** Its persistence (DEC-253) keeps one working set in
-  `/MidiLooper/engine/store.bin` — every slot with its undo history, A/B copies, written continuously, sector by
-  sector — and reports pending / writing / failed (`Persistence::writing`, `unsaved`, `stats().saves / saveFailed`;
-  the status band's save dots). That is the background autosave; it produces no versions.
-* **Legacy catalog** (`SetRevisionCatalog.h`, `/sets/S####/set.bin` + `revisions/v####`): a set record holds id,
-  latest revision, revision count, created / updated time, subtitle, favourite and 15 reserved bytes; a revision holds
-  an id and its creation time. **No ancestry is recorded anywhere** — neither a revision's parent nor a set's origin.
-* **Legacy automatic producers:** "auto-save before load" (`StorageManager.cpp`, `saveNewSetInternal`) writes a whole
-  new *set* folder every time a changed workspace is left by a load — the main source of clutter; the dirty prompt's
-  "save then load" commits a revision. No idle failsafe was found. None of these exist in the engine; the proposal
-  does not port them.
-* Owner decisions so far: a new folder (legacy sets are not listed); the RTC keeps time (battery fitted); long hold
-  opens and cancels everywhere; double press is undo / clear / mute; a single tap acts; a version carries everything
-  the working set has (every slot with its undo history, tempo, surface state).
+A set holds the whole journey: build source loops → explore by playing → capture loops and takes → develop an
+arrangement → keep a final version. Jams and their loops stay inside the set; **Save as new set** starts an alternative
+direction and records its origin.
 
-## Model
+Each manual version carries one label, chosen when it is saved and never changed afterwards:
 
-* **Version** — immutable, manual, a full copy of the working set (all slots with history, tempo, selected slots),
-  `S####/V####.mlv` under a new `/MidiLooper/library/` (one file a version: the existing per-slot set file, version 3,
-  framed per slot, plus a header). Its header records **`parent`: the set and version the work developed from**, or
-  none for a set started empty.
-* **Set** — a lineage. "Save as new set" creates S+1 whose V01 has `parent` = the workspace's base (the branch); a set
-  started from an empty workspace has no parent.
-* **Workspace base** — the version the current work developed from: set by a load or a save, kept in the store's
-  surface state so it survives a reboot. "Save version" appends V+1 to the base's set with `parent` = the base, so
-  loading V02 and saving gives V05 with parent V02 (a fork inside the set), never "after V04".
-* **Index** — `/MidiLooper/library/index.bin`: one 48-byte record a version (set, version, parent set/version, RTC
-  time, BPM, bars, loop count, 8 × 8 note-count nibbles for the mosaic, flags). Rebuildable from the version headers.
-  The browser reads only the index; it never opens version files to draw.
-* **Recovery checkpoints** — not versions, not in the history graph. Taken automatically before a load replaces the
-  workspace (`R####.mlv`, the last 4 kept, oldest dropped). Shown only in a separate Recovery view.
-* **Autosave** — unchanged (the store). The graph shows it as one hollow endpoint: `○ CURRENT  SAVED 14:32` (the RTC
-  time of the last *completed* store write), `○ CURRENT  SAVING` while a write is open, `○ CURRENT  NOT SAVED !` after
-  a failed one.
-
-## Screen (256 × 64, rendered from the firmware's 3 × 5 font)
-
-Top strip: month labels once, a mark per save, overlapping saves merged into a counted block, calendar spacing kept,
-the selection bracketed. Left: the local history graph (newest first), the selected row inverted; `+ VERSION` and
-`+ NEW SET` pinned at the bottom. Right: full date and time, identity and origin, BPM / bars / loops, the 8 × 8 mosaic
-(brightness by note count; the slot playing at save time outlined), position `n/N`.
-
-| Dense month | Long history |
+| Label | Meaning |
 |---|---|
-| ![dense month](images/sets_1_dense_month.png) | ![long history](images/sets_2_long_history.png) |
+| Sketch | an initial idea worth keeping |
+| Building | developing the source loops and parts |
+| Exploration | trying combinations, variations and directions |
+| Take | a captured result worth returning to |
+| Arrangement | shaping the material into a song structure |
+| Final | the final version of the song |
 
-| Fork | Failed save |
+Labels are milestones, not a pipeline: versions skip or revisit them, and a spontaneous take may be Final at once.
+Ancestry and labels are independent — a branch may hold a Sketch, a Take or a Final.
+
+## 2. Saving: the suggestion is highlighted, confirming it is one press
+
+The save popup lists all six labels with a **suggested** one highlighted. Confirming takes one Track press; choosing
+another is Record / Edit first. The suggestion keeps a `SUGGESTED` marker when the highlight moves.
+
+Suggestion, from what the engine actually observed since the set's last manual save (opening screens counts for
+nothing; a suggestion never creates a version and never relabels one):
+
+| Observed since the last save | Suggested |
 |---|---|
-| ![fork](images/sets_3_fork.png) | ![failed save](images/sets_4_failed_save.png) |
+| the set has no version yet | Sketch |
+| a Record take ended while another track played (playing captured as a take) | Take |
+| loops recorded or overdubbed, notes edited (NOTE_EDIT), loops created, resized or rotated | Building |
+| only launches, slot switches, mutes and solos — existing loops combined, nothing new | Exploration |
+| — (the engine has no arrangement features yet; suggested once one exists) | Arrangement |
+| — (never suggested; a choice) | Final |
 
-* **Dense month** — November aggregated by day; `4` and `6` are counted blocks. The list shows a date once per day
-  (`8 NOV`, `7 NOV`, …), not on every row.
-* **Long history** — `^` above the lane: ancestors continue above the viewport; position `7/14`.
-* **Fork** — S02's lane joins S01 at V02 (its recorded parent); the hollow `CURRENT` hangs under S02 because the
-  workspace base is S02 V01.
-* **Failed save** — the details pane becomes the error: what failed, that nothing changed, what to do.
+Priority when several apply: Take, then Building, then Exploration. With nothing observed since the last save, the
+previous version's label is suggested.
 
-## The seven decisions (proposed answers)
+## 3. The goals, in order, and what serves each
 
-1. **Moving between sets, versions and branches (4 buttons).** One selection, one list: the rows of the local graph.
-   Record = up (newer), Edit = down (older); the list scrolls at its edge and stops at both ends (no wrap, never onto
-   an action). Track short toggles the **mode**: *Version* (every row) ↔ *Set* (one row a set: its newest version and
-   the fork points), so a long library is crossed a set at a time. Forks are rows like any other: stepping onto
-   `S02 V01` under its parent and tapping loads it. Month / year jumps are deferred until a real library needs them.
-2. **Hold to repeat.** In the browser Record and Edit step on *press*, and repeat after 400 ms at 8 steps a second
-   while held. Long-hold-to-cancel stays on the screen's own button (Track) and the encoder push only.
-3. **Single vs double.** Inside the browser Record and Edit are arrows: a press steps at once, there is no double. Undo
-   of a load is not a double press here — the workspace that was left is the newest Recovery checkpoint, one tap away.
-   Outside the browser double press keeps its meaning (undo / clear / mute).
-4. **Play/Stop while browsing.** A single tap acts on the selected row: load a version, or run `+ VERSION` /
-   `+ NEW SET`. The two actions are the navigation's first stop above `CURRENT` (Record up from `CURRENT`; Edit and
-   Record move between them), drawn pinned at the bottom so they never scroll away — a stop, not a wrap. Holding
-   Play/Stop stops the transport — always available, and a hold is never a selection. Scrolling never loads or saves.
-5. **When a load may happen.** Refused while a take records or overdubs ("RECORDING — STOP FIRST"); opening the browser
-   ends NOTE_EDIT / LOOP_EDIT (their edits kept as one step, as when leaving). During playback the load runs in the
-   background and switches at the first bar line after it completes; the row shows `LOADING` meanwhile.
-6. **Failures.** Before a load, a recovery checkpoint is written; if that write fails the load does not start
-   ("COULD NOT KEEP CURRENT — LOAD CANCELLED"). Store writes are held during the load, so the store still holds the
-   departing workspace; if the destination fails to load, the workspace is reloaded from the store ("LOAD FAILED —
-   RESTORED"). A failed `+ VERSION` changes nothing and says so (mockup 4); Play/Stop retries.
-7. **Encoder push and NOTELEN are not identical.** Checked: NOTELEN short toggles position ↔ length in NOTE_EDIT
-   (pitch and velocity have their own faders), creates on an empty step, and opens the length popup when held in
-   LOOP_EDIT. A fader-less unit needs a field cycle that includes pitch and velocity. Proposal: one *Next field* action,
-   bound to the encoder push and to NOTELEN short; each surface defines its own field list (with faders: position ↔
-   length; without: position → pitch → length → velocity). In the browser Next field = the Track short mode toggle.
+1. **Protect ongoing work automatically** — the engine's store (below); no button.
+2. **Save a milestone quickly** — hold Track, Track, Track (open on `+ SAVE VERSION`, open the popup, confirm).
+3. **Find and load the right starting point** — sets collapsed to one row each, labelled with the furthest label
+   reached; a set opens to its versions with labels in the list and a large label in the details.
+4. **Return after loading the wrong thing** — `< RETURN TO PREVIOUS` is the first row after a load, one press.
+5. **Develop alternatives without losing work** — real parent records; loading an older version and saving forks.
+6. **Understand history visually** — the timeline strip (when) and the local graph (what developed from what).
 
-## Walkthroughs
+## 4. Autosave versus musical history — checked against the engine
 
-* **Save a milestone:** hold Track (the browser opens with `CURRENT` selected) → Record once (up, onto `+ VERSION`) →
-  tap Play/Stop. `S02 V02` appears in the lane with its mark in the strip; `CURRENT` now hangs under it. Three
-  actions, no fader.
-* **Go back one version and branch:** hold Track → Edit down to `S02 V01` → tap: the workspace is kept as R0003 and V01
-  loads at the next bar. Work, then `+ VERSION`: `S02 V03` with parent V01 — the graph shows V03 forking from V01
-  beside V02.
-* **Dense month:** Track short (Set mode) jumps a set at a time; the strip's counted blocks show where the activity
-  was; the list shows `8 NOV` once over the day's rows.
-* **Undo a load:** hold Track → Track short until `RECOVERY` → the newest checkpoint `BEFORE LOAD 14:31` → tap.
+* **Engine (as built, DEC-253):** the working set lives in `/MidiLooper/engine/store.bin`; each changed slot is written
+  sector by sector to the copy that is not current (A / B), only after saving is approved; at boot every slot's later
+  valid copy loads, so an interrupted write falls back to the previous copy. The engine reports pending / writing /
+  failed (`Persistence::unsaved`, `writing`, `stats().saveFailed`, the status band's dots). It keeps no versions and
+  no checkpoints, and does not record the time of a completed write (needed for `SAVED 14:32`: to add).
+* **Shown as:** one hollow endpoint `CURRENT` with `SAVING`, `SAVED 14:32` (the RTC time of the last completed write),
+  `UNSAVED` (changes pending) or `NOT SAVED !` (a write failed). No rows, no timeline marks.
+* **Before a load:** the working set is copied into a recovery checkpoint (a full copy, not a version, not a set),
+  which `< RETURN TO PREVIOUS` loads. Retention: the latest 4 (a proposed default, open). Older checkpoints are reached
+  through a `RECOVERY` row at the end of the set list, which opens like a set.
+* **Legacy differences:** legacy "auto-save before load" (`StorageManager.cpp`, `saveNewSetInternal`) wrote a new
+  *set* on every load from a changed workspace — not ported. Legacy's dirty prompt ("save then load / discard /
+  cancel", `openspec/specs/revision-load`) is not needed: the checkpoint makes every load returnable. The legacy
+  catalog (`/sets/S####/`) records no ancestry; the new library is a new folder (owner).
 
-## Slices (each committed, flashed and testable)
+## 5. Screen hierarchy (256 × 64)
 
-1. Version files and index on the card (`+ VERSION` / `+ NEW SET` from a serial command): header with parent, RTC
-   time, metrics, mosaic; index rebuild. Native: round trip of a two-set library with a fork.
-2. Workspace base in the store's surface state; load a version (store writes held, recovery checkpoint first, restore
-   on failure; refused while recording). Native: load / fail / restore.
-3. The browser window: strip, graph rows, details, mosaic, `CURRENT` endpoint and its save state; Record / Edit / Track
-   / Play/Stop as above; opened by a Track hold (mute moves to the track button's double).
-4. Set mode, hold-to-repeat, position indicator, counted strip blocks.
-5. Recovery view.
-6. Encoder (when the patch sends it) and the *Next field* action across NOTE_EDIT / LOOP_EDIT / browser.
+Musical identity first: the list shows the set and each version's label; the details pane shows the **label large**,
+then supporting facts, each once:
 
-Open for the owner: the 4-checkpoint recovery depth; whether `+ NEW SET` from a loaded version should ask for nothing
-(proposed) or show the origin first.
+* line 1: set, version, origin (`S02 V05  FROM V02`) — not repeated from the list row's wording;
+* line 2: the full timestamp (`8 NOV 2026 14:20`), only here;
+* line 3–4: `18 LOOPS  4-8 BARS`, `120.0 BPM`;
+* the 8 × 8 mosaic (tracks × slots, brightness by note count, the slot playing at save time outlined) at the right.
+
+Definitions: **LOOPS** = slots with content; **BARS** = the shortest to the longest loop length (`4-8 BARS`; one
+value when all are equal; fractions under a bar as `3/4`). The list shows a date once per day, on the day's first row.
+The timeline strip labels months once, merges overlapping saves into counted marks, keeps calendar spacing and
+brackets the selection's mark; it follows the selection and has no cursor of its own.
+
+## 6. Controls — one model, matching what is drawn
+
+The list runs top to bottom: action rows (`< RETURN TO PREVIOUS` when there is one, `+ SAVE VERSION`,
+`+ SAVE AS NEW SET`), then the sets. Record moves the highlight **up**, Edit **down** (assumed: Record sits above or
+left of Edit; swapped if the hardware says otherwise). One selection; movement stops at both ends.
+
+| Button | In the browser | In the save popup |
+|---|---|---|
+| Record / Edit | up / down, on press; held 400 ms: repeat at 8 a second | label up / down |
+| Track, short (released < 600 ms) | select: open the save popup · open a set · `< BACK TO SETS` · load a version · return · open `RECOVERY` | confirm the highlighted label |
+| Track, hold 600 ms | close (fires while held, nothing changes) | cancel the popup |
+| Play/Stop | transport, as everywhere — stops at once | transport |
+| encoder (when present) | turn = Record / Edit; push = Track short | the same |
+
+* **Single versus double:** inside the browser no button has a double. Record / Edit act on press, Track acts on
+  release before 600 ms — nothing waits for a second press. Outside the browser double press keeps undo / clear / mute.
+* **Two levels, no modes:** sets collapsed; Track opens one (its `< BACK TO SETS` row on top). A large library is
+  crossed set by set (hold-repeat: 60 sets in under 8 s). Month / year jumps are deferred until a real library shows
+  the need.
+* **Opening and leaving:** a Track hold opens the browser from performance, NOTE_EDIT or LOOP_EDIT (the track
+  switch's mute moves to the track button's double — owner, agreed). **Review:** an open edit is left on entry with its
+  changes kept as one undo step, as a track switch does; the alternative is to refuse opening until the edit is left.
+* **Loading:** refused while a take records or overdubs (`RECORDING - STOP FIRST`). **Review:** with the transport
+  stopped the load is immediate; while it runs the destination loads in the background and switches in at the first
+  bar line after it is ready (the row shows `LOADING`); the alternative is to stop the transport for a load.
+
+## 7. Walkthroughs (frames at the panel's resolution and font)
+
+| 1 Opened on SAVE VERSION | 2 Save popup, suggestion highlighted |
+|---|---|
+| ![](images/sets_w1_open.png) | ![](images/sets_w2_save_popup.png) |
+| **3 Another label chosen** | **4 Another set in a large library** |
+| ![](images/sets_w3_other_label.png) | ![](images/sets_w4_find_set.png) |
+| **5 A Final in a long history** | **6 Continuing from an earlier version (fork)** |
+| ![](images/sets_w5_long_history.png) | ![](images/sets_w6_fork.png) |
+| **7 Return after an accidental load** | **8 A failed load** |
+| ![](images/sets_w7_return.png) | ![](images/sets_w8_failed_load.png) |
+
+1. **Normal save with its suggested label** — hold Track (frame 1: `+ SAVE VERSION` selected, details say
+   `INTO S02 AS V04`, `FROM V03 TAKE`) → Track (frame 2: popup, `EXPLORATION` highlighted and marked `SUGGESTED`,
+   because only launches and mutes happened since V03) → Track: S02 V04 Exploration is saved, its mark joins the
+   strip, `CURRENT` now hangs under it. Three presses after the hold.
+2. **Choosing another label** — in the popup Edit once (frame 3: `TAKE` highlighted, `SUGGESTED` stays on
+   Exploration) → Track.
+3. **Another set in a large library** — hold Track → Edit past the actions onto the set rows (frame 4: one row a set
+   with its furthest label and version count; the details show the set's latest version and mosaic) → hold Edit to
+   run down → Track opens S07.
+4. **A Take or Final in a long history** — in an open set the labels are the row text (frame 5: `V14 FINAL` selected,
+   `FINAL` large, `14/14`; `^` above the lane: older versions continue above the view). "Which take did I like?" is
+   answered by the TAKE rows and their mosaics; Track loads one.
+5. **Continuing from an earlier version and forking** — load V02, work, save: V05 records parent V02 (frame 6: V05's
+   lane joins V02; V03 and V04 remain on their own lane, untouched).
+6. **Return after an accidental load** — after any load the first row is `< RETURN TO PREVIOUS` (frame 7, selected
+   when the browser opens): Track puts back the workspace exactly as it was left (`TO S02 AS LEFT AT 14:57`). It is
+   not a version and adds nothing to the history.
+7. **A failed load** — frame 8: `LOAD FAILED`, the reason, that the previous set is still loaded and nothing was lost,
+   and `TRACK: TRY AGAIN`. If the checkpoint before a load cannot be written the load does not start (`COULD NOT KEEP
+   CURRENT - LOAD CANCELLED`); if a version cannot be written nothing changes (`SAVE FAILED`, Track retries).
+
+## 8. Model and storage (after the interaction paths)
+
+* `/MidiLooper/library/S####/V####.mlv` — a version: header (label, parent set / version, RTC time, metrics, mosaic)
+  and every slot with its undo history (the engine's set file, version 3, framed per slot), tempo and surface state.
+* `/MidiLooper/library/index.bin` — one record a version (set, version, label, parent, time, BPM, shortest / longest
+  loop, loop count, 8 × 8 note-count nibbles); rebuildable from the headers; the browser reads only this.
+* `/MidiLooper/library/recovery/R####.mlv` — checkpoints, the same file format, never indexed as versions.
+* The workspace base (the version the work developed from, set by a load or a save) and the observed-activity flags
+  for the suggestion live in the store's state record. That record is 27 bits today (track selections): it needs a
+  wider record, a store format change (a DEC).
+* Library writes, like the store, only after saving is approved.
+
+## 9. Open decisions for the owner
+
+1. Entering the browser during NOTE_EDIT / LOOP_EDIT: leave the edit keeping it (proposed) or refuse.
+2. Loading while playing: switch at the next bar line once loaded (proposed) or stop the transport.
+3. Recovery depth: 4 checkpoints (proposed).
+4. Record above Edit on the hardware (assumed for up / down).
+5. The Take heuristic: "a Record take ended while another track played" — right signal for "a captured result"?
+6. Set names: numbers only for now (`S07`), or a name entered later?
+
+## 10. Slices (once the paths above are agreed)
+
+1. Version and checkpoint files, index, labels and parent records; RTC time of completed store writes; serial
+   commands to save / load for tests.
+2. Load with checkpoint and restore on failure; `< RETURN TO PREVIOUS`; the state record's base and activity flags.
+3. The browser: list (actions, sets, versions), details with the large label, mosaic, `CURRENT` endpoint; controls of
+   section 6; opened by a Track hold.
+4. The save popup with the suggestion.
+5. The timeline strip (months, counted marks, selection bracket) and the graph lanes for forks.
+6. `RECOVERY`, hold-repeat tuning, the encoder when the patch sends it.
