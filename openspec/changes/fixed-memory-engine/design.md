@@ -2433,7 +2433,9 @@ Opened by a slot's long press (an empty slot first gets its empty loop, DEC-256)
 on that slot (`Surface::openPopup`). While open, the button that opened it is the popup's: each release is a tap (the
 opening long press fired at its own release); 300 ms after the last tap a single press steps to the next of 1, 2, 3,
 4, 5, 6, 7, 8, 16, 32, 64, 128 bars above the loop's length and a double press to the one below, round at the ends
-(owner 2026-11-08: the earlier +1 / 2^(n−1) bursts were annoying and had no way back; `Surface::popupStep`). F2 (CC 101 / pitch bend channel 14) sets the length
+(owner 2026-11-08: the earlier +1 / 2^(n−1) bursts were annoying and had no way back; `Surface::popupStep`). Held
+`kPopupCancelMs` (600 ms) the button cancels, as an Atari dialog's Cancel: the popup's undo step is undone when it is
+still the slot's current (its identity checked), and the popup closes (`Surface::cancelPopup`). F2 (CC 101 / pitch bend channel 14) sets the length
 as in LOOP_EDIT, outside LOOP_EDIT too, on the popup's slot; its motor is parked on opening. The popup hides
 `kPopupMs` (3 s) after the last change and its changes are one undo step (a visit: opening starts one, so it never
 replaces a LOOP_EDIT visit's state). Drawn last over the frame (`EngineDisplay::drawPopup`), light — the panel dims as a whole under load, and a bright

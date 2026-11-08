@@ -1392,6 +1392,32 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
 }
 
+// A long press in the popup cancels it (owner 2026-11-08: an Atari dialog's Cancel): the loop is back at the length it
+// had when the popup opened, with no undo step left, and the popup is closed.
+void test_length_popup_long_press_cancels() {
+  recordBar({{96, 60}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kSlotBase + 0, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  taps(S::kSlotBase + 0, 1);
+  taps(S::kSlotBase + 0, 1);
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
+  tap(S::kSlotBase + 0, 700);  // hold: cancel
+  ms(50);
+  TEST_ASSERT_FALSE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT8(undo0, gE.history().undoDepth(0));
+  tap(S::kSlotBase + 0, 700);  // opened again, cancelled with no change: nothing undone
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  tap(S::kSlotBase + 0, 700);
+  ms(50);
+  TEST_ASSERT_FALSE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT8(undo0, gE.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1510,6 +1536,7 @@ int main(int, char**) {
   RUN_TEST(test_loop_edit_f1_rotates_the_loop_start);
   RUN_TEST(test_length_popup_taps_and_f2);
   RUN_TEST(test_length_popup_on_a_new_loop_and_from_loop_edit);
+  RUN_TEST(test_length_popup_long_press_cancels);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

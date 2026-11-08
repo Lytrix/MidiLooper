@@ -16,6 +16,10 @@
   5, 6, 7, 8, 16, 32, 64, 128 bars above the loop's length (8 → 16), a double press to the one below, round at the ends
   (`Surface::popupStep`; the step lands after the 300 ms double window). Hint "PRESS +  DOUBLE -  F2". Image
   `a30b9841…`, boot verified; seen on the device (a press showed "8 BARS").
+- Then (owner: a revert): a long press of the popup's button cancels, like an Atari dialog's Cancel — the loop back at
+  the length it had when the popup opened (its one undo step undone; nothing when unchanged), the popup closed
+  (`Surface::cancelPopup`). Hint "PRESS +  2X -  HOLD CANCEL". Image `b515ebb8…`, boot verified; seen on the device:
+  2 → 4 bars by two presses, the hold back to 2 bars, UNDO 7 → 6.
 
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
 - Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or

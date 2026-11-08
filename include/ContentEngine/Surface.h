@@ -195,6 +195,7 @@ class Surface {
   static constexpr uint8_t kFineTrigger = 1, kCoarseTrigger = 2;       // channel 15 notes: F3 / F4 `clear`
   static constexpr uint32_t kCoarseMinBpm = 20, kCoarseMaxBpm = 300;
   static constexpr uint32_t kPopupMs = 3000, kPopupTapMs = 300;  // the popup hides; a single press is not a double
+  static constexpr uint32_t kPopupCancelMs = 600;                 // a long press in the popup cancels it
   static constexpr uint32_t kLengthSettleMs = 300;
   enum Button : uint8_t {
     kRecord,
@@ -227,7 +228,7 @@ class Surface {
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
     blinkMs_ = 0;
-    loopEdit_ = loopPark_ = popup_ = false;
+    loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
     popupTaps_ = 0;
     loopMotorCount_ = 0;
     for (uint32_t& w : loopWrittenMs_) w = 0;
@@ -654,17 +655,39 @@ class Surface {
     popupSlot_ = slot;
     popupButton_ = button;
     popupTaps_ = 0;
+    popupHeld_ = false;
     popupUntil_ = ms + kPopupMs;
     visitState_ = 0;
     const uint32_t loop = e_->manifests().manifest(transport().contentOf(slot)).loopLengthTicks;
     loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
   }
-  /// A press of the popup's button: its release is a tap (the opening long press fired at its own release).
+  /// A press of the popup's button: its release is a tap (the opening long press fired at its own release); held
+  /// `kPopupCancelMs` it cancels (owner 2026-11-08: an Atari dialog's Cancel) — the loop back at the length it had when
+  /// the popup opened (its one undo step undone), the popup closed.
   void popupPress(bool down, uint32_t ms) {
     popupUntil_ = ms + kPopupMs;
-    if (down) return;
+    if (down) {
+      popupDownMs_ = ms;
+      popupHeld_ = true;
+      return;
+    }
+    if (popupHeld_ && ms - popupDownMs_ >= kPopupCancelMs) {
+      cancelPopup();
+      return;
+    }
+    popupHeld_ = false;
     ++popupTaps_;
     popupTapMs_ = ms;
+  }
+  void cancelPopup() {
+    pendingLoop_ = 0;
+    popupTaps_ = 0;
+    popupHeld_ = false;
+    const ManifestId c = transport().contentOf(popupSlot_);
+    if (visitState_ != 0 && c != kNoManifest && e_->manifests().manifest(c).identity == visitState_)
+      control().undo(popupSlot_, tick_, us_, us());
+    popup_ = false;
+    visitState_ = 0;
   }
   void servicePopup(uint32_t ms) {
     if (!popup_) return;
@@ -903,9 +926,9 @@ class Surface {
   uint32_t pendingMs_ = 0;
   uint32_t visitState_ = 0;  // identity of the state this LOOP_EDIT visit's last change made (0: none)
   uint32_t pendingLoop_ = 0;  // LOOP_EDIT's F2 moved: the length it will take (ticks)
-  bool popup_ = false;  // the length popup
+  bool popup_ = false, popupHeld_ = false;  // the length popup; its button is down
   uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
-  uint32_t popupUntil_ = 0, popupTapMs_ = 0;
+  uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0, appliedStart_ = 0;
   bool startPending_ = false;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
