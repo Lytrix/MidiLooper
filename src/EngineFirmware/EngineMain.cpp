@@ -676,6 +676,7 @@ void loop() {
   const auto& ed = gSurface.edit();
   ev.loop = gSurface.loopEdit();
   ev.loopBars = gSurface.pendingLoopBars();
+  ev.loopStart = gSurface.loopStart();
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();

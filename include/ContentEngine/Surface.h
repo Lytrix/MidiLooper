@@ -9,7 +9,8 @@
 // 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
 // performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08; LOOP_EDIT's F4 is the tempo, pitch
 // bend on channel 15, its motor parked at the tempo on entry; F2 the loop length, 1–128 bars, CC 101 on channel 16 (or
-// pitch bend on channel 14), applied at rest as a play window, DEC-257, its motor CC 101), NOTELEN
+// pitch bend on channel 14), applied at rest as a play window, DEC-257, its motor CC 101; F1 the loop start in 16ths,
+// pitch bend on channel 16, applied at rest by rotating the content, counted from LOOP_EDIT's entry), NOTELEN
 // 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
 // bend channel 14, F3 / F4 CC 2 / CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
 // buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
@@ -222,6 +223,9 @@ class Surface {
     loopEdit_ = tempoPending_ = lengthMotorPending_ = false;
     tempoWrittenMs_ = lengthWrittenMs_ = pendingMs_ = 0;
     pendingBars_ = 0;
+    startMotor_ = 0;
+    startWrittenMs_ = startGateMs_ = startMs_ = pendingStart_ = appliedStart_ = 0;
+    startPending_ = false;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
   static bool controlPlane(uint8_t status) { return (status & 0xF0) < 0xF0 && (status & 0x0F) >= 12; }
@@ -231,7 +235,8 @@ class Surface {
     const uint8_t type = status & 0xF0, channel = status & 0x0F;
     if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
       const int16_t pb = static_cast<int16_t>(static_cast<int32_t>(d1 | (d2 << 7)) - 8192);
-      if (channel == 14 && loopEdit_) tempo(pb, ms);
+      if (channel == 15 && loopEdit_) startFader(pb, ms);
+      else if (channel == 14 && loopEdit_) tempo(pb, ms);
       else if (channel == 13 && loopEdit_) lengthFader(pb, ms);
       else if (channel == 15) edit_.select(pb, ms);
       else if (channel == 13) edit_.coarse(pb, ms);
@@ -279,17 +284,37 @@ class Surface {
     while (press_.next(ms, b, p)) dispatch(b, p);
     edit_.service(ms);
     settleLength(ms);
+    settleStart(ms);
   }
   const EditSurface<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
   /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in bars (0: none).
   uint16_t pendingLoopBars() const { return pendingBars_; }
+  /// LOOP_EDIT's loop start, in ticks from the content as LOOP_EDIT found it (F1; pending while it settles).
+  uint32_t loopStart() const { return startPending_ ? pendingStart_ : appliedStart_; }
   /// The next motor-fader message (NOTE_EDIT feedback), sent like the LEDs.
   /// The next motor message: NOTE_EDIT's, else LOOP_EDIT's tempo fader parked at the tempo on entry (legacy
   /// `sendCurrentTempoPitchBend`: the value alone).
   bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) {
     if (edit_.motor(ms, m)) return true;
+    if (startMotor_ == 1) {  // legacy `sendCurrentLoopStartPitchbend`: pitch bend, then trigger note 0 (channel 16)
+      startMotor_ = 2;
+      startWrittenMs_ = ms;
+      m = {static_cast<uint8_t>(0xE0 | kProgramChannel), 0, 0};  // the loop start: the fader's bottom
+      return true;
+    }
+    if (startMotor_ == 2) {
+      startMotor_ = 3;
+      startGateMs_ = ms + EditSurface<Engine>::kMotorGateMs;
+      m = {static_cast<uint8_t>(0x90 | kProgramChannel), 0, 127};
+      return true;
+    }
+    if (startMotor_ == 3 && static_cast<int32_t>(ms - startGateMs_) >= 0) {
+      startMotor_ = 0;
+      m = {static_cast<uint8_t>(0x80 | kProgramChannel), 0, 0};
+      return true;
+    }
     if (lengthMotorPending_) {  // legacy `sendCurrentLoopLengthCC`: CC 101 on channel 16, bars − 1
       lengthMotorPending_ = false;
       lengthWrittenMs_ = ms;
@@ -484,7 +509,9 @@ class Surface {
   /// ends when that slot is empty.
   void switchTrack(uint8_t tt) {
     const bool follow = edit_.active() && tt != selected();
+    const bool loopFollow = loopEdit_ && tt != selected();
     control().selectTrack(tt);
+    if (loopFollow) enterLoopEdit();  // the new track's loop: faders parked, start counted from its content
     if (!follow) return;
     edit_.leave();
     enterEdit(tt);
@@ -506,6 +533,34 @@ class Surface {
     tempoPending_ = !clock_->external();  // F4's motor to the tempo
     lengthMotorPending_ = true;           // F2's to the length
     pendingBars_ = 0;
+    startMotor_ = 1;  // F1's to the loop start: rotations count from the content as it is now
+    appliedStart_ = 0;
+    startPending_ = false;
+  }
+  /// LOOP_EDIT's F1 (legacy `handleLoopStartFaderInput`: pitch bend on channel 16 over the loop's 16ths): the loop start,
+  /// counted from the content as LOOP_EDIT found it (owner 2026-11-08: rotate). Applied at rest as one rotation, one
+  /// undo step; not while its motor lands.
+  void startFader(int16_t pb, uint32_t ms) {
+    if (ms - startWrittenMs_ < EditSurface<Engine>::kMotorSettleMs) return;
+    const ManifestId c = transport().contentOf(shownSlot(selected()));
+    if (c == kNoManifest) return;
+    const uint32_t steps = e_->manifests().manifest(c).loopLengthTicks / EditSurface<Engine>::kSixteenth;
+    const uint32_t k = steps > 1 ? static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) / 16383 : 0;
+    pendingStart_ = k * EditSurface<Engine>::kSixteenth;
+    startPending_ = true;
+    startMs_ = ms;
+  }
+  void settleStart(uint32_t ms) {
+    if (!startPending_ || ms - startMs_ < kLengthSettleMs) return;
+    startPending_ = false;
+    if (!loopEdit_) return;
+    const uint8_t slot = shownSlot(selected());
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest) return;
+    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
+    const uint32_t shift = (pendingStart_ % loop + loop - appliedStart_ % loop) % loop;
+    if (shift == 0) return;
+    if (control().rotate(slot, shift, tick_, us_, us()) == X::Result::Ok) appliedStart_ = pendingStart_;
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
@@ -701,6 +756,9 @@ class Surface {
   bool lengthMotorPending_ = false;  // LOOP_EDIT entered: F2's motor to the length
   uint32_t lengthWrittenMs_ = 0, pendingMs_ = 0;
   uint16_t pendingBars_ = 0;
+  uint8_t startMotor_ = 0;  // F1's park: 1 value, 2 trigger on, 3 trigger off due at `startGateMs_`
+  uint32_t startWrittenMs_ = 0, startGateMs_ = 0, startMs_ = 0, pendingStart_ = 0, appliedStart_ = 0;
+  bool startPending_ = false;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 

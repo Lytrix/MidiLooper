@@ -70,6 +70,7 @@ struct EditView {
   bool velocity = false;  // NOTELEN held: F4 is the velocity
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint16_t loopBars = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (bars)
+  uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
 };
 
 class EngineDisplay {
@@ -557,7 +558,9 @@ class EngineDisplay {
       cells[1] = Cell{"LENGTH", "-", 32};
       cells[2] = Cell{"BPM", "", 24};
       if (info.loop != 0) {
-        strcpy(cells[0].value, "1");
+        snprintf(cells[0].value, sizeof cells[0].value, "%lu.%lu",
+                 static_cast<unsigned long>(edit_.loopStart / kBar + 1),
+                 static_cast<unsigned long>(edit_.loopStart % kBar / (kBar / 16) + 1));
         const uint32_t bars = edit_.loopBars != 0 ? edit_.loopBars : (info.loop + kBar - 1) / kBar;
         snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>(bars));
       }

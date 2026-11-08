@@ -1163,6 +1163,74 @@ void test_loop_edit_f2_sets_the_length() {
   TEST_ASSERT_EQUAL_UINT32(4 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
 }
 
+/// Every run of slot 0's current state keeps its rows in tick order (HideNote rows lead).
+static void expectRowsInTickOrder() {
+  const auto& m = gE.manifests().manifest(gE.transport().contentOf(0));
+  for (uint8_t k = 0; k < m.runCount; ++k) {
+    uint32_t last = 0;
+    for (uint32_t i = 0; i < gE.runs().run(m.runs[k]).rowCount; ++i) {
+      const PassEvent& e = gE.runs().rowAt(m.runs[k], i, gE.pool());
+      if (e.status == kHideNoteStatus || gE.runs().run(m.runs[k]).kind == RunKind::kFit) continue;
+      TEST_ASSERT_TRUE(e.tick >= last);
+      last = e.tick;
+    }
+  }
+}
+
+// LOOP_EDIT's F1 moves the loop start by rotating the content (owner 2026-11-08; legacy: pitch bend on channel 16 over
+// the loop's 16ths, its motor parked at the bottom with trigger note 0): every note starts that much earlier and keeps
+// its length; one crossing the new loop start wraps. Back at the bottom the content is as recorded.
+void test_loop_edit_f1_rotates_the_loop_start() {
+  recordBar({{96, 60}, {600, 62}});
+  overdubHeld({{10, 20, 67}, {150, 100, 66}, {700, 200, 64}});  // 67 lands before 64's rotated NoteOff (708)
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kEditModeNote);  // NOTE_EDIT
+  ms(400);
+  drainMotors(800);  // NOTE_EDIT's own fader writes
+  tap(S::kEditModeNote);  // LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  const auto sent = drainMotors(300);
+  const Sent* park = findStatus(sent, 0xEF);
+  TEST_ASSERT_NOT_NULL(park);
+  TEST_ASSERT_EQUAL_UINT8(0, park->m.d1 | park->m.d2);
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9F, 0));  // its trigger
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x8F, 0));
+  const auto f1At = [](uint32_t step) {  // 16 steps in the 1-bar loop
+    pitchBend(15, -8192 + static_cast<int32_t>(step * 16383 / 15) + 100);
+    ms(5);
+  };
+  f1At(2);  // the motor landing: no change
+  TEST_ASSERT_EQUAL_UINT32(0, gS.loopStart());
+  ms(600);
+  f1At(4);  // the start 4 16ths (192 ticks) later
+  TEST_ASSERT_EQUAL_UINT32(192, gS.loopStart());
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+  run(gUs + 768 * kTick);
+  expectRowsInTickOrder();
+  EXPECT_ALL(positions(true, 60, 768), 672);   // 96 − 192 wraps
+  EXPECT_ALL(positions(true, 62, 768), 408);
+  EXPECT_ALL(positions(true, 66, 768), 726);   // 150 − 192 wraps ...
+  EXPECT_ALL(positions(false, 66, 768), 58);   // ... and its length carries it across the new loop start
+  EXPECT_ALL(positions(false, 64, 768), 708);  // 700 + 200 − 192: no longer wrapping
+  EXPECT_ALL(positions(true, 67, 768), 586);
+  f1At(0);  // back
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+  run(gUs + 768 * kTick);  // the playing track follows from the next boundary
+  EXPECT_ALL(positions(true, 60, 768), 96);
+  EXPECT_ALL(positions(true, 66, 768), 150);
+  EXPECT_ALL(positions(false, 64, 768), 132);
+  // A shortened loop rotates too: its notes past the end stay unplayed (the fit run is rebuilt for the new runs).
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(384));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().rotate(0, 96, gLast, gUs, gClk.usPerTick()));
+  run(gUs + 2 * 768 * kTick);
+  expectRowsInTickOrder();
+  TEST_ASSERT_TRUE(positions(true, 62, 384).empty());
+  EXPECT_ALL(positions(true, 60, 384), 0);  // 96 − 96
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1278,6 +1346,7 @@ int main(int, char**) {
   RUN_TEST(test_resize_rewraps_notes_and_keeps_those_past_the_end);
   RUN_TEST(test_resize_resolves_a_held_loop_note);
   RUN_TEST(test_loop_edit_f2_sets_the_length);
+  RUN_TEST(test_loop_edit_f1_rotates_the_loop_start);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

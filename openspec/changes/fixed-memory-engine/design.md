@@ -2374,3 +2374,26 @@ the pending bars. Tests: `test_resize_rewraps_notes_and_keeps_those_past_the_end
 (overdubbed notes crossing the loop end; a recorded take's held notes end at its stop), `test_loop_edit_f2_sets_the_length`;
 mutations 12 of 14 caught — the fit builder's redundant past-end filter (removed) and the cold-start wrap-held count
 (`Composer::bind`, cycle-0 occlusion only; not reached through the surface) survived.
+
+## Loop start: rotating the content (owner 2026-11-08: "Rotate"; DEC-257 amendment; as built)
+
+LOOP_EDIT's F1 (legacy `handleLoopStartFaderInput`: pitch bend on channel 16 over the loop's 16ths; its motor parked
+at the bottom with trigger note 0 on channel 16 on entering LOOP_EDIT, its landing ignored for `kMotorSettleMs`) sets
+the loop start, counted from the content as LOOP_EDIT found it; applied once the fader rests 300 ms
+(`Surface::settleStart`) as one rotation by the difference from the start applied so far — one undo step. The status
+band's START shows bar.16th. A track switch in LOOP_EDIT re-parks the faders and counts from the new track's content.
+* **Rotation is a lossless copy, not a window.** `SlotTransport::rotate` writes each content run again, rotated
+  (`FitBuilder::rotate`): a note starts `shift` earlier, wrapped at the loop, and keeps its length — one crossing the
+  new loop start wraps (its NoteOff past the loop end); NoteOns and controllers past a shorter end keep their ticks
+  (still unplayed); HideNote rows lead unchanged; noteIds, `seq` and `origin` are kept, so edit hides and provenance
+  hold. Rows come out in tick order, NoteOffs first at a tick, merging three passes over the source (after the shift,
+  before it, past the end; at most 64 notes open in each). The fit run is rebuilt for the new runs. Rotating by
+  `loop − shift` gives the rows back; the earlier state stays in the history.
+* **Cost.** A rotation copies the content (reserved like any write; refused by name when it does not fit) and scans
+  it three times, synchronously (≤ 32,768 rows; its time on the device not yet measured). The open-note scratch shares
+  the fit lookups' memory: no RAM2 change.
+* Tests: `test_loop_edit_f1_rotates_the_loop_start` (the motor park and its landing; notes moved and wrapped, a note
+  carried across the new loop start, rows in tick order, rotated back; a shortened loop rotated keeps its notes past
+  the end unplayed); mutations 7 / 7.
+* The DROID's loop bank (owner 2026-11-08, its code): F1 pitch bend channel 16, F2 CC 101 channel 16, F3 not
+  programmed, F4 pitch bend channel 15.

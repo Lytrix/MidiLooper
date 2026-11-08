@@ -323,6 +323,52 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  /// Loop start (owner 2026-11-08: rotate): a state whose content runs are the slot's rotated `shift` ticks earlier
+  /// (`FitBuilder::rotate`: notes keep their lengths, one crossing the new loop start wraps), with a fit run rebuilt for
+  /// them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot follow
+  /// from the next boundary.
+  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
+    const ManifestId base = contentOf(slot);
+    if (base == kNoManifest) return Result::Empty;
+    const auto& b = manifests_->manifest(base);
+    const uint32_t loop = b.loopLengthTicks;
+    shift %= loop;
+    if (shift == 0) return Result::NoChange;
+    RunId list[Manifests::kMaxRuns];
+    uint8_t n = 0;
+    Result result = Result::Ok;
+    for (uint8_t i = 0; i < b.runCount && result == Result::Ok; ++i) {
+      if (runs_->run(b.runs[i]).kind == RunKind::kFit) continue;
+      RunId r;
+      const FitResult f = fit_.rotate(*pool_, *runs_, writer_->reservations(), slot, b.runs[i], loop, shift, r);
+      if (f == FitResult::Ok)
+        list[n++] = r;
+      else
+        result = f == FitResult::DeniedRun ? Result::DeniedRun : Result::Refused;
+    }
+    RunId fit = kNoRun;
+    if (result == Result::Ok) {
+      const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit);
+      if (f == FitResult::DeniedRun) result = Result::DeniedRun;
+      else if (f != FitResult::Ok && f != FitResult::None) result = Result::Refused;
+      else if (fit != kNoRun && n == Manifests::kMaxRuns) result = Result::Refused;
+      else if (fit != kNoRun) list[n++] = fit;
+    }
+    ManifestId m = kNoManifest;
+    if (result == Result::Ok) {
+      m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
+      if (m == kNoManifest) result = Result::DeniedManifest;
+    }
+    for (uint8_t i = 0; i < n; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
+    if (fit != kNoRun && (n == 0 || list[n - 1] != fit)) runs_->release(fit);
+    if (result != Result::Ok) return result;
+    history_->commit(slot, m);
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+
   /// Starts composing `slot` for `track` from its loop start; `commitLaunch` makes it play.
   Result launch(uint8_t track, uint8_t slot) {
     if (mode_ != Mode::Idle && wTrack_ == track) return Result::Busy;

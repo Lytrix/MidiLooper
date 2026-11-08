@@ -29,6 +29,11 @@
 - Fix (owner: "I tried F2 but it changes nothing", capture `session_20261108_162349`): the DROID's loop bank sends F2
   as CC 101 on channel 16 (bars − 1, legacy `LENGTH_CC_NUMBER`), not the pitch bend on channel 14; both are taken now
   (`Surface::lengthBars`). Image `8e04b478…`, boot verified.
+- Slice 8 (DEC-257 amendment 1 — loop start by rotation): LOOP_EDIT's F1 (pitch bend channel 16, the loop's 16ths) moves
+  the loop start, counted from the content LOOP_EDIT found, applied at rest as one rotation and one undo step: notes
+  start earlier and keep their lengths, one crossing the new start wraps; lossless (`SlotTransport::rotate`,
+  `FitBuilder::rotate`). START shows bar.16th. The DROID's loop bank per its code: F3 not programmed, F4 pitch bend
+  channel 15 (none seen in the owner's capture yet). Image `c44cc4ea…`, boot verified; owner check pending.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

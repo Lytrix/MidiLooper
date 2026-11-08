@@ -15,7 +15,11 @@
 //   from its `kOriginHeldLoop` flag at this length.
 // `build` scans every row of the content runs once (at most `kMaxScanRows`, else TooLarge), holds at most `kMaxOpen`
 // notes open per run and `kMaxEntries` lookups (else refused by name), and writes nothing when no lookup is needed (a
-// resize that changes no wrap: `None`). No allocation.
+// resize that changes no wrap: `None`).
+// `rotate` (owner 2026-11-08: LOOP_EDIT's F1 moves the loop start by rotating the content) copies a content run with
+// every note `shift` ticks earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its
+// NoteOff past the loop end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by
+// `loop − shift` gives the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation.
 
 #pragma once
 
@@ -36,6 +40,46 @@ class FitBuilder {
   static constexpr uint16_t kMaxEntries = 256;
   static constexpr uint16_t kMaxOpen = Config::kMaxOpenNotesPerWriter;
   static constexpr uint8_t kMaxRuns = 32;
+  static constexpr uint16_t kRotateOpen = 64;  // notes open at once per rotation segment
+
+  /// The rows of content run `src` rotated `shift` ticks earlier at loop `loop` (0 < shift < loop), in a new sealed run
+  /// of the same kind for `slot` (`out`, the writer's reference). Its leading HideNote rows come first, unchanged; the
+  /// rest in tick order, NoteOffs first at a tick — three passes over `src` (after the shift, before it, past the end),
+  /// merged. A NoteOff whose NoteOn the run does not hold is dropped.
+  FitResult rotate(Pool& pool, Runs& runs, Res& res, uint8_t slot, RunId src, uint32_t loop, uint32_t shift,
+                   RunId& out) {
+    out = kNoRun;
+    const auto& d = runs.run(src);
+    if (d.rowCount > kMaxScanRows) return FitResult::TooLarge;
+    const RunId run = runs.allocate(slot, d.kind);
+    if (run == kNoRun) return FitResult::DeniedRun;
+    if (res.reserve(run, d.rowCount) != Admission::Ok) {
+      runs.seal(run);
+      runs.release(run);
+      return FitResult::DeniedCapacity;
+    }
+    uint32_t i = 0;
+    for (; i < d.rowCount && runs.rowAt(src, i, pool).status == kHideNoteStatus; ++i)
+      res.writeOwed(run, runs.rowAt(src, i, pool));
+    Cursor c[3];
+    for (uint8_t k = 0; k < 3; ++k) {
+      c[k] = Cursor{i, 0, false, PassEvent{}, 0};
+      if (!advance(pool, runs, src, d.rowCount, loop, shift, k, c[k])) return refuse(res, runs, run);
+    }
+    for (;;) {
+      int8_t best = -1;
+      for (uint8_t k = 0; k < 3; ++k)
+        if (c[k].has && (best < 0 || c[k].key < c[best].key)) best = static_cast<int8_t>(k);
+      if (best < 0) break;
+      res.writeOwed(run, c[best].next);
+      if (!advance(pool, runs, src, d.rowCount, loop, shift, static_cast<uint8_t>(best), c[best]))
+        return refuse(res, runs, run);
+    }
+    res.forgive(run);  // dropped orphan NoteOffs
+    runs.seal(run);
+    out = run;
+    return FitResult::Ok;
+  }
 
   /// The fit run of `content[0..n)` (no fit run among them) at loop length `loop`, for `slot`: `fit` is a sealed run
   /// with the writer's reference, or kNoRun when the result is not Ok.
@@ -87,6 +131,57 @@ class FitBuilder {
   struct Open {
     uint32_t noteId, tick;
   };
+  struct Cursor {
+    uint32_t i;
+    uint16_t open;
+    bool has;
+    PassEvent next;
+    uint32_t key;  // new tick << 2 | class (DEC-244: NoteOffs first at a tick)
+  };
+  /// The segment of a NoteOn or controller at `t`: 0 after the shift, 1 before it, 2 at or past the loop end.
+  static uint8_t segment(uint32_t t, uint32_t loop, uint32_t shift) { return t >= loop ? 2 : t >= shift ? 0 : 1; }
+  static uint32_t moved(uint32_t t, uint8_t seg, uint32_t loop, uint32_t shift) {
+    return seg == 2 ? t : seg == 0 ? t - shift : t + loop - shift;
+  }
+  /// Cursor `k`'s next row of its segment (false: more than `kRotateOpen` of its notes open).
+  bool advance(Pool& pool, Runs& runs, RunId src, uint32_t rows, uint32_t loop, uint32_t shift, uint8_t k, Cursor& c) {
+    uint32_t* ids = ids_[k];
+    for (; c.i < rows; ++c.i) {
+      const PassEvent& e = runs.rowAt(src, c.i, pool);
+      if (e.status == kHideNoteStatus) continue;
+      const uint8_t t = e.status & 0xF0;
+      const bool off = t == 0x80 || (t == 0x90 && e.data2 == 0);
+      uint8_t cls = 2;
+      if (off) {
+        uint16_t j = 0;
+        while (j < c.open && ids[j] != e.noteId) ++j;
+        if (j == c.open) continue;
+        ids[j] = ids[--c.open];
+        cls = 0;
+      } else {
+        if (segment(e.tick, loop, shift) != k) continue;
+        if (t == 0x90) {
+          if (c.open == kRotateOpen) return false;
+          ids[c.open++] = e.noteId;
+          cls = 1;
+        }
+      }
+      c.next = e;
+      c.next.tick = moved(e.tick, k, loop, shift);
+      c.key = (c.next.tick << 2) | cls;
+      c.has = true;
+      ++c.i;
+      return true;
+    }
+    c.has = false;
+    return true;
+  }
+  FitResult refuse(Res& res, Runs& runs, RunId run) {
+    res.forgive(run);  // the rows it will not write
+    runs.seal(run);
+    runs.release(run);
+    return FitResult::TooManyOpen;
+  }
 
   bool push(RunId run, uint8_t status, uint32_t noteId, uint32_t offTick) {
     if (count_ == kMaxEntries) return false;
@@ -147,7 +242,10 @@ class FitBuilder {
     return FitResult::Ok;
   }
 
-  Entry entries_[kMaxEntries];
+  union {
+    Entry entries_[kMaxEntries];
+    uint32_t ids_[3][kRotateOpen];  // a rotation's open notes per segment
+  };
   Open open_[kMaxOpen];
   uint16_t count_ = 0;
 };

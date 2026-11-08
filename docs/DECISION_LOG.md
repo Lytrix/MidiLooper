@@ -14927,3 +14927,11 @@ original lengths and wrap at the loop end in force); implementation in slices.
   `test_loop_edit_f2_sets_the_length`; mutations 12 / 14 (the two survivors in design.md). Native full suite 4,400
   cases, 0 failed; heap gate OK. RAM2 ratchet 154,400 B (+ 4,104 B builder scratch). Device image `6dfaf762…`: boot
   `crash=0`, 23 slots loaded.
+
+### Amendment 1 — The loop start rotates the content by copying it (2026-11-08, owner: "Rotate")
+
+- LOOP_EDIT's F1 rotates: each content run is written again with every note `shift` earlier, wrapped at the loop and
+  keeping its length; the fit run is rebuilt. A rotation loses nothing (rotating back restores the rows), so a copy is
+  used instead of a window over the runs, which would have changed the composer's ordering at a moved loop seam.
+- Evidence: `test_loop_edit_f1_rotates_the_loop_start`, mutations 7 / 7; native full suite 4,401 cases, 0 failed;
+  device image `c44cc4ea…`, boot `crash=0`, 23 slots loaded.
