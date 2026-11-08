@@ -2245,7 +2245,9 @@ fader within 300 ms) gave each of them its own step. As legacy, a note's edits a
 deselected (an F1 select, delete, create, undo / redo) or NOTE_EDIT is left: `EditSurface::commit` replaces the selected
 note's step (undo, then the note's whole new value) while that step is still the session's last, and a change back to
 the note's value before its step takes the step away. Start ↔ length switching keeps the step. A refused change redoes
-the replaced step, so the note keeps its edits. The screen's EDIT count follows (one a note).
+the replaced step, so the note keeps its edits. The screen's EDIT count follows (one a note), counting the selected
+note's step once the note is deselected, as legacy (`EditSurface::steps`; owner 2026-11-08: it did not change at
+deselect).
 `test_content_engine_edit_surface`: the geometry test edits one note with F2, F3 and F4 in one step, a second note in
 its own, back and forth to its value, and undoes all of the first note's changes at once; the undo test reworked
 (mutations 2 / 2).

@@ -1,12 +1,14 @@
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT takes one undo step a note.**
 - Every change to the selected note is one undo step, kept at deselect or when leaving NOTE_EDIT (as legacy), instead
   of a step a fader gesture: micro-adjustments no longer pile up steps, and one undo takes back all of a note's edits.
-  Image `f6bd255d…`, boot verified; owner check on the DROID pending.
+  Image `f6bd255d…`; owner confirmed on the DROID (and the length-mode bracket below). The EDIT count counts a note's
+  step once it is deselected (`EditSurface::steps`; owner: it did not change at deselect). Image `59f854c3…`, boot
+  verified; owner check of the count pending.
 
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT's bracket follows the end in length mode.**
 - In length mode the bracket stayed at the end it jumped to when the mode began; it now follows the selected note's
   end as F2 / F3 change the length (`EditSurface::follow`), as it follows the start outside length mode. Image
-  `8f670227…`, boot verified; owner check on the DROID pending.
+  `8f670227…`, boot verified; owner confirmed on the DROID.
 
 **2026-11-07 — Fixed-memory engine: NOTE_EDIT's EDIT count counts every step.**
 - The status band's EDIT count stopped at 1: it read History's session depth, but History holds a NOTE_EDIT session

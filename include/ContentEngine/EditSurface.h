@@ -128,8 +128,13 @@ class EditSurface {
   uint32_t windowTicks() const { return ticks_; }
   uint32_t loop() const { return loop_; }
   uint32_t bracket() const { return bracket_; }
-  /// The session's E: level, as the screen's EDIT count (History holds the session as one state, replaced in place).
-  uint8_t steps() const { return editing() ? session().depth() : 0; }
+  /// The screen's EDIT count: the session's E: level (History holds the session as one state, replaced in place) less
+  /// the selected note's step, which counts once the note is deselected (as legacy; owner 2026-11-08).
+  uint8_t steps() const {
+    if (!editing()) return 0;
+    const uint8_t d = session().depth();
+    return open_ && d == openDepth_ && d > 0 ? static_cast<uint8_t>(d - 1) : d;
+  }
   bool lengthMode() const { return length_; }
   /// The selected note as it is now. False: none selected.
   bool selected(EditNote& n) const {

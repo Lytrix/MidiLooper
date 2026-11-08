@@ -222,19 +222,23 @@ void test_geometry_faders_move_and_pitch_heard_one_step_a_note() {
   f4(70);
   TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
   TEST_ASSERT_EQUAL_UINT32(485, heardAt(70));
-  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());  // the screen's EDIT count: one step for the note
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gE.noteEdit().depth());
+  TEST_ASSERT_EQUAL_UINT8(depth0, gS.edit().steps());  // the screen's EDIT count: the note's step once deselected
   // Another note: a step of its own; a change back to its value takes the step away again.
   f1(pbFor(8, 16));  // 67 @ 384
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());
   settle();
   f4(72);
-  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gS.edit().steps());
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gE.noteEdit().depth());
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());
   ms(400);
   f4(67);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gE.noteEdit().depth());
   TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());
   ms(400);
   f4(72);
-  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gS.edit().steps());
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gE.noteEdit().depth());
   // Undo (record double) twice: 67's step, then all of 64's; redo once.
   dbl(S::kRecordNote);
   ms(500);
