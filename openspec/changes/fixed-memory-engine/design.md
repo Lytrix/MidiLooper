@@ -2395,5 +2395,16 @@ band's START shows bar.16th. A track switch in LOOP_EDIT re-parks the faders and
 * Tests: `test_loop_edit_f1_rotates_the_loop_start` (the motor park and its landing; notes moved and wrapped, a note
   carried across the new loop start, rows in tick order, rotated back; a shortened loop rotated keeps its notes past
   the end unplayed); mutations 7 / 7.
-* The DROID's loop bank (owner 2026-11-08, its code): F1 pitch bend channel 16, F2 CC 101 channel 16, F3 not
-  programmed, F4 pitch bend channel 15.
+* The DROID's loop bank (`droid/midilooper_v1.ini`): F1 pitch bend channel 16, F2 CC 101 channel 16, F3 CC 100
+  channel 16 (the fine tempo), F4 pitch bend channel 15.
+
+## LOOP_EDIT tempo coarse and fine; the loop bank's motors (owner 2026-11-08; as built)
+
+The whole-range tempo fader (1–300 BPM in tenths over one travel) was too shallow to set exactly (owner). As NOTE_EDIT's
+position: F4 (pitch bend channel 15) sets whole BPM, 20–300 over its travel (the engine clock's floor is 20), and puts
+F3 back at its centre; F3 (CC 100 channel 16, per `droid/midilooper_v1.ini`) adds (value − 64) tenths. On entry each
+loop-bank motor is parked with its value and then its `clear` trigger note, as the ini wires them — F1 pitch bend /
+note 100 and F2 CC 101 / note 101 on channel 16, F3 CC 100 / note 1 and F4 pitch bend / note 2 (the trigger on channel
+15) — through one timed queue (`Surface::loopWrite`); a fader's own messages are not moves for `kMotorSettleMs`. Before
+this, F2 and F4 were written without triggers and F1 with the note bank's (note 0). `test_loop_edit_tempo_coarse_and_fine`
+(replaces the single-fader tempo test); mutations 7 / 7.

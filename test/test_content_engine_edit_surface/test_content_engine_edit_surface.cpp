@@ -1005,30 +1005,55 @@ void test_edit_button_cycles_note_and_loop_edit() {
   TEST_ASSERT_FALSE(gS.edit().active());
 }
 
-// LOOP_EDIT's F4 sets the tempo (legacy: pitch bend on channel 15, 1–300 BPM in tenths over the whole travel); on
-// entry its motor is parked at the tempo, and that landing changes nothing.
-void test_loop_edit_f4_sets_the_tempo() {
+// LOOP_EDIT's tempo is coarse and fine (owner 2026-11-08, `droid/midilooper_v1.ini`): F4 (pitch bend channel 15) sets
+// whole BPM over 20–300 and re-centres F3; F3 (CC 100 channel 16) adds tenths from its centre. On entry each motor is
+// parked — its value, then its trigger note (F3 note 1, F4 note 2 on channel 15) — and its landing changes nothing.
+void test_loop_edit_tempo_coarse_and_fine() {
   tap(S::kEditModeNote);  // slot 0 empty: LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
-  const auto sent = drainMotors(100);
-  const Sent* park = findStatus(sent, 0xEE);
-  TEST_ASSERT_NOT_NULL(park);
-  const uint16_t wire = static_cast<uint16_t>(park->m.d1 | (park->m.d2 << 7));
-  TEST_ASSERT_EQUAL_UINT16(TempoMapping::pitchBendWireFromBpm(120.0f), wire);
+  const auto sent = drainMotors(300);
+  const Sent* coarse = findStatus(sent, 0xEE);
+  TEST_ASSERT_NOT_NULL(coarse);
+  const uint32_t wire = static_cast<uint32_t>(coarse->m.d1 | (coarse->m.d2 << 7));
+  TEST_ASSERT_EQUAL_UINT32((120 - 20) * 16383 / 280, wire);
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9E, 2));  // F4's trigger
+  const Sent* fine = findMsg(sent, 0xBF, 100);
+  TEST_ASSERT_NOT_NULL(fine);
+  TEST_ASSERT_EQUAL_UINT8(64, fine->m.d2);
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9E, 1));  // F3's trigger
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9F, 100));  // F1's
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9F, 101));  // F2's
   const uint32_t us120 = gClk.usPerTick();
-  const uint16_t near = static_cast<uint16_t>(wire + 300);  // the motor lands a little off
-  gS.input(0xEE, near & 0x7F, near >> 7, gUs / 1000);
+  const auto f4 = [](uint32_t bpm) {
+    const uint32_t w = (bpm - 20) * 16383 / 280 + 20;
+    gS.input(0xEE, w & 0x7F, static_cast<uint8_t>(w >> 7), gUs / 1000);
+    ms(5);
+  };
+  const auto f3 = [](uint8_t cc) {
+    gS.input(0xBF, 100, cc, gUs / 1000);
+    ms(5);
+  };
+  f4(90);  // landing
+  f3(70);
   TEST_ASSERT_EQUAL_UINT32(us120, gClk.usPerTick());
   ms(600);
-  const uint16_t w90 = TempoMapping::pitchBendWireFromBpm(90.0f);
-  gS.input(0xEE, w90 & 0x7F, w90 >> 7, gUs / 1000);
+  f4(90);
   TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9000ull * 192), gClk.usPerTick());
-  tap(S::kEditModeNote, 700);  // performance: F4's pitch bend is not the tempo
+  const auto again = drainMotors(300);
+  const Sent* centre = findMsg(again, 0xBF, 100);  // F3 back at its centre
+  TEST_ASSERT_NOT_NULL(centre);
+  TEST_ASSERT_EQUAL_UINT8(64, centre->m.d2);
+  ms(600);
+  f3(64 + 7);  // 90.7
+  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9070ull * 192), gClk.usPerTick());
+  f3(64 - 3);  // 89.7
+  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (8970ull * 192), gClk.usPerTick());
+  tap(S::kEditModeNote, 700);  // performance: neither fader is the tempo
   ms(400);
-  const uint16_t w60 = TempoMapping::pitchBendWireFromBpm(60.0f);
-  gS.input(0xEE, w60 & 0x7F, w60 >> 7, gUs / 1000);
-  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9000ull * 192), gClk.usPerTick());
+  f4(60);
+  f3(100);
+  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (8970ull * 192), gClk.usPerTick());
 }
 
 struct NoteSpec {
@@ -1194,8 +1219,8 @@ void test_loop_edit_f1_rotates_the_loop_start() {
   const Sent* park = findStatus(sent, 0xEF);
   TEST_ASSERT_NOT_NULL(park);
   TEST_ASSERT_EQUAL_UINT8(0, park->m.d1 | park->m.d2);
-  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9F, 0));  // its trigger
-  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x8F, 0));
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x9F, 100));  // its trigger (`droid/midilooper_v1.ini`: note 100 channel 16)
+  TEST_ASSERT_NOT_NULL(findMsg(sent, 0x8F, 100));
   const auto f1At = [](uint32_t step) {  // 16 steps in the 1-bar loop
     pitchBend(15, -8192 + static_cast<int32_t>(step * 16383 / 15) + 100);
     ms(5);
@@ -1342,7 +1367,7 @@ int main(int, char**) {
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
-  RUN_TEST(test_loop_edit_f4_sets_the_tempo);
+  RUN_TEST(test_loop_edit_tempo_coarse_and_fine);
   RUN_TEST(test_resize_rewraps_notes_and_keeps_those_past_the_end);
   RUN_TEST(test_resize_resolves_a_held_loop_note);
   RUN_TEST(test_loop_edit_f2_sets_the_length);

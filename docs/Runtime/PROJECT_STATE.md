@@ -1,3 +1,12 @@
+**2026-11-08 — Fixed-memory engine: LOOP_EDIT tempo coarse and fine; loop-bank motor triggers.**
+- Owner: the whole-range tempo fader was too shallow to set exactly. As NOTE_EDIT's position: F4 (pitch bend channel 15)
+  sets whole BPM over 20–300 and puts F3 back at its centre; F3 (CC 100 channel 16, `droid/midilooper_v1.ini`) adds
+  0.1 BPM steps from its centre (64) (`Surface::coarseTempo` / `fineTempo`).
+- Fix: the loop bank's motors were given values without their `clear` triggers (F2, F4) or with the note bank's (F1,
+  note 0), so they likely did not move on entry. Each is now its value then its trigger per the ini: F1 note 100 / F2
+  note 101 on channel 16, F3 note 1 / F4 note 2 on channel 15 (`Surface::loopWrite`). Image `36d08b9e…`, boot verified;
+  owner check pending.
+
 **2026-11-08 — Fixed-memory engine: creation and LOOP_EDIT, slice 1 of 9 (owner plan).**
 - Plan (owner): 1 NOTELEN short on an empty 16th creates; 2 NOTELEN long press released creates; 3 slot long press on
   an empty slot creates a 1-bar loop; 4 slot double = Clear; 5 edit button cycles NOTE ↔ LOOP, long leaves; 6–8
