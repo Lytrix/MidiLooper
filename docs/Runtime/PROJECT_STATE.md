@@ -9,7 +9,9 @@
 - Then: off-screen frames, opt-in (`!ENGINE oled-flip 1 / 0`, default off; `SSD1322_API::setPageFlip`): each frame is
   written to the 64 GRAM rows not shown and the display start line (0xA1) moved to them once complete. Tear-free only
   if the controller applies the start line at its next frame (not in the datasheet). Legacy (`teensy41-capture-serial`)
-  still builds; it never turns it on. Image `b20f4a6f…`, boot verified; owner check by eye pending.
+  still builds; it never turns it on. Image `b20f4a6f…`, boot verified.
+- Owner: "No tear" with `oled-flip 1` — now on at boot (`EngineDisplay::begin`). Image `1bacdd55…` flashed; its serial
+  boot check is pending (a Teensy serial monitor held the port).
 
 **2026-11-08 — Fixed-memory engine: note starts on the piano roll.**
 - Each note's first pixel is drawn brighter than its bar (13; 15 selected; 6 / 9 muted), after every bar so a touching

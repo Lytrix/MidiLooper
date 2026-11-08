@@ -8,6 +8,9 @@
 // The first frame after `begin` goes over blocking SPI, which arms the panel's GRAM window (the library's resync
 // path): measured 2026-11-06, the panel stayed blank when the first frame was a DMA one and drew once a blocking frame
 // had been sent.
+// Frames are written off-screen (`SSD1322_API::setPageFlip`; owner 2026-11-08): to the 64 GRAM rows not shown, the
+// display start line moved there once complete, so the panel never scans a half-written frame (the playhead tore).
+// `!ENGINE oled-flip 0` turns it off for a comparison.
 // The layout (no sidebar; every field has a fixed place and shows `-` when it has nothing to show):
 // * Left column (x 0–21): the 8 tracks' numbers. While the clock runs, each track's activity level (Cubase's activity
 //   column): the last NoteOn's velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden track.
@@ -81,6 +84,10 @@ class EngineDisplay {
     oled_.gfx.select_font(&Font5x7FixedMono);
     oled_.gfx.fill_buffer(oled_.api.getFrameBuffer(), 0);
     sendBlocking();  // arms the GRAM window before the first DMA frame
+    // Off-screen frames (owner 2026-11-08: the playhead tore while the panel scanned a frame being written; no tear
+    // with them): each frame goes to the GRAM rows not shown, then the start line moves there. Both pages blank.
+    oled_.api.setPageFlip(true);
+    sendBlocking();
     for (uint8_t& s : shown_) s = 0xFF;
     focus_ = 0xFF;
     started_ = false;
