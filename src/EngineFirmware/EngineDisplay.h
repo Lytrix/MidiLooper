@@ -13,7 +13,7 @@
 //   column): the last NoteOn's velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden track.
 //   While it does not, the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A armed, P playing,
 //   S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track's solo
-//   — the selected track shows its real state); the selected track's letter pulses (legacy: 1 Hz, brightness 4–10).
+//   — the selected track shows its real state); the selected track's letter pulses (1 Hz, brightness 7–13; legacy 4–10).
 // * Piano roll (x 22–255, rows 0–45; four dark rows under it, no rule before the status band): the shown slot — the
 //   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4
 //   bars), the engine's tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (owner
@@ -263,13 +263,9 @@ class EngineDisplay {
     for (uint8_t i = 0; i < 8; ++i) anySolo |= c.soloed(i);
     return c.muted(t) || (anySolo && !c.soloed(t));
   }
-  /// 1 Hz between 4 and 10 (legacy `minPulse` / `maxPulse`): the selected track's letter, NOTE_EDIT's mode cell.
+  /// 1 Hz between 7 and 13 (legacy 4–10; owner 2026-11-08: readable at its darkest): the selected track's state letter,
+  /// NOTE_EDIT's mode cell behind its dark (0) label.
   static uint8_t pulseAt(uint32_t nowMs) {
-    const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
-    return static_cast<uint8_t>(4.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
-  }
-  /// The pulsing label square behind dark (0) text: 7–13, so the label stays readable at its darkest.
-  static uint8_t labelPulseAt(uint32_t nowMs) {
     const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
     return static_cast<uint8_t>(7.0f + 6.0f * (0.5f + 0.5f * sinf(phase * 2.0f * 3.1415926f)));
   }
@@ -523,7 +519,7 @@ class EngineDisplay {
         const int16_t cx = static_cast<int16_t>(edit_.velocity ? x0 + 18 + kGap : x0 + 18 + 32 + 2 * kGap);
         const int16_t right = static_cast<int16_t>(edit_.velocity ? cx + 32 + kGap / 2 - 1 : end + 1);
         oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - kGap / 2), kLabY - 1, right, kLabY + 5,
-                                   labelPulseAt(nowMs));
+                                   pulseAt(nowMs));
       }
     } else {
       cells[0] = Cell{"TRACK", "", 20};

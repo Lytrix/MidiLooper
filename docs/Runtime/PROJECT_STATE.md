@@ -7,6 +7,8 @@
 - Then (owner): the pulsing VELOCITY / LENGTH label square runs 7–13 (was 4–10) so its label stays readable, and spans
   from its divider to the next (LENGTH: to the bar's end), so no steady column is left beside it. Image `a2ed35a2…`,
   boot verified.
+- Then (owner): the selected track's state letter (S / P / R / -) pulses at 7–13 too (was 4–10). Image
+  `edbfa4e1…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT velocity on F4 with NOTELEN held.**
 - Holding NOTELEN (35) makes F4 set the selected note's velocity (1–127) instead of its pitch; that press is then no

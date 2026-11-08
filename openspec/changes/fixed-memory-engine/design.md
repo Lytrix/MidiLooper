@@ -1822,7 +1822,7 @@ DROID. Later: LOOP_EDIT, copy / paste, quantize, move-tick, the set browser, mot
   slot when that slot has content (owner 2026-11-06: a MIDI Start plays all tracks; tracks playing at the stop
   resume, a muted one silently, as legacy's mute only silences).
 - **Track letters** as legacy `trackStateToLetter` (R, O, A, P, S — the selected slot has content —, -, M), the
-  selected track's letter pulsing at 1 Hz (brightness 4–10).
+  selected track's letter pulsing at 1 Hz (brightness 4–10; 7–13 since owner 2026-11-08).
 - **Live notes while recording:** `LiveOverlay` is now a list of the take's notes (768, start / end / pitch /
   brightness; a held note reaching the current position, a note across the loop end wrapping while overdubbing), drawn
   by `drawRollBand` at the view's scale. A first take's view grows with the current tick and ends at it (legacy
