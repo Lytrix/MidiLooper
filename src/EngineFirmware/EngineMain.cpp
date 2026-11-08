@@ -26,6 +26,12 @@
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
+// Wall-clock time (sets browser slice 1; owner 2026-11-08: real dates only): the Teensy RTC, valid only per
+// `wallclock::valid` (never the firmware's build time). The Teensy loader sets the RTC to the computer's **local** time at
+// every upload (measured 2026-11-08: one hour ahead of UTC in CET), so the RTC is read as local time and the shown offset
+// (minutes, EEPROM bytes 0–3: 'T', 'Z', the offset) defaults to 0. `!ENGINE time` reports it, `!ENGINE time <unix>`
+// sets the clock, `!ENGINE tz <minutes>` the offset (`scripts/engine_set_time.py` sets local time and offset 0, as the
+// loader does); reported at boot as `#ENGINE,time,...`.
 
 #if defined(ENGINE_FIRMWARE)
 
@@ -36,9 +42,12 @@
 #include <cstdlib>
 #include <cstring>
 
+#include <EEPROM.h>
+
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
 #include "ContentEngine/Surface.h"
+#include "ContentEngine/WallClock.h"
 #include "EngineFirmware/EngineDisplay.h"
 #include "EngineFirmware/SdCardIo.h"
 
@@ -234,6 +243,32 @@ void pollInput(uint32_t nowUs) {
 char gLine[64];
 uint8_t gLineLength = 0;
 
+// ---- Wall-clock time -------------------------------------------------------------------------------------------------
+int16_t gTzOffset = 0;  // minutes east of UTC
+void loadTzOffset() {
+  if (EEPROM.read(0) != 'T' || EEPROM.read(1) != 'Z') return;
+  gTzOffset = wallclock::clampOffset(static_cast<int16_t>(EEPROM.read(2) | (EEPROM.read(3) << 8)));
+}
+void storeTzOffset(int16_t minutes) {
+  gTzOffset = wallclock::clampOffset(minutes);
+  EEPROM.update(0, 'T');
+  EEPROM.update(1, 'Z');
+  EEPROM.update(2, static_cast<uint8_t>(gTzOffset & 0xFF));
+  EEPROM.update(3, static_cast<uint8_t>((gTzOffset >> 8) & 0xFF));
+}
+/// The RTC's UTC time, or 0 when it is not valid (`wallclock::valid`).
+uint32_t wallTime() {
+  const uint32_t t = static_cast<uint32_t>(rtc_get());
+  return wallclock::valid(t) ? t : 0;
+}
+void reportTime() {
+  const uint32_t raw = static_cast<uint32_t>(rtc_get());
+  char stamp[24];
+  wallclock::formatStamp(raw, gTzOffset, stamp, sizeof stamp);
+  Serial.printf("#ENGINE,time,unix=%lu,valid=%u,offset_min=%d,local=%s\n", static_cast<unsigned long>(raw),
+                wallclock::valid(raw) ? 1u : 0u, gTzOffset, stamp);
+}
+
 void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
@@ -306,6 +341,12 @@ void command(char* line, uint32_t nowUs) {
     const bool clock = verb[5] == 'c', phase = verb[5] == 'p', flip = verb[5] == 'f';
     gDisplay.tune(clock ? static_cast<uint8_t>(v) : 0, phase ? static_cast<uint8_t>(v) : 0,
                   !clock && !phase && !flip ? static_cast<uint32_t>(v) : 0, flip && arg != nullptr ? static_cast<int>(v) : -1);
+  } else if (std::strcmp(verb, "time") == 0) {  // time: report; time <unix UTC>: set the RTC
+    if (arg != nullptr) rtc_set(std::strtoul(arg, nullptr, 10));
+    reportTime();
+  } else if (std::strcmp(verb, "tz") == 0) {  // tz <minutes east of UTC>: the shown offset, kept in EEPROM
+    if (arg != nullptr) storeTzOffset(static_cast<int16_t>(a));
+    reportTime();
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
@@ -577,6 +618,8 @@ void setup() {
                 static_cast<unsigned long>(gPrevCrumbs[0]), static_cast<unsigned long>(gPrevCrumbs[1]),
                 static_cast<unsigned long>(gPrevCrumbs[2]));
   if (crashed) Serial.print(CrashReport);
+  loadTzOffset();
+  reportTime();
   if (!gEngine.init(gPsram, gRam2, kBlockUs)) {
     Serial.println("#CAP,BOOT,engine,init_failed");
     return;

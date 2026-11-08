@@ -1,3 +1,14 @@
+## Now implementing — Engine sets browser, slice 1 (2026-11-08)
+
+**2026-11-08 — owner-requested scope (“start stage 1”), branch `feature/engine-sets-browser` from
+`rewrite/fixed-memory-engine`.** Design: [engine sets browser proposal](../Plans/engine_sets_browser_proposal.md)
+(revision 4 + the one-checkpoint / real-time decisions; not authority — the owner's decisions recorded there are).
+Slice 1 only: (a) the engine reads the RTC, a valid-time rule (`TIME NOT SET`, never the build time), a set-time and a
+time-zone-offset serial command, whether the Teensy loader sets the clock checked; (b) the time of each completed store
+write; (c) milestone and checkpoint files (every slot with its undo history, tempo, surface state), the index with
+stage, per-stage number and parent; (d) serial commands to save and list milestones for testing. Non-goals in this
+slice: loading, the browser screen, the save popup, live switching, loop retrieval.
+
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
 **2026-11-04 — PAUSED by owner ruling (architecture direction change):** no further C3.4 / DEC-251 containment
