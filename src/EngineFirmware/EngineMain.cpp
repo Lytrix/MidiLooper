@@ -280,6 +280,164 @@ void stampSaves() {
   gLastSaveWall = wallTime();
 }
 
+// ---- The milestone library (DEC-258, sets browser slice 1c) ----------------------------------------------------------
+constexpr const char* kLibraryFolder = "/MidiLooper/library";
+constexpr const char* kLibraryFile = "/MidiLooper/library/library.bin";
+ProductionLibrary::Status gLibraryWas = ProductionLibrary::Status::Idle;
+bool gLibraryCheckpoint = false;  // the job running writes the checkpoint (else a milestone)
+uint32_t gLibraryStartUs = 0;
+
+/// The tempo in tenths of a BPM (as LOOP_EDIT shows it).
+uint16_t tempoTenthsNow() {
+  const uint64_t d = static_cast<uint64_t>(gClock.usPerTick()) * EngineClock::kTicksPerQuarter;
+  return static_cast<uint16_t>((600000000ull + d / 2) / d);
+}
+/// The surface state as it is saved (`saveSelection`).
+void surfaceNow(uint8_t* state) {
+  state[0] = gEngine.control().selectedTrack();
+  for (uint8_t t = 0; t < kTrackCount; ++t) state[1 + t] = gSurface.selectedSlot(t);
+}
+const char* libraryRefusal(ProductionLibrary::Result r) {
+  switch (r) {
+    case ProductionLibrary::Result::Ok: return "OK";
+    case ProductionLibrary::Result::NotMounted: return "LIBRARY NOT READY";
+    case ProductionLibrary::Result::Busy: return "BUSY";
+    case ProductionLibrary::Result::IndexFull:
+    case ProductionLibrary::Result::LogFull:
+    case ProductionLibrary::Result::TooLarge: return "LIBRARY FULL";
+    case ProductionLibrary::Result::Failed: return "SAVE FAILED";
+  }
+  return "?";
+}
+const char* libraryFullWhy(ProductionLibrary::Result r) {
+  return r == ProductionLibrary::Result::IndexFull ? "index" : r == ProductionLibrary::Result::LogFull ? "log"
+         : r == ProductionLibrary::Result::TooLarge ? "set" : "-";
+}
+void reportLibrary(const char* why) {
+  auto& l = gEngine.library();
+  const library::IndexHeader& h = l.header();
+  library::CheckpointHeader cp{};
+  const bool hasCheckpoint = l.checkpoint(cp);
+  Serial.printf("#ENGINE,library,%s,open=%u,approved=%u,error=%u,sector=%lu,open_ms=%lu,count=%u,append=%lu,"
+                "free_sectors=%lu,checkpoint=%lu\n",
+                why, l.mounted() ? 1u : 0u, gEngine.persistence().approved() ? 1u : 0u, gCard.libraryError(),
+                static_cast<unsigned long>(gCard.librarySector()),
+                static_cast<unsigned long>(gCard.libraryOpenUs() / 1000), h.count,
+                static_cast<unsigned long>(h.appendSector),
+                static_cast<unsigned long>(library::kLogSectors - h.appendSector),
+                static_cast<unsigned long>(hasCheckpoint ? cp.sequence : 0));
+}
+/// Opens the library; creating (preallocating 1 GiB) only while stopped, no take open, saving approved (DEC-258).
+void openLibrary(const char* why) {
+  const bool create = gEngine.persistence().approved() && !gClock.running() &&
+                      gEngine.transport().writingSlot() == ProductionTransport::kNoSlot;
+  if (create && !gCard.exists(kLibraryFolder)) gCard.makeDir(kLibraryFolder);
+  bool created = false;
+  gEngine.openLibrary(kLibraryFile, create, created);
+  reportLibrary(created ? "created" : why);
+}
+void listMilestones() {
+  auto& l = gEngine.library();
+  for (uint16_t i = 0; i < l.header().count; ++i) {
+    library::Record r;
+    if (!l.readRecord(i, r)) {
+      Serial.printf("#ENGINE,ms,i=%u,bad=1\n", i);
+      continue;
+    }
+    char stamp[24];
+    wallclock::formatStamp(r.wallTime, gTzOffset, stamp, sizeof stamp);
+    Serial.printf("#ENGINE,ms,i=%u,id=SET %02u %c%02u,seq=%lu,parent=%lu,time=%s,tempo=%u.%u,loops=%u,shortest=%lu,"
+                  "longest=%lu,sector=%lu,sectors=%lu\n",
+                  i, r.set, library::stageLetter(r.stage), r.stageNumber, static_cast<unsigned long>(r.sequence),
+                  static_cast<unsigned long>(r.parent), stamp, r.tempoTenths / 10, r.tempoTenths % 10, r.loops,
+                  static_cast<unsigned long>(r.shortestLoop), static_cast<unsigned long>(r.longestLoop),
+                  static_cast<unsigned long>(r.logSector), static_cast<unsigned long>(r.logSectors));
+  }
+  reportLibrary("list");
+}
+/// milestone <S|B|E|T|A|F> [set]: the whole set as it is now, numbered next in its stage (DEC-258).
+void saveMilestone(const char* arg, uint32_t nowUs) {
+  static const char kLetters[] = "SBETAF";
+  const char* at = arg != nullptr ? std::strchr(kLetters, arg[0]) : nullptr;
+  if (arg == nullptr || arg[0] == 0 || at == nullptr) {
+    Serial.println("#ENGINE,milestone,refused,why=STAGE S|B|E|T|A|F");
+    return;
+  }
+  const char* setArg = std::strchr(arg, ' ');
+  const uint16_t set = static_cast<uint16_t>(setArg != nullptr ? std::atoi(setArg + 1) : 1);
+  auto& l = gEngine.library();
+  const char* refused = nullptr;
+  if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) refused = "STOP THE TAKE FIRST";
+  else if (!l.mounted()) refused = "LIBRARY NOT READY";
+  else if (l.busy()) refused = "BUSY";
+  if (refused != nullptr) {
+    Serial.printf("#ENGINE,milestone,refused,why=%s\n", refused);
+    return;
+  }
+  ProductionLibrary::Milestone m;
+  m.set = set;
+  m.stage = static_cast<library::Stage>(at - kLetters);
+  m.stageNumber = 1;
+  for (uint16_t i = 0; i < l.header().count; ++i) {  // the next number in this set and stage
+    library::Record r;
+    if (l.readRecord(i, r) && r.set == set && r.stage == m.stage && r.stageNumber >= m.stageNumber)
+      m.stageNumber = static_cast<uint8_t>(r.stageNumber + 1);
+  }
+  m.parent = 0;
+  m.wallTime = wallTime();
+  m.tempoTenths = tempoTenthsNow();
+  surfaceNow(m.surface);
+  const ProductionLibrary::Result r = gEngine.saveMilestone(m);
+  if (r != ProductionLibrary::Result::Ok) {
+    Serial.printf("#ENGINE,milestone,refused,why=%s,full=%s\n", libraryRefusal(r), libraryFullWhy(r));
+    return;
+  }
+  gLibraryCheckpoint = false;
+  gLibraryStartUs = nowUs;
+  Serial.printf("#ENGINE,milestone,begin,id=SET %02u %c%02u,sectors=%lu\n", set, kLetters[at - kLetters],
+                m.stageNumber, static_cast<unsigned long>(l.published().logSectors));
+}
+/// checkpoint: replaces the recovery checkpoint with the whole set as it is now (diagnostics until loading, DEC-258).
+void saveCheckpoint(uint32_t nowUs) {
+  if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) {
+    Serial.println("#ENGINE,checkpoint,refused,why=STOP THE TAKE FIRST");
+    return;
+  }
+  ProductionLibrary::Checkpoint c;
+  c.wallTime = wallTime();
+  c.base = 0;
+  c.set = 0;
+  c.loaded = 0;
+  c.tempoTenths = tempoTenthsNow();
+  surfaceNow(c.surface);
+  const ProductionLibrary::Result r = gEngine.saveCheckpoint(c);
+  if (r != ProductionLibrary::Result::Ok) {
+    Serial.printf("#ENGINE,checkpoint,refused,why=%s\n", libraryRefusal(r));
+    return;
+  }
+  gLibraryCheckpoint = true;
+  gLibraryStartUs = nowUs;
+  Serial.println("#ENGINE,checkpoint,begin");
+}
+/// A library job's end, reported once.
+void serviceLibrary() {
+  const ProductionLibrary::Status st = gEngine.library().status();
+  if (st == gLibraryWas) return;
+  gLibraryWas = st;
+  if (st != ProductionLibrary::Status::Done && st != ProductionLibrary::Status::Failed) return;
+  const bool ok = st == ProductionLibrary::Status::Done;
+  const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
+  if (gLibraryCheckpoint) {
+    Serial.printf("#ENGINE,checkpoint,%s,ms=%lu\n", ok ? "done" : "failed", ms);
+  } else {
+    const library::Record& r = gEngine.library().published();
+    Serial.printf("#ENGINE,milestone,%s,id=SET %02u %c%02u,seq=%lu,sectors=%lu,ms=%lu\n", ok ? "done" : "failed",
+                  r.set, library::stageLetter(r.stage), r.stageNumber, static_cast<unsigned long>(r.sequence),
+                  static_cast<unsigned long>(r.logSectors), ms);
+  }
+  reportLibrary(ok ? "saved" : "failed");
+}
+
 void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
@@ -360,6 +518,18 @@ void command(char* line, uint32_t nowUs) {
     reportTime();
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
+    if (!gEngine.library().mounted()) openLibrary("approved");  // right after the approval, when stopped (DEC-258)
+  } else if (std::strcmp(verb, "library") == 0) {  // the milestone library's state
+    reportLibrary("status");
+  } else if (std::strcmp(verb, "library-open") == 0) {  // opens it, creating it when stopped and approved
+    if (!gEngine.library().mounted()) openLibrary("opened");
+    else reportLibrary("status");
+  } else if (std::strcmp(verb, "milestone") == 0) {  // milestone <S|B|E|T|A|F> [set]
+    saveMilestone(arg, nowUs);
+  } else if (std::strcmp(verb, "milestones") == 0) {
+    listMilestones();
+  } else if (std::strcmp(verb, "checkpoint") == 0) {
+    saveCheckpoint(nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)
     auto& x = gEngine.transport();
     const uint8_t w = x.writingSlot();
@@ -713,6 +883,7 @@ void loop() {
     gBootReported = true;
     reportBootLoad();
     restoreSelection();
+    openLibrary("boot");  // created here only once saving is approved (boot is stopped, DEC-258)
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
@@ -720,6 +891,7 @@ void loop() {
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   stampSaves();
+  serviceLibrary();
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT

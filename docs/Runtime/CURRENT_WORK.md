@@ -9,6 +9,9 @@ write; (c) milestone and checkpoint files (every slot with its undo history, tem
 stage, per-stage number and parent; (d) serial commands to save and list milestones for testing. Non-goals in this
 slice: loading, the browser screen, the save popup, live switching, loop retrieval.
 
+**2026-11-08 — slice 1 done (1a–1c):** time, stamped saves, the milestone library and its serial commands are built and
+verified on the device (DEC-258 evidence). Next, on the owner's go: slice 2 (loading, checkpoint / return).
+
 ## Investigating — revision manifests over fixed event pages (owner request, 2026-11-01)
 
 **2026-11-04 — PAUSED by owner ruling (architecture direction change):** no further C3.4 / DEC-251 containment

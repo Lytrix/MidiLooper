@@ -1,3 +1,16 @@
+**2026-11-08 — Engine sets browser, slice 1c — milestone storage (branch `feature/engine-sets-browser`, DEC-258).**
+- 1c-i: the library's on-card format and bounds (`Library.h`): 1 GiB `/MidiLooper/library/library.bin`, A / B index
+  header, 4,096 records, two checkpoint regions, an append-only log; the largest set 4,300 sectors (asserted).
+- 1c-ii: `LibraryWriter.h` — the whole set pinned at the instant asked (later changes are not in it), written as a
+  milestone (blob → record → header, each programmed first) or as the recovery checkpoint (the other region, header
+  last); too large / full refused before any write; a failed write publishes nothing. Mutations 9 / 9.
+- 1c-iii: the card file and serial commands — `!ENGINE library`, `library-open`, `milestone <S|B|E|T|A|F> [set]`,
+  `milestones`, `checkpoint`. While a milestone writes, slot autosaves wait (one card stream). Device: the file created
+  (1 GiB, contiguous), SET 02 T01 / T02 / S01 / B01 published in 59–67 ms (B01 while playing, worst grain 239 µs), two
+  checkpoints, all read back after a reboot; refused during a take. Image `22e4d90c…`, boot verified. Full native
+  4,413 passed.
+- Next (slice 2, per the proposal): loading a milestone with the checkpoint / return, then the browser screen.
+
 **2026-11-08 — Engine sets browser, slice 1a–1b (branch `feature/engine-sets-browser`).**
 - 1a: wall-clock time. The engine reads the Teensy RTC; a time is valid only from 2025 to 2099 (`wallclock::valid`) and
   otherwise shows `TIME NOT SET` — never the build time (legacy `RtcTime` seeded an invalid clock from `__DATE__`).

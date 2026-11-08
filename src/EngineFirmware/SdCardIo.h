@@ -9,7 +9,7 @@
 // directly — no directory lookup, allocation or flush, so a sector costs the card's write and nothing else (every
 // file-system operation took 4–8 ms on the device). SdFat's cache never holds a store sector: the store is never
 // read or written through the file system after it is opened. Writes do not wait for the card either (E9.8h): see
-// `writeSector` and `ready`.
+// `writeSector` and `ready`. The milestone library (DEC-258) is a second such file, written through the same stream.
 
 #pragma once
 
@@ -64,45 +64,33 @@ class SdCardIo : public ContentEngine::CardIo {
     if (reader_) reader_.close();
   }
   bool openStore(const char* path, uint32_t sectors, bool create, bool& created) override {
-    quiesce();
-    created = false;
-    base_ = count_ = 0;
-    storeError_ = 1;
-    if (!ready_) return false;
     const uint32_t t = micros();
-    FsFile f = SD.sdfs.open(path, O_RDONLY);
-    storeError_ = 2;
-    if (!f && create) {
-      f = SD.sdfs.open(path, O_RDWR | O_CREAT);
-      storeError_ = 3;
-      if (!f) return false;
-      if (!f.preAllocate(static_cast<uint64_t>(sectors) * 512u)) {
-        f.close();
-        SD.sdfs.remove(path);
-        storeError_ = 4;
-        return false;
-      }
-      created = true;
-    }
-    if (!f) return false;
-    uint32_t bgn = 0, end = 0;
-    const bool ok = f.contiguousRange(&bgn, &end) && end >= bgn && end - bgn + 1 >= sectors;
-    f.close();
+    const bool ok = openContiguous(path, sectors, create, created, base_, count_, storeError_);
     worst(t_.store, t);
-    storeError_ = 5;
-    if (!ok) return false;
-    storeError_ = 0;
-    base_ = bgn;
-    count_ = sectors;
-    return true;
+    return ok;
   }
   bool readSector(uint32_t i, uint8_t* data) override {
-    quiesce();
-    if (i >= count_) return false;
+    return i < count_ && readAt(base_ + i, data);
+  }
+  /// The library's first sector on the card (0: none), why it did not open (as `storeError`), and how long the last
+  /// open took (µs; creating it preallocates 1 GiB).
+  uint32_t librarySector() const { return libBase_; }
+  uint8_t libraryError() const { return libError_; }
+  uint32_t libraryOpenUs() const { return libOpenUs_; }
+  bool openLibrary(const char* path, uint32_t sectors, bool create, bool& created) override {
     const uint32_t t = micros();
-    const bool ok = SD.sdfs.card()->readSector(base_ + i, data);
-    worst(t_.sectorRead, t);
+    const bool ok = openContiguous(path, sectors, create, created, libBase_, libCount_, libError_);
+    libOpenUs_ = micros() - t;
     return ok;
+  }
+  bool readLibrarySector(uint32_t i, uint8_t* data) override {
+    return i < libCount_ && readAt(libBase_ + i, data);
+  }
+  bool writeLibrarySector(uint32_t i, const uint8_t* data) override {
+    return i < libCount_ && writeAt(libBase_ + i, data);
+  }
+  bool libraryReady(uint32_t i) override {
+    return readyAt(i == ContentEngine::CardIo::kIdle ? i : libBase_ + i);
   }
   // Store writes are SdFat's multi-block stream (`writeStart`, `writeData`), the adapter's own: SdFat's `writeSector`
   // stops an open stream and waits while the card programs it (1.6–8.2 ms on the owner's card), so it is not used.
@@ -111,34 +99,12 @@ class SdCardIo : public ContentEngine::CardIo {
   // its transfer flag is cleared (`syncDevice` on an idle SdFat: no wait once the block is done) before a stop or a
   // new stream, because a command clears the transfer-complete status that flag would wait for.
   bool writeSector(uint32_t i, const uint8_t* data) override {
-    if (i >= count_) return false;
-    const uint32_t t = micros();
-    const bool next = streaming_ && base_ + i == next_;
-    if (!next) {
-      quiesce();  // waits only when `ready` was not asked first
-      if (!sdio()->syncDevice() || !sdio()->writeStart(base_ + i)) return false;
-      streaming_ = true;
-    }
-    const bool ok = sdio()->writeData(data);
-    next_ = base_ + i + 1;
-    worst(t_.sectorWrite, t);
-    worst(next ? t_.nextWrite : t_.jumpWrite, t);
-    return ok;
+    return i < count_ && writeAt(base_ + i, data);
   }
   /// False while writing sector `i` would wait: the card still takes the last block or programs a stopped stream; or
   /// the open stream is not at `i` (`kIdle`: the store is to be left idle) — it is stopped now, without waiting.
   bool ready(uint32_t i) override {
-    SdioCard* c = sdio();
-    bool r = !c->isBusy();
-    if (r && streaming_ && (i == ContentEngine::CardIo::kIdle || base_ + i != next_)) {
-      c->syncDevice();
-      c->stopTransmission(false);
-      streaming_ = false;
-      ++t_.stops;
-      r = false;
-    }
-    if (!r) ++t_.notReady;
-    return r;
+    return readyAt(i == ContentEngine::CardIo::kIdle ? i : base_ + i);
   }
   /// Stops an open store stream and waits until the card has programmed it: before anything else reaches the card
   /// (SdFat believes it idle).
@@ -150,6 +116,75 @@ class SdCardIo : public ContentEngine::CardIo {
   }
 
  private:
+  /// Opens (or creates and preallocates) `path` as one contiguous run of at least `sectors`: its first card sector in
+  /// `base`. `error` as `storeError`.
+  bool openContiguous(const char* path, uint32_t sectors, bool create, bool& created, uint32_t& base, uint32_t& count,
+                      uint8_t& error) {
+    quiesce();
+    created = false;
+    base = count = 0;
+    error = 1;
+    if (!ready_) return false;
+    FsFile f = SD.sdfs.open(path, O_RDONLY);
+    error = 2;
+    if (!f && create) {
+      f = SD.sdfs.open(path, O_RDWR | O_CREAT);
+      error = 3;
+      if (!f) return false;
+      if (!f.preAllocate(static_cast<uint64_t>(sectors) * 512u)) {
+        f.close();
+        SD.sdfs.remove(path);
+        error = 4;
+        return false;
+      }
+      created = true;
+    }
+    if (!f) return false;
+    uint32_t bgn = 0, end = 0;
+    const bool ok = f.contiguousRange(&bgn, &end) && end >= bgn && end - bgn + 1 >= sectors;
+    f.close();
+    error = 5;
+    if (!ok) return false;
+    error = 0;
+    base = bgn;
+    count = sectors;
+    return true;
+  }
+  bool readAt(uint32_t sector, uint8_t* data) {
+    quiesce();
+    const uint32_t t = micros();
+    const bool ok = SD.sdfs.card()->readSector(sector, data);
+    worst(t_.sectorRead, t);
+    return ok;
+  }
+  bool writeAt(uint32_t sector, const uint8_t* data) {
+    const uint32_t t = micros();
+    const bool next = streaming_ && sector == next_;
+    if (!next) {
+      quiesce();  // waits only when `ready` was not asked first
+      if (!sdio()->syncDevice() || !sdio()->writeStart(sector)) return false;
+      streaming_ = true;
+    }
+    const bool ok = sdio()->writeData(data);
+    next_ = sector + 1;
+    worst(t_.sectorWrite, t);
+    worst(next ? t_.nextWrite : t_.jumpWrite, t);
+    return ok;
+  }
+  /// `ready` on a card sector (`kIdle`: the card to be left idle).
+  bool readyAt(uint32_t sector) {
+    SdioCard* c = sdio();
+    bool r = !c->isBusy();
+    if (r && streaming_ && (sector == ContentEngine::CardIo::kIdle || sector != next_)) {
+      c->syncDevice();
+      c->stopTransmission(false);
+      streaming_ = false;
+      ++t_.stops;
+      r = false;
+    }
+    if (!r) ++t_.notReady;
+    return r;
+  }
   static void worst(uint32_t& w, uint32_t since) {
     const uint32_t d = micros() - since;
     if (d > w) w = d;
@@ -161,6 +196,8 @@ class SdCardIo : public ContentEngine::CardIo {
   uint32_t base_ = 0, count_ = 0, next_ = 0;  // `next_`: the open stream's next card sector
   bool streaming_ = false;
   uint8_t storeError_ = 0;
+  uint32_t libBase_ = 0, libCount_ = 0, libOpenUs_ = 0;
+  uint8_t libError_ = 0;
   bool ready_ = false;
 };
 

@@ -15003,4 +15003,19 @@ owner's request before implementation).
   the next succeeds; blob → record → header each programmed before the next (no out-of-order publication); no heap.
   Mutations 9 / 9 (snapshot pins, header or checkpoint written in place, append not advanced, fit ignored, pins kept
   on failure or refusal, record before the blob is programmed, `SaveJob` unpinning a chain it did not pin).
-- To be added: 1c-iii the card file and commands.
+- 1c-iii (the card file and commands): `SdCardIo` opens the library as a second contiguous file through the store's
+  write stream (`openLibrary`, library sector read / write / ready); `EngineRoot` holds the writer in PSRAM (4,200 B
+  with its 512 B save chunk; the PSRAM line raised to the host layout's 6,817,320 B, the Teensy's 6,816,880). One card
+  stream: while a milestone writes, no slot save starts (`Persistence::service` waits) and a save already on the card
+  finishes first (`Persistence::onCard`). The file is created at boot (stopped) or right after `approve-saving`, only
+  with saving approved, no take open and the clock stopped; otherwise opened if present. `!ENGINE library`,
+  `library-open`, `milestone <S|B|E|T|A|F> [set]` (next number in that set and stage; `STOP THE TAKE FIRST`,
+  `LIBRARY NOT READY`, `LIBRARY FULL`, `BUSY`), `milestones`, `checkpoint` (diagnostic until loading).
+  Device (image `22e4d90c…`, boot `crash=0`, `BOOT,load,ok`): the file was created in the boot after the upload (1 GiB
+  contiguous at card sector 5,268,562; opened in 20 ms at the next boot). SET 02 T01, T02, S01 published (509 sectors
+  each, 22 loops, 59–62 ms); two checkpoints, current 1 then 2; after a reboot the index and the checkpoint read back
+  unchanged; SET 02 B01 saved while playing (67 ms; the worst grain meanwhile 239 µs); `milestone T` during a take
+  refused (`STOP THE TAKE FIRST`); a bad stage letter refused. Full native suite 4,413 passed, 0 failed (191 suites);
+  heap gate OK.
+- Open for the browser slice: the next stage number is found by reading the index on the command (≤ 512 sector
+  reads; ~2 ms with 4 milestones, the serial stage's worst) — the browser keeps the index in memory instead.
