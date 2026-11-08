@@ -17,6 +17,10 @@
   then NOTE ↔ LOOP; its long press leaves (`Surface::cycleEdit`). LOOP_EDIT so far: the DROID's loop bank (0), the
   status band's START / LENGTH (bars) / BPM cells with inverted labels, NOTELEN (short or long) creating an empty loop
   on an empty slot. Image `5a7e7f05…`, boot verified.
+- Slice 6: LOOP_EDIT's F4 sets the tempo (legacy: pitch bend channel 15, 1–300 BPM in tenths over the whole travel,
+  `TempoMapping`; the engine clock holds at least 20); its motor is parked at the tempo on entering LOOP_EDIT and the
+  landing ignored for the settle time; nothing on an external clock (`Surface::tempo`). Image `1cadee32…`, boot
+  verified.
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo

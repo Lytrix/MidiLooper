@@ -2328,4 +2328,6 @@ as built, `test_slot_long_press_creates_an_empty_loop`, `test_an_empty_loop_roun
 for the popup; `test_slot_double_press_clears`, mutations 2 / 2); (5) the edit button cycles NOTE ↔ LOOP and a long press leaves (as built: from performance
 LOOP_EDIT when the shown slot is empty; LOOP_EDIT shows START / LENGTH / BPM and NOTELEN creates an empty loop on an
 empty slot; `Surface::cycleEdit`, `test_edit_button_cycles_note_and_loop_edit`, mutations 4 / 5, the fifth redundant
-with `createEmpty`'s own refusal and removed); (6–8) LOOP_EDIT F4 tempo, F2 length, F1 start; (9) a loop-length popup.
+with `createEmpty`'s own refusal and removed); (6) LOOP_EDIT F4 tempo (as built: legacy pitch bend on channel 15 over 1–300 BPM
+in tenths, the clock's floor 20; the motor parked at the tempo on entry, its landing ignored for `kMotorSettleMs`;
+not on an external clock; `test_loop_edit_f4_sets_the_tempo`, mutations 5 / 5); (7–8) F2 length, F1 start; (9) a loop-length popup.

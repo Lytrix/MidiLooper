@@ -7,7 +7,8 @@
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
 // 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
-// performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08), NOTELEN
+// performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08; LOOP_EDIT's F4 is the tempo, pitch
+// bend on channel 15, its motor parked at the tempo on entry), NOTELEN
 // 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
 // bend channel 14, F3 / F4 CC 2 / CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
 // buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
@@ -50,6 +51,7 @@
 
 #include "ContentEngine/EditSurface.h"
 #include "ContentEngine/EngineClock.h"
+#include "Utils/TempoMapping.h"
 
 namespace ContentEngine {
 
@@ -182,6 +184,7 @@ class Surface {
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
   static constexpr uint8_t kLoopEditBank = 0, kNoteEditBank = 1;
+  static constexpr uint8_t kTempoChannel = 14;  // LOOP_EDIT's F4: pitch bend on channel 15 (legacy)
   enum Button : uint8_t {
     kRecord,
     kTrackSwitch,
@@ -213,6 +216,8 @@ class Surface {
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
     blinkMs_ = 0;
+    loopEdit_ = tempoPending_ = false;
+    tempoWrittenMs_ = 0;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
   static bool controlPlane(uint8_t status) { return (status & 0xF0) < 0xF0 && (status & 0x0F) >= 12; }
@@ -220,9 +225,10 @@ class Surface {
   /// A control-plane message at `ms`.
   void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
     const uint8_t type = status & 0xF0, channel = status & 0x0F;
-    if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14)
+    if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
       const int16_t pb = static_cast<int16_t>(static_cast<int32_t>(d1 | (d2 << 7)) - 8192);
-      if (channel == 15) edit_.select(pb, ms);
+      if (channel == 14 && loopEdit_) tempo(pb, ms);
+      else if (channel == 15) edit_.select(pb, ms);
       else if (channel == 13) edit_.coarse(pb, ms);
       return;
     }
@@ -268,7 +274,17 @@ class Surface {
   /// LOOP_EDIT is open (the edit button's cycle; its faders in later slices).
   bool loopEdit() const { return loopEdit_; }
   /// The next motor-fader message (NOTE_EDIT feedback), sent like the LEDs.
-  bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) { return edit_.motor(ms, m); }
+  /// The next motor message: NOTE_EDIT's, else LOOP_EDIT's tempo fader parked at the tempo on entry (legacy
+  /// `sendCurrentTempoPitchBend`: the value alone).
+  bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) {
+    if (edit_.motor(ms, m)) return true;
+    if (!tempoPending_) return false;
+    tempoPending_ = false;
+    tempoWrittenMs_ = ms;
+    const uint16_t wire = TempoMapping::pitchBendWireFromBpm(static_cast<float>(tempoTenths()) / 10.0f);
+    m = {static_cast<uint8_t>(0xE0 | kTempoChannel), static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7)};
+    return true;
+  }
 
   /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
   void transportStarted(uint32_t firstTick) {
@@ -457,12 +473,29 @@ class Surface {
   void cycleEdit(uint8_t t) {
     if (edit_.active()) {
       edit_.leave();
-      loopEdit_ = true;
+      enterLoopEdit();
       return;
     }
     loopEdit_ = false;
     enterEdit(t);
-    if (!edit_.active()) loopEdit_ = true;
+    if (!edit_.active()) enterLoopEdit();
+  }
+  void enterLoopEdit() {
+    loopEdit_ = true;
+    tempoPending_ = !clock_->external();  // F4's motor to the tempo
+  }
+  /// The internal tempo in tenths of a BPM.
+  uint32_t tempoTenths() const {
+    const uint64_t d = static_cast<uint64_t>(clock_->usPerTick()) * EngineClock::kTicksPerQuarter;
+    return static_cast<uint32_t>((600000000ull + d / 2) / d);
+  }
+  /// LOOP_EDIT's F4 (legacy `handleTempoInput`): the tempo, 1–300 BPM in tenths over the whole travel
+  /// (`TempoMapping`; the engine clock holds at least 20). Not on an external clock, nor while its motor lands.
+  void tempo(int16_t pb, uint32_t ms) {
+    if (clock_->external() || ms - tempoWrittenMs_ < EditSurface<Engine>::kMotorSettleMs) return;
+    const uint32_t tenths = 10u + TempoMapping::bpmStepFromPitchBendLogical(pb);
+    if (tenths == tempoTenths()) return;
+    clock_->setTempo(tenths * 10u);
   }
   void leaveEdit() {
     edit_.leave();
@@ -620,6 +653,8 @@ class Surface {
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
+  bool tempoPending_ = false;  // LOOP_EDIT entered: F4's motor to the tempo
+  uint32_t tempoWrittenMs_ = 0;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 

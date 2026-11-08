@@ -999,6 +999,32 @@ void test_edit_button_cycles_note_and_loop_edit() {
   TEST_ASSERT_FALSE(gS.edit().active());
 }
 
+// LOOP_EDIT's F4 sets the tempo (legacy: pitch bend on channel 15, 1–300 BPM in tenths over the whole travel); on
+// entry its motor is parked at the tempo, and that landing changes nothing.
+void test_loop_edit_f4_sets_the_tempo() {
+  tap(S::kEditModeNote);  // slot 0 empty: LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  const auto sent = drainMotors(100);
+  const Sent* park = findStatus(sent, 0xEE);
+  TEST_ASSERT_NOT_NULL(park);
+  const uint16_t wire = static_cast<uint16_t>(park->m.d1 | (park->m.d2 << 7));
+  TEST_ASSERT_EQUAL_UINT16(TempoMapping::pitchBendWireFromBpm(120.0f), wire);
+  const uint32_t us120 = gClk.usPerTick();
+  const uint16_t near = static_cast<uint16_t>(wire + 300);  // the motor lands a little off
+  gS.input(0xEE, near & 0x7F, near >> 7, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT32(us120, gClk.usPerTick());
+  ms(600);
+  const uint16_t w90 = TempoMapping::pitchBendWireFromBpm(90.0f);
+  gS.input(0xEE, w90 & 0x7F, w90 >> 7, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9000ull * 192), gClk.usPerTick());
+  tap(S::kEditModeNote, 700);  // performance: F4's pitch bend is not the tempo
+  ms(400);
+  const uint16_t w60 = TempoMapping::pitchBendWireFromBpm(60.0f);
+  gS.input(0xEE, w60 & 0x7F, w60 >> 7, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9000ull * 192), gClk.usPerTick());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -1110,6 +1136,7 @@ int main(int, char**) {
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
+  RUN_TEST(test_loop_edit_f4_sets_the_tempo);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);
