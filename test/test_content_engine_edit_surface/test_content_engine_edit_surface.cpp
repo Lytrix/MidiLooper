@@ -199,40 +199,52 @@ void test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes() {
   TEST_ASSERT_EQUAL_UINT32(5 * 48, gS.edit().bracket());
 }
 
-void test_geometry_faders_move_and_pitch_heard_one_step_a_gesture() {
+void test_geometry_faders_move_and_pitch_heard_one_step_a_note() {
   recordBar({{0, 60}, {100, 64}, {384, 67}});
   enterEdit();
   settle();
   f1(pbFor(2, 16));  // 64 @ 100 (step 2, offset 4)
   settle();          // F2–F4's motors follow the selection first
   const uint8_t depth0 = gE.noteEdit().depth();
-  // F2: to step 10 with the offset in the 16th kept, moved twice within 300 ms: one step.
+  // F2: to step 10 with the offset in the 16th kept: the note's step.
   f2(-8192 + 16384 * 6 / 15);
   f2(-8192 + 16384 * 10 / 15 + 20);
   TEST_ASSERT_EQUAL_UINT32(10 * 48 + 4, sel().tick);
   TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gE.noteEdit().depth());
   TEST_ASSERT_EQUAL_UINT32(484, heardAt(64));
-  // F3 (a new gesture, after 300 ms): the reference 16th's tick (480), not the start (484), + 5.
+  // F3: the reference 16th's tick (480), not the start (484), + 5 — the same note: its step replaced, not another.
   ms(400);
   f3(69);
   TEST_ASSERT_EQUAL_UINT32(485, sel().tick);
-  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gE.noteEdit().depth());
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gE.noteEdit().depth());
   // F4: pitch.
   ms(400);
   f4(70);
   TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
   TEST_ASSERT_EQUAL_UINT32(485, heardAt(70));
-  TEST_ASSERT_EQUAL_UINT8(depth0 + 3, gS.edit().steps());  // the screen's EDIT count: every step
-  // Undo (record double) twice: the pitch, then the fine move; redo once.
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());  // the screen's EDIT count: one step for the note
+  // Another note: a step of its own; a change back to its value takes the step away again.
+  f1(pbFor(8, 16));  // 67 @ 384
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  settle();
+  f4(72);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gS.edit().steps());
+  ms(400);
+  f4(67);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gS.edit().steps());
+  ms(400);
+  f4(72);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 2, gS.edit().steps());
+  // Undo (record double) twice: 67's step, then all of 64's; redo once.
   dbl(S::kRecordNote);
   ms(500);
-  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
   dbl(S::kRecordNote);
   ms(500);
-  TEST_ASSERT_EQUAL_UINT32(484, sel().tick);
+  TEST_ASSERT_EQUAL_UINT8(depth0, gS.edit().steps());
+  TEST_ASSERT_EQUAL_UINT32(100, heardAt(64));  // every F2 / F3 / F4 change undone at once
   tap(S::kRecordNote), ms(100), tap(S::kRecordNote), ms(100), tap(S::kRecordNote);  // triple: redo
   ms(500);
-  TEST_ASSERT_EQUAL_UINT32(485, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(485, heardAt(70));
 }
 
 // The DROID keeps sending a fader at rest (a repeat, or jitter of a few values): F1 acts only when its position moves,
@@ -605,19 +617,22 @@ void test_undo_restores_the_causing_note() {
   f1(pbFor(2, 16, 0, 2));  // 60 @ 96
   TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
   settle();
-  f4(62);  // a first step: its focus is A (the session start records none)
-  ms(400);
-  f4(64);
+  f4(64);  // A's step: B hidden
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
-  f1(pbFor(8, 16));  // 67: A's results settle
-  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
-  dbl(S::kRecordNote);  // undo A's second step: A at 62 and B back, A selected
+  dbl(S::kRecordNote);  // undo A's step: A at 60 and B back, A still selected
   ms(800);
-  TEST_ASSERT_EQUAL_UINT8(62, sel().pitch);
-  TEST_ASSERT_EQUAL_UINT32(4, onsAt(62, 96) + onsAt(64, 96));
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(4, onsAt(60, 96) + onsAt(64, 96));
   settle();
   f4(64);
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));  // A causes again: B hidden
+  f1(pbFor(8, 16));  // 67: A's results settle — they stay (sticky) when 67 is edited and that step undone
+  settle();
+  f4(68);
+  dbl(S::kRecordNote);
+  ms(800);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);  // the undone step's predecessor: A's, A selected
+  TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
 }
 
 // While playing, a move is heard in the bar it is made in (owner 2026-11-07), not from the next window: the first time
@@ -783,7 +798,7 @@ void test_no_heap() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
-  RUN_TEST(test_geometry_faders_move_and_pitch_heard_one_step_a_gesture);
+  RUN_TEST(test_geometry_faders_move_and_pitch_heard_one_step_a_note);
   RUN_TEST(test_f1_at_rest_keeps_the_moved_note_selected);
   RUN_TEST(test_the_droid_fader_bank_follows_note_edit);
   RUN_TEST(test_motor_faders_follow_the_selection_and_their_echo_changes_nothing);

@@ -22,9 +22,10 @@
 // * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end
 //   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
 // * F4 pitch (channel 15 CC 3): the value.
-// * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. One
-//   fader gesture on one note is one undo step: a move of the same fader on the same note within 300 ms replaces the
-//   gesture's step (as legacy collapses contiguous same-note updates).
+// * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
+//   change to the selected note is one undo step, kept when the note is deselected or NOTE_EDIT is left (as legacy;
+//   owner 2026-11-08: a fader is never exact, so a step a move was too many): a later change replaces the note's
+//   step, and one back at the note's value before it takes the step away.
 // * NOTELEN 35: short = start ↔ end (length) editing — the bracket and the reference 16th move to the note's end or
 //   start; double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
 //   within 24 ticks of it.
@@ -60,10 +61,9 @@ class EditSurface {
  public:
   static constexpr uint32_t kSixteenth = 48, kBar = 768, kWindowBars = 16;
   static constexpr int32_t kPbMin = -8192, kPbMax = 8192;
-  static constexpr uint32_t kGraceMs = 750, kCoarseRestMs = 1000, kGestureMs = 300, kSnapTicks = 24;
+  static constexpr uint32_t kGraceMs = 750, kCoarseRestMs = 1000, kSnapTicks = 24;
   static constexpr int32_t kCoarseThreshold = 150;
   static constexpr int32_t kF1Deadband = 96;  // of 16,384: F1's rest test (a 16th of a 16-step window is 1,092)
-  enum class Fader : uint8_t { None, Coarse, Fine, Pitch, Delete, Create, Length };
   /// Diagnostics (`!ENGINE trace`): what the last fader message did.
   enum class Why : uint8_t { Acted, NotReady, Grace, AtRest, NoChange, Refused };
   Why lastWhy() const { return why_; }
@@ -74,7 +74,7 @@ class EditSurface {
     state_ = State::Idle;
     sel_ = -1;
     length_ = false;
-    gesture_ = Fader::None;
+    open_ = false;
     for (Motor& m : motors_) m = Motor{};
     f1Seen_ = false;
     why_ = Why::Acted;
@@ -161,7 +161,7 @@ class EditSurface {
     state_ = State::Idle;
     sel_ = -1;
     length_ = false;
-    gesture_ = Fader::None;
+    open_ = false;
   }
 
   /// Once per pass: a finished gather opens the session (or narrows the window when it holds too many notes).
@@ -194,7 +194,7 @@ class EditSurface {
     refStep_ = bracket_ / kSixteenth;
     armedMs_ = ms;
     armed_ = false;
-    gesture_ = Fader::None;
+    open_ = false;
     f1Seen_ = false;  // the first F1 message selects
     drive(kMotorAll, ms);
   }
@@ -246,7 +246,7 @@ class EditSurface {
     length_ = false;  // a new selection leaves length mode
     refStep_ = bracket_ / kSixteenth;
     armed_ = true;  // an F1 move arms the geometry faders at once
-    gesture_ = Fader::None;
+    open_ = false;
     drive(kMotorCoarse | kMotorFine | kMotorPitch, ms);
   }
   void coarse(int16_t pb, uint32_t ms) {
@@ -260,12 +260,11 @@ class EditSurface {
     lastCoarse_ = pb;
     lastCoarseMs_ = ms;
     hadCoarse_ = true;
-    // The start's offset from the reference 16th, which F3 sets (−64 … +63: it may lie past the 16th) — taken before
-    // `base` undoes the gesture's last step, while the note and the reference 16th still go together.
+    // The start's offset from the reference 16th, which F3 sets (−64 … +63: it may lie past the 16th).
     const int32_t offset = static_cast<int32_t>(session().current(static_cast<uint16_t>(sel_)).tick) -
                            static_cast<int32_t>(refStep_ * kSixteenth);  // wrapped or not: the modulo below
     const int32_t loop = static_cast<int32_t>(loop_);
-    EditNote v = base(Fader::Coarse, ms);
+    EditNote v = base();
     if (length_) {
       uint32_t end = lengthCoarseTick(pb);
       lengthRules(v, end);
@@ -283,7 +282,7 @@ class EditSurface {
       v.tick = static_cast<uint32_t>(start);
       refStep_ = step;
     }
-    if (commit(Fader::Coarse, v, ms)) drive(kMotorFine, ms);
+    if (commit(v)) drive(kMotorFine, ms);
   }
   void fine(uint8_t cc, uint32_t ms) {
     const bool travel = echo(2, cc, ms);
@@ -295,7 +294,7 @@ class EditSurface {
     lastFine_ = cc;
     lastFineMs_ = ms;
     hadFine_ = true;
-    EditNote v = base(Fader::Fine, ms);
+    EditNote v = base();
     const int32_t offset = static_cast<int32_t>(cc) - 64;
     if (length_) {
       int32_t o = offset < -static_cast<int32_t>(kSixteenth) ? -static_cast<int32_t>(kSixteenth)
@@ -308,7 +307,7 @@ class EditSurface {
       const int32_t t = static_cast<int32_t>(refStep_ * kSixteenth) + offset;
       v.tick = t < 0 ? loop_ + static_cast<uint32_t>(t) : static_cast<uint32_t>(t) % loop_;
     }
-    commit(Fader::Fine, v, ms);  // F2 stays: it shows the reference 16th F3 offsets from
+    commit(v);  // F2 stays: it shows the reference 16th F3 offsets from
   }
   void pitch(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);
@@ -317,9 +316,9 @@ class EditSurface {
       why_ = Why::NoChange;
       return;
     }
-    EditNote v = base(Fader::Pitch, ms);
+    EditNote v = base();
     v.pitch = cc & 0x7F;
-    commit(Fader::Pitch, v, ms);
+    commit(v);
   }
 
   // ---- Buttons --------------------------------------------------------------------------------------------------
@@ -327,7 +326,6 @@ class EditSurface {
   void toggleLength(uint32_t ms) {
     if (!editing()) return;
     length_ = !length_;
-    gesture_ = Fader::None;
     armed_ = true;  // legacy: entering / leaving length mode enables the geometry faders
     EditNote n;
     if (!selected(n)) return;
@@ -343,7 +341,7 @@ class EditSurface {
   /// NOTELEN double: delete the selected note, else create one at the bracket.
   void deleteOrCreate(uint32_t ms) {
     if (!editing()) return;
-    gesture_ = Fader::None;
+    open_ = false;
     EditNote n;
     if (selected(n)) {
       n.deleted = 1;
@@ -428,38 +426,40 @@ class EditSurface {
     why_ = Why::Grace;
     return false;
   }
-  /// The note a gesture starts from: its value before the gesture (the step it replaces is undone first).
-  EditNote base(Fader f, uint32_t ms) {
-    const bool same = f == gesture_ && sel_ == gestureNote_ && ms - gestureMs_ < kGestureMs &&
-                      session().depth() == gestureDepth_;
-    if (same) {
-      uint32_t focusOut;
-      session().undo(focusOut);  // the gesture's previous value: replaced by the new one
-    }
-    return session().current(static_cast<uint16_t>(sel_));
-  }
-  /// True: the change was taken as a step.
-  bool commit(Fader f, const EditNote& v, uint32_t ms) {
+  /// The selected note as it is now: a fader changes it from there.
+  EditNote base() const { return session().current(static_cast<uint16_t>(sel_)); }
+  /// True: the note changed (its step taken, replaced or taken away).
+  bool commit(const EditNote& v) {
     if (v == session().current(static_cast<uint16_t>(sel_))) {
-      // A value that changes nothing takes no undo step (a fader's echo at rest, or a gesture back at its start —
-      // `base` undid its step): the bracket follows the note (owner 2026-11-06: it stayed a 16th on, at the end).
+      // A value that changes nothing takes no undo step (a fader's echo at rest): the bracket follows the note (owner
+      // 2026-11-06: it stayed a 16th on, at the end).
       why_ = Why::NoChange;
       follow(v);
       return false;
     }
+    uint32_t focusOut;
+    const bool replace = open_ && sel_ == openNote_ && session().depth() == openDepth_;
+    if (replace) {
+      session().undo(focusOut);  // the note's step: replaced by the new value
+      open_ = false;
+      if (v == session().current(static_cast<uint16_t>(sel_))) {  // back at its value before the step: none
+        why_ = Why::Acted;
+        follow(v);
+        return true;
+      }
+    }
     const EditChange c{static_cast<uint16_t>(sel_), v};
     const EditResult r = session().apply(&c, 1, focus());
     if (r != EditResult::Ok) {
-      gesture_ = Fader::None;
+      if (replace && session().redo(focusOut) == EditResult::Ok) open_ = true;  // the note keeps its step
       why_ = Why::Refused;
       refusal_ = static_cast<uint8_t>(r);
       return false;
     }
     why_ = Why::Acted;
-    gesture_ = f;
-    gestureNote_ = sel_;
-    gestureMs_ = ms;
-    gestureDepth_ = session().depth();
+    open_ = true;
+    openNote_ = sel_;
+    openDepth_ = session().depth();
     follow(v);
     return true;
   }
@@ -604,7 +604,7 @@ class EditSurface {
       refStep_ = bracket_ / kSixteenth;
     }
     if (r == EditResult::Ok) session().cause(sel_);  // the step's own results came back with it
-    gesture_ = Fader::None;
+    open_ = false;
     if (r == EditResult::Ok) drive(kMotorAll, ms);
     return true;
   }
@@ -663,10 +663,9 @@ class EditSurface {
   uint8_t lastFine_ = 64;
   uint32_t lastFineMs_ = 0;
   bool hadFine_ = false;
-  Fader gesture_ = Fader::None;
-  int16_t gestureNote_ = -1;
-  uint32_t gestureMs_ = 0;
-  uint8_t gestureDepth_ = 0;
+  bool open_ = false;  // the selected note has its step: a change replaces it
+  int16_t openNote_ = -1;
+  uint8_t openDepth_ = 0;
 };
 
 }  // namespace ContentEngine

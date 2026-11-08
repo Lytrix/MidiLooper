@@ -1787,8 +1787,8 @@ the DROID.
   channel 14) the start in 16ths across the loop keeping its offset (movement ≥ 150 or after 1 s at rest), or in length
   mode the end across the loop; F3 (CC 2 channel 15) the start as the reference 16th + (value − 64), or the end anchor ±
   48; F4 (CC 3 channel 15) the pitch. An end stays at least a 16th after the start. The geometry faders wait 750 ms
-  after a selection unless F1 moved. One gesture of one fader on one note is one E: step (a move within 300 ms replaces
-  the gesture's step, as legacy collapses contiguous updates).
+  after a selection unless F1 moved. Every change to the selected note is one E: step, kept at deselect or leaving
+  (see "One undo step a note in NOTE_EDIT" below; it replaced one step a fader gesture).
 - **NOTELEN 35:** short = start ↔ end editing (the bracket and reference 16th follow); double = delete the selected
   note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts within 24 ticks. The record button's
   double / triple are the session's undo / redo while editing, restoring the selection (undo to the session start keeps
@@ -2237,3 +2237,15 @@ ahead / behind / kept / re-pitched / new-sounding / a passed controller; overtak
 selection superseding an edit joins as before; past-window note; boundary) and `test_content_engine_edit_surface`
 (a move heard in the bar it is made in, twice a bar apart); mutations 15 / 15 (a loop-length guard found unreachable —
 an edit keeps the loop — was removed). Device `6938a165…`: boot clean; confirmed on the DROID by the owner (2026-11-07: "Works").
+
+## One undo step a note in NOTE_EDIT (owner 2026-11-08: "saving every edit move is a bit overkill"; as built)
+
+A fader or encoder is never exact, so a note takes a few micro-adjustments; one E: step a gesture (a move of the same
+fader within 300 ms) gave each of them its own step. As legacy, a note's edits are now one step, kept when it is
+deselected (an F1 select, delete, create, undo / redo) or NOTE_EDIT is left: `EditSurface::commit` replaces the selected
+note's step (undo, then the note's whole new value) while that step is still the session's last, and a change back to
+the note's value before its step takes the step away. Start ↔ length switching keeps the step. A refused change redoes
+the replaced step, so the note keeps its edits. The screen's EDIT count follows (one a note).
+`test_content_engine_edit_surface`: the geometry test edits one note with F2, F3 and F4 in one step, a second note in
+its own, back and forth to its value, and undoes all of the first note's changes at once; the undo test reworked
+(mutations 2 / 2).
