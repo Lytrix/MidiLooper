@@ -69,7 +69,7 @@ struct EditView {
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
-  uint16_t loopBars = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (bars)
+  uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
 };
 
@@ -210,6 +210,19 @@ class EngineDisplay {
   /// 5 × 7 text right-aligned so its last column is `xr`.
   void rtext(const char* s, int16_t xr, uint8_t v) {
     text(s, static_cast<int16_t>(xr - static_cast<int16_t>(strlen(s)) * 6 + 2), kValBase, v);
+  }
+  /// A loop length for LOOP_EDIT's LENGTH: bars, or under a bar its fraction in 16ths reduced ("1/16", "3/4").
+  static void lengthText(uint32_t loop, char* out, size_t n) {
+    if (loop >= kBar || loop % (kBar / 16) != 0) {
+      snprintf(out, n, "%lu", static_cast<unsigned long>((loop + kBar - 1) / kBar));
+      return;
+    }
+    uint32_t num = loop / (kBar / 16), den = 16;
+    while (num % 2 == 0 && den > 1) {
+      num /= 2;
+      den /= 2;
+    }
+    snprintf(out, n, "%lu/%lu", static_cast<unsigned long>(num), static_cast<unsigned long>(den));
   }
   /// `tenths` as whole.tenth right-aligned so its last column is `xr`, with the legacy thin dot (one pixel in the
   /// spacing column) — "120.5" in 24 columns.
@@ -573,8 +586,7 @@ class EngineDisplay {
         snprintf(cells[0].value, sizeof cells[0].value, "%lu.%lu",
                  static_cast<unsigned long>(edit_.loopStart / kBar + 1),
                  static_cast<unsigned long>(edit_.loopStart % kBar / (kBar / 16) + 1));
-        const uint32_t bars = edit_.loopBars != 0 ? edit_.loopBars : (info.loop + kBar - 1) / kBar;
-        snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>(bars));
+        lengthText(edit_.loopTicks != 0 ? edit_.loopTicks : info.loop, cells[1].value, sizeof cells[1].value);
       }
       // The tempo with its tenth (owner 2026-11-08: F3 sets tenths), drawn after the cells with the thin dot.
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1,

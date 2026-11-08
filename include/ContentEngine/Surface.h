@@ -9,7 +9,8 @@
 // 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
 // performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08; LOOP_EDIT's F4 is the coarse tempo,
 // whole BPM, pitch bend on channel 15, and F3 the fine tempo, 0.1 BPM from its centre, CC 100 on channel 16; F2 the
-// loop length, 1–128 bars, CC 101 on channel 16 (or pitch bend on channel 14), applied at rest as a play window,
+// loop length on a scale of 25 notches, 1/16 bar to 128 bars, CC 101 on channel 16 (or pitch bend on channel 14),
+// applied at rest as a play window (one undo step a LOOP_EDIT visit),
 // DEC-257; F1 the loop start in 16ths, pitch bend on channel 16, applied at rest by rotating the content, counted from
 // LOOP_EDIT's entry; every motor parked on entry, `loopWrite`), NOTELEN
 // 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
@@ -230,7 +231,7 @@ class Surface {
     for (uint32_t& w : loopWrittenMs_) w = 0;
     pendingMs_ = 0;
     coarseBpm_ = 120;
-    pendingBars_ = 0;
+    pendingLoop_ = 0;
     startMs_ = pendingStart_ = appliedStart_ = 0;
     startPending_ = false;
   }
@@ -250,7 +251,7 @@ class Surface {
       return;
     }
     if (type == 0xB0 && channel == 15 && d1 == kLengthCc && loopEdit_) {  // LOOP_EDIT's F2: CC 101, bars − 1
-      lengthBars(static_cast<uint16_t>((d2 & 0x7F) + 1), ms);
+      lengthAt(d2 & 0x7F, ms);
       return;
     }
     if (type == 0xB0 && channel == 15 && d1 == kFineCc && loopEdit_) {  // LOOP_EDIT's F3: CC 100, the fine tempo
@@ -300,8 +301,8 @@ class Surface {
   const EditSurface<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
-  /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in bars (0: none).
-  uint16_t pendingLoopBars() const { return pendingBars_; }
+  /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in ticks (0: none).
+  uint32_t pendingLoopTicks() const { return pendingLoop_; }
   /// LOOP_EDIT's loop start, in ticks from the content as LOOP_EDIT found it (F1; pending while it settles).
   uint32_t loopStart() const { return startPending_ ? pendingStart_ : appliedStart_; }
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
@@ -516,8 +517,9 @@ class Surface {
   }
   void enterLoopEdit() {
     loopEdit_ = true;
+    visitState_ = 0;   // a new visit: its first change is a step
     loopPark_ = true;  // every fader to its value, at the next motor pass
-    pendingBars_ = 0;
+    pendingLoop_ = 0;
     appliedStart_ = 0;  // rotations count from the content as it is now
     startPending_ = false;
     coarseBpm_ = static_cast<uint16_t>(tempoTenths() / 10);
@@ -539,9 +541,8 @@ class Surface {
     loopMotorCount_ = 0;
     loopWrite(0, 0xE0 | kProgramChannel, 0, 0, kProgramChannel, kStartTrigger, ms);  // the start: the bottom
     const ManifestId c = transport().contentOf(shownSlot(selected()));
-    const uint32_t bars = c == kNoManifest ? 1 : e_->manifests().manifest(c).loopLengthTicks / EditSurface<Engine>::kBar;
-    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, static_cast<uint8_t>(bars == 0 ? 0 : bars > 128 ? 127 : bars - 1),
-              kProgramChannel, kLengthTrigger, ms);
+    const uint32_t loop = c == kNoManifest ? EditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
+    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, positionOf(loop), kProgramChannel, kLengthTrigger, ms);
     if (clock_->external()) return;
     writeFine(static_cast<uint8_t>(64 + tempoTenths() % 10), ms);
     const uint16_t wire = wireOfBpm(coarseBpm_);
@@ -575,28 +576,50 @@ class Surface {
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
     const uint32_t shift = (pendingStart_ % loop + loop - appliedStart_ % loop) % loop;
     if (shift == 0) return;
-    if (control().rotate(slot, shift, tick_, us_, us()) == X::Result::Ok) appliedStart_ = pendingStart_;
+    if (control().rotate(slot, shift, tick_, us_, us(), visitState_) == X::Result::Ok) {
+      appliedStart_ = pendingStart_;
+      visited(slot);
+    }
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
   /// motor lands.
   void lengthFader(int16_t pb, uint32_t ms) {
-    lengthBars(static_cast<uint16_t>((static_cast<int32_t>(pb) + 8192) * 127 / 16383 + 1), ms);
+    lengthAt(static_cast<uint8_t>((static_cast<int32_t>(pb) + 8192) * kLengthScaleCount / 16384), ms);
   }
-  /// F2 at `bars` (1–128): the DROID's loop bank sends CC 101 on channel 16 (owner capture 2026-11-08; legacy
-  /// `LENGTH_CC_NUMBER`), the pitch bend form is legacy's too.
-  void lengthBars(uint16_t bars, uint32_t ms) {
+  /// F2's travel (owner 2026-11-08: the motor holds 25 notches, and 1–8 bars over 128 steps was niggly): 25 positions —
+  /// 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars. The DROID's notched fader sends the position itself
+  /// (owner: "it outputs integer values 0-25"), as CC 101; a higher one is the last.
+  static constexpr uint8_t kLengthScaleCount = 25;
+  static uint32_t loopAt(uint8_t i) {
+    static constexpr uint16_t kFraction[5] = {48, 96, 192, 384, 576};  // ticks: 1/16 … 3/4 bar
+    static constexpr uint16_t kTail[4] = {32, 64, 96, 128};            // bars
+    const uint32_t bar = EditSurface<Engine>::kBar;
+    return i < 5 ? kFraction[i] : i < 21 ? (i - 4u) * bar : kTail[i < kLengthScaleCount ? i - 21 : 3] * bar;
+  }
+  /// The position that puts F2 on `loop` ticks (a length off the scale: the position below it).
+  static uint8_t positionOf(uint32_t loop) {
+    uint8_t i = 0;
+    while (i + 1 < kLengthScaleCount && loopAt(static_cast<uint8_t>(i + 1)) <= loop) ++i;
+    return i;
+  }
+  /// F2 at position `pos` (CC 101 on channel 16, the DROID's loop bank; owner capture 2026-11-08).
+  void lengthAt(uint8_t pos, uint32_t ms) {
     if (landing(1, ms)) return;
-    pendingBars_ = bars;
+    pendingLoop_ = loopAt(pos);  // past the last notch: the last
     pendingMs_ = ms;
   }
   void settleLength(uint32_t ms) {
-    if (pendingBars_ == 0 || ms - pendingMs_ < kLengthSettleMs) return;
-    const uint32_t loop = pendingBars_ * EditSurface<Engine>::kBar;
-    pendingBars_ = 0;
+    if (pendingLoop_ == 0 || ms - pendingMs_ < kLengthSettleMs) return;
+    const uint32_t loop = pendingLoop_;
+    pendingLoop_ = 0;
     if (!loopEdit_) return;
-    control().resize(shownSlot(selected()), loop, tick_, us_, us());
+    const uint8_t slot = shownSlot(selected());
+    if (control().resize(slot, loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
   }
+  /// One undo step a LOOP_EDIT visit (owner 2026-11-08: the steps exploded): a later change replaces the state the
+  /// visit's last one made, while that is still the slot's current. Leaving LOOP_EDIT or switching track ends it.
+  void visited(uint8_t slot) { visitState_ = e_->manifests().manifest(transport().contentOf(slot)).identity; }
   /// The internal tempo in tenths of a BPM.
   uint32_t tempoTenths() const {
     const uint64_t d = static_cast<uint64_t>(clock_->usPerTick()) * EngineClock::kTicksPerQuarter;
@@ -796,7 +819,8 @@ class Surface {
   bool loopPark_ = false;           // LOOP_EDIT entered: every fader to its value
   uint16_t coarseBpm_ = 120;        // F4's whole BPM
   uint32_t pendingMs_ = 0;
-  uint16_t pendingBars_ = 0;
+  uint32_t visitState_ = 0;  // identity of the state this LOOP_EDIT visit's last change made (0: none)
+  uint32_t pendingLoop_ = 0;  // LOOP_EDIT's F2 moved: the length it will take (ticks)
   uint32_t startMs_ = 0, pendingStart_ = 0, appliedStart_ = 0;
   bool startPending_ = false;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;

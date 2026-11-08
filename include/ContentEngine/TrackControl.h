@@ -151,18 +151,18 @@ class TrackControl {
   }
   Result createEmpty(uint8_t slot, uint32_t loop) { return x_->createEmpty(slot, loop); }
   /// Loop start (owner 2026-11-08): the slot's content rotated `shift` ticks earlier.
-  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
     Emit buf[Tracks * T];
     uint8_t n;
-    const Result r = x_->rotate(slot, shift, clock, buf, Tracks * T, n);
+    const Result r = x_->rotate(slot, shift, clock, buf, Tracks * T, n, replace);
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
   /// Loop length (DEC-257): a play window over the slot's content.
-  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
     Emit buf[Tracks * T];
     uint8_t n;
-    const Result r = x_->resize(slot, loop, clock, buf, Tracks * T, n);
+    const Result r = x_->resize(slot, loop, clock, buf, Tracks * T, n, replace);
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }

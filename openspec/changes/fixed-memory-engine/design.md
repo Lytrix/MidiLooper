@@ -2408,3 +2408,19 @@ note 100 and F2 CC 101 / note 101 on channel 16, F3 CC 100 / note 1 and F4 pitch
 15) — through one timed queue (`Surface::loopWrite`); a fader's own messages are not moves for `kMotorSettleMs`. Before
 this, F2 and F4 were written without triggers and F1 with the note bank's (note 0). `test_loop_edit_tempo_coarse_and_fine`
 (replaces the single-fader tempo test); mutations 7 / 7.
+
+## LOOP_EDIT: one undo step a visit; F2 on 25 notches (owner 2026-11-08; as built)
+
+* **One undo step a visit** ("the number of undos explode on the loop length edits"). `resize` and `rotate` take the
+  identity of the state the LOOP_EDIT visit's last change made; while that state is still the slot's current, the new
+  state replaces it in place (`SlotTransport::adopt` → `History::replaceState`, which releases the replaced manifest
+  and so a replaced rotation's copied runs) instead of adding a step. The identity, not the table index, is compared:
+  an undo inside the visit makes the next change a step again and never overwrites the state before the visit.
+  Entering LOOP_EDIT (or switching track in it) starts a visit.
+* **F2 on 25 notches** (the motor holds 25; 1–8 bars over 128 steps was niggly; the DROID's notched fader sends the
+  notch number): 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars, CC 101 = the notch (a higher value is
+  the last; the pitch bend form maps its travel onto the same 25). The motor is parked on the notch of the current
+  length, or the one below a length off the scale. LENGTH shows a fraction under a bar.
+* `test_loop_edit_f2_sets_the_length` (the scale, sub-bar lengths, one step across many changes, an undo inside a visit,
+  a second visit, undo restoring each visit); `test_loop_edit_f1_rotates_the_loop_start` (one step for two rotations);
+  mutations 9 of 10 (the last a redundant clamp, removed).

@@ -1,3 +1,13 @@
+**2026-11-08 — Fixed-memory engine: LOOP_EDIT one undo step a visit; F2 on 25 notches.**
+- Owner: "the number of undos explode on the loop length edits". A LOOP_EDIT visit is now one undo step: a length or
+  start change replaces the state the visit's previous change made while that is still the slot's current (its
+  identity checked, so an undo inside the visit makes the next change a step again); leaving LOOP_EDIT or switching
+  track ends the visit (`SlotTransport::adopt`, `History::replaceState`). Replaced rotations' copies are released.
+- Owner: F2 over 128 steps was niggly and the motor holds 25 notches, sending the notch number. F2 is now 25 positions:
+  1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars (CC 101 = the notch, its motor parked on the notch
+  below an off-scale length); LENGTH shows fractions under a bar ("1/16", "3/4"). The DROID's F2 needs 25 notches.
+  Image `d4150f38…`, boot verified; owner check pending.
+
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT tempo coarse and fine; loop-bank motor triggers.**
 - Owner: the whole-range tempo fader was too shallow to set exactly. As NOTE_EDIT's position: F4 (pitch bend channel 15)
   sets whole BPM over 20–300 and puts F3 back at its centre; F3 (CC 100 channel 16, `droid/midilooper_v1.ini`) adds

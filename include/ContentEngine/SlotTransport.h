@@ -293,7 +293,10 @@ class SlotTransport {
   /// Loop length (DEC-257, owner 2026-11-08: a play window): a state of the slot's content runs at loop `loop`, with a
   /// fit run re-wrapping them there (the previous one left out); notes keep their lengths, those past a shorter end are
   /// kept and not played. One undo step; tracks playing the slot follow from the next boundary.
-  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+  /// `replace` (owner 2026-11-08: one undo step a LOOP_EDIT visit): when the slot's current state has this identity, the
+  /// new state replaces it in place instead of adding a step (0: always a step).
+  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
+                uint32_t replace = 0) {
     emitted = 0;
     if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -318,7 +321,7 @@ class SlotTransport {
     const ManifestId m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
     if (fit != kNoRun) runs_->release(fit);  // the manifest holds it
     if (m == kNoManifest) return Result::DeniedManifest;
-    history_->commit(slot, m);
+    adopt(slot, base, m, replace);
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
   }
@@ -327,7 +330,8 @@ class SlotTransport {
   /// (`FitBuilder::rotate`: notes keep their lengths, one crossing the new loop start wraps), with a fit run rebuilt for
   /// them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot follow
   /// from the next boundary.
-  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
+                uint32_t replace = 0) {
     emitted = 0;
     if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -364,9 +368,14 @@ class SlotTransport {
     for (uint8_t i = 0; i < n; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
     if (fit != kNoRun && (n == 0 || list[n - 1] != fit)) runs_->release(fit);
     if (result != Result::Ok) return result;
-    history_->commit(slot, m);
+    adopt(slot, base, m, replace);
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
+  }
+  /// `m` becomes the slot's state: in place of `base` when that is the state with identity `replace`, else a step.
+  void adopt(uint8_t slot, ManifestId base, ManifestId m, uint32_t replace) {
+    if (replace != 0 && manifests_->manifest(base).identity == replace && history_->replaceState(slot, base, m)) return;
+    history_->commit(slot, m);
   }
 
   /// Starts composing `slot` for `track` from its loop start; `commitLaunch` makes it play.

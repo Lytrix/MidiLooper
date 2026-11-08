@@ -1151,41 +1151,77 @@ void test_resize_resolves_a_held_loop_note() {
   EXPECT_ALL(positions(false, 65, 1536), 900);
 }
 
-// LOOP_EDIT's F2 sets the loop length (legacy: pitch bend channel 14, 1–128 bars; its motor CC 101 on channel 16): moves
-// within the settle time are one resize, one undo step; notes past the shorter end come back when lengthened.
-void test_loop_edit_f2_sets_the_length() {
-  recordBar({{96, 60}, {600, 62}});
-  const uint8_t undo0 = gE.history().undoDepth(0);
+// LOOP_EDIT's F2 sets the loop length (CC 101 on channel 16: the notched fader's position, or pitch bend on channel 14)
+// on a scale of 25 notches —
+// 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 (owner 2026-11-08) — applied at rest. A LOOP_EDIT visit is
+// one undo step (owner 2026-11-08: the steps exploded): later changes replace it; the next visit is a new step.
+static uint8_t ccForBars(uint32_t bars) {  // the notched fader's position for whole bars (1–16, 32, 64, 96, 128)
+  return static_cast<uint8_t>(bars <= 16 ? bars + 4 : bars == 32 ? 21 : bars == 64 ? 22 : bars == 96 ? 23 : 24);
+}
+static void enterLoopEditOnContent() {
   tap(S::kEditModeNote);  // NOTE_EDIT
   ms(400);
+  drainMotors(800);
   tap(S::kEditModeNote);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
+}
+void test_loop_edit_f2_sets_the_length() {
+  recordBar({{96, 60}, {600, 62}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  enterLoopEditOnContent();
   const auto sent = drainMotors(100);
   const Sent* park = findMsg(sent, 0xBF, 101);
   TEST_ASSERT_NOT_NULL(park);
-  TEST_ASSERT_EQUAL_UINT8(0, park->m.d2);  // 1 bar
-  const auto f2 = [](uint32_t bars) {  // the DROID's loop bank: CC 101 on channel 16, bars − 1
-    gS.input(0xBF, 101, static_cast<uint8_t>(bars - 1), gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(ccForBars(1), park->m.d2);
+  const auto f2 = [](uint32_t bars) {
+    gS.input(0xBF, 101, ccForBars(bars), gUs / 1000);
     ms(5);
   };
   f2(2);  // the motor landing: no change
-  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopBars());
+  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopTicks());
   ms(600);
   f2(2);
-  TEST_ASSERT_EQUAL_UINT16(2, gS.pendingLoopBars());
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, gS.pendingLoopTicks());
   f2(4);
   ms(400);
-  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopBars());
+  TEST_ASSERT_EQUAL_UINT16(0, gS.pendingLoopTicks());
   TEST_ASSERT_EQUAL_UINT32(4 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
-  f2(1);  // back to a bar: a second step
+  f2(32);  // the scale past 20
   ms(400);
-  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(32 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  gS.input(0xBF, 101, 30, gUs / 1000);  // past the last notch: the last
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(128 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  pitchBend(13, -8192 + ccForBars(8) * 16384 / 25 + 64);  // the pitch bend form
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(8 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  gS.input(0xBF, 101, 2, gUs / 1000);  // under a bar: notch 2 is a quarter bar
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(192, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  gS.input(0xBF, 101, 0, gUs / 1000);  // a 16th
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(48, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  gS.input(0xBF, 101, ccForBars(8), gUs / 1000);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // still the visit's one step
+  tap(S::kEditModeNote, 700);  // leave
+  ms(400);
+  enterLoopEditOnContent();  // a new visit
+  drainMotors(800);
+  f2(3);
+  ms(400);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
-  pitchBend(13, -8192 + 3 * 16383 / 127 + 64);  // the pitch bend form: 4 bars
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());  // undone within the visit: the next change is a step again,
+  f2(5);                                                // never a replacement of the state before the visit
   ms(400);
-  TEST_ASSERT_EQUAL_UINT32(4 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(5 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  TEST_ASSERT_EQUAL_UINT32(8 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());  // the first visit at once
+  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
 }
 
 /// Every run of slot 0's current state keeps its rows in tick order (HideNote rows lead).
@@ -1242,7 +1278,7 @@ void test_loop_edit_f1_rotates_the_loop_start() {
   EXPECT_ALL(positions(true, 67, 768), 586);
   f1At(0);  // back
   ms(400);
-  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // one step a LOOP_EDIT visit
   run(gUs + 768 * kTick);  // the playing track follows from the next boundary
   EXPECT_ALL(positions(true, 60, 768), 96);
   EXPECT_ALL(positions(true, 66, 768), 150);
