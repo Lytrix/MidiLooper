@@ -1151,12 +1151,13 @@ void test_resize_resolves_a_held_loop_note() {
   EXPECT_ALL(positions(false, 65, 1536), 900);
 }
 
-// LOOP_EDIT's F2 sets the loop length (CC 101 on channel 16: the notched fader's position, or pitch bend on channel 14)
+// LOOP_EDIT's F2 sets the loop length (CC 101 on channel 16, 0–127 to the nearest notch, or pitch bend on channel 14)
 // on a scale of 25 notches —
 // 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 (owner 2026-11-08) — applied at rest. A LOOP_EDIT visit is
 // one undo step (owner 2026-11-08: the steps exploded): later changes replace it; the next visit is a new step.
-static uint8_t ccForBars(uint32_t bars) {  // the notched fader's position for whole bars (1–16, 32, 64, 96, 128)
-  return static_cast<uint8_t>(bars <= 16 ? bars + 4 : bars == 32 ? 21 : bars == 64 ? 22 : bars == 96 ? 23 : 24);
+static uint8_t ccOfNotch(uint32_t n) { return static_cast<uint8_t>((n * 127 + 12) / 24); }  // a notch's value
+static uint8_t ccForBars(uint32_t bars) {  // the notch for whole bars (1–16, 32, 64, 96, 128), as CC 0–127
+  return ccOfNotch(bars <= 16 ? bars + 4 : bars == 32 ? 21 : bars == 64 ? 22 : bars == 96 ? 23 : 24);
 }
 static void enterLoopEditOnContent() {
   tap(S::kEditModeNote);  // NOTE_EDIT
@@ -1191,16 +1192,16 @@ void test_loop_edit_f2_sets_the_length() {
   f2(32);  // the scale past 20
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(32 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
-  gS.input(0xBF, 101, 30, gUs / 1000);  // past the last notch: the last
+  gS.input(0xBF, 101, 125, gUs / 1000);  // near the top: the last notch
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(128 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
-  pitchBend(13, -8192 + ccForBars(8) * 16384 / 25 + 64);  // the pitch bend form
+  pitchBend(13, -8192 + 12 * 16384 / 25 + 64);  // the pitch bend form: notch 12, 8 bars
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(8 * 768, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
-  gS.input(0xBF, 101, 2, gUs / 1000);  // under a bar: notch 2 is a quarter bar
+  gS.input(0xBF, 101, ccOfNotch(2) + 1, gUs / 1000);  // under a bar: notch 2 (a value off its centre) is a quarter
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(192, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
-  gS.input(0xBF, 101, 0, gUs / 1000);  // a 16th
+  gS.input(0xBF, 101, 2, gUs / 1000);  // a 16th (notch 0)
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(48, gE.manifests().manifest(gE.transport().contentOf(0)).loopLengthTicks);
   gS.input(0xBF, 101, ccForBars(8), gUs / 1000);

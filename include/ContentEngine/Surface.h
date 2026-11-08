@@ -251,7 +251,7 @@ class Surface {
       return;
     }
     if (type == 0xB0 && channel == 15 && d1 == kLengthCc && loopEdit_) {  // LOOP_EDIT's F2: CC 101, bars − 1
-      lengthAt(d2 & 0x7F, ms);
+      lengthAt(notchOfCc(d2), ms);
       return;
     }
     if (type == 0xB0 && channel == 15 && d1 == kFineCc && loopEdit_) {  // LOOP_EDIT's F3: CC 100, the fine tempo
@@ -542,7 +542,7 @@ class Surface {
     loopWrite(0, 0xE0 | kProgramChannel, 0, 0, kProgramChannel, kStartTrigger, ms);  // the start: the bottom
     const ManifestId c = transport().contentOf(shownSlot(selected()));
     const uint32_t loop = c == kNoManifest ? EditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
-    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, positionOf(loop), kProgramChannel, kLengthTrigger, ms);
+    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
     if (clock_->external()) return;
     writeFine(static_cast<uint8_t>(64 + tempoTenths() % 10), ms);
     const uint16_t wire = wireOfBpm(coarseBpm_);
@@ -588,8 +588,9 @@ class Surface {
     lengthAt(static_cast<uint8_t>((static_cast<int32_t>(pb) + 8192) * kLengthScaleCount / 16384), ms);
   }
   /// F2's travel (owner 2026-11-08: the motor holds 25 notches, and 1–8 bars over 128 steps was niggly): 25 positions —
-  /// 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars. The DROID's notched fader sends the position itself
-  /// (owner: "it outputs integer values 0-25"), as CC 101; a higher one is the last.
+  /// 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars, over CC 101's 0–127 (the nearest notch: a
+  /// notch's value is `round(notch × 127 / 24)`). Owner 2026-11-08: the notch number sent as is saturates at CC 127
+  /// past notch 0, so the patch scales it back to 0–1 (or the fader runs continuous).
   static constexpr uint8_t kLengthScaleCount = 25;
   static uint32_t loopAt(uint8_t i) {
     static constexpr uint16_t kFraction[5] = {48, 96, 192, 384, 576};  // ticks: 1/16 … 3/4 bar
@@ -597,6 +598,10 @@ class Surface {
     const uint32_t bar = EditSurface<Engine>::kBar;
     return i < 5 ? kFraction[i] : i < 21 ? (i - 4u) * bar : kTail[i < kLengthScaleCount ? i - 21 : 3] * bar;
   }
+  static uint8_t notchOfCc(uint8_t cc) {
+    return static_cast<uint8_t>(((cc & 0x7F) * (kLengthScaleCount - 1) + 63) / 127);
+  }
+  static uint8_t ccOfNotch(uint8_t i) { return static_cast<uint8_t>((i * 127 + (kLengthScaleCount - 1) / 2) / (kLengthScaleCount - 1)); }
   /// The position that puts F2 on `loop` ticks (a length off the scale: the position below it).
   static uint8_t positionOf(uint32_t loop) {
     uint8_t i = 0;

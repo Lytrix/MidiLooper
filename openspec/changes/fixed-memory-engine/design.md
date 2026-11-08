@@ -2419,8 +2419,10 @@ this, F2 and F4 were written without triggers and F1 with the note bank's (note 
   Entering LOOP_EDIT (or switching track in it) starts a visit.
 * **F2 on 25 notches** (the motor holds 25; 1–8 bars over 128 steps was niggly; the DROID's notched fader sends the
   notch number): 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars, CC 101 = the notch (a higher value is
-  the last; the pitch bend form maps its travel onto the same 25). The motor is parked on the notch of the current
-  length, or the one below a length off the scale. LENGTH shows a fraction under a bar.
+  the last; the pitch bend form maps its travel onto the same 25). Read over CC 0–127 to the nearest notch
+  (`notchOfCc`; owner 2026-11-08: the DROID's notched output saturated its CC at 127 past notch 0), the motor parked
+  at a notch's value (`ccOfNotch`) — on the notch of the current length, or the one below a length off the scale.
+  LENGTH shows a fraction under a bar.
 * `test_loop_edit_f2_sets_the_length` (the scale, sub-bar lengths, one step across many changes, an undo inside a visit,
   a second visit, undo restoring each visit); `test_loop_edit_f1_rotates_the_loop_start` (one step for two rotations);
   mutations 9 of 10 (the last a redundant clamp, removed).

@@ -5,8 +5,11 @@
   track ends the visit (`SlotTransport::adopt`, `History::replaceState`). Replaced rotations' copies are released.
 - Owner: F2 over 128 steps was niggly and the motor holds 25 notches, sending the notch number. F2 is now 25 positions:
   1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars (CC 101 = the notch, its motor parked on the notch
-  below an off-scale length); LENGTH shows fractions under a bar ("1/16", "3/4"). The DROID's F2 needs 25 notches.
-  Image `d4150f38…`, boot verified; owner check pending.
+  below an off-scale length); LENGTH shows fractions under a bar ("1/16", "3/4").
+- Fix (owner: notched, F2 showed only 1/16 and 128): the DROID's notched output is the notch number, which its CC out
+  saturates at 127 past notch 0. CC 101 is read over 0–127 again, to the nearest of the 25 notches
+  (`Surface::notchOfCc`), and the motor parked at a notch's value (`ccOfNotch`): continuous works as is; notched needs
+  the patch to scale the notch back to 0–1 (output ÷ 24, start value × 24). Image `3719a15b…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: LOOP_EDIT tempo coarse and fine; loop-bank motor triggers.**
 - Owner: the whole-range tempo fader was too shallow to set exactly. As NOTE_EDIT's position: F4 (pitch bend channel 15)
