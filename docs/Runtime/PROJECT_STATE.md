@@ -1,3 +1,9 @@
+**2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
+- A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo
+  step on its slot, as leaving — and opens NOTE_EDIT on the new track's shown slot, or ends it when that slot is empty
+  (`Surface::switchTrack`). It stayed open on the track left (owner's choice of three: follow, exit, keep). Image
+  `ee52aa5c…` flashed; serial boot check pending (a Teensy serial monitor holds the port).
+
 **2026-11-08 — Fixed-memory engine: panel timing tuning (diagnostics).**
 - The playhead tears for part of a 1-bar loop at 120 BPM (owner): most likely the panel scanning rows while a DMA
   frame is written (no sync signal from this module), the crossing drifting with draw time. `!ENGINE oled-clock <v>`

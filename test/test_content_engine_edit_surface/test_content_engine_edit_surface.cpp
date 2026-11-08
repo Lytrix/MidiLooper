@@ -816,6 +816,67 @@ void test_f4_at_zero_mutes_the_note() {
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(64, 96));
 }
 
+/// Track 1's slot 8, one bar recorded while track 0 plays: `notes` (positions from the take start, 40 ticks each).
+static void recordTrack1(std::initializer_list<std::pair<uint32_t, uint8_t>> notes) {
+  static Live live[64];
+  tap(S::kTrackBase + 1);
+  ms(400);
+  tap(S::kSlotBase + 0);  // armed: the take starts at the next bar
+  for (int i = 0; i < 4000 && gE.transport().mode() != ProductionTransport::Mode::Recording; ++i) ms(1);
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Recording, gE.transport().mode());
+  const uint32_t t0 = gUs - ((gLast - gE.transport().origin(0)) % 768) * kTick;  // at track 0's bar line
+  uint32_t n = 0;
+  for (const auto& p : notes) live[n++] = {t0 + p.first * kTick + kTick / 2, t0 + (p.first + 40) * kTick, p.second};
+  gLive = live;
+  gLiveCount = n;
+  run(t0 + kBarUs - 200 * kTick);
+  tap(S::kSlotBase + 0);  // the take ends at the bar
+  run(t0 + kBarUs + 50 * kTick);
+  gLive = nullptr;
+  gLiveCount = 0;
+  TEST_ASSERT_TRUE(gE.transport().contentOf(8) != kNoManifest);
+}
+
+// NOTE_EDIT follows the track (owner 2026-11-08): a track select leaves the session — its edits one undo step on its
+// slot — and opens NOTE_EDIT on the new track's slot, or ends it when that slot is empty; outside NOTE_EDIT a select
+// opens nothing.
+void test_note_edit_follows_the_track() {
+  recordBar({{96, 64}});
+  recordTrack1({{384, 72}});
+  tap(S::kTrackBase + 0);
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  settle();
+  f4(70);
+  tap(S::kTrackBase + 1);  // to track 1: NOTE_EDIT on slot 8
+  ms(400);
+  for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  TEST_ASSERT_EQUAL_UINT8(8, gS.edit().slot());
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // track 0's edits: one step
+  settle();
+  f1(pbFor(8, 16));
+  TEST_ASSERT_EQUAL_UINT8(72, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT32(96, heardAt(70));  // track 0's edit kept
+  tap(S::kTrackBase + 2);  // an empty slot: NOTE_EDIT ends
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  tap(S::kTrackBase + 0);  // outside NOTE_EDIT: nothing opens
+  ms(400);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  enterEdit();
+  tap(S::kTrackSwitchNote);  // the track switch button follows too: track 1
+  ms(500);
+  for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  TEST_ASSERT_EQUAL_UINT8(8, gS.edit().slot());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -922,6 +983,7 @@ int main(int, char**) {
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);
   RUN_TEST(test_f4_with_notelen_held_sets_the_velocity);
   RUN_TEST(test_f4_at_zero_mutes_the_note);
+  RUN_TEST(test_note_edit_follows_the_track);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

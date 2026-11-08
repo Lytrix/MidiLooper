@@ -2305,3 +2305,12 @@ bar's bodies, so the previous note's last pixel (the same column) cannot cover i
 previous bar (flags bit 4) has none. Dense rasters and the live overlay are unchanged.
 `test_content_engine_piano_roll`: the geometry test's first pixels, and `test_touching_notes_show_each_start`
 (mutations 4 / 4).
+
+## NOTE_EDIT follows the track (owner 2026-11-08: "the mode should follow the track at least"; as built)
+
+A track select — a track button or the track switch button — while NOTE_EDIT is open left the session on the track
+left, its faders editing notes no longer shown. Of follow, exit and keep, the owner chose follow (`Surface::switchTrack`):
+the session is left, its edits one undo step on its slot as when leaving, and NOTE_EDIT opens on the new track's shown
+slot (the playing, else the selected one) as its entry does — bracket at the playhead, length and velocity mode off —
+or ends when that slot is empty or being written. Outside NOTE_EDIT a select opens nothing.
+`test_note_edit_follows_the_track` (mutations 5 / 5).

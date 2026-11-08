@@ -376,7 +376,7 @@ class Surface {
         else control().clear(slot, tick_, us_, us());
         return;
       case kTrackSwitch:
-        if (p == Press::Short) control().selectTrack(static_cast<uint8_t>((t + 1) % kTracks));
+        if (p == Press::Short) switchTrack(static_cast<uint8_t>((t + 1) % kTracks));
         else if (p == Press::Double) control().undo(slot, tick_, us_, us());
         else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
         else control().setMute(t, !control().muted(t), us_);
@@ -430,12 +430,22 @@ class Surface {
     }
     if (b >= kTrack0 && b < kTrack0 + kTracks) {
       const uint8_t tt = static_cast<uint8_t>(b - kTrack0);
-      if (p == Press::Short) control().selectTrack(tt);
+      if (p == Press::Short) switchTrack(tt);
       else if (p == Press::Double) control().setMute(tt, !control().muted(tt), us_);
       else if (p == Press::Long) control().setSolo(tt, !control().soloed(tt), us_);
     }
   }
 
+  /// A track select. NOTE_EDIT follows the track (owner 2026-11-08: it stayed open on the track left): the session is
+  /// left — its edits one undo step on its slot, as leaving — and NOTE_EDIT opens on the new track's shown slot, or
+  /// ends when that slot is empty.
+  void switchTrack(uint8_t tt) {
+    const bool follow = edit_.active() && tt != selected();
+    control().selectTrack(tt);
+    if (!follow) return;
+    edit_.leave();
+    enterEdit(tt);
+  }
   /// NOTE_EDIT on the shown slot (the playing or selected one), the window at the playhead.
   void enterEdit(uint8_t t) {
     auto& x = transport();
