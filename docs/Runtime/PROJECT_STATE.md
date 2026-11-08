@@ -5,7 +5,9 @@
 - Fix: the loop bank's motors were given values without their `clear` triggers (F2, F4) or with the note bank's (F1,
   note 0), so they likely did not move on entry. Each is now its value then its trigger per the ini: F1 note 100 / F2
   note 101 on channel 16, F3 note 1 / F4 note 2 on channel 15 (`Surface::loopWrite`). Image `36d08b9e…`, boot verified;
-  owner check pending.
+  owner confirmed ("it all works smoothly now").
+- Then (owner): LOOP_EDIT's BPM cell shows the tenth ("120.5", the band tempo's thin dot, `EngineDisplay::rtenths`, now
+  shared with the band). Image `caf5c9f7…`, boot verified.
 
 **2026-11-08 — Fixed-memory engine: creation and LOOP_EDIT, slice 1 of 9 (owner plan).**
 - Plan (owner): 1 NOTELEN short on an empty 16th creates; 2 NOTELEN long press released creates; 3 slot long press on

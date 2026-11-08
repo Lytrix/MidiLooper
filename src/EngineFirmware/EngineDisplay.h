@@ -211,6 +211,18 @@ class EngineDisplay {
   void rtext(const char* s, int16_t xr, uint8_t v) {
     text(s, static_cast<int16_t>(xr - static_cast<int16_t>(strlen(s)) * 6 + 2), kValBase, v);
   }
+  /// `tenths` as whole.tenth right-aligned so its last column is `xr`, with the legacy thin dot (one pixel in the
+  /// spacing column) — "120.5" in 24 columns.
+  void rtenths(uint32_t tenths, int16_t xr, uint8_t v) {
+    char buf[8];
+    snprintf(buf, sizeof buf, "%lu", static_cast<unsigned long>(tenths / 10));
+    const int16_t w = static_cast<int16_t>(strlen(buf)) * 6;
+    const int16_t tx = static_cast<int16_t>(xr - w - 5);
+    text(buf, tx, kValBase, v);
+    px(static_cast<int16_t>(tx + w - 1), kValBase - 1, v);
+    const char tenth[2] = {static_cast<char>('0' + tenths % 10), 0};
+    text(tenth, static_cast<int16_t>(tx + w + 1), kValBase, v);
+  }
 
   // ---- 3 × 5 labels and 5-row icons ----------------------------------------------------------------------------------
   /// Bit 14 is the top-left pixel, rows of 3 (row-major).
@@ -564,7 +576,7 @@ class EngineDisplay {
         const uint32_t bars = edit_.loopBars != 0 ? edit_.loopBars : (info.loop + kBar - 1) / kBar;
         snprintf(cells[1].value, sizeof cells[1].value, "%lu", static_cast<unsigned long>(bars));
       }
-      snprintf(cells[2].value, sizeof cells[2].value, "%u", st::tempoTenths(clock.usPerTick(), kQuarter) / 10);
+      // The tempo with its tenth (owner 2026-11-08: F3 sets tenths), drawn after the cells with the thin dot.
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1,
                                  static_cast<int16_t>(x0 + 24 + 32 + 24 + 2 * kGap), kLabY + 5, 11);
     } else {
@@ -582,7 +594,10 @@ class EngineDisplay {
     for (uint8_t i = 0; i < 3; ++i) {
       if (i) separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
       label(cells[i].label, x0, kLabY, noteEdit || loopEdit ? 0 : 5);
-      rtext(cells[i].value, static_cast<int16_t>(x0 + cells[i].width - 1), noteEdit || loopEdit || i < 2 ? 13 : 11);
+      if (loopEdit && i == 2)
+        rtenths(st::tempoTenths(clock.usPerTick(), kQuarter), static_cast<int16_t>(x0 + cells[i].width - 1), 13);
+      else
+        rtext(cells[i].value, static_cast<int16_t>(x0 + cells[i].width - 1), noteEdit || loopEdit || i < 2 ? 13 : 11);
       x0 = static_cast<int16_t>(x0 + cells[i].width + kGap);
     }
     // ---- Undo: the slot's steps, or the open overdub's / NOTE_EDIT session's ----
@@ -615,15 +630,7 @@ class EngineDisplay {
     } else {
       icon(Icon::Clock, bx, kLabY, 5);
     }
-    const uint16_t tenths = st::tempoTenths(clock.usPerTick(), kQuarter);
-    snprintf(buf, sizeof buf, "%u", tenths / 10);
-    const int16_t wWhole = static_cast<int16_t>(strlen(buf)) * 6;
-    const int16_t tx = static_cast<int16_t>(kX1 - (wWhole + 1 + 5) + 1);  // the legacy thin dot before the tenth
-    const uint8_t tv = ext ? 12 : 9;
-    text(buf, tx, kValBase, tv);
-    px(static_cast<int16_t>(tx + wWhole - 1), kValBase - 1, tv);
-    char tenth[2] = {static_cast<char>('0' + tenths % 10), 0};
-    text(tenth, static_cast<int16_t>(tx + wWhole + 1), kValBase, tv);
+    rtenths(st::tempoTenths(clock.usPerTick(), kQuarter), kX1, ext ? 12 : 9);  // the legacy thin dot before the tenth
   }
 
   SSD1322 oled_;
