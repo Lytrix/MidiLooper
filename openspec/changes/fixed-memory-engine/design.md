@@ -2263,3 +2263,32 @@ On the release F4's motor is written back to the pitch (`EditSurface::velocityDo
 band's NOTE_EDIT label bar pulses (1 Hz, 4–10, as the selected track's letter) under VELOCITY in velocity mode and
 under LENGTH in length mode. The range stays 1–127: `EditWriter` refuses velocity 0, a NoteOn that is a note off.
 `test_content_engine_edit_surface` +1, extended with the long hold (mutations 5 / 5).
+
+## Muted note (owner 2026-11-08: "a Mute Note sounds most logical"; designed, not built)
+
+The owner asked for F4's velocity range to reach 0. A stored NoteOn at velocity 0 is a note off everywhere in the engine
+(playback, `SpanWindow`, `NoteEditSession`, `DisplayTiles`, `RunTable`, `Composer`), and `SetFile::addNote` refuses it,
+so a velocity-0 note would vanish from the screen and NOTE_EDIT and could not be raised again. As other sequencers do
+(Ableton's deactivated note, an Elektron trig turned off), silence is a flag beside the velocity, not a velocity: a
+muted note keeps its pitch, length and velocity, is drawn and editable, and is not sent. The flag is also the hook for a
+later feature that chooses at random which notes play (owner 2026-11-08).
+
+* **Representation.** Bit 7 of the onset row's `data2` (velocity is 7-bit, so the bit is free): `data2 = 0x80 |
+  velocity`. The off row is unchanged. Every `data2 != 0` onset test still sees an onset, so pairing, tiles, the run
+  table and the edit session keep the note. No new row, no `PassEvent` size change; `origin` has no free bit (0..5
+  ordinal, 6 held loop, 7 closure).
+* **Readers.** Velocity is `data2 & 0x7F` wherever it is read as a value (`NoteEditSession`'s `EditNote`, the tiles,
+  `ClockOutput`'s levels). Exactly one owner admits a note to the output and skips a muted onset together with its
+  off by `noteId` (an unmatched off could cut a sounding note of the same pitch and channel); every other emit path
+  masks `& 0x7F`, so a data byte ≥ 0x80 can never reach a port. Which owner admits is settled by the audit at build.
+* **Overlap.** A muted note still takes part in overlap resolve (it is present, only not sent): muting never changes
+  which other notes are cut. Open for the owner when built.
+* **Editing.** `EditNote` gains `muted`; `EditWriter` writes and validates it (velocity stays 1–127). In velocity mode
+  (NOTELEN held), F4 at 0 mutes the note and any other value unmutes it at that velocity, so the fader's whole travel
+  is used. A mute is a change of the note's undo step like any other.
+* **Screen.** A muted note is drawn at the dim level (outline when selected); the velocity cell reads `M`.
+* **Set file.** `kSetFileVersion` 2; `LoadJob` accepts 1 and 2 (a version-1 file has no bit 7 set). Older engine
+  firmware refuses version 2 by name rather than sending `0x80 | velocity`. V1 import never sets the bit.
+* **Tests at build.** A muted note survives save / load and undo, is drawn and selectable, sends nothing (neither on nor
+  off), does not cut a same-pitch note, and unmutes at F4's value; an emit-path test proves no data byte ≥ 0x80 leaves a
+  port. A `DEC-###` entry records the representation.
