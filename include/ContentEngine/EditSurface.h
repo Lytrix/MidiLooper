@@ -21,7 +21,8 @@
 //   (`lengthEditCoarsePitchbendToLoopTick`), at least a 16th (`applyLengthEndTargetRules`).
 // * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end
 //   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
-// * F4 pitch (channel 15 CC 3): the value.
+// * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127; owner 2026-11-08, not in
+//   legacy) — that press is then no short / double, and F4's motor goes back to the pitch on its release.
 // * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
 //   change to the selected note is one undo step, kept when the note is deselected or NOTE_EDIT is left (as legacy;
 //   owner 2026-11-08: a fader is never exact, so a step a move was too many): a later change replaces the note's
@@ -313,6 +314,23 @@ class EditSurface {
       v.tick = t < 0 ? loop_ + static_cast<uint32_t>(t) : static_cast<uint32_t>(t) % loop_;
     }
     commit(v);  // F2 stays: it shows the reference 16th F3 offsets from
+  }
+  /// F4 while NOTELEN is held: the velocity (1–127; owner 2026-11-08, not in legacy).
+  void velocity(uint8_t cc, uint32_t ms) {
+    const bool travel = echo(3, cc, ms);
+    const uint8_t vel = (cc & 0x7F) == 0 ? 1 : (cc & 0x7F);
+    if (!geometryReady(ms)) return;
+    if (travel || session().current(static_cast<uint16_t>(sel_)).velocity == vel) {
+      why_ = Why::NoChange;
+      return;
+    }
+    EditNote v = base();
+    v.velocity = vel;
+    commit(v);
+  }
+  /// NOTELEN released after F4 set the velocity: F4's motor goes back to the pitch.
+  void velocityDone(uint32_t ms) {
+    if (editing()) drive(kMotorPitch, ms);
   }
   void pitch(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);

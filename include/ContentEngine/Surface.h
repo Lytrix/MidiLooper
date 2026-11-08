@@ -7,8 +7,8 @@
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
 // 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: enter / leave on the shown slot, long: leave), NOTELEN
-// 35 (short: start ↔ end, double: delete / create), F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4 CC 2 /
-// CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
+// 35 (short: start ↔ end, double: delete / create, held: F4 is the velocity), F1 pitch bend channel 16, F2 pitch
+// bend channel 14, F3 / F4 CC 2 / CC 3 channel 15; while editing the record button's double / triple are the session's undo / redo. The extended edit
 // buttons 41–48, LOOP_EDIT and bar / 16th steps are later slices: read and ignored here.
 // * Presses (`PressDetector`, the legacy `MidiButtonProcessor`): long when held ≥ the long time (on release); else a
 //   tap — a second tap within the double window is a double (at once, or after the triple window when the button has a
@@ -86,6 +86,11 @@ class PressDetector {
     s.pressed = false;
     s.released = true;
     s.lastRelease = ms;
+    if (s.consumed) {  // used with another control: no gesture, and no tap for a double
+      s.consumed = false;
+      idle(s);
+      return;
+    }
     const Timing& t = timing_[b];
     if (ms - s.start >= t.longMs) {
       idle(s);
@@ -128,12 +133,16 @@ class PressDetector {
     return true;
   }
   bool pressed(uint8_t b) const { return state_[b].pressed; }
+  /// The held press of `b` was used with another control: its release is no gesture.
+  void consume(uint8_t b) {
+    if (state_[b].pressed) state_[b].consumed = true;
+  }
 
  private:
   static constexpr uint8_t kQueue = 8;
   enum class Tap : uint8_t { Idle, PendingShort, PendingDouble };
   struct State {
-    bool pressed = false, released = false, tapped = false;
+    bool pressed = false, released = false, tapped = false, consumed = false;
     Tap tap = Tap::Idle;
     uint32_t start = 0, lastRelease = 0, lastTap = 0, secondTap = 0, expire = 0;
   };
@@ -197,6 +206,7 @@ class Surface {
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
+    velocityHeld_ = false;
     blinkMs_ = 0;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
@@ -212,17 +222,29 @@ class Surface {
       return;
     }
     if (type == 0xB0 && channel == 14) {  // F3 fine CC 2, F4 pitch CC 3 (channel 15)
-      if (d1 == 2) edit_.fine(d2, ms);
-      else if (d1 == 3) edit_.pitch(d2, ms);
+      if (d1 == 2) {
+        edit_.fine(d2, ms);
+      } else if (d1 == 3 && edit_.editing() && press_.pressed(kLength)) {  // NOTELEN held: F4 is the velocity
+        press_.consume(kLength);
+        velocityHeld_ = true;
+        edit_.velocity(d2, ms);
+      } else if (d1 == 3) {
+        edit_.pitch(d2, ms);
+      }
       return;
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     const uint8_t b = buttonOf(d1);
     if (b == 0xFF) return;
-    if (type == 0x90 && d2 != 0)
+    if (type == 0x90 && d2 != 0) {
       press_.down(b, ms);
-    else
+    } else {
       press_.up(b, ms);
+      if (b == kLength && velocityHeld_) {
+        velocityHeld_ = false;
+        edit_.velocityDone(ms);
+      }
+    }
   }
 
   /// Once per main-loop pass: the gestures due, at the last played tick.
@@ -557,6 +579,7 @@ class Surface {
   uint8_t slot_[kTracks] = {};
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
+  bool velocityHeld_ = false;  // F4 set the velocity while NOTELEN was held
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };
 

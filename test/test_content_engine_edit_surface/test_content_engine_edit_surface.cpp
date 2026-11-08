@@ -711,6 +711,39 @@ void test_length_mode_sets_the_end_at_least_a_sixteenth() {
   TEST_ASSERT_FALSE(gS.edit().lengthMode());
 }
 
+// Owner 2026-11-08 (not in legacy): F4 with NOTELEN held sets the velocity; that press is no short (length mode) or
+// double (delete); on its release F4's motor goes back to the pitch.
+void test_f4_with_notelen_held_sets_the_velocity() {
+  recordBar({{96, 64}});
+  enterEdit();
+  settle();
+  f1(pbFor(2, 16));
+  settle();
+  drainMotors(800);
+  const uint8_t depth0 = gE.noteEdit().depth();
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);  // hold
+  ms(100);
+  f4(30);
+  ms(100);
+  f4(0);  // velocity 0 would be a note off: 1
+  TEST_ASSERT_EQUAL_UINT8(1, sel().velocity);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  ms(100);
+  f4(90);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);  // release: no gesture
+  const auto sent = drainMotors(800);
+  TEST_ASSERT_FALSE(gS.edit().lengthMode());
+  TEST_ASSERT_EQUAL_UINT8(90, sel().velocity);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT8(depth0 + 1, gE.noteEdit().depth());  // the note's one step
+  const Sent* back = findMsg(sent, 0xBE, 3);
+  TEST_ASSERT_NOT_NULL(back);
+  TEST_ASSERT_EQUAL_UINT8(64, back->m.d2);
+  tap(S::kLengthNote);  // a press without F4: length mode as before
+  ms(450);
+  TEST_ASSERT_TRUE(gS.edit().lengthMode());
+}
+
 void test_no_note_is_created_next_to_a_note() {
   recordBar({{380, 69}});
   enterEdit();
@@ -815,6 +848,7 @@ int main(int, char**) {
   RUN_TEST(test_geometry_waits_the_grace_period_after_entry);
   RUN_TEST(test_length_mode_sets_the_end_at_least_a_sixteenth);
   RUN_TEST(test_notelen_double_deletes_and_creates_and_leave_keeps_one_step);
+  RUN_TEST(test_f4_with_notelen_held_sets_the_velocity);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_no_heap);

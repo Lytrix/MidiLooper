@@ -2251,3 +2251,12 @@ deselect).
 `test_content_engine_edit_surface`: the geometry test edits one note with F2, F3 and F4 in one step, a second note in
 its own, back and forth to its value, and undoes all of the first note's changes at once; the undo test reworked
 (mutations 2 / 2).
+
+## Velocity on F4 with NOTELEN held (owner 2026-11-08: "if you hold the length button and move the pitch fader, it can change the velocity value"; as built)
+
+Not in legacy. While NOTELEN (35) is held in NOTE_EDIT, F4 (CC 3 channel 15) sets the selected note's velocity, 1–127
+(0 would be a note off), as one change of the note's undo step (`EditSurface::velocity`). The press is then used
+(`PressDetector::consume`): its release is no short (length mode) or double (delete / create), nor a tap toward one.
+On the release F4's motor is written back to the pitch (`EditSurface::velocityDone`). F4 is not moved to the velocity
+when NOTELEN goes down, so the velocity follows the fader from wherever it is. `test_content_engine_edit_surface` +1
+(mutations 3 / 3).

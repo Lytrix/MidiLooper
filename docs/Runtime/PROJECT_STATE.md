@@ -1,3 +1,9 @@
+**2026-11-08 — Fixed-memory engine: NOTE_EDIT velocity on F4 with NOTELEN held.**
+- Holding NOTELEN (35) makes F4 set the selected note's velocity (1–127) instead of its pitch; that press is then no
+  short (length mode) or double (delete / create), and on its release F4's motor goes back to the pitch. Not in
+  legacy (owner request). The change joins the note's one undo step. Image `a9ca89e9…`, boot verified; owner check on
+  the DROID pending.
+
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT takes one undo step a note.**
 - Every change to the selected note is one undo step, kept at deselect or when leaving NOTE_EDIT (as legacy), instead
   of a step a fader gesture: micro-adjustments no longer pile up steps, and one undo takes back all of a note's edits.
