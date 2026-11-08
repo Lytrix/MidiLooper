@@ -2,7 +2,7 @@
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo
   step on its slot, as leaving — and opens NOTE_EDIT on the new track's shown slot, or ends it when that slot is empty
   (`Surface::switchTrack`). It stayed open on the track left (owner's choice of three: follow, exit, keep). Image
-  `ee52aa5c…` flashed; serial boot check pending (a Teensy serial monitor holds the port).
+  `ee52aa5c…`, boot verified (`crash=0`, 22 slots loaded, off-screen frames on).
 
 **2026-11-08 — Fixed-memory engine: panel timing tuning (diagnostics).**
 - The playhead tears for part of a 1-bar loop at 120 BPM (owner): most likely the panel scanning rows while a DMA
@@ -16,8 +16,8 @@
   written to the 64 GRAM rows not shown and the display start line (0xA1) moved to them once complete. Tear-free only
   if the controller applies the start line at its next frame (not in the datasheet). Legacy (`teensy41-capture-serial`)
   still builds; it never turns it on. Image `b20f4a6f…`, boot verified.
-- Owner: "No tear" with `oled-flip 1` — now on at boot (`EngineDisplay::begin`). Image `1bacdd55…` flashed; its serial
-  boot check is pending (a Teensy serial monitor held the port).
+- Owner: "No tear" with `oled-flip 1` — now on at boot (`EngineDisplay::begin`). Image `1bacdd55…` flashed; boot verified
+  with its successor `ee52aa5c…` (flip=1 at boot).
 
 **2026-11-08 — Fixed-memory engine: note starts on the piano roll.**
 - Each note's first pixel is drawn brighter than its bar (13; 15 selected; 6 / 9 muted), after every bar so a touching
