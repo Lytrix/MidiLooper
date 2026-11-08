@@ -12,7 +12,8 @@
 // 3. The jobs (`submitJobs`) and worker grains while the scheduler grants them.
 // 4. Each port's due messages to the wire: DIN and USB device. The USB host port is the DROID's: it gets only the
 //    surface's LED feedback (as the legacy firmware, which never sends playback there) — the host driver's
-//    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop.
+//    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop. Every host send is
+//    admitted first (`hostSend`, `HostTx.h`): dropped when both transmit buffers are full, and the LED stage waits.
 // 5. The control surface (E9.8b-1, `Surface`): the DROID control plane (channels 13–16, never recorded nor thru) as
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
 //    a millisecond (the DROID host's gap); the DROID's fader bank (Program Change 1 / 0 on channel 16, every port) follows
@@ -46,6 +47,7 @@
 
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
+#include "ContentEngine/HostTx.h"
 #include "ContentEngine/Surface.h"
 #include "ContentEngine/WallClock.h"
 #include "EngineFirmware/EngineDisplay.h"
@@ -66,6 +68,60 @@ uint32_t gLastLedUs = 0;
 constexpr uint32_t kLedGapUs = 1000;  // the DROID USB host drops packets closer than ~1 ms (legacy MIN_PACKET_GAP)
 USBHost gHost;
 MIDIDevice_BigBuffer gHostMidi(gHost);
+// The host driver's transmit state is private; an explicit instantiation may name private members, so these tags read
+// it without patching the library (`hosttx::hasRoom`, `HostTx.h`).
+template <typename Tag, typename Tag::type M>
+struct DriverField {
+  friend typename Tag::type field(Tag) { return M; }
+};
+struct Tx1 {
+  using type = volatile uint8_t MIDIDeviceBase::*;
+  friend type field(Tx1);
+};
+struct Tx2 {
+  using type = volatile uint8_t MIDIDeviceBase::*;
+  friend type field(Tx2);
+};
+struct TxSize {
+  using type = uint16_t MIDIDeviceBase::*;
+  friend type field(TxSize);
+};
+struct TxPipe {
+  using type = Pipe_t* MIDIDeviceBase::*;
+  friend type field(TxPipe);
+};
+template struct DriverField<Tx1, &MIDIDeviceBase::tx1_count>;
+template struct DriverField<Tx2, &MIDIDeviceBase::tx2_count>;
+template struct DriverField<TxSize, &MIDIDeviceBase::tx_size>;
+template struct DriverField<TxPipe, &MIDIDeviceBase::txpipe>;
+uint32_t gHostDropped = 0, gHostDeferred = 0;  // diagnostics (`!ENGINE take`): host messages dropped, LED passes waited
+
+/// The host driver's transmit state; call with interrupts off (a completion empties a buffer, the timer fills one).
+hosttx::State hostTxState() {
+  const MIDIDeviceBase& d = gHostMidi;
+  return {d.*field(TxPipe{}) != nullptr, d.*field(Tx1{}), d.*field(Tx2{}), static_cast<uint32_t>(d.*field(TxSize{}) / 4)};
+}
+
+/// True when the host port takes a message now (the LED stage waits while it does not).
+bool hostTxRoom() {
+  __disable_irq();
+  const bool room = hosttx::hasRoom(hostTxState());
+  __enable_irq();
+  return room;
+}
+
+/// One channel message to the DROID, or none (counted) when `write_packed` would wait. The check and the send run with
+/// interrupts off, so the driver's timer cannot fill the last buffer between them (`write_packed` re-enables them).
+void hostSend(uint8_t type, uint8_t d1, uint8_t d2, uint8_t channel) {
+  __disable_irq();
+  if (!hosttx::hasRoom(hostTxState())) {
+    __enable_irq();
+    ++gHostDropped;
+    return;
+  }
+  gHostMidi.send(type, d1, d2, channel);
+  __enable_irq();
+}
 
 constexpr uint32_t kBlockUs = 2000;       // B_max: the longest non-engine block of a pass (input, USB, serial)
 constexpr uint8_t kInputPerPass = 32;     // messages a port a pass
@@ -622,7 +678,7 @@ void command(char* line, uint32_t nowUs) {
     Serial.printf("#ENGINE,clock,timeout_age_us=%lu\n", static_cast<unsigned long>(gClock.timeoutAgeUs()));
     // Worst stage times (µs): input, serial, ticks, jobs, grains, send, surface, leds, screen; saves so far.
     Serial.printf("#ENGINE,stages,input=%lu,serial=%lu,ticks=%lu,jobs=%lu,grains=%lu,send=%lu,surface=%lu,leds=%lu,"
-                  "screen=%lu,saves=%lu,save_failed=%lu,heartbeats=%lu\n",
+                  "screen=%lu,saves=%lu,save_failed=%lu,heartbeats=%lu,host_dropped=%lu,host_deferred=%lu,host_pipe=%u\n",
                   static_cast<unsigned long>(gStageMaxUs[kInput]), static_cast<unsigned long>(gStageMaxUs[kSerial]),
                   static_cast<unsigned long>(gStageMaxUs[kTicks]), static_cast<unsigned long>(gStageMaxUs[kJobs]),
                   static_cast<unsigned long>(gStageMaxUs[kGrains]), static_cast<unsigned long>(gStageMaxUs[kSend]),
@@ -630,7 +686,8 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(gStageMaxUs[kScreen]),
                   static_cast<unsigned long>(gEngine.persistence().stats().saves),
                   static_cast<unsigned long>(gEngine.persistence().stats().saveFailed),
-                  static_cast<unsigned long>(gHeartbeats));
+                  static_cast<unsigned long>(gHeartbeats), static_cast<unsigned long>(gHostDropped),
+                  static_cast<unsigned long>(gHostDeferred), gHostMidi.*field(TxPipe{}) != nullptr ? 1u : 0u);
     for (uint32_t& m : gStageMaxUs) m = 0;
     const auto& ct = gCard.times();  // the card operations' worst times (µs)
     Serial.printf("#ENGINE,card,exists=%lu,open_read=%lu,sector_read=%lu,sector_write=%lu,store_open=%lu,store=%u\n",
@@ -816,7 +873,7 @@ void sendBank(uint8_t program) {
   gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
-  gHostMidi.sendProgramChange(program, Surface<EngineRoot>::kProgramChannel + 1);
+  hostSend(0xC0, program, 0, Surface<EngineRoot>::kProgramChannel + 1);
 }
 
 /// A motor-fader message (NOTE_EDIT feedback) on every port, as the LEDs.
@@ -828,7 +885,7 @@ void sendMotor(const EditSurface<EngineRoot>::MotorMsg& m) {
   gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
-  gHostMidi.send(type, m.d1, m.d2, channel);
+  hostSend(type, m.d1, m.d2, channel);
 }
 
 void sendLed(uint8_t note, uint8_t velocity) {
@@ -839,7 +896,7 @@ void sendLed(uint8_t note, uint8_t velocity) {
   gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
-  gHostMidi.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
+  hostSend(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
 }
 
 // ---- Breadcrumbs -----------------------------------------------------------------------------------------------------
@@ -982,7 +1039,10 @@ void loop() {
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
   EditSurface<EngineRoot>::MotorMsg motor;
   if (gSurface.motor(millis(), motor)) sendMotor(motor);  // the DROID's motor faders follow the selection
-  if (micros() - gLastLedUs >= kLedGapUs && gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
+  if (micros() - gLastLedUs >= kLedGapUs) {
+    if (!hostTxRoom()) ++gHostDeferred;  // the DROID is not taking packets: the surface keeps its LEDs until it does
+    else if (gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
+  }
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
