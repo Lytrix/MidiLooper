@@ -34,7 +34,7 @@
   start earlier and keep their lengths, one crossing the new start wraps; lossless (`SlotTransport::rotate`,
   `FitBuilder::rotate`). START shows bar.16th. The DROID's loop bank per its code: F3 not programmed, F4 pitch bend
   channel 15 (none seen in the owner's capture yet). Image `c44cc4ea…`, boot verified; owner confirmed F1, F2 and
-  the loop wrap on the DROID (2026-11-08: "it works great").
+  the loop wrap on the DROID (2026-11-08: "it works great"), and the tempo on F4 ("BPM also works").
 
 **2026-11-08 — Fixed-memory engine: NOTE_EDIT follows the track.**
 - A track select (track button or the track switch button) while in NOTE_EDIT leaves the session — its edits one undo
