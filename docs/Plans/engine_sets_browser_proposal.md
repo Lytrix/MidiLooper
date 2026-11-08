@@ -148,8 +148,17 @@ the destination popup, reusing the same list and popup components — the browse
 * The engine's store protects the working set already (A / B copies, boot loads each slot's newer copy; pending /
   writing / failed). It does not yet record the time of a completed write (`SAVED 14:32`): to add. Autosave appears
   only as the working set's row, `SET 02 NOW`, with `SAVING`, `SAVED 14:32`, `UNSAVED` or `NOT SAVED !`.
-* Recovery checkpoints are not milestones; `< RETURN TO PREVIOUS` loads the latest; older ones under a `RECOVERY` row
-  at the end of the set list. How many to keep is open.
+* **One recovery checkpoint** (owner 2026-11-08): just before a load replaces the working set, the whole working set is
+  written as a checkpoint — every slot with its undo history, tempo, selected slots and its base milestone — with the
+  real time and what it was (`BEFORE LOAD 14:57 · SET 02 FROM T02 → SET 07 T03`). `< RETURN TO PREVIOUS` restores it
+  exactly, as a load does, without touching milestone history. A manual save keeps it; the next load replaces it.
+  Crashes and power loss are the store's job, intentional states the milestones': the checkpoint only undoes a load.
+  A `RECOVERY` list of older checkpoints is deferred until it proves needed. The checkpoint write precedes the load,
+  so a live switch waits for it (longer for a larger set).
+* **Real time only.** The engine reads the RTC (it does not yet); a time is shown only when the clock is valid, else
+  `TIME NOT SET` — never the firmware's build time (legacy `RtcTime` seeds an invalid clock from `__DATE__`, which is
+  why its dates were not real). Times are stored UTC and shown with a time-zone offset; a serial command (or host
+  script) sets the clock and the offset. Whether the Teensy loader sets the RTC at upload is checked in slice 1.
 * **Live switching** (owner: songs change in performance): the destination loads in the background and switches in at
   the global switch point — next bar or loop end. To make the switch seamless, the playing content of the destination
   is staged first (current slot states only, not histories) in spare memory; at the switch point each track launches
@@ -161,15 +170,14 @@ the destination popup, reusing the same list and popup components — the browse
 
 * `/MidiLooper/library/SET####/M####.mlv` — a milestone (header: stage, stage number, parent, RTC time, metrics,
   mosaic; every slot with its undo history; tempo; surface state); `index.bin` (one record a milestone; the browser
-  reads only this); `recovery/R####.mlv` (checkpoints, same format, never listed as milestones).
+  reads only this); `recovery/R0001.mlv` (the one checkpoint, same format, never listed as a milestone).
 * The working set's base milestone and the evidence flags for the suggestion live in the store's state record (27 bits
   today: a wider record, a store format change with a DEC).
-* Slices: (1) milestone and checkpoint files, index, stage numbers and parents, the store's completed-write time,
-  serial save / load; (2) load with checkpoint, return, failure restore, the global switch point and staged live
+* Slices: (1) the RTC (read, validity, `TIME NOT SET`, set-time command, offset), milestone and checkpoint files, index,
+  stage numbers and parents, the store's completed-write time, serial save / load; (2) load with checkpoint, return, failure restore, the global switch point and staged live
   switching; (3) the browser lists and controls; (4) the save popup with id preview and suggestion; (5) the timeline
   strip and fork lanes; (6) the loop retrieval extension (§6), then multi-select.
 
 ## 9. Open
 
-1. Recovery depth.
-2. A live switch that does not fit: refuse (load at stop) or a short gap.
+1. A live switch that does not fit: refuse (load at stop) or a short gap.
