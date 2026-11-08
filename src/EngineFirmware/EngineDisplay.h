@@ -125,7 +125,27 @@ class EngineDisplay {
                   edit_.length);
   }
   /// Holds the screen for `ms` (the next frame waits).
-  void hold(uint32_t nowMs, uint32_t ms) { lastFrameMs_ = nowMs + ms - kFrameMs; }
+  void hold(uint32_t nowMs, uint32_t ms) { lastFrameMs_ = nowMs + ms - frameMs_; }
+  /// Panel timing (diagnostics, owner 2026-11-08: the playhead tore part of the loop — the panel scanning rows while a
+  /// frame is written): `reg` 0xB3 front clock (high nibble oscillator, low nibble divide − 1; boot 0x91) or 0xB1
+  /// phase lengths (boot 0xE2), `value` its byte, sent once the frame in flight is done; 0 leaves it. `frameMs` the
+  /// frame period (0 leaves it). Not kept over a reboot.
+  void tune(uint8_t clock, uint8_t phase, uint32_t frameMs) {
+    while (oled_.api.isDisplayTransferActive()) oled_.api.pollDisplayTransfer();
+    if (clock != 0) {
+      oled_.api.SSD1322_API_command(0xB3);
+      oled_.api.SSD1322_API_data(clock);
+      clock_ = clock;
+    }
+    if (phase != 0) {
+      oled_.api.SSD1322_API_command(0xB1);
+      oled_.api.SSD1322_API_data(phase);
+      phase_ = phase;
+    }
+    if (frameMs != 0) frameMs_ = frameMs;
+    Serial.printf("#ENGINE,oled,clock=0x%02X,phase=0x%02X,frame_ms=%lu\n", clock_, phase_,
+                  static_cast<unsigned long>(frameMs_));
+  }
 
   /// The slot a track shows while it plays nothing (the last one launched or recorded on it).
   void show(uint8_t track, uint8_t slot) {
@@ -138,7 +158,7 @@ class EngineDisplay {
                    uint32_t nowMs, const EditView& edit = EditView{}) {
     edit_ = edit;
     oled_.api.pollDisplayTransfer();
-    if (nowMs - lastFrameMs_ < kFrameMs || oled_.api.isDisplayTransferActive()) return 0;
+    if (nowMs - lastFrameMs_ < frameMs_ || oled_.api.isDisplayTransferActive()) return 0;
     lastFrameMs_ = nowMs;
     const uint32_t t0 = micros();
     draw(e, clock, lastTick, nowMs);
@@ -587,6 +607,8 @@ class EngineDisplay {
   uint8_t focus_ = 0xFF;
   bool started_ = false;
   uint32_t lastFrameMs_ = 0, frames_ = 0, worstUs_ = 0;
+  uint32_t frameMs_ = kFrameMs;
+  uint8_t clock_ = 0x91, phase_ = 0xE2;  // the library's boot values
 };
 
 }  // namespace EngineFirmware

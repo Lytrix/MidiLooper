@@ -299,6 +299,12 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "oled-test") == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes
     gDisplay.selfTest(a != 0);
     gDisplay.hold(millis(), 3000);
+  } else if (std::strcmp(verb, "oled-clock") == 0 || std::strcmp(verb, "oled-phase") == 0 ||
+             std::strcmp(verb, "frame-ms") == 0) {  // panel timing (diagnostics): oled-clock 0xF1; frame-ms 16; no arg reports
+    const long v = arg != nullptr ? std::strtol(arg, nullptr, 0) : 0;
+    const bool clock = verb[5] == 'c', phase = verb[5] == 'p';
+    gDisplay.tune(clock ? static_cast<uint8_t>(v) : 0, phase ? static_cast<uint8_t>(v) : 0,
+                  !clock && !phase ? static_cast<uint32_t>(v) : 0);
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)

@@ -1,3 +1,11 @@
+**2026-11-08 — Fixed-memory engine: panel timing tuning (diagnostics).**
+- The playhead tears for part of a 1-bar loop at 120 BPM (owner): most likely the panel scanning rows while a DMA
+  frame is written (no sync signal from this module), the crossing drifting with draw time. `!ENGINE oled-clock <v>`
+  / `oled-phase <v>` set the SSD1322's front clock (0xB3, boot 0x91) / phase lengths (0xB1, boot 0xE2) live, and
+  `frame-ms <n>` the frame period (33); no argument reports. Not kept over a reboot. Goal: a panel scan as fast as the
+  ~3.3 ms frame write, so the two rarely cross; the chosen value then goes into the boot sequence. Image
+  `551eeb80…`, boot verified; owner tuning by eye pending.
+
 **2026-11-08 — Fixed-memory engine: note starts on the piano roll.**
 - Each note's first pixel is drawn brighter than its bar (13; 15 selected; 6 / 9 muted), after every bar so a touching
   neighbour's last pixel cannot cover it; a part continued from the previous bar has none. Notes touching on a pitch
