@@ -29,7 +29,8 @@ boots in SET 02 `FROM T03` (the old guess said SET 03); return → reboot SET 03
 another slot (no checkpoint, no clear), `SlotTransport::place` puts it on as one undo step; serial `get 9 1-1 8-8`.
 Native +3 (four mutations killed), full 4,482 passed; device `3b915713…`: placed in 2 ms, empty source and bad names
 refused or unchanged, undone. **Incident:** the "Show SET 1" frame capture's script pressed TRACK on SET 2 T03 and
-loaded it (checkpoint 36 holds the owner's SET 3 working set from before; `return` restores it) — owner asked.
+loaded it (checkpoint 36 holds the SET 3 working set from before); owner: every set is dev testing, no restore
+needed — the board stays on SET 2 T03.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
