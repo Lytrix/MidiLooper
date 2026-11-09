@@ -15348,3 +15348,41 @@ and 'Teensy MIDI' ports: serial dead, the uploader unable to reboot the board, a
   reset, every previous stage 11. `!ENGINE hang` → reset in ~4 s, `watchdog=1`, PC resolves to `loop`;
   `!ENGINE hang irq` → reset, `watchdog=1`, PC 0 (interrupts off). Full native suite 4,456 passed.
 - Open: the cause of a board-side USB stop, if cycle 39 was one; the next one is placed by c4–c6.
+
+## DEC-267 — The browser redesigned: a window, time down the list, saving and loading split (amends DEC-263–265)
+
+**Status:** Accepted (owner 2026-11-09, over a series of mockups: the top bar "disconnected", "integrate it in the menu
+list as part of the dates", "a cubase/atari like window", "remove [return to previous] entirely", "loading and saving
+should be more clearly split", the stages "as a preview of the git like branch structure … all stages as a list
+dimmed", "AS NEW SET", "Newest at top").
+
+### Decision
+
+- **A window over the performance screen** (the length popup's GEM style: shadow, frame, hatched title bar): `SETS`,
+  or the open set (`SET 02`); the hint line under it.
+- **Top level:** `CLOSE`, `SAVE`, a `LOAD` divider (not selectable; RECORD / EDIT pass it), then the working set (a
+  ring, `NOW`) and the other sets. **No return row** (the checkpoint stays — a load still writes it and the serial
+  `return` command still uses it — but the browser no longer offers it). Opening selects `SAVE`.
+- **Time down the list** (replaces DEC-265's strip): each dated row shows the year and month on the top row shown
+  (sticky) and where a month starts, the day once per day, a node on a spine that is broken between months, the id
+  (or set) and, for a stage, its saved time. A row without a valid time leaves the date column empty and is passed
+  over by the rows below it. Inside a set: `< SETS`, then its stages newest first; a stage off the newest one's line
+  is a hollow node (DEC-265's side lane does not fit beside the date column).
+- **Detail:** the id three times the size, the stage under it (`LATEST`, `FROM E01`), the mosaic beside it.
+- **SAVE → `SAVE CURRENT`:** left, `AS NEW SET 03` on a lane of its own, then the new node on the working set's history
+  (newest first; the base's line on the main lane, branches beside it); right, every stage dimmed with the id it would
+  get, the chosen one bright and wired to the new node, `<` on the suggestion (`?` when a provisional Take). RECORD /
+  EDIT run from `AS NEW SET` through SKETCH … FINAL (any stage, in any order); the popup opens on the suggestion.
+  `AS NEW SET` saves the current set as Sketch 01 of the next set number.
+- Mockups kept: `docs/Plans/images/browser_v2_*.png`.
+
+### Evidence
+
+- Host: `test_content_engine_browser` 17 cases (the rows and the divider passed, CLOSE, the popup from AS NEW SET to
+  FINAL, AS NEW SET as Sketch 01 of a new set, the history's line traced from the base, and the earlier suggestion,
+  failure, scroll and lane cases); `test_content_engine_surface` (the buttons in the browser). Full native suite: 194
+  suites passed, the surface suite then updated and passing (31 cases with the browser's); heap gate OK.
+- Device (image `701dd197…`, boot `crash=0`): the top level (`CLOSE`, `SAVE`, `LOAD ───`, `2026 NOV 9 ▢ SET 02 NOW`),
+  inside `SET 02` (sticky `2026 NOV`, the day once, times, `E02  EXPLORATION  FROM E01`), the popup (`AS NEW SET 03`,
+  the new node S04 wired to SKETCH — no base after a reboot — over E02 / S03 / S02 / E01), and AS NEW SET chosen (the
+  node hollow, `S01`).

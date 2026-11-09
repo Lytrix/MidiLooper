@@ -7,12 +7,13 @@
 //
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
-// * Views. Top: `< RETURN TO PREVIOUS` (when a load left a checkpoint), `+ SAVE MILESTONE`, `+ SAVE AS NEW SET`, the
-//   working set (`SET 02 NOW`), then the other sets. A set: `< ALL SETS`, then its milestones. The save popup: the six
-//   stages with the id each would get, one suggested. A failure: what, why, `NOTHING CHANGED`, over the view it came
-//   from.
-// * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends); TRACK does what the hint says for the selected
-//   row; HOLD TRACK closes the popup or the browser, changing nothing. Opening selects `+ SAVE MILESTONE` (rule 1).
+// * Views (owner 2026-11-09: saving and loading split, no return row). Top: `CLOSE`, `SAVE`, a `LOAD` divider (not
+//   selectable), then the working set and the other sets, newest first. A set: `< SETS`, then its milestones newest
+//   first. The save popup (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the
+//   id it would get, the suggested one selected; beside it the working set's history from its base. A failure: what,
+//   why, `NOTHING CHANGED`, over the view it came from.
+// * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
+//   says for the selected row; HOLD TRACK closes the popup or the browser, changing nothing. Opening selects `SAVE`.
 // * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
 //   base's stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed
 //   only → Building, or a provisional Take when every change was a recording begun while another track played;
@@ -33,13 +34,13 @@ template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Popup, Failed };
-  enum class RowKind : uint8_t { Return, Save, SaveNewSet, Working, Set, Back, Milestone };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set: the set
     uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none)
   };
-  enum class Action : uint8_t { None, Save, Load, Return };
+  enum class Action : uint8_t { None, Save, Load };
   struct Request {
     Action action = Action::None;
     uint16_t record = 0;  // Load
@@ -95,12 +96,10 @@ class Browser {
   }
 
   // ---- The working set (its owner keeps it current) --------------------------------------------------------------
-  /// The set worked in, the milestone it descends from (sequence, 0: none) and whether a load left a checkpoint to
-  /// return to.
-  void setWorking(uint16_t set, uint32_t baseSequence, bool canReturn) {
+  /// The set worked in and the milestone it descends from (sequence, 0: none).
+  void setWorking(uint16_t set, uint32_t baseSequence) {
     workingSet_ = set;
     base_ = baseSequence;
-    canReturn_ = canReturn;
   }
   uint16_t workingSet() const { return workingSet_; }
   uint32_t baseSequence() const { return base_; }
@@ -128,11 +127,11 @@ class Browser {
   }
 
   // ---- Navigation --------------------------------------------------------------------------------------------------
-  /// HOLD TRACK on the performance screen: the top level, `+ SAVE MILESTONE` selected.
+  /// HOLD TRACK on the performance screen: the top level, `SAVE` selected.
   void open() {
     view_ = View::Top;
     request_ = Request{};
-    selected_ = canReturn_ ? 1 : 0;
+    selected_ = 1;
     first_ = 0;
     scroll();
   }
@@ -150,26 +149,31 @@ class Browser {
     }
     if (view_ != View::Top && view_ != View::Set) return;
     if (selected_ > 0) --selected_;
+    if (row(selected_).kind == RowKind::Divider && selected_ > 0) --selected_;  // the divider is passed
     scroll();
   }
   /// EDIT: down.
   void down() {
     if (view_ == View::Popup) {
-      if (stageSel_ + 1 < kStages) ++stageSel_;
+      if (stageSel_ < kStages) ++stageSel_;  // 0 AS NEW SET, 1..6 the stages
       return;
     }
     if (view_ != View::Top && view_ != View::Set) return;
     if (selected_ + 1 < rowCount()) ++selected_;
+    if (row(selected_).kind == RowKind::Divider) {
+      if (selected_ + 1 < rowCount()) ++selected_;
+      else --selected_;
+    }
     scroll();
   }
   /// TRACK: what the hint says.
   void press() {
     switch (view_) {
-      case View::Popup:
+      case View::Popup:  // AS NEW SET: Sketch 01 of a new set; else the stage, next in the working set
         request_.action = Action::Save;
-        request_.set = popupSet_;
-        request_.stage = static_cast<library::Stage>(stageSel_);
-        request_.stageNumber = nextNumber(popupSet_, request_.stage);
+        request_.set = stageSel_ == 0 ? newSetNumber() : workingSet_;
+        request_.stage = stageSel_ == 0 ? library::Stage::Sketch : static_cast<library::Stage>(stageSel_ - 1);
+        request_.stageNumber = nextNumber(request_.set, request_.stage);
         pending_ = request_;
         return;
       case View::Failed:  // try again
@@ -184,14 +188,13 @@ class Browser {
     }
     const Row r = row(selected_);
     switch (r.kind) {
-      case RowKind::Return:
-        request_ = Request{};
-        request_.action = Action::Return;
-        pending_ = request_;
+      case RowKind::Close:
+        view_ = View::Closed;
         return;
       case RowKind::Save:
-      case RowKind::SaveNewSet:
-        openPopup(r.kind == RowKind::SaveNewSet ? newSetNumber() : workingSet_, r.kind == RowKind::SaveNewSet);
+        openPopup();
+        return;
+      case RowKind::Divider:
         return;
       case RowKind::Working:
       case RowKind::Set:
@@ -247,27 +250,24 @@ class Browser {
   uint16_t rowCount() const {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(1 + members_);
-    return static_cast<uint16_t>((canReturn_ ? 1 : 0) + 3 + otherSets());
+    return static_cast<uint16_t>(4 + otherSets());
   }
   Row row(uint16_t i) const {
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
       return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - 1))};
     }
-    if (canReturn_) {
-      if (i == 0) return Row{RowKind::Return, workingSet_, kNone};
-      --i;
-    }
-    if (i == 0) return Row{RowKind::Save, workingSet_, kNone};
-    if (i == 1) return Row{RowKind::SaveNewSet, workingSet_, kNone};
-    if (i == 2) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
-    const uint16_t s = otherSet(static_cast<uint16_t>(i - 3));
+    if (i == 0) return Row{RowKind::Close, workingSet_, kNone};
+    if (i == 1) return Row{RowKind::Save, workingSet_, kNone};
+    if (i == 2) return Row{RowKind::Divider, workingSet_, kNone};
+    if (i == 3) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
+    const uint16_t s = otherSet(static_cast<uint16_t>(i - 4));
     return Row{RowKind::Set, setNumber_[s], setLatest_[s]};
   }
   uint16_t selected() const { return selected_; }
   /// The first row shown (the list scrolls with the selection).
   uint16_t first() const { return first_; }
-  static constexpr uint8_t kVisible = 6;
+  static constexpr uint8_t kVisible = 5;
   uint16_t openSetNumber() const { return openSet_; }
   /// The newest milestone of `set` (kNone: none).
   uint16_t latestOf(uint16_t set) const {
@@ -293,9 +293,15 @@ class Browser {
   uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + 1); }
 
   // ---- The save popup ----------------------------------------------------------------------------------------------
-  uint16_t popupSet() const { return popupSet_; }
-  bool popupNewSet() const { return popupNew_; }
+  uint16_t popupSet() const { return workingSet_; }
+  /// 0: AS NEW SET; 1..6: the stages (Sketch .. Final).
   uint8_t popupSelected() const { return stageSel_; }
+  /// The working set's milestones newest first (the popup's history): how many, which, and whether one lies on the
+  /// base's line (the base and its parents; others branched off); the base's row (kNone: none).
+  uint16_t historyCount() const { return members_; }
+  uint16_t historyRecord(uint16_t k) const { return member_[k]; }
+  bool historyOnLine(uint16_t k) const { return k < members_ && line_[k]; }
+  uint16_t historyBase() const { return baseRow_; }
   library::Stage suggested() const { return suggested_; }
   /// The suggestion is a provisional Take (marked as such).
   bool suggestedProvisional() const { return provisional_; }
@@ -335,9 +341,7 @@ class Browser {
   }
   void openSet(uint16_t set) {
     openSet_ = set;
-    members_ = 0;
-    for (uint16_t i = count_; i-- > 0;)  // newest first
-      if (records_[i].set == set) member_[members_++] = i;
+    fillMembers(set);
     markLine();
     view_ = View::Set;
     selected_ = members_ != 0 ? 1 : 0;  // rule 5: its newest milestone
@@ -347,11 +351,11 @@ class Browser {
   uint16_t member(uint16_t k) const { return member_[k]; }
   /// Slice 5, the fork lanes: the open set's line — its newest milestone and that one's parents within the set — and the
   /// side of it (milestones that branched off; drawn on a lane of their own, joined where they grew from).
-  void markLine() {
+  void markLine(uint16_t from = 0) {
     for (uint16_t k = 0; k < members_; ++k) line_[k] = false;
     join_ = kNone;
-    if (members_ == 0) return;
-    for (uint16_t k = 0;;) {  // newest, then each parent in the set
+    if (members_ == 0 || from >= members_) return;
+    for (uint16_t k = from;;) {  // `from` (the newest, or the base), then each parent in the set
       line_[k] = true;
       const uint32_t parent = records_[member_[k]].parent;
       uint16_t next = kNone;
@@ -367,12 +371,22 @@ class Browser {
     for (uint16_t k = 0; k < members_; ++k)  // the side's root: where it grew from, on the line
       if (line_[k] && records_[member_[k]].sequence == records_[member_[oldestSide]].parent) join_ = k;
   }
-  void openPopup(uint16_t set, bool newSet) {
+  void fillMembers(uint16_t set) {
+    members_ = 0;
+    for (uint16_t i = count_; i-- > 0;)  // newest first
+      if (records_[i].set == set) member_[members_++] = i;
+  }
+  /// The save popup over the top level: the working set's history with the base's line marked, the suggestion
+  /// selected.
+  void openPopup() {
     list_ = view_;
-    popupSet_ = set;
-    popupNew_ = newSet;
-    suggested_ = suggest(newSet, provisional_);
-    stageSel_ = static_cast<uint8_t>(suggested_);
+    fillMembers(workingSet_);
+    baseRow_ = kNone;
+    for (uint16_t k = 0; k < members_; ++k)
+      if (records_[member_[k]].sequence == base_) baseRow_ = k;
+    markLine(baseRow_ == kNone ? 0 : baseRow_);
+    suggested_ = suggest(false, provisional_);
+    stageSel_ = static_cast<uint8_t>(static_cast<uint8_t>(suggested_) + 1);
     view_ = View::Popup;
   }
   void scroll() {
@@ -384,11 +398,11 @@ class Browser {
   library::Record records_[MaxRecords];
   uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
   bool line_[MaxRecords] = {};
-  uint16_t join_ = kNone;
+  uint16_t join_ = kNone, baseRow_ = kNone;
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
-  uint16_t workingSet_ = 1, openSet_ = 0, popupSet_ = 0;
+  uint16_t workingSet_ = 1, openSet_ = 0;
   uint32_t base_ = 0;
-  bool canReturn_ = false, popupNew_ = false, changed_ = false, provisional_ = false;
+  bool changed_ = false, provisional_ = false;
   Activity activity_{};
   View view_ = View::Closed, list_ = View::Top;
   uint16_t selected_ = 0, first_ = 0;

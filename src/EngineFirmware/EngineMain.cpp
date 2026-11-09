@@ -658,7 +658,7 @@ void serviceBrowser(uint32_t nowUs) {
   library::CheckpointHeader cp{};
   const bool hasCheckpoint = gEngine.library().checkpoint(cp);
   if (!gBrowser.isOpen()) {
-    gBrowser.setWorking(gSet, gBase, hasCheckpoint);
+    gBrowser.setWorking(gSet, gBase);
     const Evidence now = evidenceNow(), &at = gEvidenceAt;
     const uint32_t commits = now.commits - at.commits, records = now.records - at.records;
     ProductionBrowser::Activity a;
@@ -694,10 +694,6 @@ void serviceBrowser(uint32_t nowUs) {
     case ProductionBrowser::Action::Load:
       gBrowserOp = BrowserOp::Load;
       if ((why = beginLoad(true, q.record, nowUs)) != nullptr) gBrowser.failed("LOAD FAILED", why);
-      break;
-    case ProductionBrowser::Action::Return:
-      gBrowserOp = BrowserOp::Return;
-      if ((why = beginLoad(false, 0, nowUs)) != nullptr) gBrowser.failed("RETURN FAILED", why);
       break;
     default:
       break;

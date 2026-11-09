@@ -1,3 +1,9 @@
+**2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
+performance screen; `CLOSE`, `SAVE`, then `LOAD` and the sets; time down the list (sticky year / month, the day once,
+the time, a spine broken between months) instead of the top strip; no return row; SAVE opens `SAVE CURRENT` — the
+history as a graph with the new node wired to the chosen stage, every stage listed, `AS NEW SET` on its own lane.
+Device frames captured (image `701dd197…`); native suites green.
+
 **2026-11-09 — Browser levels and live mosaic.** The panel barely lights levels 1–4: the browser's rules (4), dim text
 (7) and empty mosaic cells (3) were raised, the mosaic's levels are 7 / 11 / 15, and the save rows show the working
 set's mosaic live. Owner confirmed on the panel ("Looks right"). Image `4bf5fb5d…`, commit `0bda4b80`.
