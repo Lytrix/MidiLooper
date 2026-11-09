@@ -15462,3 +15462,8 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   row of SETS, a second way in (TRACK opens it; its items on the right; after a set goes to the trash the nearest set is
   selected, never `TRASH`); the trash's divider reads `RESTORE SET/STAGE` and an item's hint `TRACK: RESTORE SET 03` /
   `TRACK: RESTORE STAGE T03`, as `LOAD SET` / `LOAD STAGE` elsewhere. Image `9de0613c…`, boot `crash=0`.
+- **Amendment 2 (owner 2026-11-09): one convention for buttons on every browser page.** The bottom row: the actions on
+  the left as `[TRK] LOAD T03   HOLD [TRK] DELETE`, `[TRK] SAVE`, `[REC][EDT] CHOOSE   [TRK] CONFIRM   HOLD [TRK]
+  CANCEL`; the trash on the right, `[TRK]2× TRASH` and the can (`[TRK]2× SETS` inside it). The micro font gained `[`,
+  `]` and `×` (written `*`). The hold reads DELETE, as the owner wrote it; its confirmation still says MOVE … TO TRASH.
+  Image `aa975b80…`, boot `crash=0`.
