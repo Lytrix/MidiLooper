@@ -95,4 +95,4 @@ the gap. `!ENGINE switch-stage 0|1` turns staging off and on.
 
 `!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
 `load <index>`, `return`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
-`LIBRARY FULL`, `BUSY`. The browser screen and live switching are later slices of the [sets browser proposal](../Plans/engine_sets_browser_proposal.md).
+`LIBRARY FULL`, `BUSY`. On the DROID the same actions run from the sets browser (HOLD TRACK; DEC-263, redesigned in DEC-267); `return` is serial-only.
