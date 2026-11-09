@@ -1,3 +1,10 @@
+**2026-11-09 — "First note played twice": a late Record Stop's repeated start notes are hidden (DEC-262).**
+- Traced on the device (USB MIDI and a slot dump): not the set switch nor the launch — slot 56's take was stopped just
+  after the bar line while the line was started again, so n84 / n83 / n82 came back at the loop start on top of its own
+  (E9.8i keeps notes played after the line). Now a trimmed take hides those repeats (HideNote rows, non-destructive);
+  other notes after the line still come back. Slot 56 keeps its doubles (recorded before): NOTE_EDIT or a new take.
+- Device: a trimmed take from the host hid 3 repeats, no doubles over a cycle, the new note heard. Image `d8b90cd6…`.
+
 **2026-11-09 — 2b-ii fix: no transition after a staged switch (DEC-261 amendment 1).** The load adopts the staged state
 as the slot's current, so switched tracks play on untouched (before, a follow re-joined the window). MIDI captured at
 the switch: on the bar, nothing doubled by it. The doubled first notes heard on track 8 are a launch defect of their own

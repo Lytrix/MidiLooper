@@ -147,11 +147,62 @@ void test_a_loop_wrap_plays_each_note_once() {
   TEST_ASSERT_EQUAL_UINT32(0, d.size());
 }
 
+/// The device's case (owner 2026-11-09, E9.8i amendment): a take stopped just after the bar line while the musician
+/// started the line again — n84 a tick early, n83 and n82 after the line — plus one new note after it. The repeats are
+/// hidden (the loop start plays each note once); the new note still comes back at the loop start.
+void test_a_late_stop_hides_the_repeated_start_and_keeps_new_notes() {
+  gE.control().selectTrack(7);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(7, 56, gClock));
+  const uint32_t s = (gClock / kBar + 1) * kBar, loop = 4 * kBar, barLine = s + loop;
+  auto take = line(s);
+  take.push_back({barLine - 1, barLine + 47, 84});
+  take.push_back({barLine + 47, barLine + 95, 83});
+  take.push_back({barLine + 95, barLine + 143, 82});
+  take.push_back({barLine + 120, barLine + 128, 60});  // new material after the line
+  take.push_back({barLine + 130, barLine + 138, 84});  // the start's pitch, but 130 ticks from it: new too
+  run(barLine + 150, take);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().stopNow(gClock, us(gClock), kUsPerTick, barLine));  // a late Stop: trimmed
+  TEST_ASSERT_EQUAL_UINT32(loop, gE.manifests().manifest(gE.history().current(56)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(3, gE.transport().stats().repeatsHidden);
+  const uint32_t at = gClock;
+  run(gClock + 2 * loop);  // two loop starts
+  const auto d = doubled(at);
+  print(d, at);
+  TEST_ASSERT_EQUAL_UINT32(0, d.size());
+  uint32_t starts60 = 0, starts84 = 0, late84 = 0;
+  for (const Out& o : gOut)
+    if (o.clock >= at && (o.status & 0xF0) == 0x90 && o.d2 > 0) {
+      const uint32_t pos = (o.clock - s) % loop;
+      if (o.d1 == 60 && pos == 120) ++starts60;
+      if (o.d1 == 84 && pos == 0) ++starts84;
+      if (o.d1 == 84 && pos == 130) ++late84;
+    }
+  TEST_ASSERT_EQUAL_UINT32(2, starts60);  // kept: plays at its wrapped place each cycle
+  TEST_ASSERT_EQUAL_UINT32(2, starts84);
+  TEST_ASSERT_EQUAL_UINT32(2, late84);
+}
+
+/// Without a trim nothing is hidden: a note in the loop's last 1/32 on the start's pitch is the loop's own.
+void test_a_stop_on_the_bar_hides_nothing() {
+  gE.control().selectTrack(7);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueRecord(7, 56, gClock));
+  const uint32_t s = (gClock / kBar + 1) * kBar, loop = 4 * kBar;
+  auto take = line(s);
+  take.push_back({s + loop - 10, s + loop - 5, 84});
+  run(s + loop - 100, take);
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueStop(7, gClock));
+  run(s + loop + 1, take);
+  TEST_ASSERT_EQUAL_UINT32(loop, gE.manifests().manifest(gE.history().current(56)).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.transport().stats().repeatsHidden);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_a_relaunch_while_playing_plays_each_note_once);
   RUN_TEST(test_a_late_launch_window_plays_each_note_once);
   RUN_TEST(test_a_relaunch_from_a_checkpoint_plays_each_note_once);
   RUN_TEST(test_a_loop_wrap_plays_each_note_once);
+  RUN_TEST(test_a_late_stop_hides_the_repeated_start_and_keeps_new_notes);
+  RUN_TEST(test_a_stop_on_the_bar_hides_nothing);
   return UNITY_END();
 }

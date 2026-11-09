@@ -103,6 +103,7 @@ class SlotTransport {
     uint32_t provisionalSelections;  // wraps prepared with a provisional source (E9.1b)
     uint32_t recordPrepares;         // Record takes whose window 0 was composed ahead
     uint32_t trimmedTakes;           // Record takes ended at the bar line before their Stop (E9.8i)
+    uint32_t repeatsHidden;          // notes a late Stop hid as repeats of the loop start (E9.8i amendment)
     uint32_t pickupNotes;            // notes played before a take's tick 0, written at its Stop (E9.8j)
     uint32_t pickupsDropped;         // pickups not written (no run descriptor)
   };
@@ -565,6 +566,47 @@ class SlotTransport {
   }
   /// E9.8j: the take's pickups as one run of loop positions — NoteOn at `loop - before`, NoteOff at `loop + off`
   /// (the wrap stream when past the loop end), at least a tick and less than a loop long — written in tick order.
+  /// A late Stop trimmed take `r0` to the bar line before (E9.8i): its notes from a 1/32 before that line on that repeat
+  /// a note of the same pitch and channel within a 1/32 of the same place at the loop start — the musician starting the
+  /// pattern again — are hidden (owner 2026-11-09), so the loop start does not play them twice; any other note played
+  /// after the line still comes back at the loop start. `overrun`: how far past the line the take went (under half its
+  /// length). A sealed Edit run of their HideNote rows, or kNoRun.
+  RunId hideRepeats(RunId r0, uint32_t overrun) {
+    constexpr uint32_t kNear = 24;  // a 1/32 at 192 PPQN
+    constexpr uint8_t kMax = 32;
+    if (loop_ <= overrun + 2 * kNear) return kNoRun;
+    struct On {
+      uint32_t tick, noteId;
+      uint8_t channel, pitch;
+    };
+    On early[2 * kMax], late[kMax];
+    uint8_t ne = 0, nl = 0;
+    const auto& r = runs_->run(r0);
+    for (uint32_t i = 0; i < r.rowCount; ++i) {
+      const PassEvent& e = runs_->rowAt(r0, i, *pool_);
+      if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
+      const On o{e.tick, e.noteId, static_cast<uint8_t>(e.status & 0x0F), e.data1};
+      if (e.tick <= overrun + kNear && ne < 2 * kMax) early[ne++] = o;  // the loop start the overrun lands on
+      else if (e.tick + kNear >= loop_ && nl < kMax) late[nl++] = o;
+    }
+    uint32_t ids[kMax];
+    uint8_t n = 0;
+    for (uint8_t a = 0; a < nl; ++a) {
+      const int32_t at = static_cast<int32_t>(late[a].tick) - static_cast<int32_t>(loop_);  // its place at the start
+      for (uint8_t b = 0; b < ne; ++b) {
+        const int32_t d = static_cast<int32_t>(early[b].tick) - at;
+        if (early[b].pitch == late[a].pitch && early[b].channel == late[a].channel && d <= static_cast<int32_t>(kNear) &&
+            d >= -static_cast<int32_t>(kNear)) {
+          ids[n++] = late[a].noteId;
+          break;
+        }
+      }
+    }
+    if (n == 0) return kNoRun;
+    const RunId run = writer_->hideRun(wSlot_, ids, n);
+    if (run != kNoRun) stats_.repeatsHidden += n;
+    return run;
+  }
   RunId writePickups(const Pickup* pk, uint8_t n) {
     if (n > kMaxPickups) n = kMaxPickups;
     struct Ev {
@@ -631,16 +673,18 @@ class SlotTransport {
     if (loop_ != raw) ++stats_.trimmedTakes;
     mode_ = Mode::Idle;
     const RunId rp = loop_ != 0 && pickupCount != 0 ? writePickups(pickups, pickupCount) : kNoRun;
+    const RunId rh = loop_ != raw ? hideRepeats(r0, raw - loop_) : kNoRun;
     const bool takeRows = runs_->run(r0).rowCount != 0;
     Result result = Result::Ok;
     if (loop_ == 0 || (!takeRows && rp == kNoRun)) {
       ++stats_.emptyTakes;
       result = Result::Empty;
     } else {
-      RunId list[2];
+      RunId list[3];
       uint8_t n = 0;
       if (takeRows) list[n++] = r0;
       if (rp != kNoRun) list[n++] = rp;
+      if (rh != kNoRun && takeRows) list[n++] = rh;  // after the take: its HideNote rows hide the take's repeats
       const ManifestId m = manifests_->create(wSlot_, ++revision_, loop_, list, n, *runs_);  // admitted at Record start
       history_->commit(wSlot_, m);
       slot_[wTrack_] = wSlot_;
@@ -649,6 +693,7 @@ class SlotTransport {
       const uint32_t w = tracks_[wTrack_]->windowTicks();  // the prepared window 0 holds the rows before `preparedLen_`
       tracks_[wTrack_]->handoff(wSlot_, m, local(wTrack_, clock), raw - loop_, preparedLen_ >= (loop_ < w ? loop_ : w));
     }
+    if (rh != kNoRun) runs_->release(rh);  // the manifest holds it (or nothing does)
     drainSealed(before, clock);
     return result;
   }

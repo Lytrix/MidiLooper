@@ -92,6 +92,27 @@ class Writer {
   /// `loopLength` (0 when not yet known, e.g. a Record take) marks NoteOffs of notes held a full loop (Q-LEN-1).
   /// Each run stores ticks relative to its own start (`startTick`, then each wrap tick), so a run's main rows are loop
   /// positions and a held note's NoteOff lands at `loop + position` in its originating run.
+  /// A sealed Edit run of HideNote rows hiding the notes `ids` (E9.8i amendment, owner 2026-11-09: a late Stop's
+  /// repeated notes); the caller lists it after the run it hides in and holds the writer's reference. kNoRun: refused
+  /// (a run is being written, no run left, or no capacity) — nothing taken.
+  RunId hideRun(uint8_t slot, const uint32_t* ids, uint8_t n) {
+    if (state_ == State::Writing || n == 0) return kNoRun;
+    const RunId run = runs_->allocate(slot, RunKind::kEdit);
+    if (run == kNoRun) return kNoRun;
+    for (uint8_t i = 0; i < n; ++i) {
+      PassEvent e{};
+      e.noteId = ids[i];
+      e.status = kHideNoteStatus;
+      if (res_->accept(run, e, 0) != Admission::Ok) {
+        res_->forgive(run);
+        runs_->seal(run);
+        runs_->release(run);
+        return kNoRun;
+      }
+    }
+    runs_->seal(run);
+    return run;
+  }
   WriterResult begin(uint8_t slot, uint8_t kind, uint32_t loopLength = 0, uint32_t startTick = 0) {
     if (state_ == State::Writing) return WriterResult::NotWriting;
     const RunId run = runs_->allocate(slot, kind);

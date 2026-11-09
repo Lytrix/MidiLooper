@@ -15156,3 +15156,35 @@ The doubled notes the owner heard (channel 8, n83 / n82, ~120 and ~245 ms after)
 playback launch defect outside this decision, recorded as a follow-up. Host: the staged identity is the slot's
 current after the load and no transition is pending (mutation: adoption off — killed). Image `328de4a0…`. Native
 4,432 passed.
+
+## DEC-262 — A late Record Stop hides the notes that start the loop's pattern again (E9.8i amendment)
+
+**Status:** Accepted (owner 2026-11-09: "Drop duplicates").
+**Context:** E9.8i (owner-confirmed 2026-11-06): a Stop up to half a bar after a bar line ends the loop at that line,
+and nothing recorded is removed — notes played after the line come back at the loop start. A musician who keeps playing
+past the line usually starts the pattern again, so those notes land on the loop's own first notes and the loop start
+plays them twice (device, 2026-11-09: slot 56 doubled n84 / n83 / n82 at every loop start; the owner heard "the first
+note played twice", first noticed at a set switch).
+
+### Decision
+
+- On a trimmed take only, a NoteOn from a 1/32 before the line onwards whose place at the loop start (its tick minus the
+  loop length) lies within a 1/32 of a NoteOn of the same pitch and channel at the loop start is a **repeat**: hidden
+  by a small Edit run of HideNote rows listed after the take (`SlotTransport::hideRepeats`, `Writer::hideRun`) — the
+  same non-destructive hide NOTE_EDIT uses; the rows stay in the take, NOTE_EDIT can bring them back.
+- Every other note played after the line still comes back at the loop start (E9.8i otherwise unchanged); a take stopped
+  on a bar line hides nothing.
+- Takes recorded before this change keep their doubles (slot 56 on the owner's device): NOTE_EDIT or a new take.
+
+### Evidence
+
+- Host (`test_content_engine_launch_double`): a take stopped a fifth of a bar after the line, with the line started
+  again (n84 a tick early, n83, n82), a new note (n60) and the start's pitch far from its place (n84 +130): 3 hidden,
+  two loop starts with nothing doubled, n60 and the far n84 heard each cycle; a take stopped on the bar with a last-1/32
+  note on the start's pitch hides nothing; launches (relaunch, a late window, from a checkpoint set, wraps) play each
+  note once. Mutations 6 / 6 (trim guard, run not listed, pitch or distance ignored, the start range short of the
+  overrun, the 1/32 before the line). Full native suite 4,426 passed (one legacy suite errored once, passes on rerun);
+  heap gate OK.
+- Device (image `d8b90cd6…`): a take on slot 15 played from the host over USB MIDI and stopped 0.4 s after the line:
+  loop 4 bars, an Edit run of 3 HideNote rows, no doubled note over the next cycle, the new note heard.
+- Diagnosis tooling kept: `!ENGINE dump-slot S` (a slot's current runs and rows).
