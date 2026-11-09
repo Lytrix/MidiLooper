@@ -592,6 +592,7 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
 // Get a loop (DEC-270): the slot a get places into, and the slots named track-slot (`2-3`: track 2, its third slot).
 uint8_t gGetInto = 0;
 uint8_t gGetFrom = 0;
+bool gGetPreview = false;  // diagnostics: read into the preview partition, report it, drop it
 void slotName(uint8_t s, char* out, size_t n) { snprintf(out, n, "%u-%u", s / 8 + 1, s % 8 + 1); }
 bool parseSlot(const char* a, uint8_t& s) {
   unsigned t = 0, k = 0;
@@ -599,8 +600,9 @@ bool parseSlot(const char* a, uint8_t& s) {
   s = static_cast<uint8_t>((t - 1) * 8 + (k - 1));
   return true;
 }
-/// get <stage index> <from track-slot> <into track-slot>: that slot of a saved stage onto a slot of the working set, one
-/// undo step; nothing else changes (the working set's base included).
+/// get <stage index> <from track-slot> <into track-slot> [preview]: that slot of a saved stage onto a slot of the
+/// working set, one undo step; nothing else changes (the working set's base included). `preview` (diagnostics, plan
+/// §6.2 fix 1): read into the preview partition, reported, then dropped — nothing placed.
 void startGet(char* arg, uint32_t nowUs) {
   char* from = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
   char* into = from != nullptr ? std::strchr(from + 1, ' ') : nullptr;
@@ -612,7 +614,8 @@ void startGet(char* arg, uint32_t nowUs) {
   const uint16_t index = static_cast<uint16_t>(std::atoi(arg));
   const char* why = gEngine.loadRefusal();
   if (why == nullptr) {
-    switch (gEngine.getLoop(index, f, t)) {
+    gGetPreview = std::strstr(into + 1, "preview") != nullptr;
+    switch (gEngine.getLoop(index, f, t, gGetPreview)) {
       case ProductionSetLoad::Result::Ok: break;
       case ProductionSetLoad::Result::NoMilestone: why = "NO SUCH STAGE"; break;
       case ProductionSetLoad::Result::NoSlot: why = "NO SUCH SLOT"; break;
@@ -631,7 +634,9 @@ void startGet(char* arg, uint32_t nowUs) {
   char a[6], b[6];
   slotName(f, a, sizeof a);
   slotName(t, b, sizeof b);
-  Serial.printf("#ENGINE,get,begin,index=%u,from=%s,into=%s\n", index, a, b);
+  Serial.printf("#ENGINE,get,begin,index=%u,from=%s,into=%s,preview=%u,content_free=%lu,preview_free=%lu\n", index, a,
+                b, gGetPreview ? 1 : 0, static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
+                static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
 }
 /// A get's end (DEC-270): placed on its slot, or nothing changed.
 void endGet(ProductionSetLoad::Status st, unsigned long ms) {
@@ -639,6 +644,14 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
   char from[6], into[6], line[48];
   slotName(gGetFrom, from, sizeof from);
   slotName(gGetInto, into, sizeof into);
+  if (st == ProductionSetLoad::Status::Done && gGetPreview) {
+    Serial.printf("#ENGINE,get,preview,from=%s,ms=%lu,preview_pages=%lu,content_free=%lu,preview_free=%lu\n", from, ms,
+                  static_cast<unsigned long>(gEngine.runs().previewPages()),
+                  static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
+                  static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
+    gEngine.dropGot();
+    return;
+  }
   if (st == ProductionSetLoad::Status::Done) {
     const ProductionTransport::Result p = gEngine.placeGot(gGetInto, gLastTick, micros(), gClock.usPerTick());
     if (p == ProductionTransport::Result::Ok) {
@@ -655,7 +668,7 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
     const Why why = gEngine.setLoad().getWhy();
     Serial.printf("#ENGINE,get,failed,why=%s,NOTHING CHANGED,ms=%lu\n",
                   why == Why::Empty      ? "SLOT EMPTY THERE"
-                  : why == Why::Capacity ? "NOT ENOUGH MEMORY"
+                  : why == Why::Capacity ? (gGetPreview ? "TOO BIG TO PREVIEW" : "NOT ENOUGH MEMORY")
                                          : "READ FAILED",
                   ms);
   }

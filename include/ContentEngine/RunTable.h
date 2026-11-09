@@ -5,7 +5,10 @@
 // first `kInlinePagesPerRun` page ids live in the descriptor, later ones in directory pages drawn from the same pool
 // (one directory page lists `kIdsPerDirPage` data pages). Descriptors are pooled across all slots and refcounted by the
 // manifests that list them; a released run joins the reclaim queue (release order) and returns its pages through
-// bounded `reclaim` calls, never in one call.
+// bounded `reclaim` calls, never in one call. The last `PreviewRuns` descriptors are preview runs (plan §6.2 fix 1:
+// a get-a-loop preview): handed out only by `allocatePreview`, never as content, and the pages they hold are counted
+// (`previewPages`) as they are appended and as reclaim returns them, so the reservation ledger keeps them in their own
+// partition.
 
 #pragma once
 
@@ -35,10 +38,12 @@ constexpr uint32_t pagesToAppend(uint32_t pageCount, uint32_t rowCount, uint32_t
 }
 
 template <uint16_t RunCount, typename Pool, uint8_t InlinePages = Config::kInlinePagesPerRun,
-          uint8_t MaxDirPages = 8>
+          uint8_t MaxDirPages = 8, uint16_t PreviewRuns = 0>
 class RunTable {
  public:
   static constexpr uint16_t kRunCount = RunCount;
+  static constexpr uint16_t kContentRuns = RunCount - PreviewRuns;
+  static_assert(PreviewRuns < RunCount, "content runs remain");
   static constexpr uint8_t kInlinePages = InlinePages;
   static constexpr uint16_t kRowsPerPage = Pool::kRowsPerPage;
   static constexpr uint32_t kIdsPerDirPage = Pool::kIdsPerDirPage;
@@ -62,10 +67,14 @@ class RunTable {
   void init() {
     for (uint16_t i = 0; i < RunCount; ++i) {
       clear(runs_[i]);
-      nextFree_[i] = static_cast<RunId>(i + 1 < RunCount ? i + 1 : kNoRun);
+      const uint16_t end = i < kContentRuns ? kContentRuns : RunCount;
+      nextFree_[i] = static_cast<RunId>(i + 1 < end ? i + 1 : kNoRun);
     }
-    freeHead_ = RunCount ? 0 : kNoRun;
-    freeCount_ = RunCount;
+    freeHead_ = kContentRuns ? 0 : kNoRun;
+    freeCount_ = kContentRuns;
+    previewFreeHead_ = PreviewRuns ? kContentRuns : kNoRun;
+    previewFreeCount_ = PreviewRuns;
+    previewPages_ = 0;
     nextSerial_ = 1;
     reclaimHead_ = reclaimTail_ = kNoRun;
     reclaimRuns_ = 0;
@@ -74,11 +83,20 @@ class RunTable {
 
   /// O(1). A new run in `Writing` state with one reference (its writer). `kNoRun` when the table is full; the
   /// reservation ledger reserves descriptors before an interaction is accepted, so a writer never sees that.
-  RunId allocate(uint8_t slot, uint8_t kind) {
-    if (freeHead_ == kNoRun) return kNoRun;
-    const RunId id = freeHead_;
-    freeHead_ = nextFree_[id];
-    --freeCount_;
+  RunId allocate(uint8_t slot, uint8_t kind) { return take(freeHead_, freeCount_, slot, kind); }
+  /// A preview run (plan §6.2 fix 1), as `allocate`; `kNoRun` when every preview descriptor is in use.
+  RunId allocatePreview(uint8_t slot, uint8_t kind) { return take(previewFreeHead_, previewFreeCount_, slot, kind); }
+  bool isPreview(RunId id) const { return id >= kContentRuns && id < RunCount; }
+  /// Pages the preview runs hold now (data + directory), reclaimed ones no longer.
+  uint32_t previewPages() const { return previewPages_; }
+  uint16_t previewFreeCount() const { return previewFreeCount_; }
+
+ private:
+  RunId take(RunId& head, uint16_t& count, uint8_t slot, uint8_t kind) {
+    if (head == kNoRun) return kNoRun;
+    const RunId id = head;
+    head = nextFree_[id];
+    --count;
     Run& r = runs_[id];
     clear(r);
     r.state = RunState::Writing;
@@ -88,6 +106,8 @@ class RunTable {
     r.serial = nextSerial_++;
     return id;
   }
+
+ public:
 
   /// Appends one row, taking data/directory pages from `pool` as the run crosses page boundaries. The caller's
   /// reservation decides whether this may be asked; `NoPage` here means that accounting was violated.
@@ -104,6 +124,7 @@ class RunTable {
         r.dirPages[r.dirPageCount++] = dir;
       }
       const PageId page = pool.acquire(id);
+      if (isPreview(id)) previewPages_ += needsDir ? 2u : 1u;
       if (index < InlinePages) {
         r.inlinePages[index] = page;
       } else {
@@ -171,16 +192,19 @@ class RunTable {
       if (r.pageCount > 0) {
         pool.release(pageAt(id, static_cast<uint32_t>(r.pageCount - 1), pool), id);
         --r.pageCount;
+        if (isPreview(id)) --previewPages_;
       } else if (r.dirPageCount > 0) {
         pool.release(r.dirPages[--r.dirPageCount], id);
+        if (isPreview(id)) --previewPages_;
       } else {
         reclaimHead_ = nextFree_[id];
         if (reclaimHead_ == kNoRun) reclaimTail_ = kNoRun;
         --reclaimRuns_;
         clear(r);
-        nextFree_[id] = freeHead_;
-        freeHead_ = id;
-        ++freeCount_;
+        RunId& head = isPreview(id) ? previewFreeHead_ : freeHead_;
+        nextFree_[id] = head;
+        head = id;
+        ++(isPreview(id) ? previewFreeCount_ : freeCount_);
       }
       ++used;
       --reclaimUnits_;
@@ -218,6 +242,9 @@ class RunTable {
   RunId nextFree_[RunCount];  // free list, or reclaim queue for `Reclaiming` runs
   RunId freeHead_;
   uint16_t freeCount_;
+  RunId previewFreeHead_;
+  uint16_t previewFreeCount_;
+  uint32_t previewPages_;
   uint32_t nextSerial_;
   RunId reclaimHead_, reclaimTail_;
   uint16_t reclaimRuns_;

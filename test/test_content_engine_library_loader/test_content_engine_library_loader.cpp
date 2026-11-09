@@ -37,7 +37,7 @@ using namespace ContentEngine;
 using namespace ContentEngine::library;
 
 using Pool = PagePool<2048 + 576, 64>;
-using Runs = RunTable<32, Pool>;
+using Runs = RunTable<36, Pool, Config::kInlinePagesPerRun, 8, /*preview runs*/ 4>;
 using Manifests = ManifestTable<16, 8>;
 using Hist = History<Manifests, Runs, 4, 20>;
 
@@ -225,7 +225,7 @@ void setUp() {
   gPool.init();
   gRuns.init();
   gManifests.init();
-  gRes.init(gPool, gRuns, 0);
+  gRes.init(gPool, gRuns, 0, 16);
   gH.init(gManifests, gRuns);
   gIds.init();
   while (gIds.peek() <= 20) gIds.advance();
@@ -501,6 +501,32 @@ void test_a_get_checks_the_whole_slot_file() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+/// Plan §6.2 fix 1 (a2): a preview get reads into preview runs within the preview partition — what content may take is
+/// the same before, during and after — and a loop larger than the partition is refused (`Capacity`).
+void test_a_preview_get_stays_in_the_preview_partition() {
+  saveHistories();
+  const uint32_t content = gRes.contentFreePages();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 1, 0, true));
+  Loader::Status st;
+  while ((st = gL.step()) == Loader::Status::Running) TEST_ASSERT_EQUAL_UINT32(content, gRes.contentFreePages());
+  TEST_ASSERT_EQUAL(Loader::Status::Done, st);
+  const ManifestId m = gL.takeGot();
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  TEST_ASSERT_TRUE(gRuns.isPreview(gManifests.manifest(m).runs[0]));
+  TEST_ASSERT_EQUAL_UINT32(content, gRes.contentFreePages());
+  gManifests.release(m, gRuns);
+  while (gRuns.reclaimPendingRuns() != 0) gRuns.reclaim(gPool, 64);
+  TEST_ASSERT_EQUAL_UINT32(0, gRuns.previewPages());
+  // A loop larger than the partition: refused, nothing taken.
+  gRes.init(gPool, gRuns, 0, 0);
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 1, 0, true));
+  TEST_ASSERT_EQUAL(Loader::Status::Unchanged, loadToEnd());
+  TEST_ASSERT_TRUE(gL.getWhy() == decltype(gL.getWhy())::Capacity);
+  while (gRuns.reclaimPendingRuns() != 0) gRuns.reclaim(gPool, 64);
+  TEST_ASSERT_EQUAL_UINT16(4, gRuns.previewFreeCount());  // the refused read's descriptor back
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_refusals() {
   buildSet();
   TEST_ASSERT_EQUAL(Loader::Result::NoCheckpoint, gL.beginReturn());
@@ -555,6 +581,7 @@ int main(int, char**) {
   RUN_TEST(test_a_get_that_finds_nothing_or_fails_changes_nothing);
   RUN_TEST(test_a_get_reads_only_the_current_states_runs);
   RUN_TEST(test_a_get_checks_the_whole_slot_file);
+  RUN_TEST(test_a_preview_get_stays_in_the_preview_partition);
   RUN_TEST(test_refusals);
   RUN_TEST(test_clearing_releases_the_set);
   RUN_TEST(test_no_heap);

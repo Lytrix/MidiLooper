@@ -15561,3 +15561,15 @@ stage refused; `undo 63` → the slot empty again.
   the browsing preview's separate budget is step a2 (owner's size decision). Native +2 (two mutations killed), full
   4,484 passed; PSRAM + 3,752 B on the host (`kPsramBudget` 6,825,784). Device `dac5b1f9…`, boot `crash=0`: the same
   `get` checks as before pass.
+- **Amendment 2 (owner 2026-11-09: "8,192 notes rows"; plan §6.2 fix 1, step a2):** a get-a-loop preview has a
+  partition of its own. `RunTable` keeps 63 preview run descriptors after the 520 content ones (`allocatePreview`; the
+  pages they hold counted as appended and as reclaim returns them); `RowReservations` admits a preview run only within
+  the 199-page partition and keeps every partition page no preview run holds out of content's free pages — a preview
+  never takes what a take may use, content never takes the partition, and its pages count again only once reclaimed.
+  `StateReader`'s preview mode reads into it (larger: `TOO BIG TO PREVIEW`); KEEP will re-read the loop as content and
+  place that (step b), so preview descriptors never enter the history. Budgets: pool 4,079 → 4,278 pages (plan § 4.1 /
+  § 5.1), PSRAM + 206,160 B host (`kPsramBudget` 7,031,944; `.bss.extram` 7,293,600 B, about 1.09 MB left of 8 MiB),
+  RAM2 + 5,440 B (159,864), persistence state + 552 B (7,776 B line). Manifests: one preview in the budget. Serial
+  `get … preview` (diagnostics) reads, reports and drops. Native +2 (four mutations killed), full 4,486 passed. Device
+  `9c2e8c49…`, boot `crash=0`, pool census 4,397,788 B: `get 9 1-1 8-8 preview` held 5 partition pages (preview free
+  199 → 194) with content free 2,840 before and after, nothing placed, the partition whole again by the next read.

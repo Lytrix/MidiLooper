@@ -310,7 +310,7 @@ growing container.
 
 | Region | Bytes | Sizing |
 |---|---|---|
-| Page pool | 4,193,216 | 4,079 pages [4,096] × 1,024 B (64 rows × 16 B; split in § 5.1) + free stack 4,079 × 2 B + owner tags 4,079 × 2 B (measured, E9.2) |
+| Page pool | 4,397,788 | 4,278 pages × 1,024 B (64 rows × 16 B; split in § 5.1) + free stack and owner tags 2 B each a page (measured on the Teensy, `#CAP,MEM_REGION`; 4,079 pages before the get-a-loop preview partition, DEC-270 amendment 2, 2026-11-09) |
 | Playback windows | 1,183,392 | 8 tracks × 3 windows × (3,072 rows × 16 B + header), measured |
 | Compose carry state | 221,184 | 18 cursors × ≤ 12 KiB: 16 playback (2 per track: steady + transition), the checkpoint sweep's, the tile sweep's (E9.6) |
 | Sweep scratch windows | 98,616 | 2 × 49,308 B: the checkpoint sweep's and the tile sweep's (owner 2026-11-05, E9.2: budgeted, sweeps independent) |
@@ -408,6 +408,7 @@ If it does not close, these levers apply, in order. Each is a W change for the o
 | Content quota | 3,247 | rows ≤ 134,304 → ≤ 2,099 full pages; partial pages ≤ 1 per live run (Midi region; controller and closure rows share it) = 520, + 1 hide partial per edit run with hides, capped at 500 → ≤ 1,020; directory pages (16 inline pages per run, 512 ids per directory page) ≤ ⌊2,099 / 17⌋ + ⌈2,099 / 512⌉ = 123 + 5 = 128. **Total ≤ 2,099 + 1,020 + 128 = 3,247** (`Config::kContentQuotaPages`, derived and asserted) |
 | Compaction reserve | 256 | one history-closed range in flight with its directories (design D5c); used by compaction only |
 | Edit-index reserve | 576 | 18 index slots (one per compose cursor) × 32 pages (4,096 ids × 8 B); used only by index builds for those cursors |
+| Preview partition | 199 | get-a-loop preview (owner 2026-11-09: 8,192 rows; DEC-270 amendment 2): 128 full pages, a partial page for each of its 63 run descriptors (kept apart from the 520 content descriptors), 8 directory pages; preview runs take pages only from it and content never takes its unused pages |
 
 The **132,768 rows** are 131,072 committed rows plus the standing reservations of the one writer:
 1 × (128 NoteOff + 32 controller closures) + 2 × 1,536 NOTE_EDIT rows (the published edit run and the one being

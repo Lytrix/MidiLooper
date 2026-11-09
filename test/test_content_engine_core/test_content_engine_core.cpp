@@ -36,6 +36,9 @@ using SmallPool = PagePool</*pages*/ 96, /*rows per page*/ 8>;  // 128 B pages: 
 using SmallRuns = RunTable</*runs*/ 24, SmallPool, /*inline pages*/ 4, /*dir pages*/ 4>;
 using SmallManifests = ManifestTable</*manifests*/ 16, /*runs per manifest*/ 8>;
 using SmallReservations = RowReservations<SmallPool, SmallRuns>;
+// Plan §6.2 fix 1 (a2): the last 4 descriptors are preview runs, and 16 pages the preview partition.
+using PreviewRuns = RunTable</*runs*/ 24, SmallPool, /*inline pages*/ 4, /*dir pages*/ 4, /*preview runs*/ 4>;
+using PreviewReservations = RowReservations<SmallPool, PreviewRuns>;
 
 static SmallPool gPool;
 static SmallRuns gRuns;
@@ -210,9 +213,12 @@ void test_production_core_initializes_over_poison_without_heap() {
   gProdPool.init();
   gProdRuns.init();
   gProdManifests.init();
-  gProdRes.init(gProdPool, gProdRuns, Config::kCompactionReservePages + Config::kIndexReservePages);
+  gProdRes.init(gProdPool, gProdRuns, Config::kCompactionReservePages + Config::kIndexReservePages,
+                Config::kPreviewPages);
   TEST_ASSERT_EQUAL_UINT16(Config::kPageCount, gProdPool.freeCount());
   TEST_ASSERT_EQUAL_UINT16(Config::kRunCount, gProdRuns.freeCount());
+  TEST_ASSERT_EQUAL_UINT16(Config::kPreviewRuns, gProdRuns.previewFreeCount());
+  TEST_ASSERT_EQUAL_UINT32(Config::kPreviewPages, gProdRes.previewFreePages());
   TEST_ASSERT_EQUAL_UINT16(Config::kManifestCount, gProdManifests.freeCount());
   TEST_ASSERT_EQUAL_UINT32(Config::kContentQuotaPages, gProdRes.contentFreePages());
   TEST_ASSERT_TRUE(checkConservation(gProdPool, gProdRuns, gProdManifests));
@@ -221,11 +227,13 @@ void test_production_core_initializes_over_poison_without_heap() {
   uint32_t accepted = 0;
   while (gProdRes.accept(run, row(accepted, 0xB0, 1, accepted), 0) == Admission::Ok) ++accepted;
   TEST_ASSERT_TRUE(gProdRes.check());
-  TEST_ASSERT_EQUAL_UINT32(Config::kCompactionReservePages + Config::kIndexReservePages, gProdPool.freeCount());
+  // The fixed partitions and the whole preview partition stay (plan §6.2 fix 1: content never takes it).
+  TEST_ASSERT_EQUAL_UINT32(Config::kCompactionReservePages + Config::kIndexReservePages + Config::kPreviewPages,
+                           gProdPool.freeCount());
   TEST_ASSERT_TRUE(checkConservation(gProdPool, gProdRuns, gProdManifests));
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - heapBefore);
   const RegionBytes regions = productionRegions();
-  TEST_ASSERT_EQUAL_UINT32(4176896u, static_cast<uint32_t>(regions.poolPages));
+  TEST_ASSERT_EQUAL_UINT32(4380672u, static_cast<uint32_t>(regions.poolPages));
   TEST_MESSAGE("production regions measured (bytes) — see the test log line below");
   char line[200];
   std::snprintf(line, sizeof line, "regions: pages=%u pool_meta=%u runs=%u (desc %u B) manifests=%u (desc %u B) res=%u rows=%u",
@@ -240,6 +248,56 @@ void test_production_core_initializes_over_poison_without_heap() {
 
 // Long sequential take: NoteOn (owes its NoteOff) then NoteOff, repeated until capacity. Completed notes consume rows;
 // each next NoteOn must find room for itself and its NoteOff. At refusal no NoteOff is owed and every note is complete.
+/// Plan §6.2 fix 1 (a2): preview runs come from their own descriptors and pages from their own partition — a preview
+/// never takes what content (a take) may use, content never takes the partition, and its pages count again only once
+/// reclaim has returned them.
+void test_preview_runs_and_partition_stay_apart() {
+  static PreviewRuns runs;
+  static PreviewReservations res;
+  gPool.init();
+  runs.init();
+  res.init(gPool, runs, 0, 16);
+  TEST_ASSERT_EQUAL_UINT16(20, runs.freeCount());
+  TEST_ASSERT_EQUAL_UINT16(4, runs.previewFreeCount());
+  const uint32_t content = res.contentFreePages();
+  TEST_ASSERT_EQUAL_UINT32(96 - 16, content);
+  const RunId p = runs.allocatePreview(1, 0);
+  TEST_ASSERT_TRUE(p >= 20 && runs.isPreview(p));
+  TEST_ASSERT_EQUAL(Admission::Ok, res.reserve(p, 40));  // 5 data pages and a directory page
+  TEST_ASSERT_EQUAL_UINT32(content, res.contentFreePages());
+  for (uint32_t i = 0; i < 40; ++i) TEST_ASSERT_TRUE(res.writeOwed(p, row(i, 0x90, 60, i)));
+  TEST_ASSERT_EQUAL_UINT32(6, runs.previewPages());
+  TEST_ASSERT_EQUAL_UINT32(content, res.contentFreePages());  // the preview's pages are the partition's
+  TEST_ASSERT_TRUE(res.check());
+  const RunId q = runs.allocatePreview(1, 0);
+  TEST_ASSERT_EQUAL(Admission::DeniedCapacity, res.reserve(q, 11 * 8));  // more than the partition has left
+  // Content fills everything it may: the partition's unused pages stay.
+  RunId c[20];
+  uint8_t n = 0;
+  for (; n < 20; ++n) {
+    c[n] = runs.allocate(0, 0);
+    TEST_ASSERT_TRUE(c[n] != kNoRun && !runs.isPreview(c[n]));
+    uint32_t k = 0;
+    while (res.accept(c[n], row(k, 0x90, 61, 1000 + k), 0) == Admission::Ok) ++k;
+    if (res.contentFreePages() == 0) break;
+  }
+  TEST_ASSERT_EQUAL(kNoRun, n == 20 ? runs.allocate(0, 0) : kNoRun);
+  TEST_ASSERT_EQUAL_UINT32(16 - 6, gPool.freeCount());
+  TEST_ASSERT_EQUAL(Admission::Ok, res.reserve(q, 8));  // the partition still admits
+  TEST_ASSERT_TRUE(res.check());
+  res.forgive(q);
+  for (RunId x : {p, q}) {
+    runs.seal(x);
+    runs.release(x);
+  }
+  while (runs.reclaimPendingRuns() != 0) runs.reclaim(gPool, 1);
+  TEST_ASSERT_EQUAL_UINT32(0, runs.previewPages());
+  TEST_ASSERT_EQUAL_UINT16(4, runs.previewFreeCount());
+  TEST_ASSERT_EQUAL_UINT32(16, gPool.freeCount());  // the partition whole again, content still holds the rest
+  TEST_ASSERT_EQUAL_UINT32(0, res.contentFreePages());
+  TEST_ASSERT_TRUE(res.check());
+}
+
 void test_reservations_long_sequential_take() {
   initSmall();
   const unsigned long heapBefore = gHeapAllocations;
@@ -420,6 +478,7 @@ int main(int, char**) {
   RUN_TEST(test_run_directory_readback_and_bounded_reclaim);
   RUN_TEST(test_manifest_release_releases_runs_once);
   RUN_TEST(test_production_core_initializes_over_poison_without_heap);
+  RUN_TEST(test_preview_runs_and_partition_stay_apart);
   RUN_TEST(test_reservations_long_sequential_take);
   RUN_TEST(test_reservations_max_open_notes_survive_exhaustion);
   RUN_TEST(test_reservations_closing_runs_and_stop_at_exhaustion);

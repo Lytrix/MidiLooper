@@ -42,7 +42,7 @@ constexpr uint16_t kCommittedRunLimit = 512;
 constexpr uint16_t kRunCount = 520;
 static_assert(kCommittedRunLimit + kWriterCount * 3 + 2 + 1 <= kRunCount, "run descriptors cover W");
 constexpr uint16_t kManifestCount = 256;
-static_assert(99 + kWriterCount * 3 + 1 + 24 + 18 + 6 + 3 <= kManifestCount, "manifest slots cover W");
+static_assert(99 + kWriterCount * 3 + 1 + 24 + 18 + 6 + 3 + 1 <= kManifestCount, "manifest slots cover W and a preview");
 
 constexpr uint16_t kRowsPerPage = 64;  // 64 x 16 B = 1 KiB pages
 // Content quota (plan § 5.1): full pages for every row, a partial page per live run plus one hide partial per edit run
@@ -52,10 +52,16 @@ constexpr uint16_t kContentQuotaPages = static_cast<uint16_t>(kContentFullPages 
                                                               (kContentFullPages + 511) / 512);
 constexpr uint16_t kCompactionReservePages = 256;
 constexpr uint16_t kIndexReservePages = 576;
-constexpr uint16_t kPageCount = kContentQuotaPages + kCompactionReservePages + kIndexReservePages;
-static_assert(kContentQuotaPages == 3247 && kPageCount == 4079, "plan § 5.1 figures (one writer, two edit runs)");
-
 constexpr uint8_t kRunsPerManifest = 63;  // 60 committed + 3 writer runs; fits the 6-bit merge key
+// Get-a-loop preview (owner 2026-11-09: 8,192 rows; browser plan §6.2 fix 1): its own run descriptors (one state's
+// worth) and pages — the full pages of its rows, a partial page per run, the directory pages — never content's.
+constexpr uint32_t kPreviewRows = 8192;
+constexpr uint16_t kPreviewRuns = kRunsPerManifest;
+constexpr uint16_t kPreviewPages = static_cast<uint16_t>(kPreviewRows / kRowsPerPage + kPreviewRuns +
+                                                         kPreviewRows / kRowsPerPage / 17 + 1);
+constexpr uint16_t kPageCount = kContentQuotaPages + kCompactionReservePages + kIndexReservePages + kPreviewPages;
+static_assert(kContentQuotaPages == 3247 && kPreviewPages == 199 && kPageCount == 4278,
+              "plan § 5.1 figures (one writer, two edit runs, the preview partition)");
 constexpr uint8_t kHistoryDepth = 99;  // undo states held across all slots (owner 2026-11-05: shared, oldest evicted)
 constexpr uint8_t kSlotCount = 64;
 constexpr uint8_t kInlinePagesPerRun = 16;

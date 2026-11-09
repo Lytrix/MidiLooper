@@ -120,7 +120,7 @@ class SetSnapshot {
   uint8_t loops_ = 0;
   uint32_t shortest_ = 0, longest_ = 0;
   uint8_t mosaic_[16] = {};
-  uint8_t seen_[(Config::kRunCount + 7) / 8] = {};
+  uint8_t seen_[(Runs::kRunCount + 7) / 8] = {};
 };
 
 template <typename Card, typename Pool, typename Runs, typename Manifests, typename HistoryT, uint8_t Slots>

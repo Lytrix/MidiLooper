@@ -30,18 +30,30 @@ template <typename Pool, typename Runs>
 class RowReservations {
  public:
   /// `fixedReservePages`: pool pages that belong to other partitions (compaction, edit index) and are never content.
-  void init(Pool& pool, Runs& runs, uint32_t fixedReservePages) {
+  /// `previewPages` (plan §6.2 fix 1): the preview partition — preview runs (`Runs::isPreview`) take their pages from it
+  /// alone, and content never takes its unused pages.
+  void init(Pool& pool, Runs& runs, uint32_t fixedReservePages, uint32_t previewPages = 0) {
     pool_ = &pool;
     runs_ = &runs;
     fixedReservePages_ = fixedReservePages;
+    previewPartition_ = previewPages;
     for (auto& o : outstanding_) o = 0;
     reservedPages_ = 0;
+    previewReserved_ = 0;
   }
 
-  /// Pool pages content may still take: free pages minus the untouched fixed partitions.
+  /// Pool pages content may still take: free pages minus the untouched fixed partitions and every preview-partition
+  /// page no preview run holds yet (reserved for one or not).
   uint32_t contentFreePages() const {
-    const uint32_t free = pool_->freeCount();
-    return free > fixedReservePages_ ? free - fixedReservePages_ : 0;
+    const uint32_t previewHeld = runs_->previewPages();
+    const uint32_t free = pool_->freeCount(),
+                   held = fixedReservePages_ + (previewPartition_ > previewHeld ? previewPartition_ - previewHeld : 0);
+    return free > held ? free - held : 0;
+  }
+  /// Pages the preview partition has left: not held by a preview run nor reserved for one.
+  uint32_t previewFreePages() const {
+    const uint32_t used = runs_->previewPages() + previewReserved_;
+    return previewPartition_ > used ? previewPartition_ - used : 0;
   }
 
   uint32_t reservedPages() const { return reservedPages_; }
@@ -57,12 +69,12 @@ class RowReservations {
     if (static_cast<uint64_t>(r.rowCount) + total > static_cast<uint64_t>(Runs::kMaxPagesPerRun) * Runs::kRowsPerPage)
       return Admission::DeniedRunFull;
     const uint32_t after = need(r, total);
-    const uint32_t others = reservedPages_ - before;
-    if (contentFreePages() < others + after) return Admission::DeniedCapacity;
+    if (!fits(run, before, after)) return Admission::DeniedCapacity;
     // Guaranteed by the check above: the append cannot fail.
+    const uint32_t others = ledger(run) - before;
     runs_->append(run, row, *pool_);
     outstanding_[run] += newObligations;
-    reservedPages_ = others + need(runs_->run(run), outstanding_[run]);
+    ledger(run) = others + need(runs_->run(run), outstanding_[run]);
     return Admission::Ok;
   }
 
@@ -76,16 +88,15 @@ class RowReservations {
     if (static_cast<uint64_t>(r.rowCount) + total > static_cast<uint64_t>(Runs::kMaxPagesPerRun) * Runs::kRowsPerPage)
       return Admission::DeniedRunFull;
     const uint32_t after = need(r, total);
-    const uint32_t others = reservedPages_ - before;
-    if (contentFreePages() < others + after) return Admission::DeniedCapacity;
+    if (!fits(run, before, after)) return Admission::DeniedCapacity;
     outstanding_[run] = total;
-    reservedPages_ = others + after;
+    ledger(run) = ledger(run) - before + after;
     return Admission::Ok;
   }
 
   /// Forgives every row `run` still owes: its owner abandoned the work (a superseded NOTE_EDIT rebuild). O(1).
   void forgive(RunId run) {
-    reservedPages_ -= need(runs_->run(run), outstanding_[run]);
+    ledger(run) -= need(runs_->run(run), outstanding_[run]);
     outstanding_[run] = 0;
   }
 
@@ -96,22 +107,31 @@ class RowReservations {
     const uint32_t before = need(runs_->run(run), outstanding_[run]);
     if (runs_->append(run, row, *pool_) != AppendResult::Ok) return false;  // unreachable while R holds
     --outstanding_[run];
-    reservedPages_ = reservedPages_ - before + need(runs_->run(run), outstanding_[run]);
+    ledger(run) = ledger(run) - before + need(runs_->run(run), outstanding_[run]);
     return true;
   }
 
   /// Invariant R plus the cached total, recomputed from scratch. O(runs); tests and diagnostics.
   bool check() const {
-    uint32_t sum = 0;
+    uint32_t sum = 0, preview = 0;
     for (RunId id = 0; id < Runs::kRunCount; ++id) {
       const auto& r = runs_->run(id);
       if (outstanding_[id] != 0 && r.state != RunState::Writing) return false;
-      if (r.state == RunState::Writing) sum += need(r, outstanding_[id]);
+      if (r.state == RunState::Writing) (runs_->isPreview(id) ? preview : sum) += need(r, outstanding_[id]);
     }
-    return sum == reservedPages_ && contentFreePages() >= reservedPages_;
+    return sum == reservedPages_ && contentFreePages() >= reservedPages_ && preview == previewReserved_ &&
+           runs_->previewPages() + previewReserved_ <= previewPartition_;
   }
 
  private:
+  /// The pages reserved on `run`'s side: the preview partition's, or content's.
+  uint32_t& ledger(RunId run) { return runs_->isPreview(run) ? previewReserved_ : reservedPages_; }
+  /// `run`, owing pages `before`, may owe `after`: within the preview partition, or what content has free.
+  bool fits(RunId run, uint32_t before, uint32_t after) const {
+    if (runs_->isPreview(run))
+      return runs_->previewPages() + (previewReserved_ - before) + after <= previewPartition_;
+    return contentFreePages() >= (reservedPages_ - before) + after;
+  }
   static uint32_t need(const typename Runs::Run& r, uint32_t rows) {
     return pagesToAppend<Runs::kRowsPerPage, Runs::kIdsPerDirPage, Runs::kInlinePages>(r.pageCount, r.rowCount, rows);
   }
@@ -120,6 +140,7 @@ class RowReservations {
   Runs* runs_ = nullptr;
   uint32_t fixedReservePages_ = 0;
   uint32_t reservedPages_ = 0;
+  uint32_t previewPartition_ = 0, previewReserved_ = 0;
   uint32_t outstanding_[Runs::kRunCount];  // a loaded take may owe more than 65,535 rows
 };
 

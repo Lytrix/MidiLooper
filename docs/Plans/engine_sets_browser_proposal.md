@@ -236,7 +236,7 @@ Notes: the stage's tempo is not applied (loops are ticks; said where the length 
 7 px (§6.1).
 
 **Order:** (a) the current-state reader with its preview budget (fixes 1, and `get`) — a1, the reader, done
-(DEC-270 amendment 1); a2, the preview budget, waits on the owner's size; (b) the audition owner in the
+(DEC-270 amendment 1); a2, the preview partition (8,192 rows), done (amendment 2); (b) the audition owner in the
 engine — hold, beat-line switch, cancel and KEEP, the refusals while it lasts, cancellation on transport stop; (c) the
 preview render path (2); (d) the picker screen with 3, 5, 6, 9–11; mockups alongside (b)–(c).
 

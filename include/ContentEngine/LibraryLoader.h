@@ -182,8 +182,9 @@ class StateReader {
   static constexpr uint32_t kGrainBytes = 2048;
 
   /// Starts reading slot `from` of the set whose header is library sector `at` (written as `sequence`) for `into`.
+  /// `preview` (plan §6.2 fix 1): into preview runs, within the preview partition — larger fails `Capacity`.
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, Reservations& res, NoteIdSource& ids,
-             uint32_t at, uint32_t sequence, uint8_t from, uint8_t into) {
+             uint32_t at, uint32_t sequence, uint8_t from, uint8_t into, bool preview = false) {
     cancel();
     if (got_ != kNoManifest) manifests.release(got_, runs);
     got_ = kNoManifest;
@@ -197,6 +198,7 @@ class StateReader {
     sequence_ = sequence;
     from_ = from;
     into_ = into;
+    preview_ = preview;
     taken_ = 0;
     cached_ = kNoSector;
     why_ = Why::None;
@@ -290,7 +292,8 @@ class StateReader {
         return status_;
       }
       case Phase::Admit: {  // only the current state's runs: allocated, every row reserved before any is read
-        if (count_ > runs_->freeCount() || manifests_->freeCount() == 0) return fail(Why::Capacity);
+        if (count_ > (preview_ ? runs_->previewFreeCount() : runs_->freeCount()) || manifests_->freeCount() == 0)
+          return fail(Why::Capacity);
         uint32_t at = rowsAt_;
         for (uint16_t j = 0; j < runCount_; ++j) {
           for (uint8_t k = 0; k < count_; ++k)
@@ -298,7 +301,7 @@ class StateReader {
           at += rows_[j] * kSetFileRowBytes;
         }
         for (uint8_t k = 0; k < count_; ++k) {
-          run_[k] = runs_->allocate(into_, kind_[list_[k]]);
+          run_[k] = preview_ ? runs_->allocatePreview(into_, kind_[list_[k]]) : runs_->allocate(into_, kind_[list_[k]]);
           if (run_[k] == kNoRun) return fail(Why::Capacity);
           taken_ = static_cast<uint8_t>(k + 1);
           if (res_->reserve(run_[k], rows_[list_[k]]) != Admission::Ok) return fail(Why::Capacity);
@@ -405,6 +408,7 @@ class StateReader {
   uint16_t runCount_ = 0, r_ = 0;
   uint8_t states_ = 0, i_ = 0, count_ = 0, k_ = 0, taken_ = 0, from_ = 0, into_ = 0;
   int8_t current_ = -1;
+  bool preview_ = false;
   uint8_t kind_[Runs::kRunCount] = {};
   uint32_t rows_[Runs::kRunCount] = {};
   uint16_t list_[Manifests::kMaxRuns] = {};
@@ -467,7 +471,8 @@ class SetLoad {
   }
   /// Get a loop (DEC-270): starts reading slot `from` of milestone `index` for slot `into` — its current state only,
   /// detached (`takeGot` once Done). Unchanged: the read failed or the slot was empty there; nothing changed.
-  Result beginGet(uint16_t index, uint8_t from, uint8_t into) {
+  /// `preview` (plan §6.2 fix 1): into the preview partition (a picker's preview, never kept as it is).
+  Result beginGet(uint16_t index, uint8_t from, uint8_t into, bool preview = false) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
     if (from >= Slots || into >= Slots || from >= library::kSlots) return Result::NoSlot;
@@ -477,7 +482,7 @@ class SetLoad {
     hold_ = false;
     stageTracks_ = 0;
     start();
-    getter_.start(*card_, *pool_, *runs_, *manifests_, *res_, *ids_, setAt(), setSequence(), from, into);
+    getter_.start(*card_, *pool_, *runs_, *manifests_, *res_, *ids_, setAt(), setSequence(), from, into, preview);
     phase_ = Phase::Get;
     return Result::Ok;
   }

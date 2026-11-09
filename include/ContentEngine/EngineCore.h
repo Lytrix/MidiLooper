@@ -56,7 +56,8 @@ bool checkConservation(const Pool& pool, const Runs& runs, const Manifests& mani
 
 /// Production capacities (plan revision 3 § 4, § 5).
 using ProductionPool = PagePool<Config::kPageCount, Config::kRowsPerPage>;
-using ProductionRuns = RunTable<Config::kRunCount, ProductionPool>;
+using ProductionRuns = RunTable<Config::kRunCount + Config::kPreviewRuns, ProductionPool, Config::kInlinePagesPerRun, 8,
+                                Config::kPreviewRuns>;
 using ProductionManifests = ManifestTable<Config::kManifestCount, Config::kRunsPerManifest>;
 using ProductionReservations = RowReservations<ProductionPool, ProductionRuns>;
 
@@ -75,8 +76,9 @@ constexpr RegionBytes productionRegions() {
 }
 
 // Budget pins (plan revision 3 § 4.1 / § 4.2). A change here is a budget change and must update the plan clause.
-static_assert(ProductionPool::storageBytes() == 4176896u, "page pool data is 4,079 x 1 KiB (one writer, two edit runs)");
-static_assert(ProductionPool::metadataBytes() <= 16386u, "free stack + owner tags");
+static_assert(ProductionPool::storageBytes() == 4380672u,
+              "page pool data is 4,278 x 1 KiB (one writer, two edit runs, the 199-page preview partition)");
+static_assert(ProductionPool::metadataBytes() <= 17114u, "free stack + owner tags");
 static_assert(sizeof(ProductionRuns::Run) <= 128u, "RAM2 budget assumes <= 128 B per run descriptor");
 static_assert(sizeof(ProductionManifests::Manifest) <= 148u, "RAM2 budget assumes <= 148 B per manifest");
 static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
