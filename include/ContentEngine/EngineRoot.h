@@ -365,6 +365,12 @@ class EngineRoot {
     return p_->libraryWriter.beginMilestone(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), m,
                                             p_->libraryScratch);
   }
+  /// Starts publishing a deletion (DEC-268): milestone `target` (its sequence) or, 0, every milestone of `set` so far.
+  /// The working set is not touched.
+  ProductionLibrary::Result deleteMilestones(uint16_t set, uint32_t target, uint32_t wallTime) {
+    if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
+    return p_->libraryWriter.beginDeletion(set, target, wallTime);
+  }
   /// Starts replacing the recovery checkpoint with the whole set as it is now.
   ProductionLibrary::Result saveCheckpoint(const ProductionLibrary::Checkpoint& c) {
     if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;

@@ -449,10 +449,13 @@ class Surface {
       browser_->hold();
       return;
     }
+    if (b == kTrackSwitch) {  // once per gesture: a double press must not confirm, then act on the row under it
+      browser_->press();
+      return;
+    }
     for (uint8_t i = 0; i < times; ++i) {
       if (b == kRecord && p != Press::Long) browser_->up();
       else if (b == kEditMode && p != Press::Long) browser_->down();
-      else if (b == kTrackSwitch) browser_->press();
     }
   }
   void dispatch(uint8_t b, Press p) {

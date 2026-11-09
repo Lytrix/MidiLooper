@@ -39,30 +39,37 @@ void setUp() {
 }
 void tearDown() {}
 
-/// Owner 2026-11-09: saving and loading split — SAVE, a LOAD divider, then the sets; no return or close row.
+/// Owner 2026-11-09: `< CLOSE`, SAVE SET, a LOAD SET divider, then the sets; no return row (DEC-267, DEC-268).
 void test_opening_selects_save_over_a_load_section_of_sets_newest_first() {
   gB.open();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
-  TEST_ASSERT_EQUAL(B::RowKind::Save, kind(0));
-  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(1));
-  TEST_ASSERT_EQUAL(B::RowKind::Working, kind(2));
-  TEST_ASSERT_EQUAL_UINT16(2, gB.row(2).set);
-  TEST_ASSERT_EQUAL_UINT16(4, gB.row(2).record);  // T01, its newest
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).set);     // the newest other set first
-  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).record);  // SET 07's newest: T02
-  TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
+  TEST_ASSERT_EQUAL(B::RowKind::Close, kind(0));
+  TEST_ASSERT_EQUAL(B::RowKind::Save, kind(1));
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));
+  TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
+  TEST_ASSERT_EQUAL_UINT16(2, gB.row(3).set);
+  TEST_ASSERT_EQUAL_UINT16(4, gB.row(3).record);  // T01, its newest
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).set);     // the newest other set first
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(5).set);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(5).record);  // SET 07's newest: T02
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
 }
 
-/// No close row (owner 2026-11-09): HOLD TRACK closes; the divider is passed both ways.
-void test_hold_closes_and_the_divider_is_passed() {
+/// `< CLOSE` closes (TRACK); the divider is passed both ways; HOLD TRACK on SAVE SET or CLOSE does nothing (DEC-268).
+void test_close_closes_and_the_divider_is_passed() {
   gB.open();
   gB.down();
-  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());  // over LOAD to the working set
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());  // over LOAD SET to the working set
   gB.up();
-  TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
   gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  gB.up();
+  TEST_ASSERT_EQUAL(B::RowKind::Close, kind(gB.selected()));
+  gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  gB.press();
   TEST_ASSERT_FALSE(gB.isOpen());
   B::Request r;
   TEST_ASSERT_FALSE(gB.takeRequest(r));
@@ -71,9 +78,10 @@ void test_hold_closes_and_the_divider_is_passed() {
 void test_record_and_edit_stop_at_both_ends() {
   gB.open();
   gB.up();
+  gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   for (int i = 0; i < 10; ++i) gB.down();
-  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
 }
 
 void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
@@ -106,7 +114,7 @@ void test_back_returns_to_the_set_row() {
   TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   gB.press();  // < SETS
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
 }
 
 void test_the_popup_shows_next_ids_suggests_the_base_stage_and_saves_into_the_working_set() {
@@ -202,15 +210,169 @@ void test_arrangement_and_final_are_never_inferred_and_new_work_is_sketch() {
   TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Stage::Sketch) + 1, gB.popupSelected());  // the selection starts on it
 }
 
-void test_hold_closes_the_popup_then_the_browser_and_asks_nothing() {
+void test_hold_closes_the_save_popup_and_asks_nothing() {
   gB.open();
   gB.press();
   gB.hold();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  gB.hold();
-  TEST_ASSERT_FALSE(gB.isOpen());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
   B::Request r;
   TEST_ASSERT_FALSE(gB.takeRequest(r));
+}
+
+// ---- Deleting (DEC-268) ---------------------------------------------------------------------------------------------
+/// A tombstone as the library publishes it: its own sequence, the set, the target (0: the whole set so far).
+static void tombstone(uint16_t set, uint32_t target) {
+  Record r{};
+  r.sequence = ++gSeq;
+  r.set = set;
+  r.kind = kDeletion;
+  r.parent = target;
+  TEST_ASSERT_TRUE(gB.add(r));
+}
+
+/// HOLD TRACK on a set opens its popup with CANCEL selected; TRACK on CANCEL, or HOLD TRACK, changes nothing.
+void test_hold_on_a_set_opens_its_delete_popup_and_cancel_changes_nothing() {
+  gB.open();
+  for (int i = 0; i < 3; ++i) gB.down();  // SET 07
+  gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.deleteSet());
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.deleteRecord());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.deleteSelected());  // CANCEL
+  TEST_ASSERT_EQUAL(B::RowKind::Set, kind(gB.selected()));  // the list under it
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  B::Request r;
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
+  gB.hold();
+  gB.up();  // YES
+  gB.hold();  // cancels all the same
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
+}
+
+/// YES asks for the set's deletion; once published the set is gone, the nearest set selected; numbers are not reused.
+void test_deleting_a_set_hides_it_and_selects_the_nearest_set() {
+  gB.open();
+  for (int i = 0; i < 2; ++i) gB.down();  // SET 03
+  gB.hold();
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Delete, r.action);
+  TEST_ASSERT_EQUAL_UINT16(3, r.set);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.record);
+  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());  // until the deletion ends
+  tombstone(3, 0);
+  gB.deleted();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);  // SET 07 moved up into its place
+  TEST_ASSERT_TRUE(gB.hidden(5));              // F01
+  TEST_ASSERT_EQUAL_UINT16(8, gB.newSetNumber());  // 03 is not reused, nor 07
+  TEST_ASSERT_EQUAL_UINT16(0, gB.milestonesIn(3));
+}
+
+/// A stage: the popup names it; after it the set keeps its other stages, the next one selected; its number not reused.
+void test_deleting_a_stage_keeps_the_set_and_selects_the_next_stage() {
+  gB.open();
+  for (int i = 0; i < 3; ++i) gB.down();
+  gB.press();  // SET 07: T02, T01
+  gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.deleteRecord());  // T02
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL_UINT16(3, r.record);
+  tombstone(7, gB.record(3).sequence);
+  gB.deleted();
+  TEST_ASSERT_EQUAL(B::View::Set, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(2).record);  // T01
+  TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
+  TEST_ASSERT_EQUAL_UINT16(1, gB.latestOf(7));
+}
+
+/// The last stage of a set: the set goes, and the view goes back to the sets with the nearest one selected.
+void test_deleting_the_last_stage_removes_the_set() {
+  gB.open();
+  for (int i = 0; i < 2; ++i) gB.down();
+  gB.press();  // SET 03: F01
+  gB.hold();
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  tombstone(3, gB.record(r.record).sequence);
+  gB.deleted();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);
+}
+
+/// The loaded set (the working one): its row stays, empty, and the base is still known (what plays is untouched).
+void test_deleting_the_working_set_keeps_its_row_and_base() {
+  gB.open();
+  gB.down();  // SET 02, the working set
+  gB.hold();
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL_UINT16(2, r.set);
+  tombstone(2, 0);
+  gB.deleted();
+  TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.row(3).record);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.find(gB.baseSequence()));  // T01, hidden but known
+  bool provisional = false;
+  gB.setActivity(B::Activity{});
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(false, provisional));
+  gB.hold();  // nothing left to delete there
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  gB.press();
+  gB.hold();  // a new stage saved later starts the set again, numbered on
+  TEST_ASSERT_EQUAL_UINT8(2, gB.nextNumber(2, Stage::Take));
+}
+
+/// A failed deletion: back to the list with what and why; TRACK asks for the same deletion again.
+void test_a_failed_deletion_keeps_the_set_and_retries() {
+  gB.open();
+  for (int i = 0; i < 3; ++i) gB.down();
+  gB.hold();
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  gB.failed("DELETE FAILED", "CARD WRITE ERROR");
+  TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
+  TEST_ASSERT_EQUAL(B::View::Top, gB.listView());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());  // nothing hidden
+  gB.press();
+  B::Request again;
+  TEST_ASSERT_TRUE(gB.takeRequest(again));
+  TEST_ASSERT_EQUAL(B::Action::Delete, again.action);
+  TEST_ASSERT_EQUAL_UINT16(7, again.set);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, again.record);
+}
+
+/// At boot the index is replayed in card order: a set's deletion hides only what was published before it.
+void test_a_set_deletion_hides_only_earlier_stages() {
+  tombstone(7, 0);
+  publish(7, Stage::Sketch);  // SET 07 started again
+  TEST_ASSERT_EQUAL_UINT16(1, gB.milestonesIn(7));
+  TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
+  gB.open();
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);  // the newest other set again
 }
 
 void test_a_failure_keeps_the_screen_and_selection_and_track_tries_again() {
@@ -255,8 +417,8 @@ void test_the_list_scrolls_with_the_selection() {
   for (uint16_t s = 10; s < 20; ++s) publish(s, Stage::Sketch);
   gB.open();
   for (int i = 0; i < 8; ++i) gB.down();
-  TEST_ASSERT_EQUAL_UINT16(9, gB.selected());  // over the divider
-  TEST_ASSERT_EQUAL_UINT16(5, gB.first());      // five rows shown
+  TEST_ASSERT_EQUAL_UINT16(10, gB.selected());  // over the divider
+  TEST_ASSERT_EQUAL_UINT16(6, gB.first());      // five rows shown
   for (int i = 0; i < 10; ++i) gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.first());
 }
@@ -350,7 +512,7 @@ void test_the_popup_history_follows_the_base_line() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_opening_selects_save_over_a_load_section_of_sets_newest_first);
-  RUN_TEST(test_hold_closes_and_the_divider_is_passed);
+  RUN_TEST(test_close_closes_and_the_divider_is_passed);
   RUN_TEST(test_record_and_edit_stop_at_both_ends);
   RUN_TEST(test_a_set_opens_on_its_newest_milestone_and_loads_it);
   RUN_TEST(test_back_returns_to_the_set_row);
@@ -359,7 +521,14 @@ int main(int, char**) {
   RUN_TEST(test_the_popup_runs_from_as_new_set_to_final);
   RUN_TEST(test_the_suggestion_follows_the_evidence_since_the_base);
   RUN_TEST(test_arrangement_and_final_are_never_inferred_and_new_work_is_sketch);
-  RUN_TEST(test_hold_closes_the_popup_then_the_browser_and_asks_nothing);
+  RUN_TEST(test_hold_closes_the_save_popup_and_asks_nothing);
+  RUN_TEST(test_hold_on_a_set_opens_its_delete_popup_and_cancel_changes_nothing);
+  RUN_TEST(test_deleting_a_set_hides_it_and_selects_the_nearest_set);
+  RUN_TEST(test_deleting_a_stage_keeps_the_set_and_selects_the_next_stage);
+  RUN_TEST(test_deleting_the_last_stage_removes_the_set);
+  RUN_TEST(test_deleting_the_working_set_keeps_its_row_and_base);
+  RUN_TEST(test_a_failed_deletion_keeps_the_set_and_retries);
+  RUN_TEST(test_a_set_deletion_hides_only_earlier_stages);
   RUN_TEST(test_a_failure_keeps_the_screen_and_selection_and_track_tries_again);
   RUN_TEST(test_a_failed_save_goes_back_to_its_list_and_retries_the_same_save);
   RUN_TEST(test_the_list_scrolls_with_the_selection);

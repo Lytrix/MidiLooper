@@ -41,7 +41,7 @@ create and find the two files.
 The costs, accepted for a live instrument: the space is taken at once (1 GiB for the library, even when nearly empty);
 on a computer the card shows one opaque file each, not browsable sets (an export would need a tool or a command); the
 limits are fixed (4,096 milestones, a 2.1 MB set) and changing them is a new format version; and the library's log only
-appends, so removing a milestone would hide it, not free its space, unless compaction is added later.
+appends, so deleting a milestone hides it but does not free its space (below), unless compaction is added later.
 
 ## Making a write safe: the publishing order
 
@@ -91,8 +91,17 @@ the playing set and composed ahead, so at the switch point that track takes it a
 full load then adopts that staged state as the slot's current one, so the track plays on untouched. Only when staging does not fit does a track take
 the gap. `!ENGINE switch-stage 0|1` turns staging off and on.
 
+## Deleting (DEC-268)
+
+A deletion rewrites nothing. It is one more index record, a *tombstone* (`kind` 1, no blob), naming the milestone it
+hides, or, with no target, every milestone of its set published before it. It is published as a milestone's record is
+(the record, then the index header, each programmed first), so a cut-off deletion simply did not happen. At boot the
+records are replayed in order and tombstones hide their targets. A deleted milestone's blob stays in the log and its
+space is not reused; its stage number and set number are not reused either. Each deletion uses one of the 4,096 index
+records.
+
 ## Serial commands (testing)
 
 `!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
-`load <index>`, `return`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
+`load <index>`, `return`, `delete <set> [index]`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
 `LIBRARY FULL`, `BUSY`. On the DROID the same actions run from the sets browser (HOLD TRACK; DEC-263, redesigned in DEC-267); `return` is serial-only.

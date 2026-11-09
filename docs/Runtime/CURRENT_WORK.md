@@ -30,6 +30,12 @@ stage, else Sketch), load / return / save through slices 1–2, a one-line confi
 The index is kept in memory (PSRAM). Non-goals: the activity-based suggestion (slice 4), the timeline strip and fork
 lanes (slice 5), getting a loop (slice 6), the encoder.
 
+**2026-11-09 — deleting sets and stages (owner: "a way to delete sets or stages", with its navigation, gesture,
+confirmation, after-deletion and verification rules; DEC-268).** Tombstone records in the library (nothing rewritten,
+space not reclaimed), `< CLOSE` back on top, HOLD TRACK on a set or stage opens a `YES` / `CANCEL` popup (CANCEL
+default), the browser stays open on the nearest row, the working set untouched. Non-goals: compaction (reclaiming a
+deleted blob's space), undoing a deletion. Device deletion only on content the owner approves as disposable.
+
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
 if a board-side USB stop recurs (read `prev_crumbs` c4–c6 after the PROGRAM press).

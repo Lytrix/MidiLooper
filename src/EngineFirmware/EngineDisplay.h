@@ -269,7 +269,8 @@ class EngineDisplay {
         {'D', 0x6B6E}, {'E', 0x79A7}, {'F', 0x79A4}, {'G', 0x396B}, {'H', 0x5BED}, {'I', 0x7497}, {'J', 0x126A},
         {'K', 0x5BAD}, {'L', 0x4927}, {'M', 0x5F6D}, {'N', 0x6B6D}, {'O', 0x2B6A}, {'P', 0x6BA4}, {'Q', 0x2B6B},
         {'R', 0x6BAD}, {'S', 0x388E}, {'T', 0x7492}, {'U', 0x5B6F}, {'V', 0x5B6A}, {'W', 0x5BFD}, {'X', 0x5AAD},
-        {'Y', 0x5A92}, {'Z', 0x72A7}, {':', 0x0410}, {'.', 0x0002}, {'!', 0x2482}, {'<', 0x1511}, {'>', 0x4454}};
+        {'Y', 0x5A92}, {'Z', 0x72A7}, {':', 0x0410}, {'.', 0x0002}, {'!', 0x2482}, {'<', 0x1511}, {'>', 0x4454},
+        {'?', 0x6282}, {'(', 0x2922}, {')', 0x224A}};  // ? ( ): the delete popup (DEC-268) and a provisional suggestion
     for (const auto& g : kGlyphs)
       if (g.c == c) return g.bits;
     return 0;
@@ -340,6 +341,7 @@ class EngineDisplay {
     drawStatus(e, clock, sel, info, lastTick, nowMs);
     if (browser_ != nullptr && browser_->isOpen()) {  // a window over the performance screen
       drawBrowser(*browser_, e);
+      if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();  // a deletion's line: the browser stays open
       return;
     }
     if (edit_.popup) drawPopup();
@@ -398,8 +400,9 @@ class EngineDisplay {
       drawSavePopup(b);
       return;
     }
+    const bool deleting = b.view() == Browser::View::Delete;
     const bool inSet = b.view() == Browser::View::Set ||
-                       (b.view() == Browser::View::Failed && b.listView() == Browser::View::Set);
+                       ((b.view() == Browser::View::Failed || deleting) && b.listView() == Browser::View::Set);
     char title[16];
     if (inSet) snprintf(title, sizeof title, "SET %02u", b.openSetNumber());
     else snprintf(title, sizeof title, "SETS");
@@ -418,6 +421,40 @@ class EngineDisplay {
       drawDetail(b, b.row(b.selected()), h, sizeof h);
     }
     hint(h);
+    if (deleting) drawDeletePopup(b);
+  }
+  /// DEC-268: the target exactly (`DELETE SET 01?` with ALL SAVED STAGES, or `DELETE SET 01 S01?` with its stage) and
+  /// when it was saved, over the list; YES and CANCEL, the selected one inverted.
+  void drawDeletePopup(const Browser& b) {
+    constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
+    window(x0, y0, x1, y1, "DELETE");
+    char q[32], line[32], stamp[24];
+    const uint16_t rec = b.deleteRecord() != Browser::kNone ? b.deleteRecord() : b.latestOf(b.deleteSet());
+    if (b.deleteRecord() != Browser::kNone) {
+      char id[8];
+      idText(b.record(rec), id, sizeof id);
+      snprintf(q, sizeof q, "DELETE SET %02u %s?", b.deleteSet(), id);
+      snprintf(line, sizeof line, "%s", ContentEngine::library::stageName(b.record(rec).stage));
+    } else {
+      snprintf(q, sizeof q, "DELETE SET %02u?", b.deleteSet());
+      snprintf(line, sizeof line, "ALL SAVED STAGES (%u)", b.milestonesIn(b.deleteSet()));
+    }
+    label(q, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 13), 15);
+    label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 22), 11);
+    if (rec != Browser::kNone) {
+      ContentEngine::wallclock::formatStamp(b.record(rec).wallTime, browserInfo_.tz, stamp, sizeof stamp);
+      snprintf(line, sizeof line, b.deleteRecord() != Browser::kNone ? "SAVED %s" : "LATEST %s", stamp);
+      label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
+    }
+    const char* const kButtons[2] = {"YES", "CANCEL"};
+    for (uint8_t k = 0; k < 2; ++k) {
+      const int16_t bx = static_cast<int16_t>(k == 0 ? x0 + 24 : x1 - 50), bw = 30;
+      const bool on = b.deleteSelected() == k;
+      if (on) oled_.gfx.draw_rect_filled(fb(), bx, kButtonY - 2, static_cast<int16_t>(bx + bw), kButtonY + 6, 13);
+      const int16_t tw = static_cast<int16_t>(strlen(kButtons[k]) * 4 - 1);
+      label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), kButtonY, on ? 0 : 10);
+    }
+    hint("REC/EDIT CHOOSE  TRACK CONFIRM  HOLD CANCEL");
   }
   /// The spine: a line down the dated rows (sets, stages), broken between months.
   void drawSpine(const Browser& b) {
@@ -459,6 +496,7 @@ class EngineDisplay {
     if (on) oled_.gfx.draw_rect_filled(fb(), kWX0 + 1, static_cast<int16_t>(y - 2), kDiv - 1, static_cast<int16_t>(y + 6), 5);
     const uint8_t v = on ? 15 : 10;
     switch (r.kind) {
+      case RowKind::Close: label("< CLOSE", kYearX, y, on ? 15 : 11); return;
       case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
       default: break;
@@ -528,6 +566,11 @@ class EngineDisplay {
   void drawDetail(const Browser& b, const Row& r, char* h, size_t n) {
     char a[32], c[32];
     switch (r.kind) {
+      case RowKind::Close:
+        label("CLOSE", kDetailX, kMosaicY, 15, 2);
+        label("BACK TO PLAYING", kDetailX, 30, 9);
+        snprintf(h, n, "TRACK: CLOSE");
+        return;
       case RowKind::Save: {
         label("SAVE", kDetailX, kMosaicY, 15, 2);
         label("CURRENT", kDetailX, 30, 11);
@@ -542,21 +585,22 @@ class EngineDisplay {
         label(c, kDetailX, 38, 9);
         label(browserInfo_.saved, kDetailX, 46, kDimText);
         drawLiveMosaic();
-        snprintf(h, n, "TRACK: SAVE  HOLD: CLOSE");
+        snprintf(h, n, "TRACK: SAVE");
         return;
       }
       case RowKind::Back:
         label("SETS", kDetailX, kMosaicY, 15, 2);
         label("BACK TO ALL SETS", kDetailX, 30, 9);
-        snprintf(h, n, "TRACK: SETS  HOLD: CLOSE");
+        snprintf(h, n, "TRACK: SETS");
         return;
       case RowKind::Divider:
         h[0] = 0;
         return;
       case RowKind::Working:
       case RowKind::Set:
-        snprintf(h, n, "TRACK: OPEN SET %02u  HOLD: CLOSE", r.set);
+        snprintf(h, n, "TRACK: OPEN SET %02u  HOLD: DELETE", r.set);
         if (r.record == Browser::kNone) {
+          snprintf(h, n, "TRACK: OPEN SET %02u", r.set);
           snprintf(a, sizeof a, "SET %02u", r.set);
           label(a, kDetailX, kMosaicY, 15, 2);
           label("NO STAGES YET", kDetailX, 30, kDimText);
@@ -576,7 +620,7 @@ class EngineDisplay {
         }
         drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
         idText(m, id, sizeof id);
-        snprintf(h, n, "TRACK: LOAD %s  HOLD: CLOSE", id);
+        snprintf(h, n, "TRACK: LOAD %s  HOLD: DELETE", id);
         return;
       }
     }

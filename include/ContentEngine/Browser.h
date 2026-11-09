@@ -7,14 +7,18 @@
 //
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
-// * Views (owner 2026-11-09: saving and loading split, no return row; no close row — HOLD TRACK closes; the dividers
-//   name the intent). Top: `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets,
-//   newest first. A set: `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The save popup
+// * Views (owner 2026-11-09: saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`,
+//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first. A set: `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The save popup
 //   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
 //   suggested one selected; beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`,
 //   over the view it came from.
 // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
-//   says for the selected row; HOLD TRACK closes the popup or the browser, changing nothing. Opening selects `SAVE`.
+//   says for the selected row. HOLD TRACK on a set or a stage opens its delete popup (DEC-268: `YES` / `CANCEL`,
+//   CANCEL selected; TRACK confirms, HOLD TRACK cancels); it closes the save popup and a failure, changing nothing.
+//   Opening selects `SAVE SET`.
+// * Deleting (DEC-268): a deletion is a tombstone record (`library::kDeletion`) added like a milestone; it hides the
+//   milestone it names, or every milestone of its set before it. Hidden records keep their place (a row's record is its
+//   card index) and still count for numbering, so no id or set number is used twice.
 // * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
 //   base's stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed
 //   only → Building, or a provisional Take when every change was a recording begun while another track played;
@@ -34,18 +38,18 @@ namespace ContentEngine {
 template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
-  enum class View : uint8_t { Closed, Top, Set, Popup, Failed };
-  enum class RowKind : uint8_t { Save, Divider, Working, Set, Back, Milestone };
+  enum class View : uint8_t { Closed, Top, Set, Popup, Delete, Failed };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set: the set
     uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none)
   };
-  enum class Action : uint8_t { None, Save, Load };
+  enum class Action : uint8_t { None, Save, Load, Delete };
   struct Request {
     Action action = Action::None;
-    uint16_t record = 0;  // Load
-    uint16_t set = 0;     // Save: the set it goes into
+    uint16_t record = 0;  // Load; Delete: the stage (kNone: the whole set)
+    uint16_t set = 0;     // Save: the set it goes into; Delete: the set
     library::Stage stage = library::Stage::Sketch;
     uint8_t stageNumber = 0;
   };
@@ -57,20 +61,25 @@ class Browser {
     count_ = sets_ = 0;
     view_ = View::Closed;
   }
-  /// A published milestone, in publication order. False: the cache is full.
+  /// A published record, in publication order: a milestone, or a deletion that hides milestones before it (DEC-268).
+  /// False: the cache is full.
   bool add(const library::Record& r) {
     if (count_ >= MaxRecords) return false;
     records_[count_] = r;
-    uint16_t i = 0;
-    while (i < sets_ && setNumber_[i] != r.set) ++i;
-    if (i == sets_) {
-      setNumber_[sets_] = r.set;
-      ++sets_;
+    hidden_[count_] = r.kind == library::kDeletion;
+    if (hidden_[count_]) {
+      for (uint16_t i = 0; i < count_; ++i)
+        if (records_[i].set == r.set && (r.parent == 0 || records_[i].sequence == r.parent)) hidden_[i] = true;
+      ++count_;
+      indexSets();
+      return true;
     }
-    setLatest_[i] = count_;  // publication order: the newest
+    addToSets(count_);
     ++count_;
     return true;
   }
+  /// Whether record `i` is a deletion or was deleted (not shown, not loadable from the browser).
+  bool hidden(uint16_t i) const { return i < count_ && hidden_[i]; }
   uint16_t count() const { return count_; }
   const library::Record& record(uint16_t i) const { return records_[i]; }
   uint16_t setCount() const { return sets_; }
@@ -82,11 +91,11 @@ class Browser {
         high = records_[i].stageNumber;
     return static_cast<uint8_t>(high + 1);
   }
-  /// A set number no milestone uses: one past the highest.
+  /// A set number no milestone uses, a deleted one included: one past the highest.
   uint16_t newSetNumber() const {
     uint16_t high = 0;
-    for (uint16_t i = 0; i < sets_; ++i)
-      if (setNumber_[i] > high) high = setNumber_[i];
+    for (uint16_t i = 0; i < count_; ++i)
+      if (records_[i].set > high) high = records_[i].set;
     return static_cast<uint16_t>(high + 1);
   }
   /// The cache index of the milestone published as `sequence` (kNone: none).
@@ -132,7 +141,7 @@ class Browser {
   void open() {
     view_ = View::Top;
     request_ = Request{};
-    selected_ = 0;
+    selected_ = 1;
     first_ = 0;
     scroll();
   }
@@ -148,6 +157,10 @@ class Browser {
       if (stageSel_ > 0) --stageSel_;
       return;
     }
+    if (view_ == View::Delete) {
+      deleteSel_ = 0;  // YES
+      return;
+    }
     if (view_ != View::Top && view_ != View::Set) return;
     if (selected_ > 0) --selected_;
     if (row(selected_).kind == RowKind::Divider && selected_ > 0) --selected_;  // the divider is passed
@@ -157,6 +170,10 @@ class Browser {
   void down() {
     if (view_ == View::Popup) {
       if (stageSel_ < kStages) ++stageSel_;  // 0 AS NEW SET, 1..6 the stages
+      return;
+    }
+    if (view_ == View::Delete) {
+      deleteSel_ = 1;  // CANCEL
       return;
     }
     if (view_ != View::Top && view_ != View::Set) return;
@@ -177,6 +194,17 @@ class Browser {
         request_.stageNumber = nextNumber(request_.set, request_.stage);
         pending_ = request_;
         return;
+      case View::Delete:  // YES: the deletion asked for; CANCEL: back, nothing changed
+        if (deleteSel_ == 1) {
+          view_ = list_;
+          return;
+        }
+        request_ = Request{};
+        request_.action = Action::Delete;
+        request_.set = deleteSet_;
+        request_.record = deleteRecord_;
+        pending_ = request_;
+        return;
       case View::Failed:  // try again
         view_ = list_;
         request_ = pending_;
@@ -189,6 +217,9 @@ class Browser {
     }
     const Row r = row(selected_);
     switch (r.kind) {
+      case RowKind::Close:
+        view_ = View::Closed;
+        return;
       case RowKind::Save:
         openPopup();
         return;
@@ -212,13 +243,48 @@ class Browser {
         return;
     }
   }
-  /// HOLD TRACK: the popup closes (back to its list), anything else closes the browser. Nothing changes.
+  /// HOLD TRACK (DEC-268): on a set with stages or on a stage, its delete popup (CANCEL selected); a popup closes
+  /// (back to its list), a failure closes the browser; on any other row nothing. Nothing changes.
   void hold() {
-    if (view_ == View::Popup) {
-      view_ = list_;
-      return;
+    switch (view_) {
+      case View::Popup:
+      case View::Delete:
+        view_ = list_;
+        return;
+      case View::Failed:
+        view_ = View::Closed;
+        return;
+      case View::Top:
+      case View::Set:
+        break;
+      default:
+        return;
     }
-    view_ = View::Closed;
+    const Row r = row(selected_);
+    if (r.kind == RowKind::Milestone) openDelete(r.set, r.record);
+    else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone) openDelete(r.set, kNone);
+  }
+  /// The delete popup's target: the set, and the stage (kNone: the whole set); 0 YES, 1 CANCEL.
+  uint16_t deleteSet() const { return deleteSet_; }
+  uint16_t deleteRecord() const { return deleteRecord_; }
+  uint8_t deleteSelected() const { return deleteSel_; }
+  /// The deletion asked for was published (its tombstone `add`ed): back to the list, the nearest remaining row selected;
+  /// a set left without stages leaves its view for the sets.
+  void deleted() {
+    view_ = list_;
+    if (view_ == View::Set) {
+      fillMembers(openSet_);
+      markLine();
+      if (members_ == 0) {
+        view_ = View::Top;
+        selected_ = openSetRow_;
+      }
+    }
+    const uint16_t n = rowCount(), lowest = view_ == View::Set ? kSetHead : kTopHead - 1;  // the working set's row
+    if (selected_ >= n) selected_ = static_cast<uint16_t>(n - 1);
+    if (selected_ < lowest) selected_ = lowest;
+    first_ = 0;
+    scroll();
   }
   /// What the owner is to do now (once).
   bool takeRequest(Request& out) {
@@ -233,7 +299,7 @@ class Browser {
   /// not as it was (a load that could not restore it) — the screen says so instead of NOTHING CHANGED.
   void failed(const char* what, const char* why, bool changed = false) {
     changed_ = changed;
-    if (view_ == View::Popup) view_ = list_;
+    if (view_ == View::Popup || view_ == View::Delete) view_ = list_;
     list_ = view_ == View::Failed ? list_ : view_;
     copy(failWhat_, what);
     copy(failWhy_, why);
@@ -248,7 +314,7 @@ class Browser {
   uint16_t rowCount() const {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
-    return static_cast<uint16_t>(3 + otherSets());
+    return static_cast<uint16_t>(kTopHead + otherSets());
   }
   Row row(uint16_t i) const {
     if (shownList() == View::Set) {
@@ -256,10 +322,11 @@ class Browser {
       if (i == 1) return Row{RowKind::Divider, openSet_, kNone};
       return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - kSetHead))};
     }
-    if (i == 0) return Row{RowKind::Save, workingSet_, kNone};
-    if (i == 1) return Row{RowKind::Divider, workingSet_, kNone};
-    if (i == 2) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
-    const uint16_t s = otherSet(static_cast<uint16_t>(i - 3));
+    if (i == 0) return Row{RowKind::Close, workingSet_, kNone};
+    if (i == 1) return Row{RowKind::Save, workingSet_, kNone};
+    if (i == 2) return Row{RowKind::Divider, workingSet_, kNone};
+    if (i == 3) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
+    const uint16_t s = otherSet(static_cast<uint16_t>(i - kTopHead));
     return Row{RowKind::Set, setNumber_[s], setLatest_[s]};
   }
   uint16_t selected() const { return selected_; }
@@ -268,6 +335,8 @@ class Browser {
   static constexpr uint8_t kVisible = 5;
   /// A set's rows before its milestones: `< SETS` and the `LOAD STAGE` divider (owner 2026-11-09).
   static constexpr uint16_t kSetHead = 2;
+  /// The top level's rows before the other sets: `< CLOSE`, `SAVE SET`, the `LOAD SET` divider, the working set.
+  static constexpr uint16_t kTopHead = 4;
   uint16_t openSetNumber() const { return openSet_; }
   /// The newest milestone of `set` (kNone: none).
   uint16_t latestOf(uint16_t set) const {
@@ -278,7 +347,7 @@ class Browser {
   /// How many milestones `set` has.
   uint16_t milestonesIn(uint16_t set) const {
     uint16_t n = 0;
-    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (records_[i].set == set ? 1 : 0));
+    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (records_[i].set == set && !hidden_[i] ? 1 : 0));
     return n;
   }
 
@@ -312,7 +381,31 @@ class Browser {
     for (; s != nullptr && s[i] != 0 && i < kText - 1; ++i) out[i] = s[i];
     out[i] = 0;
   }
-  View shownList() const { return view_ == View::Popup || view_ == View::Failed ? list_ : view_; }
+  View shownList() const {
+    return view_ == View::Popup || view_ == View::Delete || view_ == View::Failed ? list_ : view_;
+  }
+  /// The sets with a visible milestone and each one's newest, from the records (after a deletion).
+  void indexSets() {
+    sets_ = 0;
+    for (uint16_t i = 0; i < count_; ++i)
+      if (!hidden_[i]) addToSets(i);
+  }
+  void addToSets(uint16_t r) {
+    uint16_t i = 0;
+    while (i < sets_ && setNumber_[i] != records_[r].set) ++i;
+    if (i == sets_) {
+      setNumber_[sets_] = records_[r].set;
+      ++sets_;
+    }
+    setLatest_[i] = r;  // publication order: the newest
+  }
+  void openDelete(uint16_t set, uint16_t record) {
+    list_ = view_;
+    deleteSet_ = set;
+    deleteRecord_ = record;
+    deleteSel_ = 1;  // CANCEL
+    view_ = View::Delete;
+  }
   /// Sets other than the working one, newest milestone first.
   uint16_t otherSets() const {
     uint16_t n = 0;
@@ -340,6 +433,7 @@ class Browser {
     return 0;
   }
   void openSet(uint16_t set) {
+    openSetRow_ = selected_;
     openSet_ = set;
     fillMembers(set);
     markLine();
@@ -374,7 +468,7 @@ class Browser {
   void fillMembers(uint16_t set) {
     members_ = 0;
     for (uint16_t i = count_; i-- > 0;)  // newest first
-      if (records_[i].set == set) member_[members_++] = i;
+      if (records_[i].set == set && !hidden_[i]) member_[members_++] = i;
   }
   /// The save popup over the top level: the working set's history with the base's line marked, the suggestion
   /// selected.
@@ -398,9 +492,12 @@ class Browser {
   library::Record records_[MaxRecords];
   uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
   bool line_[MaxRecords] = {};
+  bool hidden_[MaxRecords] = {};
   uint16_t join_ = kNone, baseRow_ = kNone;
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
-  uint16_t workingSet_ = 1, openSet_ = 0;
+  uint16_t workingSet_ = 1, openSet_ = 0, openSetRow_ = kTopHead;
+  uint16_t deleteSet_ = 0, deleteRecord_ = kNone;
+  uint8_t deleteSel_ = 1;
   uint32_t base_ = 0;
   bool changed_ = false, provisional_ = false;
   Activity activity_{};

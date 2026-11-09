@@ -201,7 +201,7 @@ class SetLoad {
   Result beginLoad(uint16_t index, typename Writer::Checkpoint c, bool atSwitch = false, uint8_t stageTracks = 0) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
-    if (!writer_->readRecord(index, record_)) return Result::NoMilestone;
+    if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
     c.loaded = record_.sequence;
     const typename Writer::Result r =
         writer_->beginCheckpoint(*pool_, *runs_, *manifests_, *history_, ids_->peek(), c, scratch_);

@@ -284,6 +284,75 @@ void test_a_record_written_before_its_header_is_not_published() {
   TEST_ASSERT_FALSE(fresh.readRecord(1, r));
 }
 
+/// DEC-268: a deletion is a tombstone record and a header — no blob, the log not advanced, nothing older rewritten; a
+/// writer that never captured a set (just booted) publishes it too.
+void test_a_deletion_publishes_a_tombstone_and_rewrites_nothing() {
+  buildSet();
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
+                    gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  const uint32_t append = gW.header().appendSector;
+  std::vector<uint8_t> blob(kSector);
+  gCard.readLibrarySector(kLogBase, blob.data());
+  LibWriter booted;
+  TEST_ASSERT_TRUE(booted.mount(gCard));
+  const uint32_t before = gCard.writes;
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, booted.beginDeletion(2, 1, 1794176000));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Busy, booted.beginDeletion(2, 0, 0));
+  LibWriter::Status st;
+  while ((st = booted.step()) == LibWriter::Status::Running) {
+  }
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, st);
+  TEST_ASSERT_EQUAL_UINT32(2, gCard.writes - before);  // the record's sector, then the header
+  TEST_ASSERT_EQUAL_UINT32(0, gCard.outOfOrder);
+  LibWriter fresh;
+  TEST_ASSERT_TRUE(fresh.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT16(2, fresh.header().count);
+  TEST_ASSERT_EQUAL_UINT32(append, fresh.header().appendSector);
+  Record m, t;
+  TEST_ASSERT_TRUE(fresh.readRecord(0, m));  // the milestone as it was
+  TEST_ASSERT_EQUAL(kMilestone, m.kind);
+  TEST_ASSERT_EQUAL_UINT32(1, m.sequence);
+  TEST_ASSERT_TRUE(fresh.readRecord(1, t));
+  TEST_ASSERT_EQUAL(kDeletion, t.kind);
+  TEST_ASSERT_EQUAL_UINT16(2, t.set);
+  TEST_ASSERT_EQUAL_UINT32(1, t.parent);
+  TEST_ASSERT_EQUAL_UINT32(2, t.sequence);
+  TEST_ASSERT_EQUAL_UINT32(0, t.logSectors);
+  std::vector<uint8_t> after(kSector);
+  gCard.readLibrarySector(kLogBase, after.data());
+  TEST_ASSERT_TRUE(after == blob);  // its blob untouched
+}
+
+/// A deletion whose header write fails publishes nothing: the milestone stays; a full index refuses it unwritten.
+void test_a_failed_deletion_publishes_nothing() {
+  buildSet();
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
+                    gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  gCard.failAfter = gCard.writes + 1;  // the record, then the header fails
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginDeletion(2, 0, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Failed, runToEnd());
+  LibWriter fresh;
+  TEST_ASSERT_TRUE(fresh.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT16(1, fresh.header().count);
+  Record r;
+  TEST_ASSERT_FALSE(fresh.readRecord(1, r));
+  gCard.failAfter = 0xFFFFFFFFu;
+  IndexHeader full;
+  full.sequence = 9;
+  full.count = static_cast<uint16_t>(kIndexRecords);
+  uint8_t sector[kSector];
+  encode(full, sector);
+  gCard.writeLibrarySector(0, sector);
+  gCard.libraryReady(FakeCard::kIdle);
+  LibWriter booted;
+  TEST_ASSERT_TRUE(booted.mount(gCard));
+  const uint32_t before = gCard.writes;
+  TEST_ASSERT_EQUAL(LibWriter::Result::IndexFull, booted.beginDeletion(2, 0, 0));
+  TEST_ASSERT_EQUAL_UINT32(before, gCard.writes);
+}
+
 void test_a_save_that_does_not_fit_writes_nothing() {
   buildSet();
   IndexHeader full;
@@ -361,6 +430,8 @@ int main(int, char**) {
   RUN_TEST(test_a_change_while_it_writes_is_not_in_it);
   RUN_TEST(test_an_interrupted_write_publishes_nothing_and_its_space_is_reused);
   RUN_TEST(test_a_record_written_before_its_header_is_not_published);
+  RUN_TEST(test_a_deletion_publishes_a_tombstone_and_rewrites_nothing);
+  RUN_TEST(test_a_failed_deletion_publishes_nothing);
   RUN_TEST(test_a_save_that_does_not_fit_writes_nothing);
   RUN_TEST(test_the_checkpoint_is_replaced_transactionally);
   RUN_TEST(test_no_heap);

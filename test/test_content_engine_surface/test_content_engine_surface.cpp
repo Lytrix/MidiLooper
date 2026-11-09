@@ -446,13 +446,13 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   ms(400);
   TEST_ASSERT_TRUE(gS.browsing());
   TEST_ASSERT_FALSE(C().muted(0));  // the long press is the browser's now
-  TEST_ASSERT_EQUAL_UINT16(0, gBrowser.selected());  // SAVE
+  TEST_ASSERT_EQUAL_UINT16(1, gBrowser.selected());  // SAVE
   tap(38);  // edit: down, over the LOAD divider to the working set
   ms(500);
-  TEST_ASSERT_EQUAL_UINT16(2, gBrowser.selected());
+  TEST_ASSERT_EQUAL_UINT16(3, gBrowser.selected());
   tap(S::kRecordNote);  // record: up, not a take
   ms(500);
-  TEST_ASSERT_EQUAL_UINT16(0, gBrowser.selected());
+  TEST_ASSERT_EQUAL_UINT16(1, gBrowser.selected());
   TEST_ASSERT_FALSE(gClk.running());
   TEST_ASSERT_EQUAL(ProductionControl::kNone, C().queuedRecordSlot(0));
   tap(S::kTrackSwitchNote);  // SAVE: the popup
@@ -462,10 +462,44 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   tap(S::kTrackSwitchNote, 700);
   ms(400);
   TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
+  // DEC-268: HOLD TRACK on the working set opens its delete popup; the release that ends the hold confirms nothing.
+  tap(38);
+  ms(500);
   tap(S::kTrackSwitchNote, 700);
   ms(400);
-  TEST_ASSERT_FALSE(gS.browsing());
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Delete, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT8(1, gBrowser.deleteSelected());  // CANCEL
+  ms(1000);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Delete, gBrowser.view());
   ProductionBrowser::Request q;
+  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
+  tap(S::kTrackSwitchNote);  // a double press on CANCEL: back to the list once, the set under it not opened
+  ms(80);
+  tap(S::kTrackSwitchNote);
+  ms(800);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
+  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
+  tap(S::kTrackSwitchNote, 700);  // again, YES this time
+  ms(400);
+  tap(S::kRecordNote);
+  ms(500);
+  tap(S::kTrackSwitchNote);
+  ms(800);
+  TEST_ASSERT_TRUE(gBrowser.takeRequest(q));
+  TEST_ASSERT_EQUAL(ProductionBrowser::Action::Delete, q.action);
+  TEST_ASSERT_EQUAL_UINT16(1, q.set);
+  gBrowser.failed("DELETE FAILED", "BUSY");
+  tap(S::kTrackSwitchNote, 700);  // a failure: HOLD TRACK closes
+  ms(400);
+  TEST_ASSERT_FALSE(gS.browsing());
+  tap(S::kTrackSwitchNote, 700);  // `< CLOSE`: TRACK closes
+  ms(400);
+  TEST_ASSERT_TRUE(gS.browsing());
+  tap(S::kRecordNote);
+  ms(500);
+  tap(S::kTrackSwitchNote);
+  ms(800);
+  TEST_ASSERT_FALSE(gS.browsing());
   TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
   gS.setBrowser(nullptr);
 }

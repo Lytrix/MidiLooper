@@ -9,6 +9,9 @@
 //   two regions        the checkpoint, A / B (`kCheckpointSectors` each: a `CheckpointHeader` sector, then the set)
 //   the rest           the milestone log, append-only: each milestone a `BlobHeader` sector, then its slots' set files,
 //                      each starting on a sector
+// A deletion (DEC-268) is a record too — a tombstone (`kind` 1, no blob) naming the milestone it hides (`parent`), or,
+// with `parent` 0, every milestone of its set published before it — published as a milestone's record and header are.
+// Nothing already written is rewritten; a deleted milestone's blob keeps its log space.
 // A milestone is published in one order — blob, record, header (each programmed before the next) — so a header names
 // only complete milestones; records and log space past it are ignored and reused. Every structure carries a CRC-32.
 // `kMaxSetSectors` is the largest whole set (every content row, every run, every state, every slot), checked at
@@ -112,6 +115,8 @@ inline IndexHeader currentHeader(const uint8_t* a, const uint8_t* b, uint8_t& wh
 }
 
 // ---- Index records ------------------------------------------------------------------------------------------------
+constexpr uint8_t kMilestone = 0, kDeletion = 1;
+
 struct Record {
   uint32_t sequence = 0;        // internal, unique, never shown
   uint16_t set = 0;             // SET nn (1-based)
@@ -121,7 +126,7 @@ struct Record {
   uint32_t wallTime = 0;        // RTC seconds (0: the clock was not valid)
   uint16_t tempoTenths = 0;
   uint8_t loops = 0;            // slots with content
-  uint8_t pad = 0;
+  uint8_t kind = 0;             // kMilestone, or kDeletion: a tombstone (DEC-268; byte 19, zero in every older record)
   uint32_t shortestLoop = 0, longestLoop = 0;  // ticks (0: no loops)
   uint32_t logSector = 0;       // the blob, relative to `kLogBase`
   uint32_t logSectors = 0;
@@ -138,6 +143,7 @@ inline void encode(const Record& r, uint8_t* out) {
   put32(out + 12, r.wallTime);
   put16(out + 16, r.tempoTenths);
   out[18] = r.loops;
+  out[19] = r.kind;
   put32(out + 20, r.shortestLoop);
   put32(out + 24, r.longestLoop);
   put32(out + 28, r.logSector);
@@ -156,11 +162,14 @@ inline bool decode(const uint8_t* in, Record& r) {
   r.wallTime = get32(in + 12);
   r.tempoTenths = get16(in + 16);
   r.loops = in[18];
+  r.kind = in[19];
+  if (r.kind > kDeletion) return false;
   r.shortestLoop = get32(in + 20);
   r.longestLoop = get32(in + 24);
   r.logSector = get32(in + 28);
   r.logSectors = get32(in + 32);
   for (int i = 0; i < 16; ++i) r.mosaic[i] = in[36 + i];
+  if (r.kind == kDeletion) return r.logSectors == 0;
   return r.logSectors != 0 && r.logSector + r.logSectors <= kLogSectors;
 }
 /// Record `i`'s sector and its byte offset in that sector.

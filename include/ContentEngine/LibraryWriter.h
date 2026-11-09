@@ -12,7 +12,8 @@
 //   (header, each slot's set file from the snapshot, sector-aligned) at the log's append point, programmed; then its
 //   index record, programmed; then the index header into the sector that is not current, programmed — only then is the
 //   milestone published. A checkpoint: the blob into the region that is not current, programmed, then its header,
-//   programmed. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
+//   programmed. A deletion (DEC-268): a tombstone record, programmed, then the index header — no blob, nothing older
+//   rewritten. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
 // No allocation.
 
 #pragma once
@@ -210,6 +211,23 @@ class LibraryWriter {
     start(library::kLogBase + header_.appendSector, record_.sequence, m.tempoTenths, m.surface);
     return Result::Ok;
   }
+  /// Starts publishing a deletion (DEC-268): `target` the milestone's sequence, or 0 for every milestone of `set` so far.
+  /// Only a record and the header are written; refused by name when the index is full.
+  Result beginDeletion(uint16_t set, uint32_t target, uint32_t wallTime) {
+    if (!mounted_) return Result::NotMounted;
+    if (busy()) return Result::Busy;
+    if (header_.count >= library::kIndexRecords) return Result::IndexFull;
+    checkpointJob_ = false;
+    record_ = library::Record{};
+    record_.sequence = header_.nextSequence;
+    record_.set = set;
+    record_.kind = library::kDeletion;
+    record_.parent = target;
+    record_.wallTime = wallTime;
+    phase_ = Phase::Record;
+    status_ = Status::Running;
+    return Result::Ok;
+  }
   /// Captures the set and starts writing it as the checkpoint, into the region that is not current.
   Result beginCheckpoint(Pool& pool, Runs& runs, Manifests& manifests, const HistoryT& history, uint32_t noteIdHigh,
                          const Checkpoint& c, uint8_t* scratch) {
@@ -391,13 +409,16 @@ class LibraryWriter {
     snap_.release(*manifests_, *runs_);
     return r;
   }
+  void releaseSnapshot() {  // a deletion captured nothing
+    if (snap_.held()) snap_.release(*manifests_, *runs_);
+  }
   Status fail() {
     save_.cancel();
-    snap_.release(*manifests_, *runs_);
+    releaseSnapshot();
     return status_ = Status::Failed;  // nothing published: the current header / checkpoint stay
   }
   Status done() {
-    snap_.release(*manifests_, *runs_);
+    releaseSnapshot();
     return status_ = Status::Done;
   }
 

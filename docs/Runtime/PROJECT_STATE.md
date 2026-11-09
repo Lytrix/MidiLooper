@@ -1,3 +1,11 @@
+**2026-11-09 — Deleting sets and stages (DEC-268).** A deletion is a tombstone record published as a milestone's
+record and header are — nothing older rewritten, a deleted blob's space not reclaimed, numbers not reused. `< CLOSE` is
+back on top; HOLD TRACK on a set or stage opens `DELETE SET 03?` / `DELETE SET 02 T03?` with what and when, `YES` /
+`CANCEL` (CANCEL selected); the browser stays open on the nearest row; the working set and playback untouched. In the
+browser TRACK now acts once per gesture. Host: browser 25, writer +2, surface updated; five mutations killed; full native
+4,467 passed. Device (image `4cba8814…`, boot clean): both popups shown and cancelled, library unchanged (11 records).
+Still owed: a deletion on the card, on content the owner approves as disposable.
+
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
 performance screen; `CLOSE`, `SAVE`, then `LOAD` and the sets; time down the list (sticky year / month, the day once,
 the time, a spine broken between months) instead of the top strip; no return row; SAVE opens `SAVE CURRENT` — the
