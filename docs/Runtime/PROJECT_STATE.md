@@ -10,7 +10,10 @@ Then (owner): `2X TRACK` beside the bin, `TRASH` as the last row of SETS, `RESTO
 browser page: actions bottom left (`[TRK] LOAD T03   HOLD [TRK] DELETE`), `[TRK]2× TRASH` and the can bottom right
 (image `aa975b80…`). Then, owner's option B: one line —
 `[REC]↑ [EDT]↓  [TRK] LOAD  HOLD [TRK] DELETE … 2× [TRK] TRASH` (image `52ed6bdc…`). Then the buttons at the unselected-menu
-level, the actions and the trash with its can one brighter level (image `aa428aa6…`).
+level, the actions and the trash with its can one brighter level (image `aa428aa6…`). The selection bar dims toward
+its right end on the panel though the frame is even (full segment current, 0xC1 0xFF): `!ENGINE oled-reg` and
+`scripts/oled_drive_cycle.py` compare drive settings live; 70 % current evened it but too dim, so the default stays —
+owner to re-evaluate off the breadboard (image `97ac8156…`).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

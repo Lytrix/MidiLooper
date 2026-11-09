@@ -176,6 +176,15 @@ class EngineDisplay {
                   static_cast<unsigned long>(frameMs_), oled_.api.pageFlip());
   }
 
+  /// Any SSD1322 register (diagnostics, owner 2026-11-09: a long bar dims toward its right end): `cmd` and up to two
+  /// data bytes, sent once the frame in flight is done. Not kept over a reboot.
+  void poke(uint8_t cmd, const uint8_t* data, uint8_t n) {
+    while (oled_.api.isDisplayTransferActive()) oled_.api.pollDisplayTransfer();
+    oled_.api.SSD1322_API_command(cmd);
+    for (uint8_t i = 0; i < n; ++i) oled_.api.SSD1322_API_data(data[i]);
+    Serial.printf("#ENGINE,oled,reg=0x%02X,n=%u,d0=0x%02X,d1=0x%02X\n", cmd, n, n > 0 ? data[0] : 0, n > 1 ? data[1] : 0);
+  }
+
   /// The sets browser to draw while it is open (slice 3), and what it shows beside its model.
   void setBrowser(const ContentEngine::ProductionBrowser* b) { browser_ = b; }
   void setBrowserInfo(const BrowserInfo& info) { browserInfo_ = info; }

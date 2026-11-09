@@ -880,6 +880,17 @@ void command(char* line, uint32_t nowUs) {
     const bool clock = verb[5] == 'c', phase = verb[5] == 'p', flip = verb[5] == 'f';
     gDisplay.tune(clock ? static_cast<uint8_t>(v) : 0, phase ? static_cast<uint8_t>(v) : 0,
                   !clock && !phase && !flip ? static_cast<uint32_t>(v) : 0, flip && arg != nullptr ? static_cast<int>(v) : -1);
+  } else if (std::strcmp(verb, "oled-reg") == 0 && arg != nullptr) {  // oled-reg 0xC1 0x9F: any register (diagnostics)
+    char* p = nullptr;
+    const uint8_t cmd = static_cast<uint8_t>(std::strtol(arg, &p, 0));
+    uint8_t d[2] = {};
+    uint8_t n = 0;
+    for (char* q = p; n < 2; p = q) {
+      const long v = std::strtol(p, &q, 0);
+      if (q == p) break;
+      d[n++] = static_cast<uint8_t>(v);
+    }
+    gDisplay.poke(cmd, d, n);
   } else if (std::strcmp(verb, "time") == 0) {  // time: report; time <unix UTC>: set the RTC
     if (arg != nullptr) rtc_set(std::strtoul(arg, nullptr, 10));
     reportTime();
