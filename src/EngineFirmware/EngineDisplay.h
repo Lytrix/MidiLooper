@@ -324,7 +324,7 @@ class EngineDisplay {
   void draw(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick, uint32_t nowMs) {
     oled_.gfx.fill_buffer(fb(), 0);
     if (browser_ != nullptr && browser_->isOpen()) {
-      drawBrowser(*browser_);
+      drawBrowser(*browser_, e);
       return;
     }
     auto& x = e.transport();
@@ -358,9 +358,12 @@ class EngineDisplay {
     snprintf(out, n, "%c%02u", ContentEngine::library::stageLetter(r.stage), r.stageNumber);
   }
   static uint32_t bars(uint32_t ticks) { return (ticks + kBar - 1) / kBar; }
-  void drawBrowser(const Browser& b) {
-    for (int16_t y = 10; y < 55; ++y) px(kRuleX, y, 2);
-    hline(0, 255, 55, 2);
+  // Levels (owner 2026-11-09: the dimmest lines did not show on the panel): rules 4, dim text 7, an empty mosaic cell 3.
+  static constexpr uint8_t kRuleLevel = 4, kDimText = 7;
+  void drawBrowser(const Browser& b, ContentEngine::EngineRoot& e) {
+    engine_ = &e;
+    for (int16_t y = 10; y < 55; ++y) px(kRuleX, y, kRuleLevel);
+    hline(0, 255, 55, kRuleLevel);
     drawStrip(b);
     drawLanes(b);
     const uint16_t n = b.rowCount();
@@ -411,16 +414,16 @@ class EngineDisplay {
     if (b.hasSide() && join != 0) sideBottom = static_cast<int16_t>(rowY(b, join) + 2);
     auto clip = [&](int16_t y) { return y < kRowY ? kRowY : y > rowY(b, last) + 4 ? static_cast<int16_t>(rowY(b, last) + 4) : y; };
     if (lineTop >= 0)
-      for (int16_t y = clip(lineTop); y <= clip(lineBottom); ++y) px(b.hasSide() ? 20 : 18, y, 6);
+      for (int16_t y = clip(lineTop); y <= clip(lineBottom); ++y) px(b.hasSide() ? 20 : 18, y, kDimText);
     if (sideTop >= 0 && b.hasSide()) {
-      for (int16_t y = clip(sideTop); y <= clip(sideBottom); ++y) px(12, y, 6);
-      if (join != 0 && join >= b.first() && join <= last) hline(12, 20, sideBottom, 6);
+      for (int16_t y = clip(sideTop); y <= clip(sideBottom); ++y) px(12, y, kDimText);
+      if (join != 0 && join >= b.first() && join <= last) hline(12, 20, sideBottom, kDimText);
     }
   }
   /// Slice 5, the timeline strip: months along the time from the first milestone shown to now (at least two weeks), a
   /// tick for each day with milestones (a count when more), the selected one between two bright marks.
   void drawStrip(const Browser& b) {
-    hline(0, 255, 8, 2);
+    hline(0, 255, 8, kRuleLevel);
     const bool inSet = setShown(b);
     uint32_t t0 = 0xFFFFFFFFu, t1 = ContentEngine::wallclock::valid(browserInfo_.now) ? browserInfo_.now : 0;
     for (uint16_t i = 0; i < b.count(); ++i) {
@@ -443,7 +446,7 @@ class EngineDisplay {
       if (at > static_cast<int64_t>(t1)) break;
       const int16_t x = at < static_cast<int64_t>(t0) ? 0 : xOf(static_cast<uint32_t>(at));
       if (x - lastLabel >= 16 && x <= 240) {
-        label(ContentEngine::wallclock::monthName(static_cast<uint8_t>(m)), x, 0, 4);
+        label(ContentEngine::wallclock::monthName(static_cast<uint8_t>(m)), x, 0, kDimText);
         lastLabel = x;
       }
       if (++m > 12) {
@@ -468,7 +471,7 @@ class EngineDisplay {
       }
       oled_.gfx.draw_rect_filled(fb(), x, 5, static_cast<int16_t>(x + 1), 7, 9);
       const char digit[2] = {static_cast<char>(count[x] > 9 ? '+' : '0' + count[x]), 0};
-      label(digit, static_cast<int16_t>(x + 3), 3, 6);
+      label(digit, static_cast<int16_t>(x + 3), 3, 9);
     }
     const Row sel = b.row(b.selected());
     const uint16_t rec = sel.kind == RowKind::Milestone || sel.kind == RowKind::Set || sel.kind == RowKind::Working
@@ -483,7 +486,7 @@ class EngineDisplay {
   }
   void drawRow(const Browser& b, const Row& r, const Row& above, int16_t y, bool on, bool hasAbove, uint16_t index) {
     if (on) oled_.gfx.draw_rect_filled(fb(), 0, static_cast<int16_t>(y - 1), kRuleX - 1, static_cast<int16_t>(y + 5), 3);
-    const uint8_t v = on ? 15 : 8, nv = on ? 15 : 5;
+    const uint8_t v = on ? 15 : 9, nv = on ? 15 : kDimText;
     char text[28] = {}, note[16] = {};
     switch (r.kind) {
       case RowKind::Return: snprintf(text, sizeof text, "< RETURN TO PREVIOUS"); break;
@@ -544,22 +547,44 @@ class EngineDisplay {
     idText(m, id, sizeof id);
     const int16_t x = label(id, kDetailX, kTop, 15, 3);
     snprintf(set, sizeof set, "SET %02u", m.set);
-    label(set, static_cast<int16_t>(x + 3), kTop, 6);
-    label(stageLine, kDetailX, 30, 12);
+    label(set, static_cast<int16_t>(x + 3), kTop, 9);
+    label(stageLine, kDetailX, 30, 13);
     ContentEngine::wallclock::formatStamp(m.wallTime, browserInfo_.tz, date, sizeof date);
-    label(date, kDetailX, 38, 8);
-    label(infoLine, kDetailX, 46, 4);
+    label(date, kDetailX, 38, 10);
+    label(infoLine, kDetailX, 46, kDimText);
     drawMosaic(m);
   }
+  /// The 8 × 8 slots (rows tracks, columns slots), brighter for more content: a milestone's, from its record.
   void drawMosaic(const ContentEngine::library::Record& m) {
-    static const uint8_t kLevel[4] = {0, 5, 9, 14};
+    uint8_t lv[64];
+    for (uint8_t k = 0; k < 64; ++k) lv[k] = static_cast<uint8_t>((m.mosaic[k / 4] >> ((k % 4) * 2)) & 3);
+    drawCells(lv);
+  }
+  /// The working set's, live: each slot's rows against the fullest slot's, as a milestone's are stored.
+  void drawLiveMosaic() {
+    if (engine_ == nullptr) return;
+    auto& e = *engine_;
+    uint32_t rows[64] = {}, most = 0;
+    for (uint8_t s = 0; s < 64; ++s) {
+      const ContentEngine::ManifestId id = e.transport().contentOf(s);
+      if (id == ContentEngine::kNoManifest) continue;
+      const auto& m = e.manifests().manifest(id);
+      for (uint8_t k = 0; k < m.runCount; ++k) rows[s] += e.runs().run(m.runs[k]).rowCount;
+      if (rows[s] == 0) rows[s] = 1;  // an empty loop still shows
+      if (rows[s] > most) most = rows[s];
+    }
+    uint8_t lv[64];
+    for (uint8_t s = 0; s < 64; ++s) lv[s] = rows[s] == 0 ? 0 : static_cast<uint8_t>(1 + (rows[s] * 3 - 1) / most);
+    drawCells(lv);
+  }
+  void drawCells(const uint8_t* lv) {
+    static const uint8_t kLevel[4] = {0, 7, 11, 15};
     for (uint8_t t = 0; t < 8; ++t)
       for (uint8_t s = 0; s < 8; ++s) {
-        const uint8_t k = static_cast<uint8_t>(t * 8 + s);
-        const uint8_t lv = static_cast<uint8_t>((m.mosaic[k / 4] >> ((k % 4) * 2)) & 3);
+        const uint8_t l = lv[t * 8 + s];
         const int16_t x = static_cast<int16_t>(kMosaicX + s * 4), y = static_cast<int16_t>(kTop + t * 4);
-        if (lv == 0) px(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1), 1);
-        else oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), kLevel[lv]);
+        if (l == 0) px(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1), 3);
+        else oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), kLevel[l & 3]);
       }
   }
   void drawDetail(const Browser& b, const Row& r, char* hint, size_t n) {
@@ -568,7 +593,7 @@ class EngineDisplay {
       case RowKind::Return:
         drawTitle("RETURN");
         label(browserInfo_.returnTo, kDetailX, 24, 9);
-        label("NOT A MILESTONE", kDetailX, 31, 5);
+        label("NOT A MILESTONE", kDetailX, 31, kDimText);
         snprintf(hint, n, "TRACK: RETURN  HOLD: CLOSE");
         return;
       case RowKind::Save:
@@ -585,13 +610,15 @@ class EngineDisplay {
         } else {
           snprintf(c, sizeof c, "NEW WORK");
         }
-        label(c, kDetailX, 31, 6);
-        label(browserInfo_.saved, kDetailX, 38, 5);
+        label(c, kDetailX, 31, 10);
+        label(browserInfo_.saved, kDetailX, 38, kDimText);
+        drawLiveMosaic();
         snprintf(hint, n, "TRACK: CHOOSE STAGE  HOLD: CLOSE");
         return;
       }
       case RowKind::Back:
         drawTitle("ALL SETS");
+        drawLiveMosaic();
         snprintf(hint, n, "TRACK: ALL SETS  HOLD: CLOSE");
         return;
       case RowKind::Working:
@@ -601,7 +628,8 @@ class EngineDisplay {
           drawTitle("NOW");
           snprintf(a, sizeof a, "SET %02u", r.set);
           label(a, kDetailX, 24, 9);
-          label("NO MILESTONES YET", kDetailX, 31, 5);
+          label("NO MILESTONES YET", kDetailX, 31, kDimText);
+          drawLiveMosaic();
           return;
         }
         snprintf(a, sizeof a, "%s  LATEST", ContentEngine::library::stageName(b.record(r.record).stage));
@@ -1063,6 +1091,7 @@ class EngineDisplay {
   SSD1322 oled_;
   EditView edit_;
   const ContentEngine::ProductionBrowser* browser_ = nullptr;
+  ContentEngine::EngineRoot* engine_ = nullptr;  // the browser's live mosaic reads the working set
   BrowserInfo browserInfo_{};
   char toast_[40] = {};
   uint32_t toastUntil_ = 0;
