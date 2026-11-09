@@ -161,14 +161,14 @@ half:
   LOOP_EDIT, and while a library job or a load runs.
 * **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves (owner 2026-11-10): NOTELEN up,
   PLAY/STOP down, REC left, EDIT right — footer `[LEN]↑ [PLY]↓ [REC]< [EDT]>` (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
-  the transport; a press of it stops everything and cancels the audition). Layout A (owner 2026-11-10, of three
+  the transport; a press of it stops everything and cancels the audition). Layout B (owner 2026-11-10, of three
   mocked): slots are 4 × 4 px squares as the panel mosaic draws them (levels for content, a dim dot for an empty one)
-  at a 6 px pitch across and 5 px down — 8 tracks fill the window's height — the cursor a hollow bright box; the
-  cursor's slot reads `SLOT 1-3` against the divider, so it reads on into the panel's `INTO 3-2`; the title names the
-  source stage (`LOOPS  SET 3  S01`). Left of slot 1, at the slots' own gap, a column of **empty-loop presets** — 1, 2,
-  4, 8 and 16 bars, dotted boxes unlike a loop (owner: a quick empty loop, and the first choice to reach: left of the
-  slots, not past slot 8). LEFT from a track's slot 1 goes to the nearest preset, RIGHT from a preset back to the
-  nearest track; the label reads `EMPTY 4`. A preset needs no audition: `[TRK] KEEP` at once (one undo step). The
+  at a 10 px pitch across and 5 px down — 8 tracks fill the window's height, the slots spread over the left half — the
+  cursor a hollow bright box. The panel's top line names both: `SLOT 1-3 INTO 3-2` (`EMPTY 4 INTO 3-2` on a preset).
+  The title names the source stage (`LOOPS  SET 3  S01`). Left of slot 1 a column of **empty-loop presets** — 1, 2, 4,
+  8 and 16 bars, dotted boxes unlike a loop — with even space on both sides (7 px to the window's edge, 7 px to the
+  slots; owner: a quick empty loop, and the first choice to reach: left of the slots, not past slot 8). LEFT from a
+  track's slot 1 goes to the nearest preset, RIGHT from a preset back to the nearest track. A preset needs no audition: `[TRK] KEEP` at once (one undo step). The
   cursor starts on the 4-bar preset only when the destination is empty; otherwise on the grid cell of the destination's
   own track and slot, and an empty loop kept over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY
   8-BAR LOOP?`, centred), so two reflex presses never wipe a loop.
@@ -207,7 +207,7 @@ reading, audition, preview only, `EMPTY LOOP`, its confirmation, after KEEP.
 
 ![](images/get_loop_picker_mockups.png)
 
-The grid as chosen (layout A, presets against slot 1): a loop selected, the 4-bar preset, track 4's slot 1.
+The grid as chosen (layout B, the presets evenly spaced): a loop selected, the 4-bar preset, track 4's slot 1.
 
 ![](images/get_loop_picker_grid.png)
 
