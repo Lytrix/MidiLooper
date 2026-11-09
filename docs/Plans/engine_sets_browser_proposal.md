@@ -204,8 +204,9 @@ half:
   the destination: its track's takes, clear, undo / redo, NOTE_EDIT, LOOP_EDIT and launches are refused. Not enough
   memory to hold both: refused before it sounds (`NOT ENOUGH MEMORY`).
 
-Mockups on real frames (2026-11-10; the grid's contents and the roll are illustrative): entry, stage list, grid,
-reading, audition, preview only, `EMPTY LOOP`, its confirmation, after USE (the mockups still read KEEP).
+Final mockups on real frames (2026-11-10; the grid's contents and the roll are illustrative): the `GET A LOOP` entry
+with the working set's mosaic, the set's stages, the grid (layout A, dots, presets), reading, an audition, preview
+only, a preset, the confirmation over a filled slot, after USE (a loop, an empty loop).
 
 ![](images/get_loop_picker_mockups.png)
 
