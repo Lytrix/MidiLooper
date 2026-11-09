@@ -711,6 +711,27 @@ void command(char* line, uint32_t nowUs) {
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeSwitchAt(ProductionControl::SwitchAt::NextBar);
     if (arg != nullptr && std::strcmp(arg, "loop") == 0) storeSwitchAt(ProductionControl::SwitchAt::LoopEnd);
     Serial.printf("#ENGINE,switch-at,%s\n", switchAtName());
+  } else if (std::strcmp(verb, "dump-slot") == 0) {  // dump-slot S: the slot's current state, its runs and rows
+    const ManifestId m = gEngine.history().current(static_cast<uint8_t>(a));
+    if (m == kNoManifest) {
+      Serial.println("#ENGINE,dump,none");
+    } else {
+      const auto& mf = gEngine.manifests().manifest(m);
+      Serial.printf("#ENGINE,dump,slot=%d,identity=%lu,loop=%lu,runs=%u\n", a, static_cast<unsigned long>(mf.identity),
+                    static_cast<unsigned long>(mf.loopLengthTicks), mf.runCount);
+      for (uint8_t i = 0; i < mf.runCount; ++i) {
+        const auto& r = gEngine.runs().run(mf.runs[i]);
+        Serial.printf("#ENGINE,dump,run=%u,id=%u,kind=%u,rows=%lu\n", i, mf.runs[i], static_cast<unsigned>(r.kind),
+                      static_cast<unsigned long>(r.rowCount));
+        for (uint32_t k = 0; k < r.rowCount; ++k) {
+          const PassEvent& e = gEngine.runs().rowAt(mf.runs[i], k, gEngine.pool());
+          Serial.printf("#R,%u,%lu,%lu,%lu,%u,%u,%u,%u\n", i, static_cast<unsigned long>(e.tick),
+                        static_cast<unsigned long>(e.noteId), static_cast<unsigned long>(e.seq), e.status, e.data1,
+                        e.data2, e.origin);
+        }
+      }
+      Serial.println("#ENGINE,dump,end");
+    }
   } else if (std::strcmp(verb, "switch-stage") == 0) {  // switch-stage 0|1: staged (gapless) live switches (DEC-261)
     if (arg != nullptr) gEngine.setStaging(a != 0);
     Serial.printf("#ENGINE,switch-stage,%u\n", gEngine.staging() ? 1u : 0u);
