@@ -174,8 +174,8 @@ half:
   own track and slot, and an empty loop kept over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY
   8-BAR LOOP?`, centred), so two reflex presses never wipe a loop.
 * **The panel** shows the loop under the cursor: its piano roll — the whole loop however long (owner 2026-11-10: all
-  bars for now; a 32-bar loop reads as its shape, not its notes — an 8-bar window under a strip of the whole loop,
-  following the playhead in an audition, is the mocked alternative if it proves too dense) — length and bars (in ticks: the stage's tempo is not
+  bars for now; a 32-bar loop reads as its shape, not its notes — if it proves too dense, a 16-bar window
+  (owner 2026-11-10: 16, not the mocked 8) under a strip of the whole loop, following the playhead in an audition) — length and bars (in ticks: the stage's tempo is not
   applied, the loop plays at the current tempo), after a short `READING…` state. A read starts only once the cursor
   has rested about 150 ms, never for cells passed over. One
   read in flight; its result is shown or auditioned only when it matches the request in full — the same picker
