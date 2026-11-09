@@ -13,8 +13,11 @@
 //   from.
 // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends); TRACK does what the hint says for the selected
 //   row; HOLD TRACK closes the popup or the browser, changing nothing. Opening selects `+ SAVE MILESTONE` (rule 1).
-// * The suggestion (slice 3): the base milestone's stage, else Sketch; a new set: Sketch. Slice 4 adds the evidence
-//   rules.
+// * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
+//   base's stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed
+//   only → Building, or a provisional Take when every change was a recording begun while another track played;
+//   launches, switches, stops, mutes and solos only → Exploration. Arrangement and Final are never inferred: a base of
+//   either keeps its stage. Mixed evidence keeps the base's stage.
 // No allocation; the record array is the caller's memory (PSRAM on the device).
 
 #pragma once
@@ -101,6 +104,28 @@ class Browser {
   }
   uint16_t workingSet() const { return workingSet_; }
   uint32_t baseSequence() const { return base_; }
+
+  /// What happened since the base milestone (or the boot): content changed (`build`), only through recordings begun
+  /// while another track played (`takesOnly`), and whether launches / switches / stops / mutes / solos were asked for.
+  struct Activity {
+    bool build = false, takesOnly = false, explore = false;
+  };
+  void setActivity(const Activity& a) { activity_ = a; }
+  /// The suggestion for a save into the working set (`newSet` false) or a new set; `provisional`: a Take inferred.
+  library::Stage suggest(bool newSet, bool& provisional) const {
+    provisional = false;
+    const uint16_t b = find(base_);
+    if (base_ == 0 || b == kNone) return library::Stage::Sketch;  // new work with no saved origin
+    const library::Stage base = records_[b].stage;
+    if (newSet || base == library::Stage::Arrangement || base == library::Stage::Final) return base;
+    const Activity& a = activity_;
+    if (a.build && a.explore) return base;  // mixed: the base's stage
+    if (a.build) {
+      provisional = a.takesOnly;
+      return a.takesOnly ? library::Stage::Take : library::Stage::Building;
+    }
+    return a.explore ? library::Stage::Exploration : base;
+  }
 
   // ---- Navigation --------------------------------------------------------------------------------------------------
   /// HOLD TRACK on the performance screen: the top level, `+ SAVE MILESTONE` selected.
@@ -262,6 +287,8 @@ class Browser {
   bool popupNewSet() const { return popupNew_; }
   uint8_t popupSelected() const { return stageSel_; }
   library::Stage suggested() const { return suggested_; }
+  /// The suggestion is a provisional Take (marked as such).
+  bool suggestedProvisional() const { return provisional_; }
 
  private:
   static void copy(char* out, const char* s) {
@@ -311,8 +338,7 @@ class Browser {
     list_ = view_;
     popupSet_ = set;
     popupNew_ = newSet;
-    const uint16_t b = newSet ? kNone : find(base_);
-    suggested_ = b == kNone ? library::Stage::Sketch : records_[b].stage;
+    suggested_ = suggest(newSet, provisional_);
     stageSel_ = static_cast<uint8_t>(suggested_);
     view_ = View::Popup;
   }
@@ -327,7 +353,8 @@ class Browser {
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
   uint16_t workingSet_ = 1, openSet_ = 0, popupSet_ = 0;
   uint32_t base_ = 0;
-  bool canReturn_ = false, popupNew_ = false, changed_ = false;
+  bool canReturn_ = false, popupNew_ = false, changed_ = false, provisional_ = false;
+  Activity activity_{};
   View view_ = View::Closed, list_ = View::Top;
   uint16_t selected_ = 0, first_ = 0;
   uint8_t stageSel_ = 0;

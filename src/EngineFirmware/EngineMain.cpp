@@ -364,6 +364,17 @@ EXTMEM ProductionBrowser gBrowser;
 enum class BrowserOp : uint8_t { None, Save, Load, Return };
 BrowserOp gBrowserOp = BrowserOp::None;
 bool gBrowserReady = false;
+// Slice 4: the counters at the base milestone (or the boot) — what happened since is the save suggestion's evidence.
+struct Evidence {
+  uint32_t commits = 0, records = 0, recordsWithOthers = 0, explore = 0;
+};
+Evidence gEvidenceAt;
+Evidence evidenceNow() {
+  const auto& c = gEngine.control().stats();
+  return Evidence{gEngine.history().commits(), c.recordsStarted, c.recordsWithOthers, c.exploreGestures};
+}
+/// The working set's base moved (a milestone saved, loaded or returned to): evidence counts from here.
+void resetEvidence() { gEvidenceAt = evidenceNow(); }
 uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work (DEC-260)
 uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint / stage, clear, read
 uint8_t gSwitchedWas = 0;      // the tracks a live load stopped, as last reported
@@ -424,6 +435,7 @@ void loadIndex() {
   // The working set until the store keeps it (DEC-259: held for the boot only): the newest milestone's set.
   if (gBase == 0 && gBrowser.count() != 0) gSet = gBrowser.record(static_cast<uint16_t>(gBrowser.count() - 1)).set;
   gBrowserReady = true;
+  resetEvidence();
   gSurface.setBrowser(&gBrowser);
   gDisplay.setBrowser(&gBrowser);
   Serial.printf("#ENGINE,index,count=%u,sets=%u,ms=%lu\n", gBrowser.count(), gBrowser.setCount(),
@@ -582,6 +594,7 @@ void serviceLoad() {
   switch (st) {
     case ProductionSetLoad::Status::Done:
       applyLoaded(l.blob());
+      resetEvidence();
       if (load) {
         gBase = l.record().sequence;
         gSet = l.record().set;
@@ -640,7 +653,16 @@ void serviceBrowser(uint32_t nowUs) {
   if (!gBrowserReady) return;
   library::CheckpointHeader cp{};
   const bool hasCheckpoint = gEngine.library().checkpoint(cp);
-  if (!gBrowser.isOpen()) gBrowser.setWorking(gSet, gBase, hasCheckpoint);
+  if (!gBrowser.isOpen()) {
+    gBrowser.setWorking(gSet, gBase, hasCheckpoint);
+    const Evidence now = evidenceNow(), &at = gEvidenceAt;
+    const uint32_t commits = now.commits - at.commits, records = now.records - at.records;
+    ProductionBrowser::Activity a;
+    a.build = commits != 0;
+    a.takesOnly = records != 0 && now.recordsWithOthers - at.recordsWithOthers == records && commits <= records;
+    a.explore = now.explore != at.explore;
+    gBrowser.setActivity(a);
+  }
   EngineFirmware::BrowserInfo info;
   info.tz = gTzOffset;
   if (gEngine.persistence().unsaved()) {
@@ -697,6 +719,7 @@ void serviceLibrary() {
       gBrowser.add(r);
       gBase = r.sequence;
       gSet = r.set;
+      resetEvidence();
     }
     if (gBrowserOp == BrowserOp::Save) {
       if (ok) {

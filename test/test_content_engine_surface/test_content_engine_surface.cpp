@@ -401,6 +401,35 @@ void test_leds_follow_and_only_changes_are_sent() {
   TEST_ASSERT_EQUAL_UINT32(sends, gLedSends);
 }
 
+// ---- The save suggestion's evidence (sets browser slice 4) ------------------------------------------------------------
+/// A Record counts as begun with others only while another track plays; the transport's own start and stop are not
+/// exploring; a mute is.
+void test_the_evidence_counts_takes_with_others_and_gestures_not_the_transport() {
+  recordOneBar(0, 60);  // track 0 alone
+  TEST_ASSERT_EQUAL_UINT32(1, C().stats().recordsStarted);
+  TEST_ASSERT_EQUAL_UINT32(0, C().stats().recordsWithOthers);
+  const uint32_t explore = C().stats().exploreGestures;
+  tap(S::kTransportNote);  // stop
+  ms(500);
+  tap(S::kTransportNote);  // start: the tracks resume, not a gesture
+  ms(500);
+  TEST_ASSERT_TRUE(X().playing(0));
+  TEST_ASSERT_EQUAL_UINT32(explore, C().stats().exploreGestures);
+  tap(S::kTrackBase + 1);  // select track 1: not evidence
+  ms(500);
+  tap(S::kSlotBase + 0);  // track 1 slot 0 arms; it records at the bar while track 0 plays
+  ms(400);
+  untilRecording(3 * kBarUs);
+  TEST_ASSERT_EQUAL_UINT32(2, C().stats().recordsStarted);
+  TEST_ASSERT_EQUAL_UINT32(1, C().stats().recordsWithOthers);
+  TEST_ASSERT_EQUAL_UINT32(explore, C().stats().exploreGestures);
+  tap(S::kTrackBase + 0);
+  tap(S::kTrackBase + 0);  // a double: mute track 0
+  ms(500);
+  TEST_ASSERT_TRUE(C().muted(0));
+  TEST_ASSERT_EQUAL_UINT32(explore + 1, C().stats().exploreGestures);
+}
+
 // ---- The sets browser (slice 3) ---------------------------------------------------------------------------------------
 static ProductionBrowser gBrowser;
 /// A long track switch opens it (an open edit left first), record / edit move, a short track switch acts, a long one
@@ -463,6 +492,7 @@ int main(int, char**) {
   RUN_TEST(test_transport_and_play_stop_buttons);
   RUN_TEST(test_a_transport_start_plays_every_unmuted_track);
   RUN_TEST(test_leds_follow_and_only_changes_are_sent);
+  RUN_TEST(test_the_evidence_counts_takes_with_others_and_gestures_not_the_transport);
   RUN_TEST(test_the_browser_takes_record_track_and_edit_while_open);
   RUN_TEST(test_no_heap);
   return UNITY_END();

@@ -123,18 +123,66 @@ void test_the_popup_shows_next_ids_suggests_the_base_stage_and_saves_into_the_wo
   TEST_ASSERT_EQUAL_UINT8(1, r.stageNumber);
 }
 
-void test_save_as_new_set_numbers_in_a_new_set_and_suggests_sketch() {
+void test_save_as_new_set_numbers_in_a_new_set_and_inherits_the_base_stage() {
   gB.open();
   gB.down();
   gB.press();
   TEST_ASSERT_TRUE(gB.popupNewSet());
   TEST_ASSERT_EQUAL_UINT16(8, gB.popupSet());
-  TEST_ASSERT_EQUAL(Stage::Sketch, gB.suggested());
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggested());  // branched from T01 (proposal §3)
   gB.press();
   B::Request r;
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL_UINT16(8, r.set);
   TEST_ASSERT_EQUAL_UINT8(1, r.stageNumber);
+}
+
+/// Slice 4 (proposal §3): one stage by one rule.
+void test_the_suggestion_follows_the_evidence_since_the_base() {
+  bool provisional = false;
+  B::Activity a;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(false, provisional));  // nothing since T01: its stage
+  a.explore = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Exploration, gB.suggest(false, provisional));
+  a = B::Activity{};
+  a.build = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Building, gB.suggest(false, provisional));
+  TEST_ASSERT_FALSE(provisional);
+  a.takesOnly = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(false, provisional));
+  TEST_ASSERT_TRUE(provisional);  // a Take is only ever provisional
+  a.explore = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(false, provisional));  // mixed: the base's stage, not provisional
+  TEST_ASSERT_FALSE(provisional);
+  a = B::Activity{};
+  a.build = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(true, provisional));  // a new set: the base's stage
+}
+void test_arrangement_and_final_are_never_inferred_and_new_work_is_sketch() {
+  publish(2, Stage::Arrangement);
+  gB.setWorking(2, gSeq, false);
+  B::Activity a;
+  a.explore = true;
+  gB.setActivity(a);
+  bool provisional = false;
+  TEST_ASSERT_EQUAL(Stage::Arrangement, gB.suggest(false, provisional));
+  a = B::Activity{};
+  a.build = true;
+  gB.setActivity(a);
+  TEST_ASSERT_EQUAL(Stage::Arrangement, gB.suggest(false, provisional));
+  gB.setWorking(2, 0, false);  // nothing loaded or saved
+  TEST_ASSERT_EQUAL(Stage::Sketch, gB.suggest(false, provisional));
+  TEST_ASSERT_EQUAL(Stage::Sketch, gB.suggest(true, provisional));
+  gB.open();
+  gB.press();
+  TEST_ASSERT_EQUAL(Stage::Sketch, gB.suggested());
+  TEST_ASSERT_EQUAL_UINT8(static_cast<uint8_t>(Stage::Sketch), gB.popupSelected());  // the selection starts on it
 }
 
 void test_hold_closes_the_popup_then_the_browser_and_asks_nothing() {
@@ -204,7 +252,9 @@ int main(int, char**) {
   RUN_TEST(test_a_set_opens_on_its_newest_milestone_and_loads_it);
   RUN_TEST(test_all_sets_returns_to_the_set_row);
   RUN_TEST(test_the_popup_shows_next_ids_suggests_the_base_stage_and_saves_into_the_working_set);
-  RUN_TEST(test_save_as_new_set_numbers_in_a_new_set_and_suggests_sketch);
+  RUN_TEST(test_save_as_new_set_numbers_in_a_new_set_and_inherits_the_base_stage);
+  RUN_TEST(test_the_suggestion_follows_the_evidence_since_the_base);
+  RUN_TEST(test_arrangement_and_final_are_never_inferred_and_new_work_is_sketch);
   RUN_TEST(test_hold_closes_the_popup_then_the_browser_and_asks_nothing);
   RUN_TEST(test_a_failure_keeps_the_screen_and_selection_and_track_tries_again);
   RUN_TEST(test_a_failed_save_goes_back_to_its_list_and_retries_the_same_save);

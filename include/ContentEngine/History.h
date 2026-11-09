@@ -321,6 +321,8 @@ class History {
     return true;
   }
   const Stats& stats() const { return stats_; }
+  /// States committed so far (any slot): the sets browser's evidence of changed content (slice 4).
+  uint32_t commits() const { return seq_; }
   /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
   uint16_t lostSteps(uint8_t slot) const { return slot < Slots ? lost_[slot] : 0; }
 

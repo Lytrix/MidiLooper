@@ -352,7 +352,7 @@ class Surface {
       // Every track not muted and not playing starts its selected slot on the first tick.
       const uint8_t slot = selectedSlot(t);
       if (x.playing(t) || x.writingTrack() == t || control().muted(t) || empty(slot)) continue;
-      control().queueSwitch(t, slot, Engine::Control::Quantize::NextGrid, firstTick - 1);
+      control().queueSwitch(t, slot, Engine::Control::Quantize::NextGrid, firstTick - 1, false);  // not a gesture
     }
   }
 

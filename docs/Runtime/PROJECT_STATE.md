@@ -1,3 +1,10 @@
+**2026-11-09 — Engine sets browser, slice 4 — the save suggestion (DEC-264).**
+- The popup suggests one stage by one rule: Sketch with no base; the base's stage for a new set or mixed activity;
+  Building when only content changed; a provisional Take (`SUGGESTED?`) when every change was a recording made while
+  another track played; Exploration when only launches / switches / stops / mutes / solos happened. Arrangement and
+  Final are never inferred. Evidence counts from the last save, load or return. Native 4,453 passed; device check
+  pending (board in use by the hang investigation).
+
 **2026-11-09 — Engine sets browser, slice 3 — the browser on the DROID (DEC-263).**
 - HOLD TRACK opens it (an open edit left first); RECORD up / EDIT down / TRACK acts / HOLD TRACK closes. Top level
   (return, save milestone, save as new set, the working set, the other sets), a set's milestones, the detail panel in

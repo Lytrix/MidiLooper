@@ -15227,3 +15227,32 @@ them on the four buttons.
   `S02` (72 ms) with its toast; a load from the list (132 ms) and a return from `< RETURN TO PREVIOUS` (68 ms).
 - Seen twice after a `!REBOOT` from the host scripts: the loop hung in a MIDI output stage (`prev_crumbs` stage 8, then
   6) — not the browser (stage 9); recorded as a follow-up.
+
+## DEC-264 — The save suggestion follows what happened since the base milestone (sets browser slice 4)
+
+**Status:** Accepted (owner 2026-11-08: proposal §3 — "make suggestions conservative", one stage by one rule; 2026-11-09:
+"Start slice 4").
+
+### Decision
+
+- One stage by one rule: no base milestone (nothing saved or loaded since the boot) → **Sketch**; a new set from a base
+  → the base's stage; otherwise the base's stage, unless everything since the base is of one kind — content changed
+  only → **Building**, or a provisional **Take** (shown `SUGGESTED?`) when every change was a recording begun while
+  another track played; launches, slot switches, track stops, mutes and solos only → **Exploration**. Arrangement and
+  Final are never inferred: a base of either keeps its stage. Mixed evidence keeps the base's stage. Opening screens is
+  not evidence.
+- **Evidence** (counters, a baseline taken at the index's loading at boot and whenever a milestone is saved, loaded or
+  returned to): History's commits (any content change: takes, overdubs, edits, clears, creates, resizes, rotations);
+  Records begun and those begun while another track played; gestures that launch, switch, stop, mute or solo. The
+  engine's own launches — a transport start resuming the tracks, a live load resuming them — are not gestures.
+  A Take needs every commit since the base to be such a recording.
+- The popup opens on the suggestion; RECORD / EDIT choose another stage.
+
+### Evidence
+
+- Host: `test_content_engine_browser` 13 cases (the rule matrix: nothing → base, explore → Exploration, build →
+  Building, recordings with others → provisional Take, mixed → base, new set → base, Arrangement / Final kept, no
+  base → Sketch, the popup selecting it); `test_content_engine_surface` (a Record alone does not count with others, a
+  second while track 0 plays does; a transport stop / start is not exploring; a mute is). Full native suite 4,453
+  passed; heap gate OK. RAM2 + 8 B.
+- Device: pending (the board was in use by the hang investigation).

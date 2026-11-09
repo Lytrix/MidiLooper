@@ -48,6 +48,8 @@ class TrackControl {
 
   struct Stats {
     uint32_t recordsStarted;  // queued Records that began
+    uint32_t recordsWithOthers;  // of those, begun while another track played (sets browser slice 4: a Take)
+    uint32_t exploreGestures;    // launches, slot switches, track stops, mutes and solos asked for (slice 4)
     uint32_t recordsWaited;   // eligible ticks a queued Record waited for the writer
     uint32_t switches;        // slot switches committed
     uint32_t pickups;         // notes begun before a take's tick 0, written at its Stop (E9.8j)
@@ -133,7 +135,10 @@ class TrackControl {
   }
   Result startOverdub(uint8_t t, uint32_t clock) { return x_->startOverdub(t, clock); }
 
-  Result queueSwitch(uint8_t t, uint8_t slot, Quantize q, uint32_t clock) {
+  /// `gesture` false: the engine's own (a transport start resuming the tracks, a live load resuming them), not
+  /// evidence of exploring (slice 4).
+  Result queueSwitch(uint8_t t, uint8_t slot, Quantize q, uint32_t clock, bool gesture = true) {
+    if (gesture) ++stats_.exploreGestures;
     Pending& p = pending_[t];
     if (p.switchSlot != kNone) x_->stopLaunch(t);
     p.switchSlot = slot;
@@ -183,10 +188,12 @@ class TrackControl {
   }
 
   void setMute(uint8_t t, bool muted, uint32_t nowUs) {
+    if (muted_[t] != muted) ++stats_.exploreGestures;
     muted_[t] = muted;
     applyAudible(nowUs);
   }
   void setSolo(uint8_t t, bool soloed, uint32_t nowUs) {
+    if (soloed_[t] != soloed) ++stats_.exploreGestures;
     soloed_[t] = soloed;
     applyAudible(nowUs);
   }
@@ -298,6 +305,7 @@ class TrackControl {
   void stopTrack(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     cancelQueued(t);
     if (!x_->playing(t)) return;
+    ++stats_.exploreGestures;
     Emit buf[T];
     out_->route(buf, x_->stopTrack(t, clock, buf, T), nowUs, usPerTick);
   }
@@ -396,9 +404,12 @@ class TrackControl {
     }
     Emit buf[T];
     if (x_->playing(t)) out_->route(buf, x_->stopTrack(t, clock, buf, T), nowUs, usPerTick);
+    bool others = false;  // before the track's own stop: another track playing
+    for (uint8_t o = 0; o < Tracks; ++o) others |= o != t && x_->playing(o);
     if (x_->startRecord(t, p.recordSlot, clock) == Result::Ok) {
       p.recordSlot = kNone;
       ++stats_.recordsStarted;
+      if (others) ++stats_.recordsWithOthers;
       gatherPreRoll(t, clock, nowUs, usPerTick);
     }
   }

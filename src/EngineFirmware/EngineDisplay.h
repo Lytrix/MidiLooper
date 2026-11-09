@@ -554,7 +554,8 @@ class EngineDisplay {
       char id[8];
       snprintf(id, sizeof id, "%c%02u", ContentEngine::library::stageLetter(stage), b.nextNumber(b.popupSet(), stage));
       label(id, x0 + 58, y, on ? 0 : 9);
-      if (stage == b.suggested()) label("SUGGESTED", x1 - 40, y, on ? 0 : 5);
+      if (stage == b.suggested())  // a Take inferred is only ever provisional (proposal §3)
+        rlabel(b.suggestedProvisional() ? "SUGGESTED?" : "SUGGESTED", x1 - 4, y, on ? 0 : 5);
     }
     oled_.gfx.draw_rect_filled(fb(), 0, kHintY - 1, 255, 63, 0);
     label("REC/EDIT STAGE  TRACK SAVE  HOLD CANCEL", 2, kHintY, 9);
