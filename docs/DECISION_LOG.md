@@ -15392,3 +15392,6 @@ dimmed", "AS NEW SET", "Newest at top").
 - **Amendment 2 (owner 2026-11-09):** the day follows the month with the gap of `2026 NOV` (`NOV 9`, left-aligned, was
   right-aligned at a fixed column), and the window is 201 px wide and centred (was 227): the list ends earlier, the
   detail and the save popup moved with it. Image `9381eb27…`, boot `crash=0`.
+- **Amendment 3 (owner 2026-11-09):** a set row shows its newest stage's time in the same column as a stage's time
+  (was the newest id, or `NOW` for the working set; the ring still marks it), and the day is right-aligned so 9 sits
+  over 10. Image `44509ad7…`, boot `crash=0`.

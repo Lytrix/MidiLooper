@@ -356,7 +356,7 @@ class EngineDisplay {
   // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. Owner
   // 2026-11-09: the day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
   static constexpr int16_t kWX0 = 27, kWY0 = 1, kWX1 = 228, kWY1 = 56, kDiv = 137;
-  static constexpr int16_t kYearX = 31, kMonX = 49, kDayX = 65, kSpineX = 77, kIdX = 83, kNoteXR = 133;
+  static constexpr int16_t kYearX = 31, kMonX = 49, kDayXR = 71, kSpineX = 77, kIdX = 83, kNoteXR = 133;
   static constexpr int16_t kDetailX = 142, kMosaicX = 192, kMosaicY = 14, kRow0 = 13, kPitch = 9, kHintY = 59;
   static constexpr uint8_t kRuleLevel = 4, kDimText = 7;
   static void idText(const Record& r, char* out, size_t n) {
@@ -485,7 +485,7 @@ class EngineDisplay {
       }
       if (newDay) {
         snprintf(buf, sizeof buf, "%u", l.day);
-        label(buf, kDayX, y, on ? 15 : 9);
+        rlabel(buf, kDayXR, y, on ? 15 : 9);  // right-aligned: 9 over 10 (owner 2026-11-09)
       }
     }
     // The node: the working set a ring; a stage off the line hollow; the selected one larger and bright.
@@ -505,14 +505,11 @@ class EngineDisplay {
       oled_.gfx.draw_rect_filled(fb(), kSpineX - 1, cy - 1, kSpineX + 1, cy + 1, 10);
     }
     char text[16], note[12] = {};
-    if (r.kind == RowKind::Milestone) {
-      idText(b.record(rec), text, sizeof text);
+    if (r.kind == RowKind::Milestone) idText(b.record(rec), text, sizeof text);
+    else snprintf(text, sizeof text, "SET %02u", r.set);
+    if (rec != Browser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
       ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
       if (strcmp(note, "--:--") == 0) note[0] = 0;
-    } else {
-      snprintf(text, sizeof text, "SET %02u", r.set);
-      if (r.kind == RowKind::Working) snprintf(note, sizeof note, "NOW");
-      else if (rec != Browser::kNone) idText(b.record(rec), note, sizeof note);
     }
     label(text, kIdX, y, v);
     if (note[0] != 0) rlabel(note, kNoteXR, y, on ? 15 : kDimText);

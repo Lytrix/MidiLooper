@@ -5,7 +5,8 @@ history as a graph with the new node wired to the chosen stage, every stage list
 Device frames captured (image `701dd197…`, commit `b77fe92a`); native suites green. Owner confirmed on the panel
 ("Looks right"). Then: the `CLOSE` row removed (HOLD TRACK closes), a brighter selection bar and a dimmer `LOAD`
 heading (DEC-267 amendment; image `afa3e651…`). Owner confirmed ("Looks right"). Then the day beside the month (`NOV 9`) and a narrower, centred window
-(201 px; image `9381eb27…`).
+(201 px; image `9381eb27…`). Then a set row's time in the stages' time column and the days right-aligned
+(image `44509ad7…`).
 
 **2026-11-09 — Browser levels and live mosaic.** The panel barely lights levels 1–4: the browser's rules (4), dim text
 (7) and empty mosaic cells (3) were raised, the mosaic's levels are 7 / 11 / 15, and the save rows show the working
