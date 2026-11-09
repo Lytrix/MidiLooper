@@ -56,8 +56,12 @@ class BlobReader {
   /// (bit s), or — `detached` (DEC-261) — only their current states, as manifests the caller owns (`detachedState`).
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res,
              NoteIdSource& ids, uint32_t at, uint32_t sequence, uint8_t* scratch, uint64_t slots = ~0ull,
-             bool detached = false) {
+             bool detached = false, const uint8_t* adoptSlot = nullptr, const ManifestId* adoptState = nullptr,
+             uint8_t adoptCount = 0) {
     load_.cancel();
+    adoptSlot_ = adoptSlot;
+    adoptState_ = adoptState;
+    adoptCount_ = adoptCount;
     slots_ = slots;
     detached_ = detached;
     for (auto& m : detachedState_) m = kNoManifest;
@@ -106,7 +110,10 @@ class BlobReader {
     left_ = blob_.slotBytes[slot_];
     fill_ = library::kSector;  // nothing buffered: the first read takes the slot's first sector
     source_.r = this;
-    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, slot_, source_, scratch_, detached_) !=
+    ManifestId adopt = kNoManifest;  // a staged state for this slot (DEC-261)
+    for (uint8_t k = 0; k < adoptCount_; ++k)
+      if (adoptSlot_[k] == slot_) adopt = adoptState_[k];
+    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, slot_, source_, scratch_, detached_, adopt) !=
         Load::Status::Running)
       return fail(Why::Slot);
     return status_;
@@ -150,6 +157,9 @@ class BlobReader {
   bool header_ = false, detached_ = false;
   uint64_t slots_ = ~0ull;
   ManifestId detachedState_[Slots] = {};
+  const uint8_t* adoptSlot_ = nullptr;
+  const ManifestId* adoptState_ = nullptr;
+  uint8_t adoptCount_ = 0;
   Why why_ = Why::None;
   Status status_ = Status::Idle;
 };
@@ -239,7 +249,9 @@ class SetLoad {
           runs_->reclaim(*pool_, kReclaimUnits);
           return status_;
         }
-        reader_.start(*card_, *pool_, *runs_, *manifests_, *history_, *res_, *ids_, readAt_, readSequence_, scratch_);
+        // The staged states become their slots' current ones (not on a restore: that loads the checkpoint).
+        reader_.start(*card_, *pool_, *runs_, *manifests_, *history_, *res_, *ids_, readAt_, readSequence_, scratch_, ~0ull,
+                      false, stageSlot_, staged_, restoring_ ? 0 : kTracks);
         phase_ = Phase::Read;
         return status_;
       case Phase::Read: {

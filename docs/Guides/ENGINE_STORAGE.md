@@ -87,8 +87,8 @@ content back. While playing (DEC-260), the load writes the checkpoint as the set
 the next bar, or the selected track's loop end (`!ENGINE switch-at bar|loop`). There the playing tracks stop, the set is
 replaced, and they resume together at the next bar line on the loaded set's selected slots: a gap of about a bar.
 To avoid the gap (DEC-261), each playing track's destination slot is first *staged*: its current state is loaded beside
-the playing set and composed ahead, so at the switch point that track takes it at position 0 without stopping; once
-the whole set is loaded the track follows the loaded state in place. Only when staging does not fit does a track take
+the playing set and composed ahead, so at the switch point that track takes it at position 0 without stopping; the
+full load then adopts that staged state as the slot's current one, so the track plays on untouched. Only when staging does not fit does a track take
 the gap. `!ENGINE switch-stage 0|1` turns staging off and on.
 
 ## Serial commands (testing)

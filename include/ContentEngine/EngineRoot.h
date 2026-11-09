@@ -151,13 +151,13 @@ struct EngineRam2 {
 // windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
 // tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
-// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,552 (DEC-259: its blob
-// reader and slot-file load job; DEC-261: its staged states). The line is the host's 64-bit layout, 560 B above the
-// Teensy's 6,821,432. RAM2: the
+// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
+// reader and slot-file load job; DEC-261: its staged states). The line is the host's 64-bit layout, 568 B above the
+// Teensy's 6,821,440. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6821992u;
+constexpr size_t kPsramBudget = 6822008u;
 constexpr size_t kRam2Budget = 154416u;  // measured (DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -620,16 +620,17 @@ class EngineRoot {
       if (m != kNoManifest && r_->transport.playing(t)) r_->transport.launchStaged(t, p_->setLoad.stagedSlot(t), m);
     }
   }
-  /// After a live load: the tracks that switched seamlessly follow the loaded states where they are (the same content);
-  /// if the load did not replace the set as asked, they stop and resume with the gapped tracks. The staged references
-  /// go back.
+  /// After a live load: the tracks that switched seamlessly play their slots' current states already (the load adopted
+  /// the staged states); one whose slot's state is another follows it. If the load did not replace the set as asked,
+  /// they stop and resume with the gapped tracks. The staged references go back (History holds its own).
   void endStaged(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     const bool loaded = p_->setLoad.status() == ProductionSetLoad::Status::Done;
     for (uint8_t t = 0; t < kTrackCount; ++t) {
       const uint8_t bit = static_cast<uint8_t>(1u << t);
       if (!(stagedPlaying_ & bit)) continue;
       if (loaded) {
-        r_->control.followSlot(r_->transport.playingSlot(t), clock, nowUs, usPerTick);
+        const uint8_t slot = r_->transport.playingSlot(t);
+        if (r_->transport.contentOf(slot) != p_->setLoad.staged(t)) r_->control.followSlot(slot, clock, nowUs, usPerTick);
       } else {
         r_->control.stopTrack(t, clock, nowUs, usPerTick);
         switched_ |= bit;

@@ -249,9 +249,12 @@ class LoadJob {
 
   /// Starts loading into `slot`, which must have no history. `scratch` holds ChunkBytes. `detached` (sets browser 2b-ii,
   /// DEC-261: a switch's staged content): the slot's history is left as it is; only the file's current state is kept,
-  /// as a manifest the caller owns (`detachedState`, one reference), and the other states are released.
+  /// as a manifest the caller owns (`detachedState`, one reference), and the other states are released. `adoptCurrent`
+  /// (DEC-261): that staged state — the same content, already playing — becomes the slot's current state instead of a
+  /// new manifest (History takes a reference of its own), so the track playing it continues untouched.
   Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
-               uint8_t slot, Source& source, uint8_t* scratch, bool detached = false) {
+               uint8_t slot, Source& source, uint8_t* scratch, bool detached = false,
+               ManifestId adoptCurrent = kNoManifest) {
     cancel();
     pool_ = &pool;
     runs_ = &runs;
@@ -270,6 +273,7 @@ class LoadJob {
     phase_ = Phase::Header;
     detached_ = detached;
     detachedState_ = kNoManifest;
+    adopt_ = adoptCurrent;
     ManifestId probe[1];
     int16_t cur;
     bool below;
@@ -353,7 +357,13 @@ class LoadJob {
             if (index >= runCount_) return fail(Status::BadFormat);
             list[k] = run_[index];
           }
-          const ManifestId m = manifests_->create(slot_, get32(h), get32(h + 4), list, count, *runs_);
+          ManifestId m;
+          if (i == current_ && adopt_ != kNoManifest) {
+            manifests_->addRef(adopt_);  // the staged state, playing already: the slot's current
+            m = adopt_;
+          } else {
+            m = manifests_->create(slot_, get32(h), get32(h + 4), list, count, *runs_);
+          }
           if (m == kNoManifest) return fail(Status::DeniedCapacity);
           made_list_[made_++] = m;
         }
@@ -431,7 +441,7 @@ class LoadJob {
   uint8_t slot_ = 0, states_ = 0, made_ = 0;
   int16_t current_ = -1;
   bool emptyBelow_ = true, detached_ = false;
-  ManifestId detachedState_ = kNoManifest;
+  ManifestId detachedState_ = kNoManifest, adopt_ = kNoManifest;
   uint32_t loop_ = 0, crc_ = 0, noteIdHigh_ = 0, row_ = 0;
   uint16_t runCount_ = 0, r_ = 0;
   Phase phase_ = Phase::Header;

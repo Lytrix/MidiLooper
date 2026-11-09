@@ -15145,3 +15145,14 @@ ahead (a queued switch); what is missing is the destination's content before the
   (tick 2304, `staged=92`), followed the loaded states 27 ticks later; staging off — the same load stopped them and
   resumed them a bar later (tick 7680). Worst grain by phase with staging: checkpoint/stage 561 µs, clear 344 µs, read
   1,195 µs (the read phase includes the staged tracks' own composing; playback's launches alone reach ~1.2 ms).
+
+**Amendment 1 (2026-11-09, owner: "the first note played twice").** After the load, a staged track no longer follows
+the loaded state (`edit`, a transition that re-joins the playing window): the load **adopts** the staged state as the
+slot's current one (`LoadJob`'s `adoptCurrent`, History taking its own reference), so the track plays on with no
+transition at all and its playing identity stays the same through the load. Measured on the device (USB MIDI captured
+around the switch): the switch itself is on the bar, the new set's notes at +1.5 ms, nothing doubled by the switch.
+The doubled notes the owner heard (channel 8, n83 / n82, ~120 and ~245 ms after) come from **any** launch of that slot
+— a plain `!ENGINE launch 7 56` while playing doubles the same two notes after every launch, with no load involved — a
+playback launch defect outside this decision, recorded as a follow-up. Host: the staged identity is the slot's
+current after the load and no transition is pending (mutation: adoption off — killed). Image `328de4a0…`. Native
+4,432 passed.

@@ -365,6 +365,7 @@ void test_staging_loads_the_selected_slot_beside_the_set() {
   m.surface[1] = 2;  // track 0 selects slot 2
   TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMilestone(gPool, gRuns, gManifests, gH, gIds.peek(), m, gScratch));
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  const auto atMilestone = setNow();
   changeSet();
   const auto beforeLoad = setNow();
   TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginLoad(0, before(), true, 0x1));
@@ -379,10 +380,12 @@ void test_staging_loads_the_selected_slot_beside_the_set() {
   TEST_ASSERT_TRUE(setNow() == beforeLoad);  // no history touched
   gL.release();
   TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
-  TEST_ASSERT_TRUE(gManifests.manifest(staged).live);  // the caller's until it gives it back
+  TEST_ASSERT_EQUAL(staged, gH.current(2));  // adopted: the slot's current is the staged state (nothing to follow)
+  TEST_ASSERT_TRUE(setNow()[2] == atMilestone[2]);
   const uint16_t free = gManifests.freeCount();
   gL.releaseStaged();
-  TEST_ASSERT_EQUAL_UINT16(free + 1, gManifests.freeCount());
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());  // History holds it now
+  TEST_ASSERT_TRUE(gManifests.manifest(staged).live);
 }
 
 void test_refusals() {

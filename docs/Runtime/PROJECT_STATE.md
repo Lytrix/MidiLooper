@@ -1,3 +1,8 @@
+**2026-11-09 — 2b-ii fix: no transition after a staged switch (DEC-261 amendment 1).** The load adopts the staged state
+as the slot's current, so switched tracks play on untouched (before, a follow re-joined the window). MIDI captured at
+the switch: on the bar, nothing doubled by it. The doubled first notes heard on track 8 are a launch defect of their own
+— any launch of slot 56 while playing doubles n83 / n82 — follow-up. Image `328de4a0…`; native 4,432 passed.
+
 **2026-11-09 — Engine sets browser, slice 2b-ii — gapless live switch (DEC-261).**
 - A live load now stages each playing track's destination slot (its current state, loaded beside the playing set and
   composed ahead); at the switch point those tracks take it at position 0 without stopping, then follow the loaded set

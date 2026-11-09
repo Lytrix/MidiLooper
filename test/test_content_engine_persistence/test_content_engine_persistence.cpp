@@ -815,14 +815,20 @@ void test_a_staged_live_load_switches_without_a_gap() {
   TEST_ASSERT_EQUAL_UINT8(9, gA.transport().playingSlot(1));
   TEST_ASSERT_EQUAL_UINT32(switchedAt, gA.transport().origin(1));  // its position 0 on the switch tick
   TEST_ASSERT_FALSE(gA.transport().playing(0));
+  run(gA, gClock + 2);
+  const uint32_t stagedIdentity = gA.track(1).playingIdentity();
+  TEST_ASSERT_TRUE(stagedIdentity != 0);
   runLibrary(gA);
+  // The load adopted the staged state as slot 9's current: the track plays on, no transition (a follow doubled notes
+  // on the device until its window ended).
+  TEST_ASSERT_EQUAL_UINT32(stagedIdentity, gA.manifests().manifest(gA.history().current(9)).identity);
+  TEST_ASSERT_FALSE(gA.track(1).transitionPending());
   TEST_ASSERT_EQUAL(ProductionSetLoad::Status::Done, gA.setLoad().status());
   run(gA, gClock + 2 * kBar);
   TEST_ASSERT_EQUAL_UINT8(0, gA.stagedTracks());
   TEST_ASSERT_TRUE(gA.transport().playing(1));
   TEST_ASSERT_EQUAL_UINT32(switchedAt, gA.transport().origin(1));  // never restarted
-  TEST_ASSERT_EQUAL_UINT32(gA.manifests().manifest(gA.history().current(9)).identity,
-                           gA.track(1).playingIdentity());  // plays the loaded state now
+  TEST_ASSERT_EQUAL_UINT32(stagedIdentity, gA.track(1).playingIdentity());  // the same instance throughout
   TEST_ASSERT_FALSE(gA.transport().playing(0));
   TEST_ASSERT_EQUAL_UINT16(held, gA.manifests().freeCount() + gA.history().heldStates());  // the staged copy freed
 }
