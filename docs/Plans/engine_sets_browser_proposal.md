@@ -154,19 +154,27 @@ half:
   destination remembered; choosing a stage enters the same grid. The destination is fixed on entry and always shown:
   `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only.
 * **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves: REC up, PLAY/STOP down, NOTELEN left,
-  EDIT right. An `EMPTY LOOP` tile comes first and is selected on entry (taking it makes the destination an empty
-  loop, one undo step).
-* **The panel** shows the loop under the cursor: its piano roll, length and bars, after a short `READING…` state. A
-  read that ends after the cursor has left is dropped (one read in flight; its result is shown or auditioned only if
-  the cursor is still there).
+  EDIT right (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
+  the transport). An `EMPTY LOOP` tile comes first, drawn unlike an empty source cell, and is selected on entry:
+  taking it makes the destination an empty loop of the destination's length when it has one, else the new-empty-loop
+  length — shown before KEEP (one undo step).
+* **The panel** shows the loop under the cursor: its piano roll, length and bars, after a short `READING…` state. One
+  read in flight; its result is shown or auditioned only when it matches the request in full — the same picker
+  session, source stage and cursor request — else it is released (a cursor that came back, or a picker reopened,
+  starts a read of its own).
 * **Audition:** TRACK auditions the loop under the cursor at the current position, without touching the history. Once
-  it sounds, the footer reads `[TRK] KEEP`; a fresh TRACK press keeps it (one undo step: `COPIED TO 3-2`). HOLD TRACK
-  cancels and goes back. Moving the cursor ends the audition (browsing never changes the sound); the next TRACK
-  auditions the new loop. After leaving, undo still brings the slot's previous loop back.
+  the preview is ready the footer reads `[TRK] KEEP` — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`
+  or `MUTED`; a fresh TRACK press keeps it (one undo step), back to the performance screen with `COPIED TO 3-2` (the
+  destination is fixed: staying would only invite replacing what was just kept). HOLD TRACK cancels and goes back.
+  Moving the cursor ends the audition (browsing never changes the sound); the next TRACK auditions the new loop. After
+  leaving, undo still brings the slot's previous loop back.
 * **Whether it sounds:** the audition plays on the destination's track. If that track plays the destination slot, the
   audition replaces it in place. If it plays another slot or is stopped while the transport runs, it switches to the
-  destination slot for the audition, and back on cancel; KEEP leaves it there. With the transport stopped, the
-  audition is the piano roll only. A muted track stays muted (the footer says so).
+  destination slot for the audition; KEEP leaves it there. With the transport stopped, the audition is the piano roll
+  only. A muted track stays muted (the footer says so).
+* **Cancel restores the playback state, not the time:** a track stopped before the audition is stopped again; one that
+  played its own slot resumes that slot at the current musical position. A cancel caused by the transport stopping
+  never restarts anything. Mute and solo changes made during the audition stay.
 * **The audition's contract (engine):** the original stays the history's current state throughout; the auditioned
   state is held by the audition alone. Cancel, a cursor move, HOLD, the browser closing, a transport stop, a failed
   read or no memory for it all put the track back as it was and release it. While it lasts, nothing else may change
