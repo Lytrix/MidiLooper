@@ -1,3 +1,7 @@
+**2026-11-09 — Browser levels and live mosaic.** The panel barely lights levels 1–4: the browser's rules (4), dim text
+(7) and empty mosaic cells (3) were raised, the mosaic's levels are 7 / 11 / 15, and the save rows show the working
+set's mosaic live. Owner confirmed on the panel ("Looks right"). Image `4bf5fb5d…`, commit `0bda4b80`.
+
 **2026-11-09 — Engine hangs after `!REBOOT`: a hardware watchdog, a USB health check, boot phases (DEC-266).** The
 2026-11-08/09 "hangs" (serial dead, the uploader unable to reboot, PROGRAM needed) were reproduced in reboot soaks as
 **USB stopping while the main loop ran** (screen and DROID fine, no output call blocked: every send is bounded);
