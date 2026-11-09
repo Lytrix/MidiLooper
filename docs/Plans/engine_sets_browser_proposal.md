@@ -20,7 +20,8 @@ tempo and surface state — described by one creative stage. Stages are unordere
 
 * Numbers count per stage within a set: saving B04 does not use a Take number. The set heading is `SET 02`, never
   `S02`, so it is not mistaken for Sketch 2.
-* The browser speaks in milestones: rows read `T02  TAKE`, the details say `TAKE 2`, messages say
+* The browser speaks in milestones: rows read `T02  TAKE`, the details lead with the id `T02` (largest), the stage
+  `TAKE` beneath it and the date third (owner 2026-11-09), messages say
   `SAVED  SET 02  T04` — "return to Take 2", "continue Arrangement 1". Dates, the timeline and the mosaic support.
 * Nothing is converted or renamed. Save T02, keep working, save A01 (parent T02): T02 stays, loadable and a source of
   loops; A01 is another snapshot.
@@ -69,8 +70,8 @@ The suggestion — one stage, by one rule, never a milestone by itself and never
 |---|---|---|
 | Top level, on `+ SAVE MILESTONE` | `SAVE`, `INTO SET 02`, `FROM E02`, the save state | `TRACK: CHOOSE STAGE  HOLD: CLOSE` |
 | Save popup | six stages with their next ids, highlight, `SUGGESTED` | `REC/EDIT STAGE  TRACK SAVE  HOLD CANCEL` |
-| Top level, on a set | `TAKE 3` (its latest), `SET 07 LATEST`, date, count, mosaic | `TRACK: OPEN SET 07  HOLD: CLOSE` |
-| Inside a set, on a milestone | `TAKE 2`, `SET 03  T02`, the timestamp once, loops / bars, mosaic | `TRACK: LOAD T02  HOLD: CLOSE` |
+| Top level, on a set | `T03` large (its latest) with `SET 07` beside, `TAKE  LATEST`, date, count, mosaic | `TRACK: OPEN SET 07  HOLD: CLOSE` |
+| Inside a set, on a milestone | `T02` large with `SET 03` beside, `TAKE`, the timestamp once, loops / bars, mosaic | `TRACK: LOAD T02  HOLD: CLOSE` |
 | `< RETURN TO PREVIOUS` | `RETURN`, `TO SET 02 AS LEFT 14:57`, `NOT A MILESTONE` | `TRACK: RETURN  HOLD: CLOSE` |
 | A failure | what, why, `NOTHING CHANGED` | `TRACK: TRY AGAIN  HOLD: CLOSE` |
 
