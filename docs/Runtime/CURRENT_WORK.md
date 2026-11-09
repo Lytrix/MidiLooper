@@ -43,6 +43,11 @@ a load or return publishes the header alone; a boot starts in it (an empty worki
 Done (native + device); then the screen shows set numbers without a leading zero (owner: "Show SET 1"). Non-goals:
 reusing set numbers, compaction.
 
+**2026-11-09 — slice 6a, get a loop (owner: "continue with next step"; DEC-270).** One slot of a saved stage read
+(detached, made for the destination) and placed on a slot of the working set as one undo step; nothing else changes.
+Serial `get <index> <T-S> <T-S>`. Done (native + device). Next, 6b on the owner's layout call: the browser's
+`GET A LOOP` entry, a stage's loop list and the destination popup. Non-goals in 6a: add as layer, multi-select.
+
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
 if a board-side USB stop recurs (read `prev_crumbs` c4–c6 after the PROGRAM press).

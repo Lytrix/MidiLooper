@@ -589,6 +589,74 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
   if (const char* why = beginLoad(load, load ? static_cast<uint16_t>(std::atoi(arg)) : 0, nowUs))
     Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
 }
+// Get a loop (DEC-270): the slot a get places into, and the slots named track-slot (`2-3`: track 2, its third slot).
+uint8_t gGetInto = 0;
+uint8_t gGetFrom = 0;
+void slotName(uint8_t s, char* out, size_t n) { snprintf(out, n, "%u-%u", s / 8 + 1, s % 8 + 1); }
+bool parseSlot(const char* a, uint8_t& s) {
+  unsigned t = 0, k = 0;
+  if (a == nullptr || std::sscanf(a, "%u-%u", &t, &k) != 2 || t < 1 || t > kTrackCount || k < 1 || k > 8) return false;
+  s = static_cast<uint8_t>((t - 1) * 8 + (k - 1));
+  return true;
+}
+/// get <stage index> <from track-slot> <into track-slot>: that slot of a saved stage onto a slot of the working set, one
+/// undo step; nothing else changes (the working set's base included).
+void startGet(char* arg, uint32_t nowUs) {
+  char* from = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
+  char* into = from != nullptr ? std::strchr(from + 1, ' ') : nullptr;
+  uint8_t f = 0, t = 0;
+  if (from == nullptr || into == nullptr || !parseSlot(from + 1, f) || !parseSlot(into + 1, t)) {
+    Serial.println("#ENGINE,get,refused,why=GET <INDEX> <T-S> <T-S>");
+    return;
+  }
+  const uint16_t index = static_cast<uint16_t>(std::atoi(arg));
+  const char* why = gEngine.loadRefusal();
+  if (why == nullptr) {
+    switch (gEngine.getLoop(index, f, t)) {
+      case ProductionSetLoad::Result::Ok: break;
+      case ProductionSetLoad::Result::NoMilestone: why = "NO SUCH STAGE"; break;
+      case ProductionSetLoad::Result::NoSlot: why = "NO SUCH SLOT"; break;
+      case ProductionSetLoad::Result::NotMounted: why = "LIBRARY NOT READY"; break;
+      default: why = "BUSY"; break;
+    }
+  }
+  if (why != nullptr) {
+    Serial.printf("#ENGINE,get,refused,why=%s\n", why);
+    return;
+  }
+  gGetFrom = f;
+  gGetInto = t;
+  gLibraryStartUs = nowUs;
+  gLoadWas = ProductionSetLoad::Status::Running;
+  char a[6], b[6];
+  slotName(f, a, sizeof a);
+  slotName(t, b, sizeof b);
+  Serial.printf("#ENGINE,get,begin,index=%u,from=%s,into=%s\n", index, a, b);
+}
+/// A get's end (DEC-270): placed on its slot, or nothing changed.
+void endGet(ProductionSetLoad::Status st, unsigned long ms) {
+  const library::Record& r = gEngine.setLoad().record();
+  char from[6], into[6], line[48];
+  slotName(gGetFrom, from, sizeof from);
+  slotName(gGetInto, into, sizeof into);
+  if (st == ProductionSetLoad::Status::Done) {
+    const ProductionTransport::Result p = gEngine.placeGot(gGetInto, gLastTick, micros(), gClock.usPerTick());
+    if (p == ProductionTransport::Result::Ok) {
+      Serial.printf("#ENGINE,get,done,id=SET %02u %c%02u,from=%s,into=%s,ms=%lu\n", r.set,
+                    library::stageLetter(r.stage), r.stageNumber, from, into, ms);
+      snprintf(line, sizeof line, "COPIED  SET %u %c%02u %s  TO %s", r.set, library::stageLetter(r.stage),
+               r.stageNumber, from, into);
+      gDisplay.toast(line, millis());
+      return;
+    }
+    Serial.printf("#ENGINE,get,failed,why=SLOT %s BUSY,NOTHING CHANGED,ms=%lu\n", into, ms);
+  } else {
+    const auto why = gEngine.setLoad().failedWhy();
+    Serial.printf("#ENGINE,get,failed,why=%s,NOTHING CHANGED,ms=%lu\n",
+                  why == ProductionSetLoad::Reader::Why::None ? "SLOT EMPTY THERE" : "READ FAILED", ms);
+  }
+  gDisplay.toast("GET FAILED  NOTHING CHANGED", millis());
+}
 /// The loaded set's tempo and selection (as the boot restores the saved selection).
 void applyLoaded(const library::BlobHeader& b) {
   if (b.tempoTenths != 0 && !gClock.external()) gClock.setTempo(static_cast<uint32_t>(b.tempoTenths) * 10u);
@@ -619,8 +687,12 @@ void serviceLoad() {
   const ProductionSetLoad::Status st = l.status();
   if (st == gLoadWas || st == ProductionSetLoad::Status::Running) return;
   gLoadWas = st;
-  const bool load = l.kind() == ProductionSetLoad::Kind::Load;
   const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
+  if (l.kind() == ProductionSetLoad::Kind::Get) {
+    endGet(st, ms);
+    return;
+  }
+  const bool load = l.kind() == ProductionSetLoad::Kind::Load;
   const char* verb = load ? "load" : "return";
   switch (st) {
     case ProductionSetLoad::Status::Done:
@@ -986,6 +1058,8 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "switch-stage") == 0) {  // switch-stage 0|1: staged (gapless) live switches (DEC-261)
     if (arg != nullptr) gEngine.setStaging(a != 0);
     Serial.printf("#ENGINE,switch-stage,%u\n", gEngine.staging() ? 1u : 0u);
+  } else if (std::strcmp(verb, "get") == 0) {  // get <index> <T-S> <T-S>: a loop from a saved stage (DEC-270)
+    startGet(arg, nowUs);
   } else if (std::strcmp(verb, "load") == 0 || std::strcmp(verb, "return") == 0) {
     startLoad(verb, arg, nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)

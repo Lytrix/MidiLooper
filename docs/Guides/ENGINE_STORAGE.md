@@ -118,5 +118,5 @@ load or return names it once the library is free (`#ENGINE,working,begin|done|fa
 ## Serial commands (testing)
 
 `!ENGINE library` (state), `library-open`, `milestone <S|B|E|T|A|F> [set]`, `milestones` (list), `checkpoint`,
-`load <index>`, `return`, `trash <set> [index]`, `restore <index>`, `empty-trash`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
+`load <index>`, `return`, `get <index> <T-S> <T-S>` (a loop from a stage, DEC-270), `trash <set> [index]`, `restore <index>`, `empty-trash`, `switch-at bar|loop`, `switch-stage 0|1`. Refusals: `STOP THE TAKE FIRST`, `CLOSE THE EDIT FIRST`, `LIBRARY NOT READY`,
 `LIBRARY FULL`, `BUSY`. On the DROID the same actions run from the sets browser (HOLD TRACK; DEC-263, redesigned in DEC-267); `return` is serial-only.

@@ -153,11 +153,12 @@ struct EngineRam2 {
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
 // library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
 // reader and slot-file load job; DEC-261: its staged states; DEC-269: + 16 B the working set in the writer's two index
-// headers). The line is the host's 64-bit layout, 568 B above the Teensy's 6,821,456. RAM2: the
+// headers; DEC-270: + 8 B the got state and its slots). The line is the host's 64-bit layout, 568 B above the Teensy's
+// 6,821,464. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6822024u;
+constexpr size_t kPsramBudget = 6822032u;
 constexpr size_t kRam2Budget = 154424u;  // measured (sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -382,6 +383,23 @@ class EngineRoot {
     if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginCheckpoint(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), c,
                                              p_->libraryScratch);
+  }
+  /// Get a loop (DEC-270; the caller checked `loadRefusal`): starts reading slot `from` of milestone `index` for slot
+  /// `into` — nothing changes until `placeGot`.
+  ProductionSetLoad::Result getLoop(uint16_t index, uint8_t from, uint8_t into) {
+    return p_->setLoad.beginGet(index, from, into);
+  }
+  /// The state a get read onto slot `into`: one undo step, heard on the slot's playing tracks as an undo is. Refused
+  /// (the slot written meanwhile) or nothing read: the state is released, nothing changes.
+  ProductionTransport::Result placeGot(uint8_t into, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    const ManifestId m = p_->setLoad.takeGot();
+    if (m == kNoManifest) return ProductionTransport::Result::NoChange;
+    ProductionEmit buf[kGestureEmits];
+    uint8_t n;
+    const auto r = r_->transport.place(into, m, clock, buf, kGestureEmits, n);
+    if (r != ProductionTransport::Result::Ok) r_->manifests.release(m, r_->runs);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
   }
   ProductionLibrary& library() { return p_->libraryWriter; }
   /// Why a load or return cannot start now (DEC-259), or nullptr.

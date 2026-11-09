@@ -9,6 +9,9 @@
 //   transaction: a failure there changes nothing), then clears every slot's history, then loads the milestone. A load
 //   that fails after the clear is undone by loading the checkpoint back (`Restored`); only when that fails as well is
 //   the set left as far as it got (`Lost`). Return clears and loads the checkpoint, writing nothing.
+// * Get a loop (DEC-270): one slot of a milestone read, detached, into another slot's tables — its current state
+//   only, the caller's to place (`takeGot`); no checkpoint, no clear, no history touched; a failed read or an empty
+//   source slot changes nothing (`Unchanged`).
 // * The caller loads only with the transport stopped, no take and no NOTE_EDIT session open, and resets the tracks in
 //   `clear` (pending launches dropped) before any history is touched; the surface state and tempo the blob carried are
 //   the caller's to apply (`blob()`). No heap.
@@ -54,11 +57,13 @@ class BlobReader {
 
   /// Starts loading the set whose header is library sector `at`, written as sequence `sequence`: the slots in `slots`
   /// (bit s), or — `detached` (DEC-261) — only their current states, as manifests the caller owns (`detachedState`).
+  /// `into` (DEC-270, detached, one slot): the slot read is made for that slot (its runs and state bound to it).
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res,
              NoteIdSource& ids, uint32_t at, uint32_t sequence, uint8_t* scratch, uint64_t slots = ~0ull,
              bool detached = false, const uint8_t* adoptSlot = nullptr, const ManifestId* adoptState = nullptr,
-             uint8_t adoptCount = 0) {
+             uint8_t adoptCount = 0, uint8_t into = kSame) {
     load_.cancel();
+    into_ = into;
     adoptSlot_ = adoptSlot;
     adoptState_ = adoptState;
     adoptCount_ = adoptCount;
@@ -113,7 +118,8 @@ class BlobReader {
     ManifestId adopt = kNoManifest;  // a staged state for this slot (DEC-261)
     for (uint8_t k = 0; k < adoptCount_; ++k)
       if (adoptSlot_[k] == slot_) adopt = adoptState_[k];
-    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, slot_, source_, scratch_, detached_, adopt) !=
+    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, into_ != kSame ? into_ : slot_, source_,
+                    scratch_, detached_, adopt) !=
         Load::Status::Running)
       return fail(Why::Slot);
     return status_;
@@ -131,6 +137,7 @@ class BlobReader {
   const library::BlobHeader& blob() const { return blob_; }
   /// A detached load's state for `slot` (one reference, the caller's; kNoManifest: none).
   ManifestId detachedState(uint8_t slot) const { return slot < Slots ? detachedState_[slot] : kNoManifest; }
+  static constexpr uint8_t kSame = 0xFF;
 
  private:
   Status fail(Why w) {
@@ -153,7 +160,7 @@ class BlobReader {
   uint8_t sector_[library::kSector] = {};
   uint32_t at_ = 0, sequence_ = 0, next_ = 0, slotAt_ = 0, left_ = 0;
   uint16_t fill_ = library::kSector;
-  uint8_t slot_ = 0, loaded_ = 0;
+  uint8_t slot_ = 0, loaded_ = 0, into_ = kSame;
   bool header_ = false, detached_ = false;
   uint64_t slots_ = ~0ull;
   ManifestId detachedState_[Slots] = {};
@@ -170,8 +177,8 @@ class SetLoad {
   using Writer = LibraryWriter<Card, Pool, Runs, Manifests, HistoryT, Slots>;
   using Reader = BlobReader<Card, Pool, Runs, Manifests, HistoryT, Slots>;
   using Reservations = RowReservations<Pool, Runs>;
-  enum class Kind : uint8_t { Load, Return };
-  enum class Result : uint8_t { Ok, NotMounted, Busy, NoMilestone, NoCheckpoint, TooLarge };
+  enum class Kind : uint8_t { Load, Return, Get };
+  enum class Result : uint8_t { Ok, NotMounted, Busy, NoMilestone, NoCheckpoint, TooLarge, NoSlot };
   /// Running; Done (loaded / returned); Unchanged (the checkpoint could not be written: nothing changed); Restored (the
   /// load failed, the working set is back from the checkpoint); Lost (that failed too: the set is as far as it got).
   enum class Status : uint8_t { Idle, Running, Done, Unchanged, Restored, Lost };
@@ -212,6 +219,30 @@ class SetLoad {
     hold_ = atSwitch;
     stageTracks_ = atSwitch ? stageTracks : 0;
     return start();
+  }
+  /// Get a loop (DEC-270): starts reading slot `from` of milestone `index` for slot `into` — its current state only,
+  /// detached (`takeGot` once Done). Unchanged: the read failed or the slot was empty there; nothing changed.
+  Result beginGet(uint16_t index, uint8_t from, uint8_t into) {
+    if (!writer_->mounted()) return Result::NotMounted;
+    if (busy() || writer_->busy()) return Result::Busy;
+    if (from >= Slots || into >= Slots || from >= library::kSlots) return Result::NoSlot;
+    if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
+    dropGot();
+    kind_ = Kind::Get;
+    getFrom_ = from;
+    hold_ = false;
+    stageTracks_ = 0;
+    start();
+    reader_.start(*card_, *pool_, *runs_, *manifests_, *history_, *res_, *ids_, setAt(), setSequence(), scratch_,
+                  1ull << from, true, nullptr, nullptr, 0, into);
+    phase_ = Phase::Read;
+    return Result::Ok;
+  }
+  /// The state a get read (one reference, now the caller's), once; kNoManifest: none.
+  ManifestId takeGot() {
+    const ManifestId m = got_;
+    got_ = kNoManifest;
+    return m;
   }
   /// Starts returning to the checkpoint (the working set before the last load).
   Result beginReturn(bool atSwitch = false, uint8_t stageTracks = 0) {
@@ -257,6 +288,14 @@ class SetLoad {
       case Phase::Read: {
         const typename Reader::Status st = reader_.step();
         if (st == Reader::Status::Running) return status_;
+        if (kind_ == Kind::Get) {  // nothing else was touched: a failure leaves the set as it is
+          got_ = st == Reader::Status::Done ? reader_.detachedState(getFrom_) : kNoManifest;
+          if (st != Reader::Status::Done) {
+            failedWhy_ = reader_.why();
+            failedSlot_ = getFrom_;
+          }
+          return status_ = got_ != kNoManifest ? Status::Done : Status::Unchanged;
+        }
         if (st == Reader::Status::Done) return status_ = restoring_ ? Status::Restored : Status::Done;
         if (kind_ == Kind::Return || restoring_) return status_ = Status::Lost;
         // The load failed after the clear: the working set back from the checkpoint written just before.
@@ -291,7 +330,7 @@ class SetLoad {
   uint8_t phase() const { return static_cast<uint8_t>(phase_); }
   Status status() const { return status_; }
   Kind kind() const { return kind_; }
-  /// The milestone being loaded, and the checkpoint written before it (or returned to).
+  /// The milestone being loaded (or got from), and the checkpoint written before it (or returned to).
   const library::Record& record() const { return record_; }
   const library::CheckpointHeader& checkpoint() const { return checkpoint_; }
   /// The set that was read last: its tempo and surface state (the milestone's, or the checkpoint's after a restore).
@@ -305,12 +344,14 @@ class SetLoad {
   static constexpr uint8_t kTracks = 8, kNoSlot = 0xFF;
   static constexpr uint32_t kReclaimUnits = 64;  // as the reclaim job's grain
 
-  /// The set this operation loads: the milestone's blob, or the checkpoint's (a return, or a restore).
+  /// The set this operation reads: the milestone's blob (a load or a get), or the checkpoint's (a return, a restore).
   uint32_t setAt() const {
-    return kind_ == Kind::Load && !restoring_ ? library::kLogBase + record_.logSector
-                                              : library::checkpointBase(region()) + 1;
+    return kind_ != Kind::Return && !restoring_ ? library::kLogBase + record_.logSector
+                                                : library::checkpointBase(region()) + 1;
   }
-  uint32_t setSequence() const { return kind_ == Kind::Load && !restoring_ ? record_.sequence : checkpoint_.sequence; }
+  uint32_t setSequence() const {
+    return kind_ != Kind::Return && !restoring_ ? record_.sequence : checkpoint_.sequence;
+  }
   /// One staging grain (DEC-261): the set's header (which slot each staged track selects), then those slots' current
   /// states, detached. Staging that fails leaves nothing staged: those tracks take the gap.
   Status stage() {
@@ -372,6 +413,10 @@ class SetLoad {
     phase_ = Phase::Reclaim;
   }
   uint8_t region() const { return writer_->checkpointRegion(); }
+  void dropGot() {  // a state read and never taken
+    if (got_ != kNoManifest) manifests_->release(got_, *runs_);
+    got_ = kNoManifest;
+  }
 
   Card* card_ = nullptr;
   Writer* writer_ = nullptr;
@@ -394,6 +439,8 @@ class SetLoad {
   uint8_t stageSlot_[kTracks] = {};
   ManifestId staged_[kTracks] = {};
   uint32_t readAt_ = 0, readSequence_ = 0;
+  ManifestId got_ = kNoManifest;
+  uint8_t getFrom_ = 0;
   typename Reader::Why failedWhy_ = Reader::Why::None;
   uint8_t failedSlot_ = 0;
   Status status_ = Status::Idle;

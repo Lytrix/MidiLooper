@@ -25,7 +25,11 @@ set (a CRC'd block after its own CRC; a save names it, a load / return publishes
 the previous). Native +7 (five mutations killed), full 4,479 passed; device `6a0a8504…`: load SET 02 T03 → reboot
 boots in SET 02 `FROM T03` (the old guess said SET 03); return → reboot SET 03. Then
 (owner: "Show SET 1") the screen shows set numbers without a leading zero (`SET 3`, `AS NEW SET 6`); serial logs keep
-`SET 02` (image `e8cbfd16…`).
+`SET 02` (image `e8cbfd16…`). **Slice 6a — get a loop (DEC-270):** `SetLoad::beginGet` reads one slot of a stage for
+another slot (no checkpoint, no clear), `SlotTransport::place` puts it on as one undo step; serial `get 9 1-1 8-8`.
+Native +3 (four mutations killed), full 4,482 passed; device `3b915713…`: placed in 2 ms, empty source and bad names
+refused or unchanged, undone. **Incident:** the "Show SET 1" frame capture's script pressed TRACK on SET 2 T03 and
+loaded it (checkpoint 36 holds the owner's SET 3 working set from before; `return` restores it) — owner asked.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

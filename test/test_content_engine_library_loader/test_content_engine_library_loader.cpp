@@ -388,6 +388,65 @@ void test_staging_loads_the_selected_slot_beside_the_set() {
   TEST_ASSERT_TRUE(gManifests.manifest(staged).live);
 }
 
+/// DEC-270 — get a loop: one slot of a saved stage read into another slot's tables, its current state only, the
+/// caller's; no checkpoint, no clear, no history touched.
+void test_getting_a_loop_reads_one_slot_for_another_and_touches_nothing() {
+  buildSet();
+  saveMilestone();
+  changeSet();
+  const auto beforeGet = setNow();
+  const uint16_t manifests = gManifests.freeCount();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 2, 1));
+  TEST_ASSERT_EQUAL(Loader::Result::Busy, gL.beginGet(0, 2, 1));
+  TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
+  TEST_ASSERT_TRUE(gL.kind() == Loader::Kind::Get);
+  const ManifestId m = gL.takeGot();
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  TEST_ASSERT_EQUAL(kNoManifest, gL.takeGot());  // taken once
+  const auto& x = gManifests.manifest(m);
+  TEST_ASSERT_EQUAL_UINT8(1, x.slot);  // bound to the slot it goes into
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, x.loopLengthTicks);  // slot 2's state at the stage, not its changed one
+  TEST_ASSERT_EQUAL_UINT8(1, x.runCount);
+  TEST_ASSERT_EQUAL_UINT8(1, gRuns.run(x.runs[0]).slot);
+  TEST_ASSERT_EQUAL_UINT32(4, gRuns.run(x.runs[0]).rowCount);
+  TEST_ASSERT_EQUAL_UINT8(48, gRuns.rowAt(x.runs[0], 0, gPool).data1);
+  TEST_ASSERT_TRUE(setNow() == beforeGet);  // nothing else changed
+  TEST_ASSERT_EQUAL_INT(0, gClears);
+  CheckpointHeader cp;
+  TEST_ASSERT_FALSE(gW.checkpoint(cp));  // no checkpoint written
+  TEST_ASSERT_EQUAL_UINT16(manifests - 1, gManifests.freeCount());  // only the state taken
+  gManifests.release(m, gRuns);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+/// DEC-270: a stage's empty slot, or a read that fails, gets nothing and changes nothing; refused by name otherwise.
+void test_a_get_that_finds_nothing_or_fails_changes_nothing() {
+  buildSet();
+  saveMilestone();
+  const auto beforeGet = setNow();
+  const uint16_t manifests = gManifests.freeCount();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 1, 3));  // slot 1 was empty at the stage
+  TEST_ASSERT_EQUAL(Loader::Status::Unchanged, loadToEnd());
+  TEST_ASSERT_EQUAL(kNoManifest, gL.takeGot());
+  Record r;
+  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  uint8_t h[kSector];
+  gCard.readLibrarySector(kLogBase + r.logSector, h);
+  BlobHeader bh;
+  TEST_ASSERT_TRUE(decode(h, bh));
+  uint32_t at = kLogBase + r.logSector + 1 + (bh.slotBytes[0] + kSector - 1) / kSector;  // slot 2's first sector
+  gCard.sectors[at][30] ^= 0xFF;  // a damaged row: the slot's CRC fails
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 2, 3));
+  TEST_ASSERT_EQUAL(Loader::Status::Unchanged, loadToEnd());
+  TEST_ASSERT_EQUAL(kNoManifest, gL.takeGot());
+  TEST_ASSERT_TRUE(setNow() == beforeGet);
+  TEST_ASSERT_EQUAL_UINT16(manifests, gManifests.freeCount());
+  TEST_ASSERT_TRUE(gRes.check());
+  TEST_ASSERT_EQUAL(Loader::Result::NoSlot, gL.beginGet(0, 4, 1));  // a slot past the set
+  TEST_ASSERT_EQUAL(Loader::Result::NoSlot, gL.beginGet(0, 1, 4));
+  TEST_ASSERT_EQUAL(Loader::Result::NoMilestone, gL.beginGet(1, 1, 2));
+}
+
 void test_refusals() {
   buildSet();
   TEST_ASSERT_EQUAL(Loader::Result::NoCheckpoint, gL.beginReturn());
@@ -438,6 +497,8 @@ int main(int, char**) {
   RUN_TEST(test_a_refused_clear_changes_nothing);
   RUN_TEST(test_a_live_load_waits_for_the_switch_point_before_it_clears);
   RUN_TEST(test_staging_loads_the_selected_slot_beside_the_set);
+  RUN_TEST(test_getting_a_loop_reads_one_slot_for_another_and_touches_nothing);
+  RUN_TEST(test_a_get_that_finds_nothing_or_fails_changes_nothing);
   RUN_TEST(test_refusals);
   RUN_TEST(test_clearing_releases_the_set);
   RUN_TEST(test_no_heap);

@@ -310,6 +310,54 @@ void test_undo_redo_and_undo_to_empty_follow_on_the_track() {
   TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
 }
 
+/// DEC-270 — get a loop: a state made elsewhere for this slot (a saved stage's slot, read in) placed on top of a
+/// playing slot is one undo step, heard on its track as an undo is; refused, the caller keeping it, while the slot is
+/// written.
+void test_a_placed_state_is_one_undo_step_heard_on_the_track() {
+  recordTake();
+  run(kS + 2 * kLoop + 1);
+  const uint8_t depth = gH.undoDepth(0);
+  auto state = [](uint8_t pitch) {
+    const RunId r = gRuns.allocate(0, RunKind::kRecord);
+    PassEvent on{}, off{};
+    on.tick = 100;
+    on.noteId = off.noteId = 900u + pitch;
+    on.status = 0x90;
+    off.tick = 200;
+    off.status = 0x80;
+    on.data1 = off.data1 = pitch;
+    on.data2 = 100;
+    on.seq = 1;
+    off.seq = 2;
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, on, gPool));
+    TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, off, gPool));
+    gRuns.seal(r);
+    const ManifestId m = gManifests.create(0, 99, kLoop, &r, 1, gRuns);
+    gRuns.release(r);
+    return m;
+  };
+  Emit buf[kT];
+  uint8_t n;
+  TEST_ASSERT_EQUAL(R::Ok, gX.place(0, state(80), gClock, buf, kT, n));
+  gOut.insert(gOut.end(), buf, buf + n);
+  TEST_ASSERT_EQUAL_UINT8(depth + 1, gH.undoDepth(0));
+  run(kS + 4 * kLoop + 1);
+  expectCycle(3, {{80, {100, 200}}});
+  TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
+  gOut.insert(gOut.end(), buf, buf + n);
+  run(kS + 6 * kLoop + 1);
+  expectCycle(5, kA);
+  TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
+  const uint16_t free = gManifests.freeCount();
+  const ManifestId held = state(81);
+  TEST_ASSERT_EQUAL(R::Busy, gX.place(0, held, gClock, buf, kT, n));
+  TEST_ASSERT_TRUE(gManifests.manifest(held).live);  // still the caller's
+  gManifests.release(held, gRuns);
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());
+  stop();
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_an_undo_on_a_boundary_is_heard_from_that_boundary() {
   recordTake();
   run(kS + kLoop + 10);
@@ -437,6 +485,7 @@ int main(int, char**) {
   RUN_TEST(test_record_then_the_take_plays);
   RUN_TEST(test_overdub_publishes_at_the_wrap_and_completes_the_held_note);
   RUN_TEST(test_undo_redo_and_undo_to_empty_follow_on_the_track);
+  RUN_TEST(test_a_placed_state_is_one_undo_step_heard_on_the_track);
   RUN_TEST(test_an_undo_on_a_boundary_is_heard_from_that_boundary);
   RUN_TEST(test_one_writer_and_named_refusals);
   RUN_TEST(test_a_full_run_list_ends_the_take_at_a_wrap);

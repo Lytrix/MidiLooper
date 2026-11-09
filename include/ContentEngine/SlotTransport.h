@@ -275,6 +275,17 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  /// Get a loop (DEC-270): state `m` — made for this slot elsewhere (a saved stage's slot, read in), one reference,
+  /// the caller's — on top of the slot's history: one undo step; its playing tracks follow as on an undo. Busy while
+  /// the slot is written: nothing taken, `m` stays the caller's.
+  Result place(uint8_t slot, ManifestId m, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (mode_ != Mode::Idle && wSlot_ == slot) return Result::Busy;
+    if (history_->commit(slot, m) == HistoryCommit::Refused) return Result::NoChange;
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+
   /// An empty loop (owner 2026-11-08: a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
   /// and loop `loop` ticks, on top of the slot's history (undoable). A slot holds content while its state lists a run,
   /// so the loop plays, is edited and saved like a recorded one. Only on an empty slot.

@@ -15520,3 +15520,36 @@ named none (fallback SET 03); a browser load of SET 02 T03 → `working,done,set
   its one-line confirmations (`SET 3`, `AS NEW SET 6`, `MOVE SET 2 T03 TO TRASH?`, `SAVED  SET 3  S02`), so `SET 100`
   reads as `SET 1` and `SET 10` do. Stage ids keep two digits (`T03`); serial log lines keep `SET 02` (host scripts parse
   them). Image `e8cbfd16…`, boot `crash=0`.
+
+## DEC-270 — Get a loop: one slot of a saved stage onto a slot of the working set, one undo step (sets browser slice 6a)
+
+**Date:** 2026-11-09. **Owner:** "continue with next step" after slices 1–5, the trash and DEC-269; the design is the
+proposal's §6 (`docs/Plans/engine_sets_browser_proposal.md`, not authority). Slice 6a is the engine and a serial
+command; 6b (the browser rows and the destination popup) follows on the owner's layout call.
+
+**Decision:**
+- `SetLoad::beginGet(index, from, into)` reads slot `from` of milestone `index` detached (DEC-261's path) and made for
+  slot `into` (`BlobReader`'s `into`: its runs and state bound to that slot): its current state only, the caller's
+  (`takeGot`). No checkpoint, no clear, no history touched while it reads; a read that fails, or a slot empty at that
+  stage, ends `Unchanged` with everything released.
+- `SlotTransport::place(slot, m)` puts that state on top of the slot's history — one undo step — and the slot's
+  playing tracks follow as on an undo (`selectSlot`). While the slot is being written it refuses (`Busy`) without
+  taking the state; the engine releases it. Placed on a filled slot it replaces what plays (undoable); on an empty
+  slot it copies. The proposal's third outcome, **add as layer** (a new pass on the current state), is not in 6a.
+- Nothing else changes: the working set's base, its name (DEC-269), the selection and the tempo stay. The store saves
+  the slot like any other change.
+- Same refusals as a load (`loadRefusal`: library ready, no take, no NOTE_EDIT, not busy); allowed while playing.
+- Serial: `!ENGINE get <index> <T-S> <T-S>` (`get 9 1-1 8-8`: track 1 slot 1 of record 9 onto track 8 slot 8) →
+  `#ENGINE,get,begin|done|failed|refused`; on the screen `COPIED  SET 2 T03 1-1  TO 8-8` or
+  `GET FAILED  NOTHING CHANGED`.
+
+**Note ids:** a copied state keeps its rows' note ids; they are matched only within one manifest (a state), whose runs
+travel together, and the read advances the id source past the stage's high-water mark, so later takes get fresh ids.
+
+**Evidence:** native: the get reads one slot for another and touches nothing (no checkpoint, no clear, histories
+equal, one manifest taken, runs bound to the destination), an empty slot and a damaged slot change nothing and release
+everything, refusals by name; a placed state is one undo step heard on the playing track, undone back, refused while
+the slot is overdubbed with the caller keeping it; four mutations killed; full native 4,482 passed. PSRAM +8 B
+(`kPsramBudget` 6,822,032). Device (image `3b915713…`, boot `crash=0`): `get 9 1-1 8-8` → done in 2 ms, slot 8-8 now
+the stage's 5-run, 768-tick loop (new run ids); `get 9 8-7 8-8` → `SLOT EMPTY THERE,NOTHING CHANGED`; a bad slot and
+stage refused; `undo 63` → the slot empty again.
