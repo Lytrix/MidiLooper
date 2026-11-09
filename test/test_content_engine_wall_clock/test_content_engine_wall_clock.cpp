@@ -70,11 +70,23 @@ void test_formats_name_an_unset_clock() {
   TEST_ASSERT_EQUAL_STRING("--:--", b);
 }
 
+/// Slice 5: a date's day number (the timeline's month starts), and back through `local`.
+void test_day_numbers_of_dates() {
+  TEST_ASSERT_EQUAL_INT64(0, dayOf(1970, 1, 1));
+  TEST_ASSERT_EQUAL_INT64(20758, dayOf(2026, 11, 1));
+  TEST_ASSERT_EQUAL_INT64(19782, dayOf(2024, 2, 29));
+  TEST_ASSERT_EQUAL_INT64(20148, dayOf(2025, 3, 1));
+  const auto l = local(static_cast<uint32_t>(dayOf(2026, 11, 1) * 86400), 0);
+  TEST_ASSERT_EQUAL_UINT8(11, l.month);
+  TEST_ASSERT_EQUAL_UINT8(1, l.day);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_only_a_plausible_time_is_valid);
   RUN_TEST(test_local_fields_follow_the_calendar);
   RUN_TEST(test_the_offset_moves_the_local_time_across_days);
   RUN_TEST(test_formats_name_an_unset_clock);
+  RUN_TEST(test_day_numbers_of_dates);
   return UNITY_END();
 }

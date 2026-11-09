@@ -244,6 +244,62 @@ void test_the_list_scrolls_with_the_selection() {
   TEST_ASSERT_EQUAL_UINT16(0, gB.first());
 }
 
+/// Slice 5, walkthrough 5: T02, B04 from T02, T03 from B04, then A01 from T02 (loaded back and arranged). The line is
+/// A01 and T02; B04 and T03 branched off, joining at T02.
+void test_the_line_and_its_side_branch() {
+  gB.clear();
+  gSeq = 0;
+  auto add = [](Stage st, uint8_t n, uint32_t parent) {
+    Record r{};
+    r.sequence = ++gSeq;
+    r.set = 4;
+    r.stage = st;
+    r.stageNumber = n;
+    r.parent = parent;
+    TEST_ASSERT_TRUE(gB.add(r));
+  };
+  add(Stage::Take, 2, 0);         // 1
+  add(Stage::Building, 4, 1);     // 2
+  add(Stage::Take, 3, 2);         // 3
+  add(Stage::Arrangement, 1, 1);  // 4
+  gB.setWorking(4, 4, false);
+  gB.open();
+  gB.down();
+  gB.down();
+  gB.press();  // the working set: A01, T03, B04, T02
+  TEST_ASSERT_EQUAL(B::View::Set, gB.view());
+  TEST_ASSERT_TRUE(gB.onLine(1));   // A01
+  TEST_ASSERT_FALSE(gB.onLine(2));  // T03
+  TEST_ASSERT_FALSE(gB.onLine(3));  // B04
+  TEST_ASSERT_TRUE(gB.onLine(4));   // T02
+  TEST_ASSERT_TRUE(gB.hasSide());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.joinRow());
+}
+void test_a_straight_history_has_one_lane() {
+  gB.open();
+  gB.down();
+  gB.down();
+  gB.press();  // SET 02: S01, B01, T01 without parents — the newest alone is "the line"
+  for (uint16_t i = 1; i <= 3; ++i) publish(2, Stage::Sketch);
+  gB.hold();
+  gB.clear();
+  gSeq = 0;
+  Record r{};
+  for (uint8_t k = 0; k < 3; ++k) {
+    r.sequence = ++gSeq;
+    r.set = 2;
+    r.parent = k == 0 ? 0 : gSeq - 1;
+    TEST_ASSERT_TRUE(gB.add(r));
+  }
+  gB.setWorking(2, 3, false);
+  gB.open();
+  gB.down();
+  gB.down();
+  gB.press();
+  TEST_ASSERT_FALSE(gB.hasSide());
+  TEST_ASSERT_EQUAL_UINT16(0, gB.joinRow());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_opening_selects_save_and_lists_actions_working_set_then_sets_newest_first);
@@ -259,5 +315,7 @@ int main(int, char**) {
   RUN_TEST(test_a_failure_keeps_the_screen_and_selection_and_track_tries_again);
   RUN_TEST(test_a_failed_save_goes_back_to_its_list_and_retries_the_same_save);
   RUN_TEST(test_the_list_scrolls_with_the_selection);
+  RUN_TEST(test_the_line_and_its_side_branch);
+  RUN_TEST(test_a_straight_history_has_one_lane);
   return UNITY_END();
 }

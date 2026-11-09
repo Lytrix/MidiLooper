@@ -1,3 +1,8 @@
+**2026-11-09 — Engine sets browser, slice 5 — timeline strip and fork lanes (DEC-265).** The browser's top rows show
+the months to now with a tick per day of milestones and the selected one marked; inside a set the line from the newest
+milestone runs on one lane and branched-off milestones on another, joined where they grew from. Native 4,456 passed;
+device check of slices 4–5 pending (board in use by the hang investigation).
+
 **2026-11-09 — Engine sets browser, slice 4 — the save suggestion (DEC-264).**
 - The popup suggests one stage by one rule: Sketch with no base; the base's stage for a new set or mixed activity;
   Building when only content changed; a provisional Take (`SUGGESTED?`) when every change was a recording made while

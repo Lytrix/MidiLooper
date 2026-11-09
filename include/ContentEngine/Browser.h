@@ -282,6 +282,16 @@ class Browser {
     return n;
   }
 
+  /// Slice 5: in the open set, whether row `i` (1: its newest milestone) lies on the newest milestone's line; whether
+  /// any milestone branched off it; the row where the side joins the line (0: none).
+  bool onLine(uint16_t i) const { return i >= 1 && i <= members_ && line_[i - 1]; }
+  bool hasSide() const {
+    for (uint16_t k = 0; k < members_; ++k)
+      if (!line_[k]) return true;
+    return false;
+  }
+  uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + 1); }
+
   // ---- The save popup ----------------------------------------------------------------------------------------------
   uint16_t popupSet() const { return popupSet_; }
   bool popupNewSet() const { return popupNew_; }
@@ -328,12 +338,35 @@ class Browser {
     members_ = 0;
     for (uint16_t i = count_; i-- > 0;)  // newest first
       if (records_[i].set == set) member_[members_++] = i;
+    markLine();
     view_ = View::Set;
     selected_ = members_ != 0 ? 1 : 0;  // rule 5: its newest milestone
     first_ = 0;
     scroll();
   }
   uint16_t member(uint16_t k) const { return member_[k]; }
+  /// Slice 5, the fork lanes: the open set's line — its newest milestone and that one's parents within the set — and the
+  /// side of it (milestones that branched off; drawn on a lane of their own, joined where they grew from).
+  void markLine() {
+    for (uint16_t k = 0; k < members_; ++k) line_[k] = false;
+    join_ = kNone;
+    if (members_ == 0) return;
+    for (uint16_t k = 0;;) {  // newest, then each parent in the set
+      line_[k] = true;
+      const uint32_t parent = records_[member_[k]].parent;
+      uint16_t next = kNone;
+      for (uint16_t j = static_cast<uint16_t>(k + 1); parent != 0 && j < members_; ++j)
+        if (records_[member_[j]].sequence == parent) next = j;
+      if (next == kNone) break;
+      k = next;
+    }
+    uint16_t oldestSide = kNone;
+    for (uint16_t k = 0; k < members_; ++k)
+      if (!line_[k]) oldestSide = k;
+    if (oldestSide == kNone) return;
+    for (uint16_t k = 0; k < members_; ++k)  // the side's root: where it grew from, on the line
+      if (line_[k] && records_[member_[k]].sequence == records_[member_[oldestSide]].parent) join_ = k;
+  }
   void openPopup(uint16_t set, bool newSet) {
     list_ = view_;
     popupSet_ = set;
@@ -350,6 +383,8 @@ class Browser {
   static constexpr uint8_t kText = 24;
   library::Record records_[MaxRecords];
   uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
+  bool line_[MaxRecords] = {};
+  uint16_t join_ = kNone;
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
   uint16_t workingSet_ = 1, openSet_ = 0, popupSet_ = 0;
   uint32_t base_ = 0;

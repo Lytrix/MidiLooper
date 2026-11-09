@@ -53,6 +53,17 @@ inline Local local(uint32_t unix, int16_t offsetMinutes) {
                static_cast<uint8_t>(secs / 3600), static_cast<uint8_t>(secs % 3600 / 60), static_cast<uint8_t>(secs % 60)};
 }
 
+/// The day number (days since 1970-01-01) of a calendar date (H. Hinnant's days_from_civil): month starts for the
+/// browser's timeline (slice 5).
+inline int64_t dayOf(int64_t y, int64_t m, int64_t d) {
+  y -= m <= 2 ? 1 : 0;
+  const int64_t era = (y >= 0 ? y : y - 399) / 400;
+  const int64_t yoe = y - era * 400;
+  const int64_t doy = (153 * (m > 2 ? m - 3 : m + 9) + 2) / 5 + d - 1;
+  const int64_t doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
 inline const char* monthName(uint8_t month) {
   static const char* const kNames[12] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
                                          "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};

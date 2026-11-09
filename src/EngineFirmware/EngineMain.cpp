@@ -402,10 +402,6 @@ const char* libraryRefusal(ProductionLibrary::Result r) {
   }
   return "?";
 }
-const char* libraryFullWhy(ProductionLibrary::Result r) {
-  return r == ProductionLibrary::Result::IndexFull ? "index" : r == ProductionLibrary::Result::LogFull ? "log"
-         : r == ProductionLibrary::Result::TooLarge ? "set" : "-";
-}
 void reportLibrary(const char* why) {
   auto& l = gEngine.library();
   const library::IndexHeader& h = l.header();
@@ -665,6 +661,7 @@ void serviceBrowser(uint32_t nowUs) {
   }
   EngineFirmware::BrowserInfo info;
   info.tz = gTzOffset;
+  info.now = wallTime();
   if (gEngine.persistence().unsaved()) {
     snprintf(info.saved, sizeof info.saved, "UNSAVED");
   } else {
