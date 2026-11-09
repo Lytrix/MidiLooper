@@ -6,7 +6,8 @@ Device frames captured (image `701dd197…`, commit `b77fe92a`); native suites g
 ("Looks right"). Then: the `CLOSE` row removed (HOLD TRACK closes), a brighter selection bar and a dimmer `LOAD`
 heading (DEC-267 amendment; image `afa3e651…`). Owner confirmed ("Looks right"). Then the day beside the month (`NOV 9`) and a narrower, centred window
 (201 px; image `9381eb27…`). Then a set row's time in the stages' time column and the days right-aligned
-(image `44509ad7…`). Owner confirmed ("Looks right").
+(image `44509ad7…`). Owner confirmed ("Looks right"). Then `SAVE SET` / `LOAD SET` on the top level
+and a `LOAD STAGE` divider inside a set (image `95874007…`).
 
 **2026-11-09 — Browser levels and live mosaic.** The panel barely lights levels 1–4: the browser's rules (4), dim text
 (7) and empty mosaic cells (3) were raised, the mosaic's levels are 7 / 11 / 15, and the save rows show the working

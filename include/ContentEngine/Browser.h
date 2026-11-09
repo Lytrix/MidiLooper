@@ -7,11 +7,12 @@
 //
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
-// * Views (owner 2026-11-09: saving and loading split, no return row; no close row — HOLD TRACK closes). Top: `SAVE`, a `LOAD` divider (not
-//   selectable), then the working set and the other sets, newest first. A set: `< SETS`, then its milestones newest
-//   first. The save popup (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the
-//   id it would get, the suggested one selected; beside it the working set's history from its base. A failure: what,
-//   why, `NOTHING CHANGED`, over the view it came from.
+// * Views (owner 2026-11-09: saving and loading split, no return row; no close row — HOLD TRACK closes; the dividers
+//   name the intent). Top: `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets,
+//   newest first. A set: `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The save popup
+//   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
+//   suggested one selected; beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`,
+//   over the view it came from.
 // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
 //   says for the selected row; HOLD TRACK closes the popup or the browser, changing nothing. Opening selects `SAVE`.
 // * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
@@ -246,13 +247,14 @@ class Browser {
   /// The rows of the list shown (the popup's and a failure's: the list under them).
   uint16_t rowCount() const {
     const View v = shownList();
-    if (v == View::Set) return static_cast<uint16_t>(1 + members_);
+    if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
     return static_cast<uint16_t>(3 + otherSets());
   }
   Row row(uint16_t i) const {
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
-      return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - 1))};
+      if (i == 1) return Row{RowKind::Divider, openSet_, kNone};
+      return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - kSetHead))};
     }
     if (i == 0) return Row{RowKind::Save, workingSet_, kNone};
     if (i == 1) return Row{RowKind::Divider, workingSet_, kNone};
@@ -264,6 +266,8 @@ class Browser {
   /// The first row shown (the list scrolls with the selection).
   uint16_t first() const { return first_; }
   static constexpr uint8_t kVisible = 5;
+  /// A set's rows before its milestones: `< SETS` and the `LOAD STAGE` divider (owner 2026-11-09).
+  static constexpr uint16_t kSetHead = 2;
   uint16_t openSetNumber() const { return openSet_; }
   /// The newest milestone of `set` (kNone: none).
   uint16_t latestOf(uint16_t set) const {
@@ -278,15 +282,15 @@ class Browser {
     return n;
   }
 
-  /// Slice 5: in the open set, whether row `i` (1: its newest milestone) lies on the newest milestone's line; whether
+  /// Slice 5: in the open set, whether row `i` (kSetHead: its newest milestone) lies on the newest milestone's line; whether
   /// any milestone branched off it; the row where the side joins the line (0: none).
-  bool onLine(uint16_t i) const { return i >= 1 && i <= members_ && line_[i - 1]; }
+  bool onLine(uint16_t i) const { return i >= kSetHead && i < kSetHead + members_ && line_[i - kSetHead]; }
   bool hasSide() const {
     for (uint16_t k = 0; k < members_; ++k)
       if (!line_[k]) return true;
     return false;
   }
-  uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + 1); }
+  uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + kSetHead); }
 
   // ---- The save popup ----------------------------------------------------------------------------------------------
   uint16_t popupSet() const { return workingSet_; }
@@ -340,7 +344,7 @@ class Browser {
     fillMembers(set);
     markLine();
     view_ = View::Set;
-    selected_ = members_ != 0 ? 1 : 0;  // rule 5: its newest milestone
+    selected_ = members_ != 0 ? kSetHead : 0;  // rule 5: its newest milestone
     first_ = 0;
     scroll();
   }

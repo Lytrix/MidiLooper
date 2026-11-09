@@ -450,15 +450,16 @@ class EngineDisplay {
     const Row r = b.row(i);
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
-    if (r.kind == RowKind::Divider) {  // LOAD: what the list below is for
-      label("LOAD", kYearX, y, 7);  // a heading, dimmer than any row (owner 2026-11-09)
-      hline(kYearX + 19, kDiv - 4, static_cast<int16_t>(y + 2), 6);
+    if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
+      const char* what = b.row(0).kind == RowKind::Back ? "LOAD STAGE" : "LOAD SET";
+      label(what, kYearX, y, 7);  // a heading, dimmer than any row
+      hline(static_cast<int16_t>(kYearX + strlen(what) * 4 + 3), kDiv - 4, static_cast<int16_t>(y + 2), 6);
       return;
     }
     if (on) oled_.gfx.draw_rect_filled(fb(), kWX0 + 1, static_cast<int16_t>(y - 2), kDiv - 1, static_cast<int16_t>(y + 6), 5);
     const uint8_t v = on ? 15 : 10;
     switch (r.kind) {
-      case RowKind::Save: label("SAVE", kYearX, y, on ? 15 : 11); return;
+      case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
       default: break;
     }

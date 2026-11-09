@@ -15395,3 +15395,6 @@ dimmed", "AS NEW SET", "Newest at top").
 - **Amendment 3 (owner 2026-11-09):** a set row shows its newest stage's time in the same column as a stage's time
   (was the newest id, or `NOW` for the working set; the ring still marks it), and the day is right-aligned so 9 sits
   over 10. Image `44509ad7…`, boot `crash=0`.
+- **Amendment 4 (owner 2026-11-09):** the rows name the intent — `SAVE SET`, a `LOAD SET` divider over the sets, and
+  inside a set a `LOAD STAGE` divider under `< SETS` (not selectable; passed like the top one; a set opens on its newest
+  stage, now row 2). Image `95874007…`, boot `crash=0`.

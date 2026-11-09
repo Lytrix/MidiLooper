@@ -82,10 +82,11 @@ void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
   gB.press();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   TEST_ASSERT_EQUAL(B::RowKind::Back, kind(0));
-  TEST_ASSERT_EQUAL_UINT16(3, gB.rowCount());
-  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(1).record);  // T02 first
-  TEST_ASSERT_EQUAL_UINT16(1, gB.row(2).record);
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(1));  // LOAD STAGE (owner 2026-11-09)
+  TEST_ASSERT_EQUAL_UINT16(4, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(2).record);  // T02 first
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).record);
   gB.down();
   gB.press();
   B::Request r;
@@ -101,7 +102,8 @@ void test_back_returns_to_the_set_row() {
   gB.open();
   for (int i = 0; i < 3; ++i) gB.down();
   gB.press();
-  gB.up();
+  gB.up();  // over LOAD STAGE
+  TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   gB.press();  // < SETS
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
@@ -222,7 +224,7 @@ void test_a_failure_keeps_the_screen_and_selection_and_track_tries_again() {
   TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
   TEST_ASSERT_EQUAL(B::View::Set, gB.listView());
   TEST_ASSERT_EQUAL_STRING("LOAD FAILED", gB.failWhat());
-  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
   gB.press();  // try again
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   B::Request again;
@@ -282,12 +284,13 @@ void test_the_line_and_its_side_branch() {
   gB.down();
   gB.press();  // the working set: A01, T03, B04, T02
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
-  TEST_ASSERT_TRUE(gB.onLine(1));   // A01
-  TEST_ASSERT_FALSE(gB.onLine(2));  // T03
-  TEST_ASSERT_FALSE(gB.onLine(3));  // B04
-  TEST_ASSERT_TRUE(gB.onLine(4));   // T02
+  TEST_ASSERT_FALSE(gB.onLine(1));  // the LOAD STAGE divider
+  TEST_ASSERT_TRUE(gB.onLine(2));   // A01
+  TEST_ASSERT_FALSE(gB.onLine(3));  // T03
+  TEST_ASSERT_FALSE(gB.onLine(4));  // B04
+  TEST_ASSERT_TRUE(gB.onLine(5));   // T02
   TEST_ASSERT_TRUE(gB.hasSide());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.joinRow());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.joinRow());
 }
 void test_a_straight_history_has_one_lane() {
   gB.open();
