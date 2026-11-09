@@ -50,7 +50,7 @@ Serial `get <index> <T-S> <T-S>`. Done (native + device). Next, 6b on the owner'
 
 **2026-11-09 — slice 6b, get-a-loop picker (owner: "create a new branch for this and start with step a"; branch
 `feature/engine-get-a-loop`; design: plan §6.1–6.2).** Order: (a) the current-state reader (a1 done) and the preview
-partition (a2 done: 8,192 rows); (b) the audition owner; (c) the preview render path; (d) the picker screen.
+partition (a2 done: 8,192 rows); (b) the audition owner (done, DEC-271); (c) the preview render path; (d) the picker screen.
 
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only

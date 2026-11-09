@@ -34,8 +34,11 @@ needed — the board stays on SET 2 T03. **Slice 6b step a1 (branch `feature/eng
 the current state (`StateReader`: one CRC pass over the slot file, then only the listed runs' rows); native 4,484
 passed; device `dac5b1f9…` same checks pass. **Step a2 (owner: 8,192 rows; DEC-270 amendment 2):** the preview
 partition — 63 preview run descriptors, 199 pool pages content never takes; pool 4,278 pages, PSRAM about 1.09 MB left;
-native 4,486 passed; device `9c2e8c49…`: a preview read held 5 partition pages, content free unchanged. Next: step b,
-the audition owner.
+native 4,486 passed; device `9c2e8c49…`: a preview read held 5 partition pages, content free unchanged. **Step b
+(DEC-271 — the audition):** `SlotTransport` plays a preview on its slot's track from the next window boundary without
+touching the history; cancel goes back, KEEP re-reads as content and commits one undo step, the slot and track are
+locked meanwhile, a transport stop ends it. Native 4,489 passed; device `40022930…` (USB MIDI captured): heard,
+cancelled, kept and undone as designed. Next: step c, the preview render path.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

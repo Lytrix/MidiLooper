@@ -15573,3 +15573,35 @@ stage refused; `undo 63` → the slot empty again.
   `get … preview` (diagnostics) reads, reports and drops. Native +2 (four mutations killed), full 4,486 passed. Device
   `9c2e8c49…`, boot `crash=0`, pool census 4,397,788 B: `get 9 1-1 8-8 preview` held 5 partition pages (preview free
   199 → 194) with content free 2,840 before and after, nothing placed, the partition whole again by the next read.
+
+## DEC-271 — Get a loop's audition: a preview heard on its slot without touching the history; KEEP is one undo step (slice 6b step b)
+
+**Date:** 2026-11-09. **Owner:** "Start step (b)"; design: browser plan §6.1–6.2 (not authority; the owner's
+choices recorded there are). Branch `feature/engine-get-a-loop`.
+
+**Decision:**
+- `SlotTransport` owns one audition: a preview state (read into the preview partition, DEC-270 amendment 2) for a
+  destination slot of a track. When the track plays that slot, it plays the preview instead; otherwise the audition
+  is a silent preview (`auditionSounding` false) and nothing is launched. The history is not touched; the track pins
+  what it plays, so the audition releases its preview whenever it ends.
+- **Switch timing:** start, cancel and KEEP switch at the track's next window boundary (`PlaybackTrack::select`, as an
+  undo is heard): on a bar line, at most two bars later. The plan's "next beat line" would need a new transition mode;
+  the window boundary avoids the mid-loop swap the red team flagged (plan §6.2, 4) and is what undo uses.
+- **Cancel** reselects the slot's own state for a track still playing it; a stopped track stays stopped.
+- **KEEP** reads the loop again as content (a normal get: the preview's run descriptors never enter the history) and
+  commits it as one undo step; the slot's playing tracks follow. Undo brings the previous loop back.
+- **While it lasts** the destination refuses clear, undo / redo, place, resize, rotate and an empty loop (`Busy`); its
+  track refuses takes and launches; a second audition, loads, returns, gets other than the KEEP read, and trash marks
+  are refused (`AUDITION OPEN`).
+- **A transport stop** ends the audition first (`TrackControl::transportStop`), so each track re-launches its slot's own
+  loop and a restart never plays the preview.
+- Serial: `audition <index> <T-S> <T-S>`, `audition-keep`, `audition-cancel` → `#ENGINE,audition,started|kept|
+  keep_failed|cancelled|none|refused`; on the screen `COPIED TO 1-1`.
+
+**Evidence:** native: heard on its slot and cancelled back (locks refused, nothing outlives it), KEEP one undo step and
+undone, silent off its slot and a stopped track not restarted; three mutations killed; full native 4,489 passed. RAM2 +8
+B (159,872). Device (image `40022930…`, boot `crash=0`, the board's USB MIDI output captured): track 1 playing 72–84;
+`audition 9 2-1 1-1` → `sounding=1`, track 1 played 60, slot 0 unchanged; `undo 0` refused, `get` and `trash`
+`AUDITION OPEN`; cancel → 72–84; audition then `audition-keep` → kept in 1 ms, track 1 played 60, slot 0 the 2-run
+2,304-tick loop; `undo 0` → 72–84; an audition then `stop` → ended, `start` → 72–84. The transport-stop cancel is
+verified on the device only (no host test of `TrackControl` for it).

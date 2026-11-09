@@ -170,9 +170,10 @@ half:
   read in flight; its result is shown or auditioned only when it matches the request in full — the same picker
   session, source stage and cursor request — else it is released (a cursor that came back, or a picker reopened,
   starts a read of its own).
-* **Audition:** TRACK auditions the loop under the cursor without touching the history, switching in on the next beat
-  line (footer `AUDITION AT BEAT`), not mid-beat: a swap at an arbitrary tick plays nothing that started before it
-  until the next cycle and would mislead; a cancel switches back on the same grid. Once the preview is ready the
+* **Audition:** TRACK auditions the loop under the cursor without touching the history, switching in at the track's
+  next window boundary — a bar line, at most two bars later, as an undo is heard (DEC-271; footer `AUDITION AT BAR`) —
+  not mid-loop: a swap at an arbitrary tick plays nothing that started before it until the next cycle and would
+  mislead; a cancel switches back on the same grid. Once the preview is ready the
   footer reads `[TRK] KEEP` — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`, `NOT PLAYING · PREVIEW
   ONLY`, `MUTED` or `SOLO ON 2`; a fresh TRACK press keeps it (one undo step), back to the performance screen with `COPIED TO 3-2` (the
   destination is fixed: staying would only invite replacing what was just kept). HOLD TRACK cancels and goes back.
@@ -183,7 +184,7 @@ half:
   launch nobody asked for, left in place by KEEP): the audition is the piano roll only (`NOT PLAYING · PREVIEW ONLY`).
   With the transport stopped, the same. A muted track stays muted, a solo elsewhere silences it; the footer says so.
 * **Cancel restores the playback state, not the time:** the track resumes the destination slot's own loop at the
-  current musical position (on the next beat line, as the audition switched in). A cancel caused by the transport stopping
+  current musical position (at the next window boundary, as the audition switched in). A cancel caused by the transport stopping
   never restarts anything. Mute and solo changes made during the audition stay.
 * **The audition's contract (engine):** the original stays the history's current state throughout; the auditioned
   state is held by the audition alone. Cancel, a cursor move, HOLD, the browser closing, a transport stop, a failed
@@ -213,7 +214,8 @@ them):
 
 High:
 
-4. **A mid-loop swap misleads.** **Fix:** audition and cancel switch on the next beat line (§6.1). To test: notes held
+4. **A mid-loop swap misleads.** **Fix:** audition and cancel switch at the next window boundary, a bar line (§6.1;
+   DEC-271 — a beat-line switch would need a new transition mode). To test: notes held
    across both swaps, since a loop from an older stage of the same slot can share note ids with what plays.
 5. **`EMPTY LOOP` selected first wipes a loop in two presses.** **Fix:** start there only on an empty destination; an
    empty loop over a filled one asks again (§6.1).
@@ -236,7 +238,7 @@ Notes: the stage's tempo is not applied (loops are ticks; said where the length 
 7 px (§6.1).
 
 **Order:** (a) the current-state reader with its preview budget (fixes 1, and `get`) — a1, the reader, done
-(DEC-270 amendment 1); a2, the preview partition (8,192 rows), done (amendment 2); (b) the audition owner in the
+(DEC-270 amendment 1); a2, the preview partition (8,192 rows), done (amendment 2); (b) done (DEC-271); (b) the audition owner in the
 engine — hold, beat-line switch, cancel and KEEP, the refusals while it lasts, cancellation on transport stop; (c) the
 preview render path (2); (d) the picker screen with 3, 5, 6, 9–11; mockups alongside (b)–(c).
 

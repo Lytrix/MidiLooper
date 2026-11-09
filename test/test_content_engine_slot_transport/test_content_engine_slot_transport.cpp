@@ -358,6 +358,109 @@ void test_a_placed_state_is_one_undo_step_heard_on_the_track() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+/// A one-note state for `slot` (pitch `pitch`, 100–200), its creator's reference.
+static ManifestId oneNote(uint8_t slot, uint8_t pitch) {
+  const RunId r = gRuns.allocate(slot, RunKind::kRecord);
+  PassEvent on{}, off{};
+  on.tick = 100;
+  on.noteId = off.noteId = 900u + pitch;
+  on.status = 0x90;
+  off.tick = 200;
+  off.status = 0x80;
+  on.data1 = off.data1 = pitch;
+  on.data2 = 100;
+  on.seq = 1;
+  off.seq = 2;
+  TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, on, gPool));
+  TEST_ASSERT_EQUAL(AppendResult::Ok, gRuns.append(r, off, gPool));
+  gRuns.seal(r);
+  const ManifestId m = gManifests.create(slot, 99, kLoop, &r, 1, gRuns);
+  gRuns.release(r);
+  return m;
+}
+
+/// DEC-271 — get a loop's audition: heard on its slot's playing track from the next boundary (as an undo is), the
+/// history untouched; while it lasts the slot and its track refuse what would change them; cancel brings the slot's own
+/// state back and nothing outlives it.
+void test_an_audition_is_heard_and_cancel_brings_the_slot_back() {
+  recordTake();
+  run(kS + 2 * kLoop + 1);
+  const ManifestId was = gH.current(0);
+  const uint8_t depth = gH.undoDepth(0);
+  const uint16_t free = gManifests.freeCount();
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 0, oneNote(0, 80), gClock));
+  TEST_ASSERT_TRUE(gX.auditioning() && gX.auditionSounding());
+  run(kS + 4 * kLoop + 1);
+  expectCycle(3, {{80, {100, 200}}});
+  TEST_ASSERT_EQUAL(was, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT8(depth, gH.undoDepth(0));
+  Emit buf[kT];
+  uint8_t n;
+  TEST_ASSERT_EQUAL(R::Busy, gX.undo(0, gClock, buf, kT, n));
+  TEST_ASSERT_EQUAL(R::Busy, gX.clear(0, gClock, buf, kT, n));
+  TEST_ASSERT_EQUAL(R::Busy, gX.startOverdub(0, gClock));
+  TEST_ASSERT_EQUAL(R::Busy, gX.launch(0, 1));
+  const ManifestId other = oneNote(0, 81);
+  TEST_ASSERT_EQUAL(R::Busy, gX.place(0, other, gClock, buf, kT, n));
+  TEST_ASSERT_EQUAL(R::Busy, gX.auditionStart(0, 0, other, gClock));  // one at a time: still the caller's
+  gManifests.release(other, gRuns);
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionCancel(gClock));
+  TEST_ASSERT_FALSE(gX.auditioning());
+  run(kS + 6 * kLoop + 1);
+  expectCycle(5, kA);
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());  // the preview gone once the track let it go
+  TEST_ASSERT_EQUAL(R::NoChange, gX.auditionCancel(gClock));
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+/// DEC-271: KEEP commits the kept copy as one undo step and the track follows it; undo brings the slot's loop back.
+void test_keeping_an_audition_is_one_undo_step() {
+  recordTake();
+  run(kS + 2 * kLoop + 1);
+  const uint8_t depth = gH.undoDepth(0);
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 0, oneNote(0, 80), gClock));
+  run(kS + 3 * kLoop + 1);
+  const ManifestId kept = oneNote(0, 80);
+  Emit buf[kT];
+  uint8_t n;
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionKeep(kept, gClock, buf, kT, n));
+  TEST_ASSERT_FALSE(gX.auditioning());
+  TEST_ASSERT_EQUAL(kept, gH.current(0));
+  TEST_ASSERT_EQUAL_UINT8(depth + 1, gH.undoDepth(0));
+  run(kS + 5 * kLoop + 1);
+  expectCycle(4, {{80, {100, 200}}});
+  TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
+  run(kS + 7 * kLoop + 1);
+  expectCycle(6, kA);
+  const ManifestId stray = oneNote(0, 82);
+  TEST_ASSERT_EQUAL(R::NoChange, gX.auditionKeep(stray, gClock, buf, kT, n));  // nothing auditioned: not taken
+  gManifests.release(stray, gRuns);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+/// DEC-271: a slot its track does not play is previewed silently (the track plays on, nothing launched); a track that
+/// stops ends the sound, and a cancel then restarts nothing.
+void test_an_audition_off_its_slot_is_silent_and_a_stop_restarts_nothing() {
+  recordTake();
+  run(kS + 2 * kLoop + 1);
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 1, oneNote(1, 80), gClock));
+  TEST_ASSERT_FALSE(gX.auditionSounding());
+  run(kS + 4 * kLoop + 1);
+  expectCycle(3, kA);
+  TEST_ASSERT_EQUAL_UINT8(0, gX.playingSlot(0));
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionCancel(gClock));
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 0, oneNote(0, 80), gClock));
+  Emit buf[kT];
+  gOut.insert(gOut.end(), buf, buf + gX.stopTrack(0, gClock, buf, kT));
+  TEST_ASSERT_FALSE(gX.auditionSounding());
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionCancel(gClock));
+  TEST_ASSERT_FALSE(gX.playing(0));
+  const size_t at = gOut.size();
+  run(kS + 6 * kLoop);
+  for (size_t i = at; i < gOut.size(); ++i) TEST_ASSERT_NOT_EQUAL(1, gOut[i].cls);  // nothing starts again
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_an_undo_on_a_boundary_is_heard_from_that_boundary() {
   recordTake();
   run(kS + kLoop + 10);
@@ -486,6 +589,9 @@ int main(int, char**) {
   RUN_TEST(test_overdub_publishes_at_the_wrap_and_completes_the_held_note);
   RUN_TEST(test_undo_redo_and_undo_to_empty_follow_on_the_track);
   RUN_TEST(test_a_placed_state_is_one_undo_step_heard_on_the_track);
+  RUN_TEST(test_an_audition_is_heard_and_cancel_brings_the_slot_back);
+  RUN_TEST(test_keeping_an_audition_is_one_undo_step);
+  RUN_TEST(test_an_audition_off_its_slot_is_silent_and_a_stop_restarts_nothing);
   RUN_TEST(test_an_undo_on_a_boundary_is_heard_from_that_boundary);
   RUN_TEST(test_one_writer_and_named_refusals);
   RUN_TEST(test_a_full_run_list_ends_the_take_at_a_wrap);

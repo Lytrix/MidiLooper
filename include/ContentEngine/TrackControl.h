@@ -229,6 +229,7 @@ class TrackControl {
     }
   }
   void transportStop(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    x_->auditionCancel(clock);  // DEC-271: a stop ends an audition first, so each track restarts its slot's own loop
     for (uint8_t t = 0; t < Tracks; ++t) cancelQueued(t);
     if (x_->writingTrack() != kNone) stopNow(clock, nowUs, usPerTick);
     Emit buf[T];

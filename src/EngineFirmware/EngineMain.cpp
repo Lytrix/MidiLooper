@@ -514,6 +514,7 @@ const char* beginMilestone(library::Stage stage, uint16_t set, uint8_t number, u
 const char* beginMark(uint8_t kind, uint16_t set, uint16_t index, uint32_t nowUs) {
   if (!gEngine.library().mounted()) return "LIBRARY NOT READY";
   if (gEngine.libraryBusy()) return "BUSY";
+  if (gEngine.auditioning()) return "AUDITION OPEN";  // DEC-271: its source stays as it is
   const uint32_t target = index == ProductionBrowser::kNone ? 0 : gBrowser.record(index).sequence;
   const ProductionLibrary::Result r = gEngine.markLibrary(kind, set, target, wallTime());
   if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
@@ -592,7 +593,11 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
 // Get a loop (DEC-270): the slot a get places into, and the slots named track-slot (`2-3`: track 2, its third slot).
 uint8_t gGetInto = 0;
 uint8_t gGetFrom = 0;
-bool gGetPreview = false;  // diagnostics: read into the preview partition, report it, drop it
+// What a get is for: a placed copy; a preview read reported and dropped (diagnostics); an audition (DEC-271); the copy
+// that KEEPs it.
+enum class GetFor : uint8_t { Place, Preview, Audition, Keep };
+GetFor gGetFor = GetFor::Place;
+uint16_t gGetIndex = 0;
 void slotName(uint8_t s, char* out, size_t n) { snprintf(out, n, "%u-%u", s / 8 + 1, s % 8 + 1); }
 bool parseSlot(const char* a, uint8_t& s) {
   unsigned t = 0, k = 0;
@@ -603,7 +608,7 @@ bool parseSlot(const char* a, uint8_t& s) {
 /// get <stage index> <from track-slot> <into track-slot> [preview]: that slot of a saved stage onto a slot of the
 /// working set, one undo step; nothing else changes (the working set's base included). `preview` (diagnostics, plan
 /// §6.2 fix 1): read into the preview partition, reported, then dropped — nothing placed.
-void startGet(char* arg, uint32_t nowUs) {
+void startGet(char* arg, uint32_t nowUs, GetFor purpose = GetFor::Place) {
   char* from = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
   char* into = from != nullptr ? std::strchr(from + 1, ' ') : nullptr;
   uint8_t f = 0, t = 0;
@@ -612,10 +617,11 @@ void startGet(char* arg, uint32_t nowUs) {
     return;
   }
   const uint16_t index = static_cast<uint16_t>(std::atoi(arg));
-  const char* why = gEngine.loadRefusal();
+  if (purpose == GetFor::Place && std::strstr(into + 1, "preview") != nullptr) purpose = GetFor::Preview;
+  const char* why = gEngine.loadRefusal(purpose == GetFor::Keep);
   if (why == nullptr) {
-    gGetPreview = std::strstr(into + 1, "preview") != nullptr;
-    switch (gEngine.getLoop(index, f, t, gGetPreview)) {
+    gGetFor = purpose;
+    switch (gEngine.getLoop(index, f, t, purpose == GetFor::Preview || purpose == GetFor::Audition)) {
       case ProductionSetLoad::Result::Ok: break;
       case ProductionSetLoad::Result::NoMilestone: why = "NO SUCH STAGE"; break;
       case ProductionSetLoad::Result::NoSlot: why = "NO SUCH SLOT"; break;
@@ -624,9 +630,10 @@ void startGet(char* arg, uint32_t nowUs) {
     }
   }
   if (why != nullptr) {
-    Serial.printf("#ENGINE,get,refused,why=%s\n", why);
+    Serial.printf("#ENGINE,%s,refused,why=%s\n", purpose == GetFor::Audition ? "audition" : "get", why);
     return;
   }
+  gGetIndex = index;
   gGetFrom = f;
   gGetInto = t;
   gLibraryStartUs = nowUs;
@@ -634,8 +641,8 @@ void startGet(char* arg, uint32_t nowUs) {
   char a[6], b[6];
   slotName(f, a, sizeof a);
   slotName(t, b, sizeof b);
-  Serial.printf("#ENGINE,get,begin,index=%u,from=%s,into=%s,preview=%u,content_free=%lu,preview_free=%lu\n", index, a,
-                b, gGetPreview ? 1 : 0, static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
+  Serial.printf("#ENGINE,get,begin,index=%u,from=%s,into=%s,for=%u,content_free=%lu,preview_free=%lu\n", index, a,
+                b, static_cast<unsigned>(purpose), static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
                 static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
 }
 /// A get's end (DEC-270): placed on its slot, or nothing changed.
@@ -644,7 +651,25 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
   char from[6], into[6], line[48];
   slotName(gGetFrom, from, sizeof from);
   slotName(gGetInto, into, sizeof into);
-  if (st == ProductionSetLoad::Status::Done && gGetPreview) {
+  if (st == ProductionSetLoad::Status::Done && gGetFor == GetFor::Audition) {
+    const ProductionTransport::Result a = gEngine.auditionGot(gGetInto, gLastTick);
+    Serial.printf("#ENGINE,audition,%s,id=SET %02u %c%02u,from=%s,into=%s,sounding=%u,ms=%lu,preview_free=%lu\n",
+                  a == ProductionTransport::Result::Ok ? "started" : "refused", r.set, library::stageLetter(r.stage),
+                  r.stageNumber, from, into, gEngine.auditionSounding() ? 1 : 0, ms,
+                  static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
+    return;
+  }
+  if (st == ProductionSetLoad::Status::Done && gGetFor == GetFor::Keep) {
+    const ProductionTransport::Result k = gEngine.auditionKeepGot(gLastTick, micros(), gClock.usPerTick());
+    Serial.printf("#ENGINE,audition,%s,into=%s,ms=%lu\n", k == ProductionTransport::Result::Ok ? "kept" : "keep_failed",
+                  into, ms);
+    if (k == ProductionTransport::Result::Ok) {
+      snprintf(line, sizeof line, "COPIED TO %s", into);
+      gDisplay.toast(line, millis());
+    }
+    return;
+  }
+  if (st == ProductionSetLoad::Status::Done && gGetFor == GetFor::Preview) {
     Serial.printf("#ENGINE,get,preview,from=%s,ms=%lu,preview_pages=%lu,content_free=%lu,preview_free=%lu\n", from, ms,
                   static_cast<unsigned long>(gEngine.runs().previewPages()),
                   static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
@@ -668,7 +693,8 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
     const Why why = gEngine.setLoad().getWhy();
     Serial.printf("#ENGINE,get,failed,why=%s,NOTHING CHANGED,ms=%lu\n",
                   why == Why::Empty      ? "SLOT EMPTY THERE"
-                  : why == Why::Capacity ? (gGetPreview ? "TOO BIG TO PREVIEW" : "NOT ENOUGH MEMORY")
+                  : why == Why::Capacity ? (gGetFor == GetFor::Place || gGetFor == GetFor::Keep ? "NOT ENOUGH MEMORY"
+                                                                                   : "TOO BIG TO PREVIEW")
                                          : "READ FAILED",
                   ms);
   }
@@ -1077,6 +1103,22 @@ void command(char* line, uint32_t nowUs) {
     Serial.printf("#ENGINE,switch-stage,%u\n", gEngine.staging() ? 1u : 0u);
   } else if (std::strcmp(verb, "get") == 0) {  // get <index> <T-S> <T-S>: a loop from a saved stage (DEC-270)
     startGet(arg, nowUs);
+  } else if (std::strcmp(verb, "audition") == 0) {  // audition <index> <T-S> <T-S>: heard on the slot, not kept (DEC-271)
+    startGet(arg, nowUs, GetFor::Audition);
+  } else if (std::strcmp(verb, "audition-keep") == 0) {  // the auditioned loop read again as content and kept
+    if (!gEngine.auditioning()) {
+      Serial.println("#ENGINE,audition,refused,why=NO AUDITION");
+    } else {
+      char again[24];
+      char f[6], t[6];
+      slotName(gGetFrom, f, sizeof f);
+      slotName(gGetInto, t, sizeof t);
+      snprintf(again, sizeof again, "%u %s %s", gGetIndex, f, t);
+      startGet(again, nowUs, GetFor::Keep);
+    }
+  } else if (std::strcmp(verb, "audition-cancel") == 0) {
+    Serial.printf("#ENGINE,audition,%s\n",
+                  gEngine.auditionCancel(gLastTick) == ProductionTransport::Result::Ok ? "cancelled" : "none");
   } else if (std::strcmp(verb, "load") == 0 || std::strcmp(verb, "return") == 0) {
     startLoad(verb, arg, nowUs);
   } else if (std::strcmp(verb, "take") == 0) {  // the take and its overlay (diagnostics)

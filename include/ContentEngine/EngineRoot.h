@@ -161,7 +161,7 @@ struct EngineRam2 {
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
 constexpr size_t kPsramBudget = 7031944u;
-constexpr size_t kRam2Budget = 159864u;  // measured (get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 159872u;  // measured (DEC-271: + 8 B the audition's slot, track, preview state; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -392,6 +392,31 @@ class EngineRoot {
   ProductionSetLoad::Result getLoop(uint16_t index, uint8_t from, uint8_t into, bool preview = false) {
     return p_->setLoad.beginGet(index, from, into, preview);
   }
+  /// Get a loop's audition (DEC-271): the preview state a get read (`getLoop(…, preview)`) auditioned on slot `into`
+  /// — heard from the next boundary when its track plays that slot, else a silent preview. Refused or nothing read:
+  /// released, nothing changes.
+  ProductionTransport::Result auditionGot(uint8_t into, uint32_t clock) {
+    const ManifestId m = p_->setLoad.takeGot();
+    if (m == kNoManifest) return ProductionTransport::Result::NoChange;
+    const auto r = r_->transport.auditionStart(static_cast<uint8_t>(into / 8), into, m, clock);
+    if (r != ProductionTransport::Result::Ok) r_->manifests.release(m, r_->runs);
+    return r;
+  }
+  ProductionTransport::Result auditionCancel(uint32_t clock) { return r_->transport.auditionCancel(clock); }
+  /// KEEP: the content copy a get read (`getLoop`, not a preview) on top of the auditioned slot's history, one undo
+  /// step; its playing tracks follow. Refused or nothing read: released, the audition goes on.
+  ProductionTransport::Result auditionKeepGot(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    const ManifestId m = p_->setLoad.takeGot();
+    if (m == kNoManifest) return ProductionTransport::Result::NoChange;
+    ProductionEmit buf[kGestureEmits];
+    uint8_t n;
+    const auto r = r_->transport.auditionKeep(m, clock, buf, kGestureEmits, n);
+    if (r != ProductionTransport::Result::Ok) r_->manifests.release(m, r_->runs);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+  bool auditioning() const { return r_->transport.auditioning(); }
+  bool auditionSounding() const { return r_->transport.auditionSounding(); }
   /// Diagnostics (plan §6.2 fix 1): drops the state a preview get read, unplaced; its pages return through reclaim.
   void dropGot() {
     const ManifestId m = p_->setLoad.takeGot();
@@ -411,8 +436,10 @@ class EngineRoot {
   }
   ProductionLibrary& library() { return p_->libraryWriter; }
   /// Why a load or return cannot start now (DEC-259), or nullptr.
-  const char* loadRefusal() const {
+  /// `keep`: the get that KEEPs an audition (DEC-271), the one library job an open audition allows.
+  const char* loadRefusal(bool keep = false) const {
     if (card_ == nullptr || !p_->libraryWriter.mounted()) return "LIBRARY NOT READY";
+    if (!keep && r_->transport.auditioning()) return "AUDITION OPEN";
     if (r_->transport.writingSlot() != ProductionTransport::kNoSlot) return "STOP THE TAKE FIRST";
     if (r_->noteEdit.editing()) return "CLOSE THE EDIT FIRST";
     if (libraryBusy() || p_->persistence.booting()) return "BUSY";
