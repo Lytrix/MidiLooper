@@ -351,7 +351,7 @@ class EngineDisplay {
   using Browser = ContentEngine::ProductionBrowser;
   using Row = Browser::Row;
   using RowKind = Browser::RowKind;
-  static constexpr int16_t kListX = 24, kRuleX = 112, kDetailX = 116, kMosaicX = 223, kHintY = 58;
+  static constexpr int16_t kListX = 24, kRuleX = 128, kDetailX = 132, kMosaicX = 223, kHintY = 58;  // the divider at half the width (owner 2026-11-09)
   // Slice 5: the timeline strip on rows 0–8; the list and the detail below it (proposal walkthroughs).
   static constexpr int16_t kTop = 11, kRowY = 12, kRowPitch = 7;
   static void idText(const ContentEngine::library::Record& r, char* out, size_t n) {
