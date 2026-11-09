@@ -15255,7 +15255,9 @@ them on the four buttons.
   base → Sketch, the popup selecting it); `test_content_engine_surface` (a Record alone does not count with others, a
   second while track 0 plays does; a transport stop / start is not exploring; a mute is). Full native suite 4,453
   passed; heap gate OK. RAM2 + 8 B.
-- Device: pending (the board was in use by the hang investigation).
+- Device (image `137de137…` with DEC-266, boot `crash=0`): after loading E01 from the browser the popup suggested
+  EXPLORATION (the base's stage) with the next ids. A change of kind could not be shown there (the base was Exploration
+  already); the host matrix covers it.
 
 ## DEC-265 — The browser's timeline strip and fork lanes (sets browser slice 5)
 
@@ -15279,7 +15281,9 @@ with next step").
 
 - Host: `test_content_engine_browser` (the line and its side branch joining at T02; a straight history has one lane),
   `test_content_engine_wall_clock` (day numbers of dates for the month starts). Full native suite 4,456 passed.
-- Device: pending (the board was in use by the hang investigation).
+- Device (same image): the strip shows OCT / NOV with the recent milestones ticked at the right (a count of 4); after
+  E02 was saved from E01, SET 02 shows `E02  EXPLORATION  FROM E01` with E02 and E01 on the line lane and S03, S02, B01
+  (no parent link to it) on the side lane.
 
 ## DEC-266 — A hardware watchdog and a USB health check reset a hung engine; boot phases place the hang
 
