@@ -163,8 +163,8 @@ half:
   PLAY/STOP down, REC left, EDIT right — footer `[LEN]↑ [PLY]↓ [REC]< [EDT]>` (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
   the transport; a press of it stops everything and cancels the audition). Layout A as first mocked (owner
   2026-11-10): slots are 4 × 4 px squares as the panel mosaic draws them (levels for content) at a 6 px pitch across
-  and 5 px down — 8 tracks fill the window's height — the cursor a hollow bright box; an empty slot a dim square or a
-  dim dot (owner's choice pending: a single dot cannot be centred in 4 px and reads uneven). The cursor's slot reads
+  and 5 px down — 8 tracks fill the window's height — the cursor a hollow bright box; an empty slot a dim dot (owner: dots
+  for now, to compare with dim squares on the device — a single dot cannot be centred in 4 px). The cursor's slot reads
   `SLOT 1-3` on one line against the divider, reading on into the panel's `INTO 3-2` (`EMPTY 4` on a preset). The
   title names the source stage (`LOOPS  SET 3  S01`). Left of slot 1 a column of **empty-loop presets** — 1, 2, 4, 8
   and 16 bars, dotted boxes unlike a loop — with space on both sides (5 px to the window's edge, 6 px to the slots;
