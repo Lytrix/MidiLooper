@@ -15573,6 +15573,18 @@ stage refused; `undo 63` → the slot empty again.
   `get … preview` (diagnostics) reads, reports and drops. Native +2 (four mutations killed), full 4,486 passed. Device
   `9c2e8c49…`, boot `crash=0`, pool census 4,397,788 B: `get 9 1-1 8-8 preview` held 5 partition pages (preview free
   199 → 194) with content free 2,840 before and after, nothing placed, the partition whole again by the next read.
+- **Amendment 3 (2026-11-09, plan §6.2 fix 2, step c): the preview roll.** A loop that is no working-set slot is drawn
+  through tile slot 64 (`EngineRoot::kPreviewSlot`, the tile store and display jobs one slot larger): the same sweep
+  composes it (edits, hides and the play window as on any slot), it borrows the successor's detail tiles while shown,
+  and `drawRollBand` draws it as slot 64. `DisplayJobs::requestPinned` holds its manifest with a pin of its own until
+  its sweep takes one, so its owner may let it go at once; `cancel` drops the request and pin and clears the slot — a
+  running sweep stops at its next grain, releasing its own pin; `yield` re-pends a stopped sweep's manifest pinned.
+  Showing another loop clears the slot first (its bars are another loop's: the never-blank rule does not apply); hiding
+  gives the detail tiles back and has the successor swept again. The serial `get … preview` now shows what it reads;
+  `preview-tiles`, `preview-hide` (diagnostics). Native +1 (three mutations killed), full 4,492 passed; PSRAM + 4,112
+  B host (7,036,056), RAM2 + 72 B (159,976). Device `9e080954…`, boot `crash=0`: a 3-bar preview swept into bars 0–2
+  (identity 98), then a 1-bar one: bar 0 identity 99 (7 segments), bars 1–2 empty; hidden: all empty, detail tiles
+  back; each preview released at once and the partition whole again by the next read.
 
 ## DEC-271 — Get a loop's audition: a preview heard on its slot without touching the history; KEEP is one undo step (slice 6b step b)
 

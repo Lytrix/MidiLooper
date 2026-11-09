@@ -66,13 +66,15 @@ using ProductionSweep =
     CheckpointSweep<ProductionComposer, ProductionCheckpoints, ProductionWindow, ProductionManifests, ProductionRuns>;
 using ProductionTransport = SlotTransport<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                           ProductionTrack, kTrackCount>;
-using ProductionTiles = TileStore<>;
+// Plan §6.2 fix 2: one tile slot past the 64 working-set slots is the get-a-loop preview's (`kPreviewSlot`).
+using ProductionTiles = TileStore<Config::kSlotCount + 1>;
 using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = OutputHub<>;
 using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
 using ProductionDisplayJobs = DisplayJobs<ProductionDisplayComposer, ProductionWindow, ProductionManifests,
-                                          ProductionRuns, ProductionTiles, ProductionScheduler, /*workers*/ 1>;
+                                          ProductionRuns, ProductionTiles, ProductionScheduler, /*workers*/ 1,
+                                          Config::kSlotCount + 1>;
 using ProductionPersistence = Persistence<CardIo, ProductionPool, ProductionRuns, ProductionManifests,
                                           ProductionHistory, Config::kSlotCount>;
 using ProductionLibrary = LibraryWriter<CardIo, ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
@@ -156,12 +158,13 @@ struct EngineRam2 {
 // headers; DEC-270: + 8 B the got state and its slots; + 3,752 B (host) the get's state reader: one sector, the
 // run directory's kinds and row counts, the current state's run list — plan §6.2 fix 1; + 206,160 B (host) the
 // get-a-loop preview partition, owner 2026-11-09: 8,192 rows — 199 pool pages with their tags, and the per-run tables
-// of 63 preview descriptors). The line is the host's 64-bit layout; the Teensy's is a few hundred bytes below it. RAM2: the
+// of 63 preview descriptors; + 4,112 B the preview roll's tile slot, its 64 density tiles — plan §6.2 fix 2). The
+// line is the host's 64-bit layout; the Teensy's is a few hundred bytes below it. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7031944u;
-constexpr size_t kRam2Budget = 159904u;  // measured (DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kPsramBudget = 7036056u;
+constexpr size_t kRam2Budget = 159976u;  // measured (plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -236,6 +239,8 @@ class EngineRoot {
     ProductionWindow* dw[1] = {&p_->displayWindow};
     r_->displayJobs.init(dc, dw, p_->tiles, r_->manifests, r_->runs, r_->scheduler, kWindowTicks, kTicksPerBar);
     overlaySlot_ = ProductionTransport::kNoSlot;
+    previewShown_ = false;
+    previewDetailWas_ = ProductionTiles::kNone;
     overlayUntil_ = 0;
     card_ = nullptr;
     persistLive_ = false;
@@ -417,10 +422,13 @@ class EngineRoot {
   }
   bool auditioning() const { return r_->transport.auditioning(); }
   bool auditionSounding() const { return r_->transport.auditionSounding(); }
-  /// Diagnostics (plan §6.2 fix 1): drops the state a preview get read, unplaced; its pages return through reclaim.
-  void dropGot() {
+  /// Diagnostics (plan §6.2 fixes 1–2): the state a preview get read shown as the preview roll, then let go at once —
+  /// the pinned request, then its sweep, hold it until the tiles are swept; its pages return through reclaim.
+  void showGotPreview() {
     const ManifestId m = p_->setLoad.takeGot();
-    if (m != kNoManifest) r_->manifests.release(m, r_->runs);
+    if (m == kNoManifest) return;
+    showPreview(m);
+    r_->manifests.release(m, r_->runs);
   }
   /// The state a get read onto slot `into`: one undo step, heard on the slot's playing tracks as an undo is. Refused
   /// (the slot written meanwhile) or nothing read: the state is released, nothing changes.
@@ -485,6 +493,29 @@ class EngineRoot {
     // Detail tiles now show this slot: sweep it again for them (its density tiles stay meanwhile).
     p_->tiles.setWanted(slot, 0);
   }
+  /// Get a loop's preview roll (plan §6.2 fix 2): the tile slot past the working set's, drawn like any slot.
+  static constexpr uint8_t kPreviewSlot = Config::kSlotCount;
+  /// `m` swept into the preview slot's tiles (a request pinned until its sweep takes over, so its owner may release it
+  /// meanwhile), focused, with the successor's detail tiles borrowed while it shows. The previous preview's tiles go
+  /// first: its bars are another loop's, so the never-blank rule does not apply.
+  void showPreview(ManifestId m) {
+    if (!previewShown_) previewDetailWas_ = p_->tiles.detailSlot(1);
+    previewShown_ = true;
+    p_->tiles.setDetail(1, kPreviewSlot);
+    r_->displayJobs.cancel(kPreviewSlot);  // another loop: none of the last one's bars (a re-sweep would keep them)
+    r_->displayJobs.requestPinned(kPreviewSlot, m);
+    r_->displayJobs.setFocus(kPreviewSlot);
+  }
+  /// The preview roll gone: its request and tiles dropped (a running sweep stops), the successor's detail tiles back.
+  void hidePreview() {
+    if (!previewShown_) return;
+    previewShown_ = false;
+    r_->displayJobs.cancel(kPreviewSlot);
+    p_->tiles.setDetail(1, previewDetailWas_);
+    r_->displayJobs.setFocus(p_->tiles.detailSlot(0));
+    if (previewDetailWas_ != ProductionTiles::kNone) p_->tiles.setWanted(previewDetailWas_, 0);  // swept again
+  }
+  bool previewShown() const { return previewShown_; }
   /// The live overlay: the shown take's notes, drawn at the view's scale (`drawRollBand`).
   const ProductionOverlay& overlay() const { return p_->overlay; }
   /// Live input with the overlay painted when the take is on the shown slot.
@@ -773,6 +804,8 @@ class EngineRoot {
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   static constexpr uint32_t kPersistGrains = 2000;
   uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
+  bool previewShown_ = false;                              // plan §6.2 fix 2: the preview roll shows
+  uint8_t previewDetailWas_ = ProductionTiles::kNone;      // the detail slot it borrowed
   uint32_t overlayUntil_ = 0;    // cleared once the slot's tiles show this identity
   static constexpr uint32_t kEditGrains = 2000;  // a gather composes up to two loops; a rebuild <= 24 grains (§ 8.4)
   uint8_t sweepNext_ = 0;

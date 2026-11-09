@@ -674,7 +674,7 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
                   static_cast<unsigned long>(gEngine.runs().previewPages()),
                   static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
                   static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
-    gEngine.dropGot();
+    gEngine.showGotPreview();  // drawn as the preview slot's tiles: `preview-tiles`, `preview-hide`
     return;
   }
   if (st == ProductionSetLoad::Status::Done) {
@@ -1116,6 +1116,18 @@ void command(char* line, uint32_t nowUs) {
       snprintf(again, sizeof again, "%u %s %s", gGetIndex, f, t);
       startGet(again, nowUs, GetFor::Keep);
     }
+  } else if (std::strcmp(verb, "preview-tiles") == 0) {  // the preview roll's tiles, bar by bar (plan §6.2 fix 2)
+    const auto& t = gEngine.tiles();
+    Serial.printf("#ENGINE,preview,shown=%u,detail1=%u,wanted=%lu\n", gEngine.previewShown() ? 1 : 0, t.detailSlot(1),
+                  static_cast<unsigned long>(t.wanted(EngineRoot::kPreviewSlot)));
+    for (uint8_t bar = 0; bar < 8; ++bar) {
+      const auto d = t.drawSource(EngineRoot::kPreviewSlot, bar);
+      Serial.printf("#ENGINE,preview,bar=%u,kind=%u,identity=%lu,segments=%u\n", bar, static_cast<unsigned>(d.kind),
+                    static_cast<unsigned long>(d.identity), d.header != nullptr ? d.header->count : 0);
+    }
+  } else if (std::strcmp(verb, "preview-hide") == 0) {
+    gEngine.hidePreview();
+    Serial.println("#ENGINE,preview,hidden");
   } else if (std::strcmp(verb, "audition-cancel") == 0) {
     Serial.printf("#ENGINE,audition,%s\n",
                   gEngine.auditionCancel(gLastTick) == ProductionTransport::Result::Ok ? "cancelled" : "none");

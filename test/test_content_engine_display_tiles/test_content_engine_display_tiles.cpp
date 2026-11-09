@@ -357,6 +357,79 @@ void test_display_jobs_focus_first_and_newest_wins() {
   TEST_MESSAGE(line);
 }
 
+/// Plan §6.2 fix 2 (get a loop's preview roll): a pinned request holds its manifest until its sweep takes its own pin
+/// or the request is cancelled; a cancel stops a running sweep; nothing outlives either, and the swept preview shows
+/// through the borrowed detail tiles like any slot.
+void test_a_pinned_preview_request_holds_its_manifest_until_swept_or_cancelled() {
+  static DisplayComposer c1;
+  static Window w1;
+  static Sched sched;
+  static Jobs jobs;
+  c1.init(gPool, gRuns, nullptr);
+  sched.init(810, 0);
+  DisplayComposer* comps[2] = {&gComp, &c1};
+  Window* wins[2] = {&gWin, &w1};
+  jobs.init(comps, wins, gStore, gManifests, gRuns, sched, kWin, kBar);
+  const uint8_t preview = 3;
+  gStore.setDetail(1, preview);
+  auto make = [](uint32_t id) {
+    std::vector<N> notes;
+    for (uint32_t i = 0; i < 40; ++i) notes.push_back({id + i, static_cast<uint8_t>(40 + i), i * 150, i * 150 + 100});
+    const RunId r = run(notes, RunKind::kRecord);
+    const ManifestId m = manifest({r}, 1, preview);
+    gRuns.release(r);
+    return m;
+  };
+  auto drain = [&]() {
+    uint32_t grains = 0;
+    while (!jobs.idle()) {
+      jobs.service();
+      sched.runGrain(grains * 810);
+      TEST_ASSERT_TRUE(++grains < 200000);
+    }
+  };
+  const uint16_t free = gManifests.freeCount();
+  // Cancelled before any sweep: the request's pin goes, the manifest with it.
+  ManifestId m = make(1000);
+  jobs.requestPinned(preview, m);
+  gManifests.release(m, gRuns);  // its owner lets go: the request's pin holds it
+  TEST_ASSERT_TRUE(gManifests.manifest(m).live);
+  jobs.cancel(preview);
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());
+  TEST_ASSERT_TRUE(jobs.idle());
+  // Swept: the sweep takes its own pin, the request's goes; done, nothing holds it.
+  m = make(2000);
+  const uint32_t id = identityOf(m);
+  jobs.requestPinned(preview, m);
+  gManifests.release(m, gRuns);
+  drain();
+  TEST_ASSERT_TRUE(gStore.drawSource(preview, 0).kind == Store::Kind::Span);
+  for (uint8_t bar = 0; bar < 8; ++bar) TEST_ASSERT_EQUAL_UINT32(id, gStore.drawSource(preview, bar).identity);
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());
+  // Cancelled while its sweep runs: the sweep stops, its pin goes; the preview's tiles are gone.
+  m = make(3000);
+  jobs.requestPinned(preview, m);
+  gManifests.release(m, gRuns);
+  jobs.service();
+  sched.runGrain(0);
+  TEST_ASSERT_FALSE(jobs.idle());
+  jobs.cancel(preview);
+  drain();
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());
+  TEST_ASSERT_TRUE(gStore.drawSource(preview, 0).kind == Store::Kind::Empty);
+  // A plain request replacing a pinned one drops that pin.
+  m = make(4000);
+  jobs.requestPinned(preview, m);
+  gManifests.release(m, gRuns);
+  const ManifestId other = make(5000);
+  jobs.request(preview, other);
+  TEST_ASSERT_FALSE(gManifests.manifest(m).live);
+  jobs.cancel(preview);
+  gManifests.release(other, gRuns);
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());
+  gStore.setDetail(1, Store::kNone);
+}
+
 void test_no_heap() {
   const RunId r = run({{1, 60, 100, 400}, {2, 61, kLoop - 50, kLoop + 50}}, RunKind::kRecord);
   const ManifestId m = manifest({r}, 1);
@@ -379,6 +452,7 @@ int main(int, char**) {
   RUN_TEST(test_draw_rule_never_blanks);
   RUN_TEST(test_live_overlay_keeps_the_recorded_notes);
   RUN_TEST(test_display_jobs_focus_first_and_newest_wins);
+  RUN_TEST(test_a_pinned_preview_request_holds_its_manifest_until_swept_or_cancelled);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

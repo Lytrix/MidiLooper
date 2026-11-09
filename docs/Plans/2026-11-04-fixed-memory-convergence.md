@@ -315,7 +315,7 @@ growing container.
 | Compose carry state | 221,184 | 18 cursors × ≤ 12 KiB: 16 playback (2 per track: steady + transition), the checkpoint sweep's, the tile sweep's (E9.6) |
 | Sweep scratch windows | 98,616 | 2 × 49,308 B: the checkpoint sweep's and the tile sweep's (owner 2026-11-05, E9.2: budgeted, sweeps independent) |
 | Checkpoint sets (E6.2d) | 417,284 | 64 slots × 2 sets × 8 checkpoints × 404 B (56 occluder pairs, 20 open instances), measured |
-| Display tiles | 602,416 | span (2 slots × 64 bars + 4 spares) × 2,560 B + density 64 slots × 64 bars × 64 B + 4 spares + headers, measured |
+| Display tiles | 606,528 | span (2 slots × 64 bars + 4 spares) × 2,560 B + density 65 slots (the 64, and the get-a-loop preview roll's, DEC-270 amendment 3) × 64 bars × 64 B + 4 spares + headers, measured on the host |
 | Live overlay raster | 9,744 | 256 × 64 px × 4 bit + state, measured |
 | Worker scratch | 50,176 | persistence 2 × 16 KiB, import 16 KiB, merge heap 64 × 16 B (E9.7) |
 | Edit writer E: log (E4.5) | 20,480 | 1,024 recorded changes × 20 B (touched only by an action's changed notes) |

@@ -522,6 +522,7 @@ class DisplayJobs {
     window_ = windowTicks;
     bar_ = barTicks;
     for (auto& r : pending_) r = kNoManifest;
+    for (auto& p : pinned_) p = false;
     order_ = 0;
     for (auto& o : requestOrder_) o = 0;
     focus_ = 0xFF;
@@ -529,9 +530,24 @@ class DisplayJobs {
 
   /// The slot's tiles should show `manifest` (a commit, Undo / Redo, an edit, a load). Replaces the slot's older request.
   void request(uint8_t slot, ManifestId manifest) {
+    dropPin(slot);
     pending_[slot] = manifest;
     requestOrder_[slot] = ++order_;
     store_->setWanted(slot, manifests_->manifest(manifest).identity);
+  }
+  /// As `request`, holding `manifest` with a pin of its own until its sweep takes one (or the request is replaced or
+  /// cancelled): for a manifest its owner may release meanwhile (plan §6.2 fix 2, a get-a-loop preview).
+  void requestPinned(uint8_t slot, ManifestId manifest) {
+    manifests_->pin(manifest);
+    request(slot, manifest);
+    pinned_[slot] = true;
+  }
+  /// The slot's tiles are wanted no more: its request (and pin) dropped, its tiles cleared — a running sweep of it
+  /// stops at its next grain (`Superseded`), releasing its own pin.
+  void cancel(uint8_t slot) {
+    dropPin(slot);
+    pending_[slot] = kNoManifest;
+    store_->clearSlot(slot);
   }
   void setFocus(uint8_t slot) { focus_ = slot; }
 
@@ -543,14 +559,17 @@ class DisplayJobs {
       if (slot == 0xFF) return;
       const ManifestId m = pending_[slot];
       pending_[slot] = kNoManifest;
-      if (w.sweep.start(*w.composer, *store_, *manifests_, *runs_, slot, m, window_, bar_) != Sweep::Status::Running)
+      if (w.sweep.start(*w.composer, *store_, *manifests_, *runs_, slot, m, window_, bar_) != Sweep::Status::Running) {
+        unpinTaken(slot, m);
         continue;
+      }
       uint8_t id;
       w.slot = slot;
       w.manifest = m;
       w.live = scheduler_->submit(JobSpec{JobClass::Display, 0, kDeclaredGrains, &step, &w}, id);
-      if (!w.live) w.sweep.cancel();  // table full: the slot's request is retried
+      if (!w.live) w.sweep.cancel();  // table full: the slot's request is retried (its pin kept)
       if (!w.live) pending_[slot] = m;
+      if (w.live) unpinTaken(slot, m);  // the sweep holds its own pin now
     }
   }
 
@@ -560,11 +579,13 @@ class DisplayJobs {
     for (auto& w : worker_) {
       if (!w.live || w.sweep.status() != Sweep::Status::Running) continue;
       const ManifestId m = w.manifest;
-      w.sweep.cancel();
-      if (pending_[w.slot] == kNoManifest) {
+      if (pending_[w.slot] == kNoManifest) {  // asked again: held by a pin of the request's (the sweep lets go)
+        manifests_->pin(m);
         pending_[w.slot] = m;
+        pinned_[w.slot] = true;
         requestOrder_[w.slot] = ++order_;
       }
+      w.sweep.cancel();
     }
   }
   bool sweeping() const {
@@ -614,7 +635,18 @@ class DisplayJobs {
   Runs* runs_ = nullptr;
   Scheduler* scheduler_ = nullptr;
   uint32_t window_ = 0, bar_ = 0, order_ = 0;
+  /// The request for `slot`, `m`, was taken off `pending_`: its pin (if it had one) goes.
+  void unpinTaken(uint8_t slot, ManifestId m) {
+    if (pinned_[slot]) manifests_->unpin(m, *runs_);
+    pinned_[slot] = false;
+  }
+  void dropPin(uint8_t slot) {
+    if (pinned_[slot] && pending_[slot] != kNoManifest) manifests_->unpin(pending_[slot], *runs_);
+    pinned_[slot] = false;
+  }
+
   ManifestId pending_[Slots];
+  bool pinned_[Slots];  // the pending request holds a pin of its own (`requestPinned`)
   uint32_t requestOrder_[Slots];
   uint8_t focus_ = 0xFF;
 };

@@ -40,7 +40,9 @@ touching the history; cancel goes back, KEEP re-reads as content and commits one
 locked meanwhile, a transport stop ends it. Native 4,489 passed; device `40022930…` (USB MIDI captured): heard,
 cancelled, kept and undone as designed. Then (owner: "Need beat line", DEC-271 amendment 1) audition and cancel switch
 on the next beat with a late join; device `252bca64…`: the old loop stopped before its next note, cancel back within
-0.6 s. Next: step c, the preview render path.
+0.6 s. **Step c (DEC-270 amendment 3 — the preview roll):** tile slot 64 for a loop that is no working-set slot,
+swept by the same sweep, its request pinned until swept, cancelled cleanly; native 4,492 passed; device `9e080954…`:
+swept, switched without stale bars, hidden. Next: step d, the picker screen (mockups first).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
