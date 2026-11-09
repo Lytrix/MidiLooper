@@ -483,7 +483,8 @@ class EngineDisplay {
       uint16_t stages = 0;
       for (uint16_t k = 0; k < b.itemCount(); ++k) stages = static_cast<uint16_t>(stages + b.itemSize(b.item(k)));
       snprintf(q, sizeof q, "EMPTY THE TRASH?");
-      snprintf(line, sizeof line, "%u ITEMS, %u STAGES", b.itemCount(), stages);
+      snprintf(line, sizeof line, "%u ITEM%s, %u STAGE%s", b.itemCount(), b.itemCount() == 1 ? "" : "S", stages,
+               stages == 1 ? "" : "S");
     } else if (b.confirmRecord() != Browser::kNone) {
       rec = b.confirmRecord();
       char id[8];
@@ -675,26 +676,28 @@ class EngineDisplay {
         return;
       case RowKind::Trash:
         label("TRASH", kDetailX, kMosaicY, 15, 2);
-        snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
+        snprintf(a, sizeof a, "%u ITEM%s", b.itemCount(), b.itemCount() == 1 ? "" : "S");
         label(b.itemCount() != 0 ? a : "EMPTY", kDetailX, 30, 11);
         label("ALSO 2* [TRK]", kDetailX, 38, 9);
         snprintf(h, n, "[TRK] OPEN TRASH");
         return;
       case RowKind::Empty: {  // DEC-268
         label("EMPTY", kDetailX, kMosaicY, 15, 2);
-        snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
+        snprintf(a, sizeof a, "%u ITEM%s", b.itemCount(), b.itemCount() == 1 ? "" : "S");
         label(b.itemCount() != 0 ? a : "THE TRASH IS EMPTY", kDetailX, 30, 11);
         if (b.itemCount() != 0) label("REMOVED FOR GOOD", kDetailX, 38, 9);
         if (b.itemCount() != 0) snprintf(h, n, "[TRK] EMPTY TRASH");
         else h[0] = 0;
         return;
       }
-      case RowKind::Item: {  // the item's newest stage, its set, when it went to the trash
+      case RowKind::Item: {  // the item's newest stage, its stage count (a set) or set (a stage), when it went to the trash
         const auto& t = b.record(r.record);
         const uint16_t newest = b.itemNewest(r.record);
         char at[8];
         ContentEngine::wallclock::formatClock(t.wallTime, browserInfo_.tz, at, sizeof at);
-        if (t.parent == 0) snprintf(a, sizeof a, "SET %02u  %u STAGES", r.set, b.itemSize(r.record));
+        // Beside the mosaic: 12 characters at most (kMosaicX − kDetailX); the set is in the row and the hint.
+        const uint16_t size = b.itemSize(r.record);
+        if (t.parent == 0) snprintf(a, sizeof a, "%u STAGE%s", size, size == 1 ? "" : "S");
         else snprintf(a, sizeof a, "SET %02u", r.set);
         snprintf(c, sizeof c, "TRASHED %s", at);
         if (newest != Browser::kNone) drawMilestone(b.record(newest), a, c);
@@ -714,7 +717,7 @@ class EngineDisplay {
           snprintf(h, n, "[TRK] OPEN");
           snprintf(a, sizeof a, "SET %02u", r.set);
           label(a, kDetailX, kMosaicY, 15, 2);
-          label("NO STAGES YET", kDetailX, 30, kDimText);
+          label("NO STAGES", kDetailX, 30, kDimText);  // beside the mosaic
           drawLiveMosaic();
           return;
         }

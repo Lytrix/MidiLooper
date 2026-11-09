@@ -15478,3 +15478,5 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   included) at the unselected-menu level (`kDimText`), the arrows and actions brighter; the trash's words and can at the
   same level as the actions, no longer dimmed when the trash is empty. Image `aa428aa6…`, boot `crash=0`; full native
   4,472 passed.
+- **Verified on the card (2026-11-09):** a throwaway set saved, trashed, restored, trashed and emptied through the
+  gestures; the replay after a reboot matched (`PROJECT_STATE`, image `ef99586e…`).

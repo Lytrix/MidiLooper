@@ -13,7 +13,13 @@ browser page: actions bottom left (`[TRK] LOAD T03   HOLD [TRK] DELETE`), `[TRK]
 level, the actions and the trash with its can one brighter level (image `aa428aa6…`). The selection bar dims toward
 its right end on the panel though the frame is even (full segment current, 0xC1 0xFF): `!ENGINE oled-reg` and
 `scripts/oled_drive_cycle.py` compare drive settings live; 70 % current evened it but too dim, so the default stays —
-owner to re-evaluate off the breadboard (image `97ac8156…`).
+owner to re-evaluate off the breadboard (image `97ac8156…`). On the card (owner: "continue with next step" = the
+proposed throwaway test, firmware gestures only): saved SET 04 S01 (seq 14), HOLD TRACK → YES → trash (seq 15, the
+working row stays with no stages), 2× TRACK → TRACK restore (seq 16), trash again (17), EMPTY TRASH → YES (18); reboot
+replays 18 records, SET 04 hidden, working set SET 03, trash empty, boot `crash=0`. Fixed what it showed: `1 ITEMS` /
+`1 STAGES` plurals and two detail lines running into the mosaic (`NO STAGES`; a set item's line is its stage count);
+rechecked with a second throwaway (SET 05: seq 19–21, saved, trashed, emptied; image `ef99586e…`). Library now 21
+records; SET 04 and 05 numbers are spent.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
