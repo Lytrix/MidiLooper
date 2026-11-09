@@ -15516,3 +15516,7 @@ rule (named, empty working set, fallback, permanent numbering); five mutations k
 named none (fallback SET 03); a browser load of SET 02 T03 → `working,done,set=2,base=10`; reboot →
 `working,boot,set=2,base=10,named=1` and SETS shows SET 02 `FROM T03`; `return` → `working,done,set=3,base=0`; reboot
 → `set=3,named=1`.
+- **Amendment 1 (owner 2026-11-09, "Show SET 1"):** set numbers are shown without a leading zero on the screen and in
+  its one-line confirmations (`SET 3`, `AS NEW SET 6`, `MOVE SET 2 T03 TO TRASH?`, `SAVED  SET 3  S02`), so `SET 100`
+  reads as `SET 1` and `SET 10` do. Stage ids keep two digits (`T03`); serial log lines keep `SET 02` (host scripts parse
+  them). Image `e8cbfd16…`, boot `crash=0`.

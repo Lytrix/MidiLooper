@@ -23,7 +23,9 @@ records; SET 04 and 05 numbers are spent. Then **DEC-269 — the working set sur
 reboot is confusing; reviewed: identity first, numbers permanent, compaction later): the index header names the working
 set (a CRC'd block after its own CRC; a save names it, a load / return publishes the header alone, a failed write keeps
 the previous). Native +7 (five mutations killed), full 4,479 passed; device `6a0a8504…`: load SET 02 T03 → reboot
-boots in SET 02 `FROM T03` (the old guess said SET 03); return → reboot SET 03.
+boots in SET 02 `FROM T03` (the old guess said SET 03); return → reboot SET 03. Then
+(owner: "Show SET 1") the screen shows set numbers without a leading zero (`SET 3`, `AS NEW SET 6`); serial logs keep
+`SET 02` (image `e8cbfd16…`).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

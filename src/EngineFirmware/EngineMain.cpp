@@ -659,12 +659,12 @@ void serviceLoad() {
     char line[40];
     if (st == ProductionSetLoad::Status::Done) {
       if (load) {
-        snprintf(line, sizeof line, "LOADED  SET %02u  %c%02u", l.record().set, library::stageLetter(l.record().stage),
+        snprintf(line, sizeof line, "LOADED  SET %u  %c%02u", l.record().set, library::stageLetter(l.record().stage),
                  l.record().stageNumber);
       } else {
         char at[8];
         wallclock::formatClock(l.checkpoint().wallTime, gTzOffset, at, sizeof at);
-        snprintf(line, sizeof line, "RETURNED  SET %02u  %s", l.checkpoint().set, at);
+        snprintf(line, sizeof line, "RETURNED  SET %u  %s", l.checkpoint().set, at);
       }
       gBrowser.succeeded();
       gDisplay.toast(line, millis());
@@ -709,7 +709,7 @@ void serviceBrowser(uint32_t nowUs) {
   if (hasCheckpoint) {
     char at[8];
     wallclock::formatClock(cp.wallTime, gTzOffset, at, sizeof at);
-    snprintf(info.returnTo, sizeof info.returnTo, "TO SET %02u AS LEFT %s", cp.set, at);
+    snprintf(info.returnTo, sizeof info.returnTo, "TO SET %u AS LEFT %s", cp.set, at);
   }
   gDisplay.setBrowserInfo(info);
   ProductionBrowser::Request q;
@@ -797,7 +797,7 @@ void serviceLibrary() {
       char id[8] = "";
       if (m != ProductionBrowser::kNone)
         snprintf(id, sizeof id, "  %c%02u", library::stageLetter(gBrowser.record(m).stage), gBrowser.record(m).stageNumber);
-      snprintf(line, sizeof line, "%s  SET %02u%s", r.kind == library::kTrash ? "IN TRASH" : "RESTORED", r.set, id);
+      snprintf(line, sizeof line, "%s  SET %u%s", r.kind == library::kTrash ? "IN TRASH" : "RESTORED", r.set, id);
     }
     if (ok) gBrowser.add(r);
     if (gBrowserOp == BrowserOp::Mark) {
@@ -826,7 +826,7 @@ void serviceLibrary() {
     if (gBrowserOp == BrowserOp::Save) {
       if (ok) {
         char line[40];
-        snprintf(line, sizeof line, "SAVED  SET %02u  %c%02u", r.set, library::stageLetter(r.stage), r.stageNumber);
+        snprintf(line, sizeof line, "SAVED  SET %u  %c%02u", r.set, library::stageLetter(r.stage), r.stageNumber);
         gBrowser.succeeded();
         gDisplay.toast(line, millis());
       } else {

@@ -443,7 +443,7 @@ class EngineDisplay {
     }
     const bool confirming = b.view() == Browser::View::Confirm;
     char title[16];
-    if (b.shownView() == Browser::View::Set) snprintf(title, sizeof title, "SET %02u", b.openSetNumber());
+    if (b.shownView() == Browser::View::Set) snprintf(title, sizeof title, "SET %u", b.openSetNumber());
     else if (b.shownView() == Browser::View::Bin) snprintf(title, sizeof title, "TRASH");
     else snprintf(title, sizeof title, "SETS");
     window(kWX0, kWY0, kWX1, kWY1, title);
@@ -489,11 +489,11 @@ class EngineDisplay {
       rec = b.confirmRecord();
       char id[8];
       idText(b.record(rec), id, sizeof id);
-      snprintf(q, sizeof q, "MOVE SET %02u %s TO TRASH?", b.confirmSet(), id);
+      snprintf(q, sizeof q, "MOVE SET %u %s TO TRASH?", b.confirmSet(), id);
       snprintf(line, sizeof line, "%s", ContentEngine::library::stageName(b.record(rec).stage));
     } else {
       rec = b.latestOf(b.confirmSet());
-      snprintf(q, sizeof q, "MOVE SET %02u TO TRASH?", b.confirmSet());
+      snprintf(q, sizeof q, "MOVE SET %u TO TRASH?", b.confirmSet());
       snprintf(line, sizeof line, "ALL SAVED STAGES (%u)", b.milestonesIn(b.confirmSet()));
     }
     label(q, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 13), 15);
@@ -620,9 +620,9 @@ class EngineDisplay {
       const uint16_t m = b.find(b.record(rec).parent);
       char id[8] = "?";
       if (m != Browser::kNone) idText(b.record(m), id, sizeof id);
-      snprintf(text, sizeof text, "SET %02u %s", r.set, id);
+      snprintf(text, sizeof text, "SET %u %s", r.set, id);
     } else {
-      snprintf(text, sizeof text, "SET %02u", r.set);
+      snprintf(text, sizeof text, "SET %u", r.set);
     }
     if (rec != Browser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
       ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
@@ -698,11 +698,11 @@ class EngineDisplay {
         // Beside the mosaic: 12 characters at most (kMosaicX − kDetailX); the set is in the row and the hint.
         const uint16_t size = b.itemSize(r.record);
         if (t.parent == 0) snprintf(a, sizeof a, "%u STAGE%s", size, size == 1 ? "" : "S");
-        else snprintf(a, sizeof a, "SET %02u", r.set);
+        else snprintf(a, sizeof a, "SET %u", r.set);
         snprintf(c, sizeof c, "TRASHED %s", at);
         if (newest != Browser::kNone) drawMilestone(b.record(newest), a, c);
         if (t.parent == 0) {
-          snprintf(h, n, "[TRK] RESTORE SET %02u", r.set);
+          snprintf(h, n, "[TRK] RESTORE SET %u", r.set);
         } else {
           char id[8] = "";
           if (newest != Browser::kNone) idText(b.record(newest), id, sizeof id);
@@ -715,7 +715,7 @@ class EngineDisplay {
         snprintf(h, n, "[TRK] OPEN  HOLD [TRK] DELETE");
         if (r.record == Browser::kNone) {
           snprintf(h, n, "[TRK] OPEN");
-          snprintf(a, sizeof a, "SET %02u", r.set);
+          snprintf(a, sizeof a, "SET %u", r.set);
           label(a, kDetailX, kMosaicY, 15, 2);
           label("NO STAGES", kDetailX, 30, kDimText);  // beside the mosaic
           drawLiveMosaic();
@@ -782,7 +782,7 @@ class EngineDisplay {
     // AS NEW SET: a hollow node, nothing wired.
     char buf[24];
     if (sel == 0) oled_.gfx.draw_rect_filled(fb(), kWX0 + 2, kNewY - 3, kWX0 + 102, kNewY + 5, 13);
-    snprintf(buf, sizeof buf, "AS NEW SET %02u", b.newSetNumber());
+    snprintf(buf, sizeof buf, "AS NEW SET %u", b.newSetNumber());
     label(buf, kWX0 + 16, kNewY - 1, sel == 0 ? 0 : 9);
     for (int16_t d = -2; d <= 2; ++d) {
       const uint8_t v = sel == 0 ? 0 : 11;

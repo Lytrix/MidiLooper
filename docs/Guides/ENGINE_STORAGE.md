@@ -64,7 +64,7 @@ boot the newer valid copy wins. So a write cut off at any point leaves the previ
 | Area | Sectors | What it holds |
 |---|---|---|
 | Index header A / B | 0–1 | count, where the next milestone goes, the next sequence number |
-| Index records | 2–513 | 4,096 records of 64 B: sequence, set, stage and stage number (`SET 02 T01`), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |
+| Index records | 2–513 | 4,096 records of 64 B: sequence, set, stage and stage number (`SET 2 T01` on screen), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |
 | Checkpoint regions A / B | 2 × 4,301 | the recovery checkpoint, each region room for the largest set |
 | Milestone log | 2,088,036 | the milestones, appended |
 
