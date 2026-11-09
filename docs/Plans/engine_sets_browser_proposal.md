@@ -151,8 +151,9 @@ half:
 
 * **Two ways in, one grid** (owner 2026-11-10, after the mockups). (1) From the sets browser: a `GET A LOOP` row under
   `< SETS` in a set's view (no controller needed), destination = the selected slot (its panel: `GET A LOOP INTO 3-2`
-  and the working set's mosaic with that slot boxed); TRACK lists the set's stages under
-  `FROM STAGE`, and TRACK on one opens its grid. (2) From a slot on a controller: the slot's long press opens the same
+  and the working set's mosaic with that slot boxed); TRACK (`[TRK] OPEN`, as a set
+  row) lists the set's stages under `FROM STAGE`, and TRACK on one (`[TRK] SELECT STAGE`, owner 2026-11-10) opens its
+  grid. (2) From a slot on a controller: the slot's long press opens the same
   window with that slot as the destination — the cursor on the 4-bar empty preset when the slot is empty, on the
   slot's own position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): long press,
   then TRACK on a preset. The destination is fixed on entry and always shown:
