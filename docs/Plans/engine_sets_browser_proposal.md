@@ -144,6 +144,35 @@ rows with the source's length. Each is one undo step on that slot.
 the save popup, load, return and failures (§5). The extension adds the `+ GET A LOOP` row, a milestone's loop list and
 the destination popup, reusing the same list and popup components — the browser needs no redesign for it.
 
+### 6.1 Get a loop — agreed flow (owner 2026-11-09; supersedes the list design above for 6b)
+
+The engine half is built (DEC-270: read one slot of a stage for another slot, place it as one undo step). The browser
+half:
+
+* **Two ways in, one grid.** (1) From the sets browser: a stage row's `GET LOOP` (no controller needed), destination
+  = the selected slot. (2) From a slot on a controller: a slot gesture opens the sets browser with that slot as the
+  destination remembered; choosing a stage enters the same grid. The destination is fixed on entry and always shown:
+  `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only.
+* **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves: REC up, PLAY/STOP down, NOTELEN left,
+  EDIT right. An `EMPTY LOOP` tile comes first and is selected on entry (taking it makes the destination an empty
+  loop, one undo step).
+* **The panel** shows the loop under the cursor: its piano roll, length and bars, after a short `READING…` state. A
+  read that ends after the cursor has left is dropped (one read in flight; its result is shown or auditioned only if
+  the cursor is still there).
+* **Audition:** TRACK auditions the loop under the cursor at the current position, without touching the history. Once
+  it sounds, the footer reads `[TRK] KEEP`; a fresh TRACK press keeps it (one undo step: `COPIED TO 3-2`). HOLD TRACK
+  cancels and goes back. Moving the cursor ends the audition (browsing never changes the sound); the next TRACK
+  auditions the new loop. After leaving, undo still brings the slot's previous loop back.
+* **Whether it sounds:** the audition plays on the destination's track. If that track plays the destination slot, the
+  audition replaces it in place. If it plays another slot or is stopped while the transport runs, it switches to the
+  destination slot for the audition, and back on cancel; KEEP leaves it there. With the transport stopped, the
+  audition is the piano roll only. A muted track stays muted (the footer says so).
+* **The audition's contract (engine):** the original stays the history's current state throughout; the auditioned
+  state is held by the audition alone. Cancel, a cursor move, HOLD, the browser closing, a transport stop, a failed
+  read or no memory for it all put the track back as it was and release it. While it lasts, nothing else may change
+  the destination: its track's takes, clear, undo / redo, NOTE_EDIT, LOOP_EDIT and launches are refused. Not enough
+  memory to hold both: refused before it sounds (`NOT ENOUGH MEMORY`).
+
 ## 7. Autosave, recovery and live switching
 
 * The engine's store protects the working set already (A / B copies, boot loads each slot's newer copy; pending /
