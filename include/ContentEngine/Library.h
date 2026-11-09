@@ -14,6 +14,10 @@
 // published before it — to the trash; a restore record (kRestore) takes the trash record named by `parent` back out; an
 // empty-trash record (kEmptyTrash) removes for good everything in the trash before it. Nothing already written is
 // rewritten; a removed milestone's blob keeps its log space (reclaiming it would be compaction).
+// The index header also names the working set (DEC-269): its number and base milestone, in a block after the header's
+// own CRC with a CRC of its own — a header without it (older firmware) is still valid and names none. A save sets it to
+// the milestone; a load or return publishes a header with nothing else changed (no record), so an interrupted write
+// leaves the previous header, and the working set it names, current. It moves with the card.
 // A milestone is published in one order — blob, record, header (each programmed before the next) — so a header names
 // only complete milestones; records and log space past it are ignored and reused. Every structure carries a CRC-32.
 // `kMaxSetSectors` is the largest whole set (every content row, every run, every state, every slot), checked at
@@ -80,7 +84,11 @@ struct IndexHeader {
   uint16_t count = 0;     // published records
   uint32_t appendSector = 0;  // the log's next free sector, relative to `kLogBase`
   uint32_t nextSequence = 1;  // the next milestone's internal sequence (never reused)
+  bool hasWorking = false;    // DEC-269: the working set below is named (else the boot falls back to a guess)
+  uint16_t workingSet = 0;    // its number, kept while it has no shown milestone
+  uint32_t workingBase = 0;   // its base milestone (sequence; 0 none)
 };
+constexpr uint32_t kWorkingMagic = 0x314B5257u;  // "WRK1"
 
 inline void encode(const IndexHeader& h, uint8_t* sector) {
   for (uint32_t i = 0; i < kSector; ++i) sector[i] = 0;
@@ -90,6 +98,12 @@ inline void encode(const IndexHeader& h, uint8_t* sector) {
   put32(sector + 12, h.appendSector);
   put32(sector + 16, h.nextSequence);
   put32(sector + 20, crc32Update(0, sector, 20));
+  if (h.hasWorking) {  // bytes 24–37: older firmware reads only 0–23
+    put32(sector + 24, kWorkingMagic);
+    put16(sector + 28, h.workingSet);
+    put32(sector + 30, h.workingBase);
+    put32(sector + 34, crc32Update(0, sector + 24, 10));
+  }
 }
 inline bool decode(const uint8_t* sector, IndexHeader& h) {
   if (get32(sector) != kHeaderMagic || get32(sector + 20) != crc32Update(0, sector, 20)) return false;
@@ -97,6 +111,10 @@ inline bool decode(const uint8_t* sector, IndexHeader& h) {
   h.count = get16(sector + 8);
   h.appendSector = get32(sector + 12);
   h.nextSequence = get32(sector + 16);
+  h.hasWorking = get32(sector + 24) == kWorkingMagic && get32(sector + 34) == crc32Update(0, sector + 24, 10) &&
+                 get16(sector + 28) != 0;
+  h.workingSet = h.hasWorking ? get16(sector + 28) : 0;
+  h.workingBase = h.hasWorking ? get32(sector + 30) : 0;
   return h.count <= kIndexRecords && h.appendSector <= kLogSectors;
 }
 /// The current header from the two sector images: the valid one with the higher sequence; `which` its sector (0 / 1),

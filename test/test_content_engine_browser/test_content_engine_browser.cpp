@@ -618,6 +618,44 @@ void test_the_popup_history_follows_the_base_line() {
   TEST_ASSERT_EQUAL(Stage::Building, gB.suggested());
 }
 
+/// DEC-269: a boot starts in the working set the card's header names — with its base while that is shown in it.
+void test_a_boot_starts_in_the_working_set_the_card_names() {
+  IndexHeader h;
+  h.hasWorking = true;
+  h.workingSet = 7;
+  h.workingBase = 4;  // SET 07 T02
+  B::Working w = gB.bootWorking(h);
+  TEST_ASSERT_EQUAL_UINT16(7, w.set);
+  TEST_ASSERT_EQUAL_UINT32(4, w.base);
+  h.workingBase = 5;  // a base of another set is not this one's
+  TEST_ASSERT_EQUAL_UINT32(0, gB.bootWorking(h).base);
+}
+/// DEC-269: an empty working set stays the working set — its stages trashed or emptied — and loses only its base; the
+/// next new set is still past it.
+void test_an_empty_working_set_survives_a_boot() {
+  mark(kTrash, 7, 0);
+  mark(kEmptyTrash, 0, 0);
+  IndexHeader h;
+  h.hasWorking = true;
+  h.workingSet = 7;
+  h.workingBase = 4;
+  const B::Working w = gB.bootWorking(h);
+  TEST_ASSERT_EQUAL_UINT16(7, w.set);
+  TEST_ASSERT_EQUAL_UINT32(0, w.base);
+  gB.setWorking(9, 0);  // a set saved as new, then emptied: its number stays spent
+  TEST_ASSERT_EQUAL_UINT16(10, gB.newSetNumber());
+}
+/// A card whose header names no working set (older firmware, or a damaged block): the newest shown milestone's set.
+void test_a_card_naming_no_working_set_falls_back_to_the_newest() {
+  IndexHeader h;
+  TEST_ASSERT_EQUAL_UINT16(3, gB.bootWorking(h).set);
+  TEST_ASSERT_EQUAL_UINT32(0, gB.bootWorking(h).base);
+  mark(kTrash, 3, 0);
+  TEST_ASSERT_EQUAL_UINT16(2, gB.bootWorking(h).set);
+  gB.clear();
+  TEST_ASSERT_EQUAL_UINT16(1, gB.bootWorking(h).set);  // an empty library
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_opening_selects_save_over_a_load_section_of_sets_newest_first);
@@ -649,5 +687,8 @@ int main(int, char**) {
   RUN_TEST(test_the_popup_history_follows_the_base_line);
   RUN_TEST(test_the_line_and_its_side_branch);
   RUN_TEST(test_a_straight_history_has_one_lane);
+  RUN_TEST(test_a_boot_starts_in_the_working_set_the_card_names);
+  RUN_TEST(test_an_empty_working_set_survives_a_boot);
+  RUN_TEST(test_a_card_naming_no_working_set_falls_back_to_the_newest);
   return UNITY_END();
 }

@@ -362,9 +362,11 @@ ProductionLibrary::Status gLibraryWas = ProductionLibrary::Status::Idle;
 bool gLibraryCheckpoint = false;  // the job running writes the checkpoint (else a milestone)
 uint32_t gLibraryStartUs = 0;
 // The working set's base milestone (its sequence; 0: none) and set number (DEC-259): a save's parent, a load's
-// checkpoint. Held this boot only (keeping them across a reboot is a store format change, a later slice).
+// checkpoint. Kept on the card in the library's index header (DEC-269): a save names them; after a load or return
+// `gWorkingOwed` until a header naming them is published; a boot starts in the ones the header names.
 uint32_t gBase = 0;
 uint16_t gSet = 1;
+bool gWorkingOwed = false;
 ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
 // The sets browser (slice 3) and the library's index in memory (4,096 records, PSRAM). `gBrowserOp`: the request it
 // made that is under way (its end answers the browser).
@@ -436,12 +438,12 @@ void loadIndex() {
     if (!l.readRecord(i, r)) r = library::Record{};
     gBrowser.add(r);
   }
-  // The working set until the store keeps it (DEC-259: held for the boot only): the newest shown milestone's set.
-  for (uint16_t i = gBrowser.count(); gBase == 0 && i-- > 0;)
-    if (!gBrowser.hidden(i)) {
-      gSet = gBrowser.record(i).set;
-      break;
-    }
+  // The working set the card's header names (DEC-269), else the newest shown milestone's set.
+  const ProductionBrowser::Working w = gBrowser.bootWorking(l.header());
+  gSet = w.set;
+  gBase = w.base;
+  Serial.printf("#ENGINE,working,boot,set=%u,base=%lu,named=%u\n", gSet, static_cast<unsigned long>(gBase),
+                l.header().hasWorking ? 1 : 0);
   gBrowserReady = true;
   resetEvidence();
   gSurface.setBrowser(&gBrowser);
@@ -627,12 +629,14 @@ void serviceLoad() {
       if (load) {
         gBase = l.record().sequence;
         gSet = l.record().set;
+        gWorkingOwed = true;
         Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu,worst_grain_us=%lu\n", l.record().set,
                       library::stageLetter(l.record().stage), l.record().stageNumber,
                       static_cast<unsigned long>(l.record().sequence), ms, static_cast<unsigned long>(gLoadGrainMaxUs));
       } else {
         gBase = l.checkpoint().base;
         gSet = l.checkpoint().set;
+        gWorkingOwed = true;
         Serial.printf("#ENGINE,return,done,base=%lu,set=%u,ms=%lu,worst_grain_us=%lu\n", static_cast<unsigned long>(gBase),
                       gSet, ms, static_cast<unsigned long>(gLoadGrainMaxUs));
       }
@@ -739,6 +743,25 @@ void serviceBrowser(uint32_t nowUs) {
   }
   if (why != nullptr) gBrowserOp = BrowserOp::None;
 }
+/// After a load or return (DEC-269): the working set named in the index header once the library is free. A refusal
+/// other than busy is reported and dropped (the next save names it).
+void serviceWorking(uint32_t nowUs) {
+  if (!gWorkingOwed || gEngine.libraryBusy()) return;
+  if (!gEngine.library().mounted()) {
+    gWorkingOwed = false;
+    return;
+  }
+  const ProductionLibrary::Result r = gEngine.publishWorking(gSet, gBase);
+  if (r == ProductionLibrary::Result::Busy) return;
+  gWorkingOwed = false;
+  if (r != ProductionLibrary::Result::Ok) {
+    Serial.printf("#ENGINE,working,refused,why=%s\n", libraryRefusal(r));
+    return;
+  }
+  gLibraryCheckpoint = false;
+  gLibraryStartUs = nowUs;
+  Serial.printf("#ENGINE,working,begin,set=%u,base=%lu\n", gSet, static_cast<unsigned long>(gBase));
+}
 /// A library job's end, reported once.
 void serviceLibrary() {
   const ProductionLibrary::Status st = gEngine.library().status();
@@ -748,6 +771,12 @@ void serviceLibrary() {
   if (st != ProductionLibrary::Status::Done && st != ProductionLibrary::Status::Failed) return;
   const bool ok = st == ProductionLibrary::Status::Done;
   const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
+  if (gEngine.library().workingJob()) {  // DEC-269: the header alone; failed, the previous one stays current
+    const library::IndexHeader& h = gEngine.library().header();
+    Serial.printf("#ENGINE,working,%s,set=%u,base=%lu,ms=%lu\n", ok ? "done" : "failed", h.workingSet,
+                  static_cast<unsigned long>(h.workingBase), ms);
+    return;
+  }
   if (gLibraryCheckpoint) {
     Serial.printf("#ENGINE,checkpoint,%s,ms=%lu\n", ok ? "done" : "failed", ms);
   } else if (gEngine.library().published().kind != library::kMilestone) {  // DEC-268: the working set untouched
@@ -1525,6 +1554,7 @@ void loop() {
   stampSaves();
   serviceLibrary();
   serviceLoad();
+  serviceWorking(micros());
   serviceBrowser(micros());
   crumb(kLeds);
   uint8_t bank;

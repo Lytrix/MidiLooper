@@ -13,7 +13,7 @@
 //   index record, programmed; then the index header into the sector that is not current, programmed — only then is the
 //   milestone published. A checkpoint: the blob into the region that is not current, programmed, then its header,
 //   programmed. A trash, restore or empty-trash record (DEC-268): the record, programmed, then the index header — no
-//   blob, nothing older rewritten. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
+//   blob, nothing older rewritten. A working-set change (DEC-269): the index header alone. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
 // No allocation.
 
 #pragma once
@@ -176,6 +176,8 @@ class LibraryWriter {
   uint8_t checkpointRegion() const { return region_; }
   bool busy() const { return status_ == Status::Running; }
   Status status() const { return status_; }
+  /// The last job published the working set alone (`beginWorking`).
+  bool workingJob() const { return headerOnly_; }
   /// The record of the milestone the last job published.
   const library::Record& published() const { return record_; }
 
@@ -194,6 +196,7 @@ class LibraryWriter {
       case library::Fit::Ok: break;
     }
     checkpointJob_ = false;
+    headerOnly_ = false;
     record_ = library::Record{};
     record_.sequence = header_.nextSequence;
     record_.set = m.set;
@@ -219,6 +222,7 @@ class LibraryWriter {
     if (busy()) return Result::Busy;
     if (header_.count >= library::kIndexRecords) return Result::IndexFull;
     checkpointJob_ = false;
+    headerOnly_ = false;
     record_ = library::Record{};
     record_.sequence = header_.nextSequence;
     record_.set = set;
@@ -226,6 +230,20 @@ class LibraryWriter {
     record_.parent = target;
     record_.wallTime = wallTime;
     phase_ = Phase::Record;
+    status_ = Status::Running;
+    return Result::Ok;
+  }
+  /// Starts publishing `set` (base milestone `base`, 0 none) as the working set (DEC-269): the index header alone, so it
+  /// needs no index record; a failed write leaves the previous header — and working set — current.
+  Result beginWorking(uint16_t set, uint32_t base) {
+    if (!mounted_) return Result::NotMounted;
+    if (busy()) return Result::Busy;
+    checkpointJob_ = false;
+    headerOnly_ = true;
+    record_ = library::Record{};  // no record written: it only carries the working set to the header
+    record_.set = set;
+    record_.parent = base;
+    phase_ = Phase::Header;
     status_ = Status::Running;
     return Result::Ok;
   }
@@ -239,6 +257,7 @@ class LibraryWriter {
     const uint32_t sectors = blobSectorsOfSnapshot();
     if (sectors > library::kMaxSetSectors) return refuse(Result::TooLarge);
     checkpointJob_ = true;
+    headerOnly_ = false;
     target_ = haveCheckpoint_ ? static_cast<uint8_t>(region_ ^ 1) : 0;
     pending_ = library::CheckpointHeader{};
     pending_.sequence = (haveCheckpoint_ ? checkpoint_.sequence : 0) + 1;
@@ -321,11 +340,22 @@ class LibraryWriter {
       case Phase::Header: {
         const uint8_t other = static_cast<uint8_t>(which_ ^ 1);
         if (!card_->libraryReady(other)) return status_;
-        next_ = header_;
+        next_ = header_;  // the working set carried, unless this names it
         next_.sequence = header_.sequence + 1;
-        next_.count = static_cast<uint16_t>(header_.count + 1);
-        next_.appendSector = header_.appendSector + record_.logSectors;
-        next_.nextSequence = header_.nextSequence + 1;
+        if (headerOnly_) {
+          next_.hasWorking = true;
+          next_.workingSet = record_.set;
+          next_.workingBase = record_.parent;
+        } else {
+          next_.count = static_cast<uint16_t>(header_.count + 1);
+          next_.appendSector = header_.appendSector + record_.logSectors;
+          next_.nextSequence = header_.nextSequence + 1;
+          if (record_.kind == library::kMilestone) {  // a save: its set is the working one, descending from it
+            next_.hasWorking = true;
+            next_.workingSet = record_.set;
+            next_.workingBase = record_.sequence;
+          }
+        }
         uint8_t sector[library::kSector];
         library::encode(next_, sector);
         if (!card_->writeLibrarySector(other, sector)) return fail();
@@ -436,7 +466,7 @@ class LibraryWriter {
   library::CheckpointHeader checkpoint_, pending_;
   bool haveCheckpoint_ = false;
   uint8_t region_ = 1, target_ = 0;
-  bool mounted_ = false, checkpointJob_ = false;
+  bool mounted_ = false, checkpointJob_ = false, headerOnly_ = false;
   library::Record record_;
   library::BlobHeader blob_;
   uint32_t base_ = 0;

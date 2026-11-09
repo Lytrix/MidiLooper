@@ -152,12 +152,12 @@ struct EngineRam2 {
 // tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
 // library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
-// reader and slot-file load job; DEC-261: its staged states). The line is the host's 64-bit layout, 568 B above the
-// Teensy's 6,821,440. RAM2: the
+// reader and slot-file load job; DEC-261: its staged states; DEC-269: + 16 B the working set in the writer's two index
+// headers). The line is the host's 64-bit layout, 568 B above the Teensy's 6,821,456. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6822008u;
+constexpr size_t kPsramBudget = 6822024u;
 constexpr size_t kRam2Budget = 154424u;  // measured (sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -370,6 +370,12 @@ class EngineRoot {
   ProductionLibrary::Result markLibrary(uint8_t kind, uint16_t set, uint32_t target, uint32_t wallTime) {
     if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginMark(kind, set, target, wallTime);
+  }
+  /// Starts naming `set` (base `base`) as the working set in the library's index header (DEC-269;
+  /// `LibraryWriter::beginWorking`): after a load or return, so the next boot starts in it.
+  ProductionLibrary::Result publishWorking(uint16_t set, uint32_t base) {
+    if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
+    return p_->libraryWriter.beginWorking(set, base);
   }
   /// Starts replacing the recovery checkpoint with the whole set as it is now.
   ProductionLibrary::Result saveCheckpoint(const ProductionLibrary::Checkpoint& c) {

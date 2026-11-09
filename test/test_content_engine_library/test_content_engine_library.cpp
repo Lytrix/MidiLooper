@@ -46,6 +46,32 @@ void test_the_newer_valid_index_header_is_current() {
   TEST_ASSERT_EQUAL_UINT8(0, which);
 }
 
+/// DEC-269: the working set rides after the header's CRC with its own: round-trips; a header without it (older
+/// firmware) or with it damaged is still valid and names none.
+void test_the_header_names_the_working_set_separately() {
+  uint8_t s[kSector];
+  IndexHeader h{7, 3, 120, 9};
+  h.hasWorking = true;
+  h.workingSet = 105;
+  h.workingBase = 0;  // an empty working set: no base
+  encode(h, s);
+  IndexHeader back;
+  TEST_ASSERT_TRUE(decode(s, back));
+  TEST_ASSERT_TRUE(back.hasWorking);
+  TEST_ASSERT_EQUAL_UINT16(105, back.workingSet);
+  TEST_ASSERT_EQUAL_UINT32(0, back.workingBase);
+  TEST_ASSERT_EQUAL_UINT16(3, back.count);
+  s[29] ^= 1;  // damage in the working block only
+  TEST_ASSERT_TRUE(decode(s, back));
+  TEST_ASSERT_FALSE(back.hasWorking);
+  TEST_ASSERT_EQUAL_UINT16(0, back.workingSet);
+  TEST_ASSERT_EQUAL_UINT32(9, back.nextSequence);
+  encode(IndexHeader{7, 3, 120, 9}, s);  // as older firmware writes it
+  TEST_ASSERT_TRUE(decode(s, back));
+  TEST_ASSERT_FALSE(back.hasWorking);
+  for (uint32_t i = 24; i < 38; ++i) TEST_ASSERT_EQUAL_UINT8(0, s[i]);
+}
+
 void test_records_round_trip_and_reject_damage() {
   Record r;
   r.sequence = 17;
@@ -155,6 +181,7 @@ int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_the_layout_fits_the_bound);
   RUN_TEST(test_the_newer_valid_index_header_is_current);
+  RUN_TEST(test_the_header_names_the_working_set_separately);
   RUN_TEST(test_records_round_trip_and_reject_damage);
   RUN_TEST(test_blob_and_checkpoint_headers);
   RUN_TEST(test_a_save_that_does_not_fit_is_refused_by_name);

@@ -55,6 +55,9 @@ boot the newer valid copy wins. So a write cut off at any point leaves the previ
   (A / B) that counts it. Until the header is programmed the milestone does not exist; a failed write's space is
   simply reused by the next one (DEC-258).
 - **Checkpoint:** written into the checkpoint region that is not current, its header last (DEC-258).
+- **Working set:** named in the index header (DEC-269). A save names its set and the new milestone; a load or return
+  writes only a new index header (A / B, no record). A cut-off write leaves the previous header, and the working set it
+  names, current. The name travels with the card.
 
 ## The library file inside
 
@@ -102,6 +105,15 @@ first), so a cut-off one simply did not happen. At boot the records are replayed
 on the card and loads again once restored. An emptied one's blob stays in the log and its space is not reused (that
 would need compaction); its stage and set numbers are not reused either. Each of these uses one of the 4,096 index
 records.
+
+## The working set across a reboot (DEC-269)
+
+The working set (the set the board plays and saves into, and the stage it descends from) is named in the index header,
+in a block after the header's own CRC with a CRC of its own. A boot starts in the set it names, even when that set has
+no shown stage left (all trashed or emptied); the base stage is kept only while it is shown in that set. A card whose
+header names none (written by older firmware, or with a damaged block) falls back to the newest shown stage's set. A
+load or return names it once the library is free (`#ENGINE,working,begin|done|failed`); the boot reports
+`#ENGINE,working,boot,set=…,base=…,named=0|1`.
 
 ## Serial commands (testing)
 

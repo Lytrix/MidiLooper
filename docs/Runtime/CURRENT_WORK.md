@@ -37,6 +37,11 @@ opens the trash (bottom left), TRACK restores, `EMPTY TRASH` asks again; the bro
 working set untouched. Non-goals: compaction (reclaiming emptied space), automatic expiry. Card writes only on content
 the owner approves as disposable.
 
+**2026-11-09 — the working set across a reboot (owner: "renaming on reboot is very confusing"; reviewed: identity
+first, numbers permanent; DEC-269).** The library's index header names the working set and its base; a save names it,
+a load or return publishes the header alone; a boot starts in it (an empty working set included), else the old guess.
+Done (native + device). Non-goals: reusing set numbers, dropping leading zeros (owner's call), compaction.
+
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
 if a board-side USB stop recurs (read `prev_crumbs` c4–c6 after the PROGRAM press).

@@ -140,12 +140,34 @@ class Browser {
         high = records_[i].stageNumber;
     return static_cast<uint8_t>(high + 1);
   }
-  /// A set number no milestone uses, a deleted one included: one past the highest.
+  /// A set number no milestone uses, a deleted one included, nor the working set: one past the highest (numbers are
+  /// never reused, DEC-268).
   uint16_t newSetNumber() const {
-    uint16_t high = 0;
+    uint16_t high = workingSet_;
     for (uint16_t i = 0; i < count_; ++i)
       if (records_[i].set > high) high = records_[i].set;
     return static_cast<uint16_t>(high + 1);
+  }
+  /// The working set a boot starts in (DEC-269), once the records are added: the one the card's header names — kept
+  /// with no shown milestone, its base only while that is shown in it — else the newest shown milestone's set, no base.
+  struct Working {
+    uint16_t set = 1;
+    uint32_t base = 0;
+  };
+  Working bootWorking(const library::IndexHeader& h) const {
+    Working w;
+    if (h.hasWorking) {
+      w.set = h.workingSet;
+      const uint16_t b = h.workingBase != 0 ? find(h.workingBase) : kNone;
+      if (b != kNone && shown(b) && records_[b].set == w.set) w.base = h.workingBase;
+      return w;
+    }
+    for (uint16_t i = count_; i-- > 0;)
+      if (shown(i)) {
+        w.set = records_[i].set;
+        break;
+      }
+    return w;
   }
   /// The cache index of the milestone published as `sequence` (kNone: none).
   uint16_t find(uint32_t sequence) const {

@@ -15208,8 +15208,8 @@ them on the four buttons.
 - **The index in memory** (`ProductionBrowser`, 4,096 records in PSRAM, ~287 KB beside the engine's budgeted line):
   read at the library's opening in card order, so a row's record is its card index; each published milestone added.
   The serial `milestone` command numbers from it (no card scan).
-- **The working set** is the set of the newest milestone at boot until the store keeps it (DEC-259's limit); a save's
-  base moves only once the milestone is published.
+- **The working set** is the set of the newest milestone at boot until the store keeps it (DEC-259's limit; kept on
+  the card since DEC-269); a save's base moves only once the milestone is published.
 - **Requests** go through the slices' paths (save: `beginMilestone`; load / return: `beginLoad`, live at the switch
   point); success closes the browser with one line (`SAVED  SET 02  S02`, `LOADED …`, `RETURNED  SET 02  10:03`); a
   failure keeps the screen with what and why, and `NOTHING CHANGED` only when true (`SET NOT AS IT WAS` otherwise).
@@ -15480,3 +15480,39 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   4,472 passed.
 - **Verified on the card (2026-11-09):** a throwaway set saved, trashed, restored, trashed and emptied through the
   gestures; the replay after a reboot matched (`PROJECT_STATE`, image `ef99586e…`).
+
+## DEC-269 — The working set is named in the library's index header and survives a reboot (amends DEC-259, DEC-263)
+
+**Date:** 2026-11-09. **Owner:** "renaming on reboot is very confusing"; reviewed proposal: fix persistent working-set
+identity first, keep set numbers permanent, defer compaction.
+
+**Context:** the working set and its base were held for the boot only (DEC-259); a boot guessed the newest shown
+milestone's set. After a load, or after the working set's stages went to the trash, a reboot showed the same music under
+another set number (SET 05 came back as SET 03).
+
+**Decision:**
+- The index header carries the working set (number, base milestone) in bytes 24–37: a magic, the two fields and a CRC
+  of their own, after the header's CRC (bytes 0–23 unchanged). A header without it — older firmware, or the block
+  damaged — is still valid and names none. No format version change; nothing on the card is rewritten.
+- A save names its set and the new milestone in the header that publishes it, so the name changes only with a
+  published save. A load or return, once done, publishes a header alone (`LibraryWriter::beginWorking`: one write, no
+  index record, no sequence spent, a full index does not refuse it); a failed load (restored, lost or unchanged) names
+  nothing. An interrupted header write leaves the previous header — and working set — current (A / B).
+- Kept on the card, not in EEPROM: it belongs to that card's library, so another card brings its own (or none).
+- A boot starts in the named set even with no shown milestone (an empty working set stays itself); its base only while
+  that milestone is shown in that set. None named: the newest shown milestone's set, as before.
+- Set numbers stay permanent (DEC-268): the next new set is past every record's set and the working set.
+
+**Rejected:** EEPROM (cannot tell two cards apart without a library identity, and needs its own torn-write handling);
+reusing emptied set numbers (an old number would name different music).
+
+**Residual:** between a load finishing and its header being programmed (milliseconds), a power cut boots in the
+previous name. The 4,096-record limit and compaction are unchanged (EMPTY TRASH itself needs a free record).
+
+**Evidence:** native: header round-trip and damage, save names / mark carries, header-only publish (one write, count
+and sequences unchanged, full index accepted), a failed header write and a failed save keep the previous name, boot
+rule (named, empty working set, fallback, permanent numbering); five mutations killed; full native 4,479 passed. PSRAM
++16 B (the two header copies; `kPsramBudget` 6,822,024). Device (image `6a0a8504…`, boot `crash=0`): the first boot
+named none (fallback SET 03); a browser load of SET 02 T03 → `working,done,set=2,base=10`; reboot →
+`working,boot,set=2,base=10,named=1` and SETS shows SET 02 `FROM T03`; `return` → `working,done,set=3,base=0`; reboot
+→ `set=3,named=1`.

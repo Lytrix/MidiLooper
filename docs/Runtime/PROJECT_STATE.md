@@ -19,7 +19,11 @@ working row stays with no stages), 2× TRACK → TRACK restore (seq 16), trash a
 replays 18 records, SET 04 hidden, working set SET 03, trash empty, boot `crash=0`. Fixed what it showed: `1 ITEMS` /
 `1 STAGES` plurals and two detail lines running into the mosaic (`NO STAGES`; a set item's line is its stage count);
 rechecked with a second throwaway (SET 05: seq 19–21, saved, trashed, emptied; image `ef99586e…`). Library now 21
-records; SET 04 and 05 numbers are spent.
+records; SET 04 and 05 numbers are spent. Then **DEC-269 — the working set survives a reboot** (owner: renaming on
+reboot is confusing; reviewed: identity first, numbers permanent, compaction later): the index header names the working
+set (a CRC'd block after its own CRC; a save names it, a load / return publishes the header alone, a failed write keeps
+the previous). Native +7 (five mutations killed), full 4,479 passed; device `6a0a8504…`: load SET 02 T03 → reboot
+boots in SET 02 `FROM T03` (the old guess said SET 03); return → reboot SET 03.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

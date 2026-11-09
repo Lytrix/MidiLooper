@@ -353,6 +353,89 @@ void test_a_failed_deletion_publishes_nothing() {
   TEST_ASSERT_EQUAL_UINT32(before, gCard.writes);
 }
 
+/// DEC-269: a save names its set as the working one, descending from it; a trash record carries it unchanged.
+void test_a_save_names_the_working_set_and_a_mark_keeps_it() {
+  buildSet();
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
+                    gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  LibWriter a;
+  TEST_ASSERT_TRUE(a.mount(gCard));
+  TEST_ASSERT_TRUE(a.header().hasWorking);
+  TEST_ASSERT_EQUAL_UINT16(2, a.header().workingSet);
+  TEST_ASSERT_EQUAL_UINT32(1, a.header().workingBase);
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMark(kTrash, 2, 0, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  LibWriter b;
+  TEST_ASSERT_TRUE(b.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT16(2, b.header().count);
+  TEST_ASSERT_TRUE(b.header().hasWorking);  // its set now has no shown stage: still the working one
+  TEST_ASSERT_EQUAL_UINT16(2, b.header().workingSet);
+  TEST_ASSERT_EQUAL_UINT32(1, b.header().workingBase);
+}
+
+/// DEC-269: a load or return publishes the working set as the index header alone — one write, no record, no sequence
+/// spent — and a full index does not refuse it.
+void test_a_working_change_publishes_only_the_header() {
+  buildSet();
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
+                    gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  const IndexHeader was = gW.header();
+  const uint32_t before = gCard.writes;
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginWorking(5, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Busy, gW.beginWorking(6, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  TEST_ASSERT_TRUE(gW.workingJob());
+  TEST_ASSERT_EQUAL_UINT32(1, gCard.writes - before);
+  TEST_ASSERT_EQUAL_UINT32(0, gCard.outOfOrder);
+  LibWriter fresh;
+  TEST_ASSERT_TRUE(fresh.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT32(was.sequence + 1, fresh.header().sequence);
+  TEST_ASSERT_EQUAL_UINT16(was.count, fresh.header().count);
+  TEST_ASSERT_EQUAL_UINT32(was.appendSector, fresh.header().appendSector);
+  TEST_ASSERT_EQUAL_UINT32(was.nextSequence, fresh.header().nextSequence);
+  TEST_ASSERT_TRUE(fresh.header().hasWorking);
+  TEST_ASSERT_EQUAL_UINT16(5, fresh.header().workingSet);
+  TEST_ASSERT_EQUAL_UINT32(0, fresh.header().workingBase);
+  IndexHeader full = fresh.header();  // no record needed: a full index still takes it
+  full.sequence += 1;
+  full.count = static_cast<uint16_t>(kIndexRecords);
+  uint8_t sector[kSector];
+  encode(full, sector);
+  gCard.writeLibrarySector(0, sector);
+  gCard.writeLibrarySector(1, sector);
+  gCard.libraryReady(FakeCard::kIdle);
+  LibWriter booted;
+  TEST_ASSERT_TRUE(booted.mount(gCard));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, booted.beginWorking(2, 1));
+}
+
+/// DEC-269: a working-set change, or a save, whose write fails leaves the previous header and working set current.
+void test_a_failed_working_change_keeps_the_previous_one() {
+  buildSet();
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
+                    gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  gCard.failAfter = gCard.writes;  // the header write tears its sector
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginWorking(7, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Failed, runToEnd());
+  LibWriter a;
+  TEST_ASSERT_TRUE(a.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT16(2, a.header().workingSet);
+  TEST_ASSERT_EQUAL_UINT32(1, a.header().workingBase);
+  gCard.failAfter = gCard.writes + 3;  // a save that fails in its blob
+  LibWriter::Milestone m = milestone(Stage::Take, 1);
+  m.set = 9;
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, m, gScratch));
+  TEST_ASSERT_EQUAL(LibWriter::Status::Failed, runToEnd());
+  gCard.failAfter = 0xFFFFFFFFu;
+  LibWriter b;
+  TEST_ASSERT_TRUE(b.mount(gCard));
+  TEST_ASSERT_EQUAL_UINT16(2, b.header().workingSet);
+  TEST_ASSERT_EQUAL_UINT32(1, b.header().workingBase);
+}
+
 void test_a_save_that_does_not_fit_writes_nothing() {
   buildSet();
   IndexHeader full;
@@ -432,6 +515,9 @@ int main(int, char**) {
   RUN_TEST(test_a_record_written_before_its_header_is_not_published);
   RUN_TEST(test_a_deletion_publishes_a_tombstone_and_rewrites_nothing);
   RUN_TEST(test_a_failed_deletion_publishes_nothing);
+  RUN_TEST(test_a_save_names_the_working_set_and_a_mark_keeps_it);
+  RUN_TEST(test_a_working_change_publishes_only_the_header);
+  RUN_TEST(test_a_failed_working_change_keeps_the_previous_one);
   RUN_TEST(test_a_save_that_does_not_fit_writes_nothing);
   RUN_TEST(test_the_checkpoint_is_replaced_transactionally);
   RUN_TEST(test_no_heap);
