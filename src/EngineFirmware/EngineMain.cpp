@@ -369,7 +369,7 @@ ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
 // The sets browser (slice 3) and the library's index in memory (4,096 records, PSRAM). `gBrowserOp`: the request it
 // made that is under way (its end answers the browser).
 EXTMEM ProductionBrowser gBrowser;
-enum class BrowserOp : uint8_t { None, Save, Load, Return, Delete };
+enum class BrowserOp : uint8_t { None, Save, Load, Return, Mark };
 BrowserOp gBrowserOp = BrowserOp::None;
 bool gBrowserReady = false;
 // Slice 4: the counters at the base milestone (or the boot) — what happened since is the save suggestion's evidence.
@@ -468,9 +468,11 @@ void listMilestones() {
     }
     char stamp[24];
     wallclock::formatStamp(r.wallTime, gTzOffset, stamp, sizeof stamp);
-    if (r.kind == library::kDeletion) {
-      Serial.printf("#ENGINE,ms,i=%u,deletes=SET %02u,target=%lu,seq=%lu,time=%s\n", i, r.set,
-                    static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence), stamp);
+    if (r.kind != library::kMilestone) {  // DEC-268
+      static const char* const kKinds[] = {"", "trash", "restore", "empty-trash"};
+      Serial.printf("#ENGINE,ms,i=%u,%s=SET %02u,target=%lu,seq=%lu,in_trash=%u,time=%s\n", i, kKinds[r.kind], r.set,
+                    static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence),
+                    gBrowser.inTrash(i) ? 1u : 0u, stamp);
       continue;
     }
     Serial.printf("#ENGINE,ms,i=%u,hidden=%u,id=SET %02u %c%02u,seq=%lu,parent=%lu,time=%s,tempo=%u.%u,loops=%u,shortest=%lu,"
@@ -504,17 +506,18 @@ const char* beginMilestone(library::Stage stage, uint16_t set, uint8_t number, u
                 static_cast<unsigned long>(l.published().logSectors));
   return nullptr;
 }
-/// Starts deleting stage `index` (the browser's record, card order) or, kNone, every stage of `set` (DEC-268): a
-/// tombstone in the library; the working set and what plays are not touched. nullptr, or why not (nothing written).
-const char* beginDelete(uint16_t set, uint16_t index, uint32_t nowUs) {
+/// Starts a trash-side record (DEC-268): `kind` library::kTrash with `index` a stage (the browser's record, card order)
+/// or kNone for every stage of `set`; kRestore with `index` the trash record; kEmptyTrash. The working set and what
+/// plays are not touched. nullptr, or why not (nothing written).
+const char* beginMark(uint8_t kind, uint16_t set, uint16_t index, uint32_t nowUs) {
   if (!gEngine.library().mounted()) return "LIBRARY NOT READY";
   if (gEngine.libraryBusy()) return "BUSY";
   const uint32_t target = index == ProductionBrowser::kNone ? 0 : gBrowser.record(index).sequence;
-  const ProductionLibrary::Result r = gEngine.deleteMilestones(set, target, wallTime());
+  const ProductionLibrary::Result r = gEngine.markLibrary(kind, set, target, wallTime());
   if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
   gLibraryCheckpoint = false;
   gLibraryStartUs = nowUs;
-  Serial.printf("#ENGINE,delete,begin,set=%u,target=%lu\n", set, static_cast<unsigned long>(target));
+  Serial.printf("#ENGINE,mark,begin,kind=%u,set=%u,target=%lu\n", kind, set, static_cast<unsigned long>(target));
   return nullptr;
 }
 /// milestone <S|B|E|T|A|F> [set]: the whole set as it is now, numbered next in its stage (the index in memory).
@@ -717,9 +720,19 @@ void serviceBrowser(uint32_t nowUs) {
       gBrowserOp = BrowserOp::Load;
       if ((why = beginLoad(true, q.record, nowUs)) != nullptr) gBrowser.failed("LOAD FAILED", why);
       break;
-    case ProductionBrowser::Action::Delete:
-      gBrowserOp = BrowserOp::Delete;
-      if ((why = beginDelete(q.set, q.record, nowUs)) != nullptr) gBrowser.failed("DELETE FAILED", why);
+    case ProductionBrowser::Action::Trash:
+      gBrowserOp = BrowserOp::Mark;
+      if ((why = beginMark(library::kTrash, q.set, q.record, nowUs)) != nullptr) gBrowser.failed("TRASH FAILED", why);
+      break;
+    case ProductionBrowser::Action::Restore:
+      gBrowserOp = BrowserOp::Mark;
+      if ((why = beginMark(library::kRestore, q.set, q.record, nowUs)) != nullptr)
+        gBrowser.failed("RESTORE FAILED", why);
+      break;
+    case ProductionBrowser::Action::Empty:
+      gBrowserOp = BrowserOp::Mark;
+      if ((why = beginMark(library::kEmptyTrash, 0, ProductionBrowser::kNone, nowUs)) != nullptr)
+        gBrowser.failed("EMPTY FAILED", why);
       break;
     default:
       break;
@@ -737,25 +750,36 @@ void serviceLibrary() {
   const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
   if (gLibraryCheckpoint) {
     Serial.printf("#ENGINE,checkpoint,%s,ms=%lu\n", ok ? "done" : "failed", ms);
-  } else if (gEngine.library().published().kind == library::kDeletion) {  // DEC-268: the working set is untouched
+  } else if (gEngine.library().published().kind != library::kMilestone) {  // DEC-268: the working set untouched
     const library::Record& r = gEngine.library().published();
-    Serial.printf("#ENGINE,delete,%s,set=%u,target=%lu,seq=%lu,ms=%lu\n", ok ? "done" : "failed", r.set,
+    Serial.printf("#ENGINE,mark,%s,kind=%u,set=%u,target=%lu,seq=%lu,ms=%lu\n", ok ? "done" : "failed", r.kind, r.set,
                   static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence), ms);
+    char line[40];
+    if (r.kind == library::kEmptyTrash) {
+      snprintf(line, sizeof line, "TRASH EMPTIED");
+    } else {
+      // The stage named (a trash record's milestone, or a restored item's), else the whole set.
+      uint32_t stage = r.parent;
+      if (r.kind == library::kRestore) {
+        const uint16_t t = gBrowser.find(r.parent);
+        stage = t != ProductionBrowser::kNone ? gBrowser.record(t).parent : 0;
+      }
+      const uint16_t m = stage != 0 ? gBrowser.find(stage) : ProductionBrowser::kNone;
+      char id[8] = "";
+      if (m != ProductionBrowser::kNone)
+        snprintf(id, sizeof id, "  %c%02u", library::stageLetter(gBrowser.record(m).stage), gBrowser.record(m).stageNumber);
+      snprintf(line, sizeof line, "%s  SET %02u%s", r.kind == library::kTrash ? "IN TRASH" : "RESTORED", r.set, id);
+    }
     if (ok) gBrowser.add(r);
-    if (gBrowserOp == BrowserOp::Delete) {
+    if (gBrowserOp == BrowserOp::Mark) {
       if (ok) {
-        char line[40];
-        const uint16_t i = r.parent == 0 ? ProductionBrowser::kNone : gBrowser.find(r.parent);
-        if (i == ProductionBrowser::kNone) {
-          snprintf(line, sizeof line, "DELETED  SET %02u", r.set);
-        } else {
-          const library::Record& m = gBrowser.record(i);
-          snprintf(line, sizeof line, "DELETED  SET %02u  %c%02u", r.set, library::stageLetter(m.stage), m.stageNumber);
-        }
-        gBrowser.deleted();
+        gBrowser.marked();
         gDisplay.toast(line, millis());
       } else {
-        gBrowser.failed("DELETE FAILED", "CARD WRITE ERROR");
+        gBrowser.failed(r.kind == library::kTrash     ? "TRASH FAILED"
+                        : r.kind == library::kRestore ? "RESTORE FAILED"
+                                                      : "EMPTY FAILED",
+                        "CARD WRITE ERROR");
       }
       gBrowserOp = BrowserOp::None;
     }
@@ -874,16 +898,24 @@ void command(char* line, uint32_t nowUs) {
     saveMilestone(arg, nowUs);
   } else if (std::strcmp(verb, "milestones") == 0) {
     listMilestones();
-  } else if (std::strcmp(verb, "delete") == 0) {  // delete <set> [index]: the set's stages, or stage `index` (DEC-268)
+  } else if (std::strcmp(verb, "trash") == 0) {  // trash <set> [index]: the set's stages, or stage `index` (DEC-268)
     const uint16_t set = static_cast<uint16_t>(arg != nullptr ? std::atoi(arg) : 0);
     const char* at = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
     const uint16_t index = at != nullptr ? static_cast<uint16_t>(std::atoi(at + 1)) : ProductionBrowser::kNone;
     const char* why = set == 0 ? "WHICH" : nullptr;
     if (why == nullptr && index != ProductionBrowser::kNone &&
-        (index >= gBrowser.count() || gBrowser.hidden(index) || gBrowser.record(index).set != set))
+        (gBrowser.hidden(index) || gBrowser.record(index).set != set))
       why = "NO SUCH STAGE";
-    if (why == nullptr) why = beginDelete(set, index, nowUs);
-    if (why != nullptr) Serial.printf("#ENGINE,delete,refused,why=%s\n", why);
+    if (why == nullptr) why = beginMark(library::kTrash, set, index, nowUs);
+    if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
+  } else if (std::strcmp(verb, "restore") == 0) {  // restore <index>: trash record `index` back out
+    const uint16_t index = static_cast<uint16_t>(arg != nullptr ? std::atoi(arg) : ProductionBrowser::kNone);
+    const char* why = arg == nullptr || !gBrowser.inTrash(index) ? "NOT IN THE TRASH" : nullptr;
+    if (why == nullptr) why = beginMark(library::kRestore, gBrowser.record(index).set, index, nowUs);
+    if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
+  } else if (std::strcmp(verb, "empty-trash") == 0) {
+    const char* why = beginMark(library::kEmptyTrash, 0, ProductionBrowser::kNone, nowUs);
+    if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
   } else if (std::strcmp(verb, "checkpoint") == 0) {
     saveCheckpoint(nowUs);
   } else if (std::strcmp(verb, "switch-at") == 0) {  // switch-at bar|loop: where a live load switches (DEC-260)

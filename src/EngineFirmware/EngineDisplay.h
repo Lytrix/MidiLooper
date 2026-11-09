@@ -387,9 +387,27 @@ class EngineDisplay {
     oled_.gfx.draw_rect_filled(fb(), 0, 57, 255, 63, 0);
     label(s, 2, kHintY, 9);
   }
+  /// The trash at the bottom left (DEC-268: a double TRACK opens it), a can and its items; the hint follows it.
+  int16_t drawTrashCorner(const Browser& b, bool open) {
+    const uint8_t v = open ? 15 : b.itemCount() != 0 ? 11 : 6;
+    const int16_t y = kHintY;
+    hline(1, 5, y, v);                                   // the lid
+    for (int16_t yy = static_cast<int16_t>(y + 1); yy <= y + 4; ++yy) {  // the can, ribbed
+      px(2, yy, v);
+      px(4, yy, v);
+    }
+    hline(2, 4, static_cast<int16_t>(y + 4), v);
+    char t[12];
+    if (b.itemCount() != 0) snprintf(t, sizeof t, "TRASH %u", b.itemCount());
+    else snprintf(t, sizeof t, "TRASH");
+    return static_cast<int16_t>(label(t, 9, y, v) + 8);
+  }
   /// The record a row stands for (its date on the spine), or kNone.
   static uint16_t recordOf(const Row& r) {
-    return r.kind == RowKind::Milestone || r.kind == RowKind::Set || r.kind == RowKind::Working ? r.record : Browser::kNone;
+    return r.kind == RowKind::Milestone || r.kind == RowKind::Set || r.kind == RowKind::Working ||
+                   r.kind == RowKind::Item
+               ? r.record
+               : Browser::kNone;
   }
   ContentEngine::wallclock::Local when(const Record& m) const {
     return ContentEngine::wallclock::local(m.wallTime, browserInfo_.tz);
@@ -400,11 +418,10 @@ class EngineDisplay {
       drawSavePopup(b);
       return;
     }
-    const bool deleting = b.view() == Browser::View::Delete;
-    const bool inSet = b.view() == Browser::View::Set ||
-                       ((b.view() == Browser::View::Failed || deleting) && b.listView() == Browser::View::Set);
+    const bool confirming = b.view() == Browser::View::Confirm;
     char title[16];
-    if (inSet) snprintf(title, sizeof title, "SET %02u", b.openSetNumber());
+    if (b.shownView() == Browser::View::Set) snprintf(title, sizeof title, "SET %02u", b.openSetNumber());
+    else if (b.shownView() == Browser::View::Bin) snprintf(title, sizeof title, "TRASH");
     else snprintf(title, sizeof title, "SETS");
     window(kWX0, kWY0, kWX1, kWY1, title);
     for (int16_t y = kWY0 + 10; y < kWY1; ++y) px(kDiv, y, kRuleLevel);
@@ -420,36 +437,48 @@ class EngineDisplay {
     } else {
       drawDetail(b, b.row(b.selected()), h, sizeof h);
     }
-    hint(h);
-    if (deleting) drawDeletePopup(b);
+    hint("");  // the row cleared, the trash at its left, the hint after it
+    label(h, drawTrashCorner(b, b.shownView() == Browser::View::Bin), kHintY, 9);
+    if (confirming) drawConfirm(b);
   }
-  /// DEC-268: the target exactly (`DELETE SET 01?` with ALL SAVED STAGES, or `DELETE SET 01 S01?` with its stage) and
-  /// when it was saved, over the list; YES and CANCEL, the selected one inverted.
-  void drawDeletePopup(const Browser& b) {
+  /// DEC-268: the target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
+  /// its stage) and when it was saved — or `EMPTY THE TRASH?`, for good — over the list; YES and CANCEL, the selected
+  /// one inverted.
+  void drawConfirm(const Browser& b) {
     constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
-    window(x0, y0, x1, y1, "DELETE");
+    const bool empty = b.confirmKind() == Browser::Confirm::Empty;
+    window(x0, y0, x1, y1, empty ? "EMPTY TRASH" : "TRASH");
     char q[32], line[32], stamp[24];
-    const uint16_t rec = b.deleteRecord() != Browser::kNone ? b.deleteRecord() : b.latestOf(b.deleteSet());
-    if (b.deleteRecord() != Browser::kNone) {
+    uint16_t rec = Browser::kNone;
+    if (empty) {
+      uint16_t stages = 0;
+      for (uint16_t k = 0; k < b.itemCount(); ++k) stages = static_cast<uint16_t>(stages + b.itemSize(b.item(k)));
+      snprintf(q, sizeof q, "EMPTY THE TRASH?");
+      snprintf(line, sizeof line, "%u ITEMS, %u STAGES", b.itemCount(), stages);
+    } else if (b.confirmRecord() != Browser::kNone) {
+      rec = b.confirmRecord();
       char id[8];
       idText(b.record(rec), id, sizeof id);
-      snprintf(q, sizeof q, "DELETE SET %02u %s?", b.deleteSet(), id);
+      snprintf(q, sizeof q, "MOVE SET %02u %s TO TRASH?", b.confirmSet(), id);
       snprintf(line, sizeof line, "%s", ContentEngine::library::stageName(b.record(rec).stage));
     } else {
-      snprintf(q, sizeof q, "DELETE SET %02u?", b.deleteSet());
-      snprintf(line, sizeof line, "ALL SAVED STAGES (%u)", b.milestonesIn(b.deleteSet()));
+      rec = b.latestOf(b.confirmSet());
+      snprintf(q, sizeof q, "MOVE SET %02u TO TRASH?", b.confirmSet());
+      snprintf(line, sizeof line, "ALL SAVED STAGES (%u)", b.milestonesIn(b.confirmSet()));
     }
     label(q, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 13), 15);
     label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 22), 11);
-    if (rec != Browser::kNone) {
+    if (empty) {
+      label("REMOVED FOR GOOD", static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
+    } else if (rec != Browser::kNone) {
       ContentEngine::wallclock::formatStamp(b.record(rec).wallTime, browserInfo_.tz, stamp, sizeof stamp);
-      snprintf(line, sizeof line, b.deleteRecord() != Browser::kNone ? "SAVED %s" : "LATEST %s", stamp);
+      snprintf(line, sizeof line, b.confirmRecord() != Browser::kNone ? "SAVED %s" : "LATEST %s", stamp);
       label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
     }
     const char* const kButtons[2] = {"YES", "CANCEL"};
     for (uint8_t k = 0; k < 2; ++k) {
       const int16_t bx = static_cast<int16_t>(k == 0 ? x0 + 24 : x1 - 50), bw = 30;
-      const bool on = b.deleteSelected() == k;
+      const bool on = b.confirmSelected() == k;
       if (on) oled_.gfx.draw_rect_filled(fb(), bx, kButtonY - 2, static_cast<int16_t>(bx + bw), kButtonY + 6, 13);
       const int16_t tw = static_cast<int16_t>(strlen(kButtons[k]) * 4 - 1);
       label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), kButtonY, on ? 0 : 10);
@@ -488,7 +517,8 @@ class EngineDisplay {
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
     if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
-      const char* what = b.row(0).kind == RowKind::Back ? "LOAD STAGE" : "LOAD SET";
+      const Browser::View list = b.shownView();
+      const char* what = list == Browser::View::Bin ? "RESTORE" : list == Browser::View::Set ? "LOAD STAGE" : "LOAD SET";
       label(what, kYearX, y, 7);  // a heading, dimmer than any row
       hline(static_cast<int16_t>(kYearX + strlen(what) * 4 + 3), kDiv - 4, static_cast<int16_t>(y + 2), 6);
       return;
@@ -497,6 +527,7 @@ class EngineDisplay {
     const uint8_t v = on ? 15 : 10;
     switch (r.kind) {
       case RowKind::Close: label("< CLOSE", kYearX, y, on ? 15 : 11); return;
+      case RowKind::Empty: label("EMPTY TRASH", kYearX, y, on ? 15 : b.itemCount() != 0 ? 11 : kDimText); return;
       case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
       default: break;
@@ -544,8 +575,16 @@ class EngineDisplay {
       oled_.gfx.draw_rect_filled(fb(), kSpineX - 1, cy - 1, kSpineX + 1, cy + 1, 10);
     }
     char text[16], note[12] = {};
-    if (r.kind == RowKind::Milestone) idText(b.record(rec), text, sizeof text);
-    else snprintf(text, sizeof text, "SET %02u", r.set);
+    if (r.kind == RowKind::Milestone) {
+      idText(b.record(rec), text, sizeof text);
+    } else if (r.kind == RowKind::Item && b.record(rec).parent != 0) {  // a stage in the trash: its set and id
+      const uint16_t m = b.find(b.record(rec).parent);
+      char id[8] = "?";
+      if (m != Browser::kNone) idText(b.record(m), id, sizeof id);
+      snprintf(text, sizeof text, "SET %02u %s", r.set, id);
+    } else {
+      snprintf(text, sizeof text, "SET %02u", r.set);
+    }
     if (rec != Browser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
       ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
       if (strcmp(note, "--:--") == 0) note[0] = 0;
@@ -596,9 +635,30 @@ class EngineDisplay {
       case RowKind::Divider:
         h[0] = 0;
         return;
+      case RowKind::Empty: {  // DEC-268
+        label("EMPTY", kDetailX, kMosaicY, 15, 2);
+        snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
+        label(b.itemCount() != 0 ? a : "THE TRASH IS EMPTY", kDetailX, 30, 11);
+        if (b.itemCount() != 0) label("REMOVED FOR GOOD", kDetailX, 38, 9);
+        if (b.itemCount() != 0) snprintf(h, n, "TRACK: EMPTY TRASH");
+        else h[0] = 0;
+        return;
+      }
+      case RowKind::Item: {  // the item's newest stage, its set, when it went to the trash
+        const auto& t = b.record(r.record);
+        const uint16_t newest = b.itemNewest(r.record);
+        char at[8];
+        ContentEngine::wallclock::formatClock(t.wallTime, browserInfo_.tz, at, sizeof at);
+        if (t.parent == 0) snprintf(a, sizeof a, "SET %02u  %u STAGES", r.set, b.itemSize(r.record));
+        else snprintf(a, sizeof a, "SET %02u", r.set);
+        snprintf(c, sizeof c, "TRASHED %s", at);
+        if (newest != Browser::kNone) drawMilestone(b.record(newest), a, c);
+        snprintf(h, n, t.parent == 0 ? "TRACK: RESTORE SET %02u" : "TRACK: RESTORE", r.set);
+        return;
+      }
       case RowKind::Working:
       case RowKind::Set:
-        snprintf(h, n, "TRACK: OPEN SET %02u  HOLD: DELETE", r.set);
+        snprintf(h, n, "TRACK: OPEN SET %02u  HOLD: TRASH", r.set);
         if (r.record == Browser::kNone) {
           snprintf(h, n, "TRACK: OPEN SET %02u", r.set);
           snprintf(a, sizeof a, "SET %02u", r.set);
@@ -620,7 +680,7 @@ class EngineDisplay {
         }
         drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
         idText(m, id, sizeof id);
-        snprintf(h, n, "TRACK: LOAD %s  HOLD: DELETE", id);
+        snprintf(h, n, "TRACK: LOAD %s  HOLD: TRASH", id);
         return;
       }
     }

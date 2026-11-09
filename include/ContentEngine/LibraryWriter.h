@@ -12,8 +12,8 @@
 //   (header, each slot's set file from the snapshot, sector-aligned) at the log's append point, programmed; then its
 //   index record, programmed; then the index header into the sector that is not current, programmed — only then is the
 //   milestone published. A checkpoint: the blob into the region that is not current, programmed, then its header,
-//   programmed. A deletion (DEC-268): a tombstone record, programmed, then the index header — no blob, nothing older
-//   rewritten. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
+//   programmed. A trash, restore or empty-trash record (DEC-268): the record, programmed, then the index header — no
+//   blob, nothing older rewritten. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
 // No allocation.
 
 #pragma once
@@ -211,9 +211,10 @@ class LibraryWriter {
     start(library::kLogBase + header_.appendSector, record_.sequence, m.tempoTenths, m.surface);
     return Result::Ok;
   }
-  /// Starts publishing a deletion (DEC-268): `target` the milestone's sequence, or 0 for every milestone of `set` so far.
-  /// Only a record and the header are written; refused by name when the index is full.
-  Result beginDeletion(uint16_t set, uint32_t target, uint32_t wallTime) {
+  /// Starts publishing a trash-side record (DEC-268): `kind` library::kTrash (`target` a milestone's sequence, or 0 for
+  /// `set`'s shown milestones so far), kRestore (`target` the trash record's sequence) or kEmptyTrash. Only the record
+  /// and the header are written; refused by name when the index is full.
+  Result beginMark(uint8_t kind, uint16_t set, uint32_t target, uint32_t wallTime) {
     if (!mounted_) return Result::NotMounted;
     if (busy()) return Result::Busy;
     if (header_.count >= library::kIndexRecords) return Result::IndexFull;
@@ -221,7 +222,7 @@ class LibraryWriter {
     record_ = library::Record{};
     record_.sequence = header_.nextSequence;
     record_.set = set;
-    record_.kind = library::kDeletion;
+    record_.kind = kind;
     record_.parent = target;
     record_.wallTime = wallTime;
     phase_ = Phase::Record;
@@ -409,7 +410,7 @@ class LibraryWriter {
     snap_.release(*manifests_, *runs_);
     return r;
   }
-  void releaseSnapshot() {  // a deletion captured nothing
+  void releaseSnapshot() {  // a trash-side record captured nothing
     if (snap_.held()) snap_.release(*manifests_, *runs_);
   }
   Status fail() {

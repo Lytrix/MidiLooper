@@ -449,8 +449,9 @@ class Surface {
       browser_->hold();
       return;
     }
-    if (b == kTrackSwitch) {  // once per gesture: a double press must not confirm, then act on the row under it
-      browser_->press();
+    if (b == kTrackSwitch) {  // once per gesture (a double press must not confirm, then act on the row under it)
+      if (p == Press::Short) browser_->press();
+      else if (p == Press::Double) browser_->openTrash();  // DEC-268: the trash, and back
       return;
     }
     for (uint8_t i = 0; i < times; ++i) {

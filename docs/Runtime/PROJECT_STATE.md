@@ -1,10 +1,12 @@
-**2026-11-09 — Deleting sets and stages (DEC-268).** A deletion is a tombstone record published as a milestone's
-record and header are — nothing older rewritten, a deleted blob's space not reclaimed, numbers not reused. `< CLOSE` is
-back on top; HOLD TRACK on a set or stage opens `DELETE SET 03?` / `DELETE SET 02 T03?` with what and when, `YES` /
-`CANCEL` (CANCEL selected); the browser stays open on the nearest row; the working set and playback untouched. In the
-browser TRACK now acts once per gesture. Host: browser 25, writer +2, surface updated; five mutations killed; full native
-4,467 passed. Device (image `4cba8814…`, boot clean): both popups shown and cancelled, library unchanged (11 records).
-Still owed: a deletion on the card, on content the owner approves as disposable.
+**2026-11-09 — The trash (DEC-268).** Owner: deletion as an Atari-style trash. HOLD TRACK on a set or stage asks
+`MOVE SET 03 TO TRASH?` / `MOVE SET 02 T03 TO TRASH?` (what and when, CANCEL selected); a double TRACK opens the trash
+(bottom left: a can and `TRASH n`) — `< SETS`, `EMPTY TRASH` (asks again, for good), `RESTORE` and the items; TRACK
+restores at once, a stage bringing its set back. On the card: trash / restore / empty-trash records published as a
+milestone's record and header are, nothing rewritten; emptied space not reclaimed (compaction would be later); numbers
+never reused. `< CLOSE` back on top; the working set and playback untouched; a TRACK gesture acts once in the browser.
+Host: browser 28, writer +2, loader and surface updated; seven mutations killed; full native 4,471 passed. Device
+(image `9f7071db…`, boot clean): the confirmations, the trash and `< CLOSE` shown, each cancelled, library unchanged.
+Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
 performance screen; `CLOSE`, `SAVE`, then `LOAD` and the sets; time down the list (sticky year / month, the day once,

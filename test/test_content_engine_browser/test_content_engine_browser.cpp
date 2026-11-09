@@ -220,98 +220,193 @@ void test_hold_closes_the_save_popup_and_asks_nothing() {
   TEST_ASSERT_FALSE(gB.takeRequest(r));
 }
 
-// ---- Deleting (DEC-268) ---------------------------------------------------------------------------------------------
-/// A tombstone as the library publishes it: its own sequence, the set, the target (0: the whole set so far).
-static void tombstone(uint16_t set, uint32_t target) {
+// ---- The trash (DEC-268) --------------------------------------------------------------------------------------------
+/// A trash-side record as the library publishes it: its own sequence, the set, the target.
+static uint32_t mark(uint8_t kind, uint16_t set, uint32_t target) {
   Record r{};
   r.sequence = ++gSeq;
   r.set = set;
-  r.kind = kDeletion;
+  r.kind = kind;
   r.parent = target;
   TEST_ASSERT_TRUE(gB.add(r));
+  return r.sequence;
+}
+/// TRACK on YES of the confirmation shown; the request it makes.
+static B::Request confirmYes() {
+  gB.up();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  return r;
 }
 
-/// HOLD TRACK on a set opens its popup with CANCEL selected; TRACK on CANCEL, or HOLD TRACK, changes nothing.
-void test_hold_on_a_set_opens_its_delete_popup_and_cancel_changes_nothing() {
+/// HOLD TRACK on a set asks to move it to the trash, CANCEL selected; TRACK on CANCEL, or HOLD TRACK, changes nothing.
+void test_hold_on_a_set_asks_to_trash_it_and_cancel_changes_nothing() {
   gB.open();
   for (int i = 0; i < 3; ++i) gB.down();  // SET 07
   gB.hold();
-  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(7, gB.deleteSet());
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.deleteRecord());
-  TEST_ASSERT_EQUAL_UINT8(1, gB.deleteSelected());  // CANCEL
+  TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());
+  TEST_ASSERT_EQUAL(B::Confirm::ToTrash, gB.confirmKind());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.confirmSet());
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.confirmRecord());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.confirmSelected());  // CANCEL
   TEST_ASSERT_EQUAL(B::RowKind::Set, kind(gB.selected()));  // the list under it
   gB.press();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   B::Request r;
   TEST_ASSERT_FALSE(gB.takeRequest(r));
   gB.hold();
-  gB.up();  // YES
+  gB.up();    // YES
   gB.hold();  // cancels all the same
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   TEST_ASSERT_FALSE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
 }
 
-/// YES asks for the set's deletion; once published the set is gone, the nearest set selected; numbers are not reused.
-void test_deleting_a_set_hides_it_and_selects_the_nearest_set() {
+/// A set to the trash: gone from the sets (the nearest selected), one item in the trash with its stages together.
+void test_a_trashed_set_leaves_the_sets_for_the_trash() {
   gB.open();
   for (int i = 0; i < 2; ++i) gB.down();  // SET 03
   gB.hold();
-  gB.up();
-  gB.press();
-  B::Request r;
-  TEST_ASSERT_TRUE(gB.takeRequest(r));
-  TEST_ASSERT_EQUAL(B::Action::Delete, r.action);
+  const B::Request r = confirmYes();
+  TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
   TEST_ASSERT_EQUAL_UINT16(3, r.set);
   TEST_ASSERT_EQUAL_UINT16(B::kNone, r.record);
-  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());  // until the deletion ends
-  tombstone(3, 0);
-  gB.deleted();
+  TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());  // until it is published
+  mark(kTrash, 3, 0);
+  gB.marked();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);  // SET 07 moved up into its place
   TEST_ASSERT_TRUE(gB.hidden(5));              // F01
+  TEST_ASSERT_EQUAL_UINT16(1, gB.itemCount());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.item(0));
+  TEST_ASSERT_EQUAL_UINT16(1, gB.itemSize(6));
+  TEST_ASSERT_EQUAL_UINT16(5, gB.itemNewest(6));
   TEST_ASSERT_EQUAL_UINT16(8, gB.newSetNumber());  // 03 is not reused, nor 07
-  TEST_ASSERT_EQUAL_UINT16(0, gB.milestonesIn(3));
 }
 
-/// A stage: the popup names it; after it the set keeps its other stages, the next one selected; its number not reused.
-void test_deleting_a_stage_keeps_the_set_and_selects_the_next_stage() {
+/// A double TRACK opens the trash (`< SETS`, EMPTY TRASH, the RESTORE divider, the items newest first) and closes it.
+void test_the_trash_lists_its_items_newest_first() {
+  mark(kTrash, 7, gB.record(3).sequence);  // SET 07 T02
+  mark(kTrash, 3, 0);                      // SET 03
+  gB.open();
+  gB.openTrash();
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL(B::RowKind::Back, kind(0));
+  TEST_ASSERT_EQUAL(B::RowKind::Empty, kind(1));
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));
+  TEST_ASSERT_EQUAL(B::RowKind::Item, kind(3));
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).set);  // the newest item first
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
+  gB.hold();  // nothing to trash in the trash
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+  gB.up();
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());  // over the divider
+  gB.openTrash();
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  gB.openTrash();
+  gB.up();
+  gB.up();
+  gB.press();  // < SETS
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
+}
+
+/// TRACK on an item restores it at once; a stage restored brings its set back; the trash stays, the next item selected.
+void test_restoring_a_stage_brings_its_set_back() {
+  const uint32_t t = mark(kTrash, 3, gB.record(5).sequence);  // SET 03 F01, its only stage: the set is gone
+  gB.open();
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  gB.openTrash();
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Restore, r.action);
+  TEST_ASSERT_EQUAL_UINT16(6, r.record);
+  mark(kRestore, 3, t);
+  gB.marked();
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(0, gB.itemCount());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());  // EMPTY TRASH, the nearest row left
+  TEST_ASSERT_FALSE(gB.hidden(5));
+  gB.openTrash();
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).set);
+}
+
+/// A stage trashed on its own, then its set: two items; restoring the set leaves the stage in the trash.
+void test_a_set_item_takes_only_the_stages_still_shown() {
+  const uint32_t stage = mark(kTrash, 7, gB.record(3).sequence);  // T02
+  const uint32_t set = mark(kTrash, 7, 0);                         // T01, the rest
+  TEST_ASSERT_EQUAL_UINT16(2, gB.itemCount());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.itemSize(7));
+  TEST_ASSERT_EQUAL_UINT16(1, gB.itemSize(6));
+  mark(kRestore, 7, set);
+  TEST_ASSERT_FALSE(gB.hidden(1));  // T01 back
+  TEST_ASSERT_TRUE(gB.hidden(3));   // T02 still in the trash
+  TEST_ASSERT_EQUAL_UINT16(1, gB.itemCount());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.latestOf(7));
+  mark(kRestore, 7, stage);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.latestOf(7));
+  TEST_ASSERT_EQUAL_UINT16(0, gB.itemCount());
+}
+
+/// EMPTY TRASH asks again (CANCEL selected); YES removes every item for good — nothing to restore, numbers not reused.
+void test_emptying_the_trash_asks_again_and_removes_for_good() {
+  const uint32_t t = mark(kTrash, 3, 0);
+  gB.open();
+  gB.openTrash();
+  gB.up();  // over the divider
+  TEST_ASSERT_EQUAL(B::RowKind::Empty, kind(gB.selected()));
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());
+  TEST_ASSERT_EQUAL(B::Confirm::Empty, gB.confirmKind());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.confirmSelected());
+  const B::Request r = confirmYes();
+  TEST_ASSERT_EQUAL(B::Action::Empty, r.action);
+  mark(kEmptyTrash, 0, 0);
+  gB.marked();
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(0, gB.itemCount());
+  mark(kRestore, 3, t);  // too late: nothing comes back
+  TEST_ASSERT_TRUE(gB.hidden(5));
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.latestOf(3));
+  TEST_ASSERT_EQUAL_UINT8(2, gB.nextNumber(3, Stage::Final));
+  gB.press();  // EMPTY TRASH with nothing in it: nothing asked
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+}
+
+/// A stage to the trash from inside its set: the set keeps its other stages, the next one selected.
+void test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage() {
   gB.open();
   for (int i = 0; i < 3; ++i) gB.down();
   gB.press();  // SET 07: T02, T01
   gB.hold();
-  TEST_ASSERT_EQUAL(B::View::Delete, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.deleteRecord());  // T02
-  gB.up();
-  gB.press();
-  B::Request r;
-  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL_UINT16(3, gB.confirmRecord());  // T02
+  const B::Request r = confirmYes();
   TEST_ASSERT_EQUAL_UINT16(3, r.record);
-  tombstone(7, gB.record(3).sequence);
-  gB.deleted();
+  mark(kTrash, 7, gB.record(3).sequence);
+  gB.marked();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   TEST_ASSERT_EQUAL_UINT16(3, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(1, gB.row(2).record);  // T01
   TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
-  TEST_ASSERT_EQUAL_UINT16(1, gB.latestOf(7));
 }
 
 /// The last stage of a set: the set goes, and the view goes back to the sets with the nearest one selected.
-void test_deleting_the_last_stage_removes_the_set() {
+void test_trashing_the_last_stage_leaves_the_set_view() {
   gB.open();
   for (int i = 0; i < 2; ++i) gB.down();
   gB.press();  // SET 03: F01
   gB.hold();
-  gB.up();
-  gB.press();
-  B::Request r;
-  TEST_ASSERT_TRUE(gB.takeRequest(r));
-  tombstone(3, gB.record(r.record).sequence);
-  gB.deleted();
+  const B::Request r = confirmYes();
+  mark(kTrash, 3, gB.record(r.record).sequence);
+  gB.marked();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
@@ -319,55 +414,47 @@ void test_deleting_the_last_stage_removes_the_set() {
 }
 
 /// The loaded set (the working one): its row stays, empty, and the base is still known (what plays is untouched).
-void test_deleting_the_working_set_keeps_its_row_and_base() {
+void test_trashing_the_working_set_keeps_its_row_and_base() {
   gB.open();
   gB.down();  // SET 02, the working set
   gB.hold();
-  gB.up();
-  gB.press();
-  B::Request r;
-  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  const B::Request r = confirmYes();
   TEST_ASSERT_EQUAL_UINT16(2, r.set);
-  tombstone(2, 0);
-  gB.deleted();
+  mark(kTrash, 2, 0);
+  gB.marked();
   TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
   TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.row(3).record);
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.find(gB.baseSequence()));  // T01, hidden but known
+  TEST_ASSERT_EQUAL_UINT16(4, gB.find(gB.baseSequence()));  // T01, in the trash but known
   bool provisional = false;
   gB.setActivity(B::Activity{});
   TEST_ASSERT_EQUAL(Stage::Take, gB.suggest(false, provisional));
-  gB.hold();  // nothing left to delete there
+  gB.hold();  // nothing left to trash there
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  gB.press();
-  gB.hold();  // a new stage saved later starts the set again, numbered on
-  TEST_ASSERT_EQUAL_UINT8(2, gB.nextNumber(2, Stage::Take));
+  TEST_ASSERT_EQUAL_UINT8(2, gB.nextNumber(2, Stage::Take));  // a new save into it is numbered on
 }
 
-/// A failed deletion: back to the list with what and why; TRACK asks for the same deletion again.
-void test_a_failed_deletion_keeps_the_set_and_retries() {
+/// A failed trash: back to the list with what and why; TRACK asks for the same again.
+void test_a_failed_trash_keeps_the_set_and_retries() {
   gB.open();
   for (int i = 0; i < 3; ++i) gB.down();
   gB.hold();
-  gB.up();
-  gB.press();
-  B::Request r;
-  TEST_ASSERT_TRUE(gB.takeRequest(r));
-  gB.failed("DELETE FAILED", "CARD WRITE ERROR");
+  confirmYes();
+  gB.failed("TRASH FAILED", "CARD WRITE ERROR");
   TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
   TEST_ASSERT_EQUAL(B::View::Top, gB.listView());
   TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());  // nothing hidden
   gB.press();
   B::Request again;
   TEST_ASSERT_TRUE(gB.takeRequest(again));
-  TEST_ASSERT_EQUAL(B::Action::Delete, again.action);
+  TEST_ASSERT_EQUAL(B::Action::Trash, again.action);
   TEST_ASSERT_EQUAL_UINT16(7, again.set);
   TEST_ASSERT_EQUAL_UINT16(B::kNone, again.record);
 }
 
-/// At boot the index is replayed in card order: a set's deletion hides only what was published before it.
-void test_a_set_deletion_hides_only_earlier_stages() {
-  tombstone(7, 0);
+/// At boot the index is replayed in card order: a set's trash record takes only what was published before it.
+void test_a_set_trash_takes_only_earlier_stages() {
+  mark(kTrash, 7, 0);
   publish(7, Stage::Sketch);  // SET 07 started again
   TEST_ASSERT_EQUAL_UINT16(1, gB.milestonesIn(7));
   TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
@@ -522,13 +609,17 @@ int main(int, char**) {
   RUN_TEST(test_the_suggestion_follows_the_evidence_since_the_base);
   RUN_TEST(test_arrangement_and_final_are_never_inferred_and_new_work_is_sketch);
   RUN_TEST(test_hold_closes_the_save_popup_and_asks_nothing);
-  RUN_TEST(test_hold_on_a_set_opens_its_delete_popup_and_cancel_changes_nothing);
-  RUN_TEST(test_deleting_a_set_hides_it_and_selects_the_nearest_set);
-  RUN_TEST(test_deleting_a_stage_keeps_the_set_and_selects_the_next_stage);
-  RUN_TEST(test_deleting_the_last_stage_removes_the_set);
-  RUN_TEST(test_deleting_the_working_set_keeps_its_row_and_base);
-  RUN_TEST(test_a_failed_deletion_keeps_the_set_and_retries);
-  RUN_TEST(test_a_set_deletion_hides_only_earlier_stages);
+  RUN_TEST(test_hold_on_a_set_asks_to_trash_it_and_cancel_changes_nothing);
+  RUN_TEST(test_a_trashed_set_leaves_the_sets_for_the_trash);
+  RUN_TEST(test_the_trash_lists_its_items_newest_first);
+  RUN_TEST(test_restoring_a_stage_brings_its_set_back);
+  RUN_TEST(test_a_set_item_takes_only_the_stages_still_shown);
+  RUN_TEST(test_emptying_the_trash_asks_again_and_removes_for_good);
+  RUN_TEST(test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage);
+  RUN_TEST(test_trashing_the_last_stage_leaves_the_set_view);
+  RUN_TEST(test_trashing_the_working_set_keeps_its_row_and_base);
+  RUN_TEST(test_a_failed_trash_keeps_the_set_and_retries);
+  RUN_TEST(test_a_set_trash_takes_only_earlier_stages);
   RUN_TEST(test_a_failure_keeps_the_screen_and_selection_and_track_tries_again);
   RUN_TEST(test_a_failed_save_goes_back_to_its_list_and_retries_the_same_save);
   RUN_TEST(test_the_list_scrolls_with_the_selection);

@@ -8,17 +8,22 @@
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
 // * Views (owner 2026-11-09: saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`,
-//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first. A set: `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The save popup
+//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first. A set:
+//   `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash (DEC-268): `< SETS`, `EMPTY TRASH`, a
+//   `RESTORE` divider, then what is in it newest first. The save popup
 //   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
 //   suggested one selected; beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`,
 //   over the view it came from.
 // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
-//   says for the selected row. HOLD TRACK on a set or a stage opens its delete popup (DEC-268: `YES` / `CANCEL`,
-//   CANCEL selected; TRACK confirms, HOLD TRACK cancels); it closes the save popup and a failure, changing nothing.
-//   Opening selects `SAVE SET`.
-// * Deleting (DEC-268): a deletion is a tombstone record (`library::kDeletion`) added like a milestone; it hides the
-//   milestone it names, or every milestone of its set before it. Hidden records keep their place (a row's record is its
-//   card index) and still count for numbering, so no id or set number is used twice.
+//   says for the selected row; a double TRACK opens the trash (and from it, the sets). HOLD TRACK on a set or a stage
+//   asks to move it to the trash (DEC-268: `YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it
+//   closes the save popup and a failure, changing nothing. In the trash TRACK restores an item; `EMPTY TRASH` asks
+//   again before removing everything in it for good. Opening selects `SAVE SET`.
+// * The trash (DEC-268): trash, restore and empty-trash records are `add`ed like milestones, in card order. A trash
+//   record is an item: the milestone it names, or every shown milestone of its set before it (its stages and history
+//   together). Restoring an item shows its milestones again (and so their set); emptying removes every item for good.
+//   Records keep their place (a row's record is its card index) and every milestone counts for numbering, so no id or
+//   set number is used twice.
 // * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
 //   base's stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed
 //   only → Building, or a provisional Take when every change was a recording begun while another track played;
@@ -38,18 +43,20 @@ namespace ContentEngine {
 template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
-  enum class View : uint8_t { Closed, Top, Set, Popup, Delete, Failed };
-  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone };
+  enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item };
   struct Row {
     RowKind kind;
-    uint16_t set;     // Working, Set: the set
-    uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none)
+    uint16_t set;     // Working, Set, Item: the set
+    uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none); Item: the trash record
   };
-  enum class Action : uint8_t { None, Save, Load, Delete };
+  enum class Action : uint8_t { None, Save, Load, Trash, Restore, Empty };
+  /// What the confirmation asks: a set or stage to the trash, or the trash emptied.
+  enum class Confirm : uint8_t { ToTrash, Empty };
   struct Request {
     Action action = Action::None;
-    uint16_t record = 0;  // Load; Delete: the stage (kNone: the whole set)
-    uint16_t set = 0;     // Save: the set it goes into; Delete: the set
+    uint16_t record = 0;  // Load; Trash: the stage (kNone: the whole set); Restore: the trash record
+    uint16_t set = 0;     // Save: the set it goes into; Trash, Restore: the set
     library::Stage stage = library::Stage::Sketch;
     uint8_t stageNumber = 0;
   };
@@ -58,28 +65,69 @@ class Browser {
 
   // ---- The index ---------------------------------------------------------------------------------------------------
   void clear() {
-    count_ = sets_ = 0;
+    count_ = sets_ = items_ = 0;
     view_ = View::Closed;
   }
-  /// A published record, in publication order: a milestone, or a deletion that hides milestones before it (DEC-268).
+  /// A published record, in publication order: a milestone, or a trash / restore / empty-trash record (DEC-268).
   /// False: the cache is full.
   bool add(const library::Record& r) {
     if (count_ >= MaxRecords) return false;
-    records_[count_] = r;
-    hidden_[count_] = r.kind == library::kDeletion;
-    if (hidden_[count_]) {
-      for (uint16_t i = 0; i < count_; ++i)
-        if (records_[i].set == r.set && (r.parent == 0 || records_[i].sequence == r.parent)) hidden_[i] = true;
-      ++count_;
-      indexSets();
-      return true;
+    const uint16_t at = count_++;
+    records_[at] = r;
+    trashedBy_[at] = kNone;
+    gone_[at] = false;
+    switch (r.kind) {
+      case library::kMilestone:
+        addToSets(at);
+        return true;
+      case library::kTrash: {  // the milestone named, or the set's shown ones before it; an item that took none is spent
+        bool took = false;
+        for (uint16_t i = 0; i < at; ++i)
+          if (shown(i) && records_[i].set == r.set &&
+              (r.parent == 0 ? records_[i].sequence < r.sequence : records_[i].sequence == r.parent)) {
+            trashedBy_[i] = at;
+            took = true;
+          }
+        gone_[at] = !took;
+        break;
+      }
+      case library::kRestore:
+        for (uint16_t j = 0; j < at; ++j)
+          if (inTrash(j) && records_[j].sequence == r.parent) {
+            gone_[j] = true;
+            for (uint16_t i = 0; i < at; ++i)
+              if (trashedBy_[i] == j) trashedBy_[i] = kNone;
+          }
+        break;
+      case library::kEmptyTrash:  // each item spent: its milestones stay tied to it, never shown again
+        for (uint16_t j = 0; j < at; ++j)
+          if (inTrash(j)) gone_[j] = true;
+        break;
+      default:
+        break;
     }
-    addToSets(count_);
-    ++count_;
+    indexSets();
     return true;
   }
-  /// Whether record `i` is a deletion or was deleted (not shown, not loadable from the browser).
-  bool hidden(uint16_t i) const { return i < count_ && hidden_[i]; }
+  /// Whether record `i` is not a shown milestone (trash-side, in the trash or removed: not loadable from the browser).
+  bool hidden(uint16_t i) const { return i >= count_ || !shown(i); }
+  /// Whether trash record `i` is an item still in the trash.
+  bool inTrash(uint16_t i) const {
+    return i < count_ && records_[i].kind == library::kTrash && !gone_[i];
+  }
+  /// The trash: its items newest first (trash records), and an item's milestones — how many, the newest.
+  uint16_t itemCount() const { return items_; }
+  uint16_t item(uint16_t k) const { return item_[k]; }
+  uint16_t itemSize(uint16_t trash) const {
+    uint16_t n = 0;
+    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (trashedBy_[i] == trash ? 1 : 0));
+    return n;
+  }
+  uint16_t itemNewest(uint16_t trash) const {
+    for (uint16_t i = count_; i-- > 0;)
+      if (trashedBy_[i] == trash) return i;
+    return kNone;
+  }
   uint16_t count() const { return count_; }
   const library::Record& record(uint16_t i) const { return records_[i]; }
   uint16_t setCount() const { return sets_; }
@@ -150,6 +198,8 @@ class Browser {
   View view() const { return view_; }
   /// The view a failure or the popup lies over.
   View listView() const { return list_; }
+  /// The list on screen: the view's own, or the one a popup or failure lies over.
+  View shownView() const { return shownList(); }
 
   /// RECORD: up.
   void up() {
@@ -157,11 +207,11 @@ class Browser {
       if (stageSel_ > 0) --stageSel_;
       return;
     }
-    if (view_ == View::Delete) {
-      deleteSel_ = 0;  // YES
+    if (view_ == View::Confirm) {
+      confirmSel_ = 0;  // YES
       return;
     }
-    if (view_ != View::Top && view_ != View::Set) return;
+    if (!listing()) return;
     if (selected_ > 0) --selected_;
     if (row(selected_).kind == RowKind::Divider && selected_ > 0) --selected_;  // the divider is passed
     scroll();
@@ -172,11 +222,11 @@ class Browser {
       if (stageSel_ < kStages) ++stageSel_;  // 0 AS NEW SET, 1..6 the stages
       return;
     }
-    if (view_ == View::Delete) {
-      deleteSel_ = 1;  // CANCEL
+    if (view_ == View::Confirm) {
+      confirmSel_ = 1;  // CANCEL
       return;
     }
-    if (view_ != View::Top && view_ != View::Set) return;
+    if (!listing()) return;
     if (selected_ + 1 < rowCount()) ++selected_;
     if (row(selected_).kind == RowKind::Divider) {
       if (selected_ + 1 < rowCount()) ++selected_;
@@ -194,15 +244,15 @@ class Browser {
         request_.stageNumber = nextNumber(request_.set, request_.stage);
         pending_ = request_;
         return;
-      case View::Delete:  // YES: the deletion asked for; CANCEL: back, nothing changed
-        if (deleteSel_ == 1) {
+      case View::Confirm:  // YES: what it asks; CANCEL: back, nothing changed
+        if (confirmSel_ == 1) {
           view_ = list_;
           return;
         }
         request_ = Request{};
-        request_.action = Action::Delete;
-        request_.set = deleteSet_;
-        request_.record = deleteRecord_;
+        request_.action = confirm_ == Confirm::Empty ? Action::Empty : Action::Trash;
+        request_.set = confirmSet_;
+        request_.record = confirmRecord_;
         pending_ = request_;
         return;
       case View::Failed:  // try again
@@ -211,6 +261,7 @@ class Browser {
         return;
       case View::Top:
       case View::Set:
+      case View::Bin:
         break;
       default:
         return;
@@ -229,11 +280,24 @@ class Browser {
       case RowKind::Set:
         openSet(r.set);
         return;
-      case RowKind::Back:
+      case RowKind::Back: {
+        const bool fromBin = view_ == View::Bin;
         view_ = View::Top;
-        selected_ = setRowOf(openSet_);
+        selected_ = fromBin ? 1 : setRowOf(openSet_);
         first_ = 0;
         scroll();
+        return;
+      }
+      case RowKind::Empty:
+        if (items_ != 0) openConfirm(Confirm::Empty, 0, kNone);
+        return;
+      case RowKind::Item:  // restored at once: nothing is lost by it
+        list_ = view_;
+        request_ = Request{};
+        request_.action = Action::Restore;
+        request_.set = r.set;
+        request_.record = r.record;
+        pending_ = request_;
         return;
       case RowKind::Milestone:
         request_ = Request{};
@@ -243,12 +307,13 @@ class Browser {
         return;
     }
   }
-  /// HOLD TRACK (DEC-268): on a set with stages or on a stage, its delete popup (CANCEL selected); a popup closes
-  /// (back to its list), a failure closes the browser; on any other row nothing. Nothing changes.
+  /// HOLD TRACK (DEC-268): on a set with stages or on a stage, asks to move it to the trash (CANCEL selected); a popup
+  /// closes (back to its list), a failure closes the browser; on any other row, and in the trash, nothing. Nothing
+  /// changes.
   void hold() {
     switch (view_) {
       case View::Popup:
-      case View::Delete:
+      case View::Confirm:
         view_ = list_;
         return;
       case View::Failed:
@@ -261,16 +326,32 @@ class Browser {
         return;
     }
     const Row r = row(selected_);
-    if (r.kind == RowKind::Milestone) openDelete(r.set, r.record);
-    else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone) openDelete(r.set, kNone);
+    if (r.kind == RowKind::Milestone) openConfirm(Confirm::ToTrash, r.set, r.record);
+    else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone)
+      openConfirm(Confirm::ToTrash, r.set, kNone);
   }
-  /// The delete popup's target: the set, and the stage (kNone: the whole set); 0 YES, 1 CANCEL.
-  uint16_t deleteSet() const { return deleteSet_; }
-  uint16_t deleteRecord() const { return deleteRecord_; }
-  uint8_t deleteSelected() const { return deleteSel_; }
-  /// The deletion asked for was published (its tombstone `add`ed): back to the list, the nearest remaining row selected;
-  /// a set left without stages leaves its view for the sets.
-  void deleted() {
+  /// A double TRACK: the trash from the sets or a set (its newest item selected), the sets from the trash.
+  void openTrash() {
+    if (view_ == View::Bin) {
+      view_ = View::Top;
+      selected_ = 1;
+    } else if (view_ == View::Top || view_ == View::Set) {
+      view_ = View::Bin;
+      selected_ = items_ != 0 ? kBinHead : 0;
+    } else {
+      return;
+    }
+    first_ = 0;
+    scroll();
+  }
+  /// The confirmation: what it asks, its set and stage (kNone: the whole set); 0 YES, 1 CANCEL.
+  Confirm confirmKind() const { return confirm_; }
+  uint16_t confirmSet() const { return confirmSet_; }
+  uint16_t confirmRecord() const { return confirmRecord_; }
+  uint8_t confirmSelected() const { return confirmSel_; }
+  /// A trash, restore or empty-trash asked for was published (its record `add`ed): back to the list, the nearest row
+  /// still there selected; a set left without stages leaves its view for the sets.
+  void marked() {
     view_ = list_;
     if (view_ == View::Set) {
       fillMembers(openSet_);
@@ -280,9 +361,9 @@ class Browser {
         selected_ = openSetRow_;
       }
     }
-    const uint16_t n = rowCount(), lowest = view_ == View::Set ? kSetHead : kTopHead - 1;  // the working set's row
+    const uint16_t n = rowCount();
     if (selected_ >= n) selected_ = static_cast<uint16_t>(n - 1);
-    if (selected_ < lowest) selected_ = lowest;
+    if (row(selected_).kind == RowKind::Divider) selected_ = static_cast<uint16_t>(selected_ + 1 < n ? selected_ + 1 : selected_ - 1);
     first_ = 0;
     scroll();
   }
@@ -299,7 +380,7 @@ class Browser {
   /// not as it was (a load that could not restore it) — the screen says so instead of NOTHING CHANGED.
   void failed(const char* what, const char* why, bool changed = false) {
     changed_ = changed;
-    if (view_ == View::Popup || view_ == View::Delete) view_ = list_;
+    if (view_ == View::Popup || view_ == View::Confirm) view_ = list_;
     list_ = view_ == View::Failed ? list_ : view_;
     copy(failWhat_, what);
     copy(failWhy_, why);
@@ -314,9 +395,17 @@ class Browser {
   uint16_t rowCount() const {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
+    if (v == View::Bin) return static_cast<uint16_t>(kBinHead + items_);
     return static_cast<uint16_t>(kTopHead + otherSets());
   }
   Row row(uint16_t i) const {
+    if (shownList() == View::Bin) {
+      if (i == 0) return Row{RowKind::Back, 0, kNone};
+      if (i == 1) return Row{RowKind::Empty, 0, kNone};
+      if (i == 2) return Row{RowKind::Divider, 0, kNone};
+      const uint16_t t = item_[i - kBinHead];
+      return Row{RowKind::Item, records_[t].set, t};
+    }
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
       if (i == 1) return Row{RowKind::Divider, openSet_, kNone};
@@ -337,6 +426,8 @@ class Browser {
   static constexpr uint16_t kSetHead = 2;
   /// The top level's rows before the other sets: `< CLOSE`, `SAVE SET`, the `LOAD SET` divider, the working set.
   static constexpr uint16_t kTopHead = 4;
+  /// The trash's rows before its items: `< SETS`, `EMPTY TRASH`, the `RESTORE` divider.
+  static constexpr uint16_t kBinHead = 3;
   uint16_t openSetNumber() const { return openSet_; }
   /// The newest milestone of `set` (kNone: none).
   uint16_t latestOf(uint16_t set) const {
@@ -347,7 +438,7 @@ class Browser {
   /// How many milestones `set` has.
   uint16_t milestonesIn(uint16_t set) const {
     uint16_t n = 0;
-    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (records_[i].set == set && !hidden_[i] ? 1 : 0));
+    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (records_[i].set == set && shown(i) ? 1 : 0));
     return n;
   }
 
@@ -382,13 +473,21 @@ class Browser {
     out[i] = 0;
   }
   View shownList() const {
-    return view_ == View::Popup || view_ == View::Delete || view_ == View::Failed ? list_ : view_;
+    return view_ == View::Popup || view_ == View::Confirm || view_ == View::Failed ? list_ : view_;
   }
-  /// The sets with a visible milestone and each one's newest, from the records (after a deletion).
+  bool listing() const { return view_ == View::Top || view_ == View::Set || view_ == View::Bin; }
+  /// A milestone neither in the trash nor removed.
+  bool shown(uint16_t i) const {
+    return records_[i].kind == library::kMilestone && trashedBy_[i] == kNone;
+  }
+  /// The sets with a shown milestone and each one's newest, and the trash's items newest first, from the records.
   void indexSets() {
     sets_ = 0;
+    items_ = 0;
     for (uint16_t i = 0; i < count_; ++i)
-      if (!hidden_[i]) addToSets(i);
+      if (shown(i)) addToSets(i);
+    for (uint16_t i = count_; i-- > 0;)
+      if (inTrash(i)) item_[items_++] = i;
   }
   void addToSets(uint16_t r) {
     uint16_t i = 0;
@@ -399,12 +498,13 @@ class Browser {
     }
     setLatest_[i] = r;  // publication order: the newest
   }
-  void openDelete(uint16_t set, uint16_t record) {
+  void openConfirm(Confirm what, uint16_t set, uint16_t record) {
     list_ = view_;
-    deleteSet_ = set;
-    deleteRecord_ = record;
-    deleteSel_ = 1;  // CANCEL
-    view_ = View::Delete;
+    confirm_ = what;
+    confirmSet_ = set;
+    confirmRecord_ = record;
+    confirmSel_ = 1;  // CANCEL
+    view_ = View::Confirm;
   }
   /// Sets other than the working one, newest milestone first.
   uint16_t otherSets() const {
@@ -468,7 +568,7 @@ class Browser {
   void fillMembers(uint16_t set) {
     members_ = 0;
     for (uint16_t i = count_; i-- > 0;)  // newest first
-      if (records_[i].set == set && !hidden_[i]) member_[members_++] = i;
+      if (records_[i].set == set && shown(i)) member_[members_++] = i;
   }
   /// The save popup over the top level: the working set's history with the base's line marked, the suggestion
   /// selected.
@@ -492,12 +592,16 @@ class Browser {
   library::Record records_[MaxRecords];
   uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
   bool line_[MaxRecords] = {};
-  bool hidden_[MaxRecords] = {};
+  // DEC-268: a milestone's trash record (kNone: none); a trash record spent (its item restored, emptied, or empty).
+  uint16_t trashedBy_[MaxRecords], item_[MaxRecords];
+  bool gone_[MaxRecords] = {};
+  uint16_t items_ = 0;
   uint16_t join_ = kNone, baseRow_ = kNone;
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
   uint16_t workingSet_ = 1, openSet_ = 0, openSetRow_ = kTopHead;
-  uint16_t deleteSet_ = 0, deleteRecord_ = kNone;
-  uint8_t deleteSel_ = 1;
+  Confirm confirm_ = Confirm::ToTrash;
+  uint16_t confirmSet_ = 0, confirmRecord_ = kNone;
+  uint8_t confirmSel_ = 1;
   uint32_t base_ = 0;
   bool changed_ = false, provisional_ = false;
   Activity activity_{};

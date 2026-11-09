@@ -15399,49 +15399,62 @@ dimmed", "AS NEW SET", "Newest at top").
   inside a set a `LOAD STAGE` divider under `< SETS` (not selectable; passed like the top one; a set opens on its newest
   stage, now row 2). Image `95874007…`, boot `crash=0`.
 
-## DEC-268 — Deleting sets and stages: tombstone records, `< CLOSE` back, HOLD TRACK deletes (amends DEC-258, DEC-267)
+## DEC-268 — The trash: sets and stages to a trash, restored or emptied; `< CLOSE` back (amends DEC-258, DEC-267)
 
-**Status:** Accepted (owner 2026-11-09: "a way to delete sets or stages", with the navigation, gesture, confirmation,
-after-deletion and verification rules below).
+**Status:** Accepted (owner 2026-11-09: "a way to delete sets or stages", then, before any deletion reached the card,
+"in atari terms … a recycle bin": "a visible Trash, with deleted sets and stages kept on the card until explicitly
+emptied", with the gesture, Trash, restore and empty rules below; "No automatic expiry initially").
 
 ### Decision
 
-- **On the card: a deletion is a record, nothing is rewritten.** A tombstone is an index record with `kind` 1 (byte 19,
-  zero in every older record, so the format version is unchanged), no blob, `parent` the deleted milestone's sequence —
-  or 0 for every milestone of its set published before it. It is published exactly as a milestone's record and header
-  are (record programmed, then the index header into the sector that is not current), so a power cut leaves either the
-  old library or the deletion, never half of it. Earlier records and blobs are never touched; a deleted milestone's
-  blob keeps its log space (the log stays append-only; reclaiming it would be compaction, not part of this). Each
-  deletion takes one of the 4,096 index records. A full index refuses it by name before writing.
-- **In memory:** the browser replays the records in card order; a tombstone hides its targets. Hidden records keep their
-  place (a row's record stays its card index) and still count for numbering, so no stage id or set number is used twice.
-  The loader refuses to load a tombstone; the serial `delete <set> [index]` does the same as the browser.
+- **On the card: records, nothing rewritten.** Three record kinds beside the milestone, each without a blob, in byte 19
+  of the index record (zero in every older record, so the format version is unchanged): a *trash* record (`kind` 1)
+  moves the milestone named by `parent` — or, `parent` 0, every shown milestone of its set published before it — to
+  the trash, as one item; a *restore* record (2) takes the trash record named by `parent` back out; an *empty-trash*
+  record (3) spends every item in the trash before it, for good. Each is published as a milestone's record and header
+  are (the record programmed, then the index header into the sector that is not current), so a power cut leaves the
+  library before or after it, never half. Earlier records and blobs are never touched. Each uses one of the 4,096 index
+  records; a full index refuses it by name before writing.
+- **Space:** trashed milestones stay on the card, loadable again once restored. Emptying the trash removes them from
+  the library for good, but their blobs keep their log space: the log stays append-only, and reclaiming it would be a
+  compaction step, not part of this.
+- **In memory:** the browser replays the records in card order. A trash record takes the stages still shown (a stage
+  trashed on its own is its own item; a set trashed after it does not take it). Restoring an item shows its stages
+  again, and so their set. Records keep their place (a row's record stays its card index) and every milestone counts for
+  numbering, so no stage id or set number is used twice. The loader refuses any record that is not a milestone.
 - **Navigation:** `< CLOSE` is back at the top of SETS (TRACK closes); `< SETS` stays inside a set. The browser opens on
-  `SAVE SET`.
-- **Gesture:** HOLD TRACK on a set that has stages, or on a stage, opens its delete popup; on other rows it does
-  nothing. HOLD TRACK from the performance screen still opens SETS. A long press fires on release, so the hold that
-  opens the popup cannot confirm it. In the browser a TRACK gesture acts once (a double press no longer presses twice:
-  a double press on CANCEL used to cancel and then act on the row under it).
-- **Confirmation:** a window naming the target exactly — `DELETE SET 03?` with `ALL SAVED STAGES (n)` and the latest
-  save's date and time, or `DELETE SET 02 T03?` with its stage and `SAVED` date and time — and `YES` / `CANCEL`, CANCEL
-  selected. RECORD selects YES, EDIT CANCEL; TRACK confirms; HOLD TRACK cancels.
-- **After:** the browser stays open with the nearest remaining row selected (a stage's neighbour; a set's neighbour); a
-  set whose last stage is deleted disappears, and its view returns to the sets. The working set and what plays are not
-  touched: deleting the loaded set keeps its row (empty, `NO STAGES YET`) and its base, so the save suggestion still
-  works; the next save into it is numbered on. A failure keeps the list with what and why (`DELETE FAILED`); TRACK
-  retries.
+  `SAVE SET`. The trash sits at the bottom left (a can and `TRASH n`, bright inside it); a double TRACK opens it from
+  the sets or a set, and goes back to the sets from it. Inside: `< SETS`, `EMPTY TRASH`, a `RESTORE` divider, then the
+  items newest first (a set, or `SET 02 T03`), dated when they were trashed.
+- **Gestures:** HOLD TRACK on a set that has stages, or on a stage, asks `MOVE SET 03 TO TRASH?` (`ALL SAVED STAGES
+  (n)`, the latest save's date and time) or `MOVE SET 02 T03 TO TRASH?` (its stage, `SAVED` date and time), `YES` /
+  `CANCEL` with CANCEL selected; RECORD selects YES, EDIT CANCEL, TRACK confirms, HOLD TRACK cancels. On other rows,
+  and in the trash, HOLD TRACK does nothing. HOLD TRACK from the performance screen still opens SETS. A long press
+  fires on release, so the hold that opens a confirmation cannot confirm it. In the trash TRACK restores an item at once
+  (nothing is lost by it); `EMPTY TRASH` asks again (`EMPTY THE TRASH?`, items and stages, `REMOVED FOR GOOD`, CANCEL
+  selected). In the browser a TRACK gesture acts once: a single press acts, a double press opens or leaves the trash.
+- **After:** the browser stays open with the nearest remaining row selected; a set whose last stage goes to the trash
+  disappears, and its view returns to the sets. The working set and what plays are not touched: trashing the loaded
+  set keeps its row (empty) and its base, so the save suggestion still works; the next save into it is numbered on. A
+  failure keeps the list with what and why (`TRASH FAILED`, `RESTORE FAILED`, `EMPTY FAILED`); TRACK retries.
+- **Serial:** `trash <set> [index]`, `restore <index>` (the trash record), `empty-trash`; `milestones` lists the trash-side
+  records and whether an item is still in the trash.
 
 ### Evidence
 
-- Host: `test_content_engine_browser` 25 cases (8 new: the popup and cancel, a set, a stage, the last stage, the working
-  set, a failed deletion and retry, replay order; `< CLOSE`); `test_content_engine_library_writer` 2 new (a tombstone is
-  two sector writes, nothing older changed, a writer that never captured a set publishes it; a failed header publishes
-  nothing; a full index refuses unwritten); `test_content_engine_surface` (hold opens, the release confirms nothing, a
-  double press on CANCEL acts once, YES asks, a failure's hold closes, `< CLOSE`). Mutations killed: a tombstone hiding
-  the whole set, the double press restored, `kind` not decoded, hidden records listed, YES as default. Full native 4,467
+- Host: `test_content_engine_browser` 28 cases (11 for the trash: asking and cancelling, a set to the trash, the trash's
+  rows and the double press, restoring a stage brings its set back, a set item takes only stages still shown, emptying
+  asks again and is for good, a stage from inside its set, the last stage, the working set, a failure and retry, replay
+  order; plus `< CLOSE`); `test_content_engine_library_writer` +2 (a mark is two sector writes, nothing older changed,
+  a writer that never captured a set publishes it; a failed header publishes nothing; a full index refuses unwritten);
+  `test_content_engine_library_loader` (a trash record is not loadable); `test_content_engine_surface` (hold asks, the
+  release confirms nothing, a double press neither cancels-then-acts nor confirms, a double press opens and leaves the
+  trash, YES asks, a failure's hold closes, `< CLOSE`). Mutations killed: restore a no-op, empty a no-op, a set item
+  taking trashed stages, the double press as a press, YES as default, a mark needing a blob, the loader accepting a
+  mark (an emptying loop over milestones was removed as redundant when its mutation survived). Full native 4,471
   passed, 0 failed.
-- Device (image `4cba8814…`, boot `crash=0`, `BOOT,load,ok`): `< CLOSE` on top; the set popup (`DELETE SET 03?`, `ALL
-  SAVED STAGES (1)`, `LATEST 9 NOV 2026 16:33`, CANCEL selected) and the stage popup (`DELETE SET 02 T03?`, `TAKE`,
-  `SAVED 9 NOV 2026 16:06`, YES selected by RECORD), each cancelled: the library still 11 records afterwards;
-  `< CLOSE` closed the browser. A deletion on the card awaits the owner's choice of disposable content.
+- Device (image `9f7071db…`, boot `crash=0`, `BOOT,load,ok`): `< CLOSE` on top with the trash at the bottom left; the
+  set and stage confirmations (`MOVE SET 02 T03 TO TRASH?`, `TAKE`, `SAVED 9 NOV 2026 16:06`, CANCEL selected), each
+  cancelled; a double TRACK into the empty trash and back; `< CLOSE` closed the browser. The library unchanged (11
+  records). A trash, restore and empty on the card await the owner's choice of disposable content.
 - The micro font gained `?`, `(` and `)` (the provisional save suggestion's `?` was blank before).

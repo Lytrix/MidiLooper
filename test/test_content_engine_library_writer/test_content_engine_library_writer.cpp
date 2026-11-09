@@ -297,8 +297,8 @@ void test_a_deletion_publishes_a_tombstone_and_rewrites_nothing() {
   LibWriter booted;
   TEST_ASSERT_TRUE(booted.mount(gCard));
   const uint32_t before = gCard.writes;
-  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, booted.beginDeletion(2, 1, 1794176000));
-  TEST_ASSERT_EQUAL(LibWriter::Result::Busy, booted.beginDeletion(2, 0, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, booted.beginMark(kTrash, 2, 1, 1794176000));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Busy, booted.beginMark(kTrash, 2, 0, 0));
   LibWriter::Status st;
   while ((st = booted.step()) == LibWriter::Status::Running) {
   }
@@ -314,7 +314,7 @@ void test_a_deletion_publishes_a_tombstone_and_rewrites_nothing() {
   TEST_ASSERT_EQUAL(kMilestone, m.kind);
   TEST_ASSERT_EQUAL_UINT32(1, m.sequence);
   TEST_ASSERT_TRUE(fresh.readRecord(1, t));
-  TEST_ASSERT_EQUAL(kDeletion, t.kind);
+  TEST_ASSERT_EQUAL(kTrash, t.kind);
   TEST_ASSERT_EQUAL_UINT16(2, t.set);
   TEST_ASSERT_EQUAL_UINT32(1, t.parent);
   TEST_ASSERT_EQUAL_UINT32(2, t.sequence);
@@ -331,7 +331,7 @@ void test_a_failed_deletion_publishes_nothing() {
                     gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
   gCard.failAfter = gCard.writes + 1;  // the record, then the header fails
-  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginDeletion(2, 0, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMark(kTrash, 2, 0, 0));
   TEST_ASSERT_EQUAL(LibWriter::Status::Failed, runToEnd());
   LibWriter fresh;
   TEST_ASSERT_TRUE(fresh.mount(gCard));
@@ -349,7 +349,7 @@ void test_a_failed_deletion_publishes_nothing() {
   LibWriter booted;
   TEST_ASSERT_TRUE(booted.mount(gCard));
   const uint32_t before = gCard.writes;
-  TEST_ASSERT_EQUAL(LibWriter::Result::IndexFull, booted.beginDeletion(2, 0, 0));
+  TEST_ASSERT_EQUAL(LibWriter::Result::IndexFull, booted.beginMark(kTrash, 2, 0, 0));
   TEST_ASSERT_EQUAL_UINT32(before, gCard.writes);
 }
 

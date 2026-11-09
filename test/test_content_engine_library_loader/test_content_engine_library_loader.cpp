@@ -394,6 +394,9 @@ void test_refusals() {
   TEST_ASSERT_EQUAL(Loader::Result::NoMilestone, gL.beginLoad(0, before()));
   saveMilestone();
   TEST_ASSERT_EQUAL(Loader::Result::NoMilestone, gL.beginLoad(1, before()));
+  TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMark(kTrash, 2, 1, 0));  // DEC-268: a trash record has no set
+  TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
+  TEST_ASSERT_EQUAL(Loader::Result::NoMilestone, gL.beginLoad(1, before()));
   TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginLoad(0, before()));
   TEST_ASSERT_EQUAL(Loader::Result::Busy, gL.beginLoad(0, before()));
   loadToEnd();
