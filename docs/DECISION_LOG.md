@@ -15458,3 +15458,7 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   cancelled; a double TRACK into the empty trash and back; `< CLOSE` closed the browser. The library unchanged (11
   records). A trash, restore and empty on the card await the owner's choice of disposable content.
 - The micro font gained `?`, `(` and `)` (the provisional save suggestion's `?` was blank before).
+- **Amendment (owner 2026-11-09):** `2X TRACK` beside the trash at the bottom left (how to get in); `TRASH` as the last
+  row of SETS, a second way in (TRACK opens it; its items on the right; after a set goes to the trash the nearest set is
+  selected, never `TRASH`); the trash's divider reads `RESTORE SET/STAGE` and an item's hint `TRACK: RESTORE SET 03` /
+  `TRACK: RESTORE STAGE T03`, as `LOAD SET` / `LOAD STAGE` elsewhere. Image `9de0613c…`, boot `crash=0`.

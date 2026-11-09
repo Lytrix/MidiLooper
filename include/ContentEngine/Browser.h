@@ -8,9 +8,10 @@
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
 // * Views (owner 2026-11-09: saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`,
-//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first. A set:
+//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first, and
+//   `TRASH` last (the second way in). A set:
 //   `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash (DEC-268): `< SETS`, `EMPTY TRASH`, a
-//   `RESTORE` divider, then what is in it newest first. The save popup
+//   `RESTORE SET/STAGE` divider, then what is in it newest first. The save popup
 //   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
 //   suggested one selected; beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`,
 //   over the view it came from.
@@ -44,7 +45,7 @@ template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed };
-  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set, Item: the set
@@ -291,6 +292,9 @@ class Browser {
       case RowKind::Empty:
         if (items_ != 0) openConfirm(Confirm::Empty, 0, kNone);
         return;
+      case RowKind::Trash:
+        openTrash();
+        return;
       case RowKind::Item:  // restored at once: nothing is lost by it
         list_ = view_;
         request_ = Request{};
@@ -364,6 +368,7 @@ class Browser {
     const uint16_t n = rowCount();
     if (selected_ >= n) selected_ = static_cast<uint16_t>(n - 1);
     if (row(selected_).kind == RowKind::Divider) selected_ = static_cast<uint16_t>(selected_ + 1 < n ? selected_ + 1 : selected_ - 1);
+    if (row(selected_).kind == RowKind::Trash) --selected_;  // the nearest set, not the way into the trash
     first_ = 0;
     scroll();
   }
@@ -396,7 +401,7 @@ class Browser {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
     if (v == View::Bin) return static_cast<uint16_t>(kBinHead + items_);
-    return static_cast<uint16_t>(kTopHead + otherSets());
+    return static_cast<uint16_t>(kTopHead + otherSets() + 1);  // the sets, then TRASH
   }
   Row row(uint16_t i) const {
     if (shownList() == View::Bin) {
@@ -415,6 +420,7 @@ class Browser {
     if (i == 1) return Row{RowKind::Save, workingSet_, kNone};
     if (i == 2) return Row{RowKind::Divider, workingSet_, kNone};
     if (i == 3) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
+    if (i == kTopHead + otherSets()) return Row{RowKind::Trash, 0, kNone};
     const uint16_t s = otherSet(static_cast<uint16_t>(i - kTopHead));
     return Row{RowKind::Set, setNumber_[s], setLatest_[s]};
   }

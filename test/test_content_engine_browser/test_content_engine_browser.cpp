@@ -43,7 +43,7 @@ void tearDown() {}
 void test_opening_selects_save_over_a_load_section_of_sets_newest_first() {
   gB.open();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.rowCount());
   TEST_ASSERT_EQUAL(B::RowKind::Close, kind(0));
   TEST_ASSERT_EQUAL(B::RowKind::Save, kind(1));
   TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));
@@ -81,7 +81,7 @@ void test_record_and_edit_stop_at_both_ends() {
   gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   for (int i = 0; i < 10; ++i) gB.down();
-  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.selected());  // TRASH, last
 }
 
 void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
@@ -276,7 +276,7 @@ void test_a_trashed_set_leaves_the_sets_for_the_trash() {
   mark(kTrash, 3, 0);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);  // SET 07 moved up into its place
   TEST_ASSERT_TRUE(gB.hidden(5));              // F01
@@ -316,11 +316,33 @@ void test_the_trash_lists_its_items_newest_first() {
   TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
 }
 
+/// TRASH, last in the sets (owner 2026-11-09: a second way in beside the double TRACK): TRACK opens the trash. A set
+/// trashed from just above it leaves the nearest set selected, not TRASH.
+void test_the_trash_row_opens_the_trash_and_is_not_the_nearest_set() {
+  gB.open();
+  for (int i = 0; i < 10; ++i) gB.down();
+  TEST_ASSERT_EQUAL(B::RowKind::Trash, kind(gB.selected()));
+  gB.hold();  // nothing to trash
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
+  gB.press();  // < SETS (the trash is empty)
+  TEST_ASSERT_EQUAL(B::View::Top, gB.view());
+  for (int i = 0; i < 10; ++i) gB.down();
+  gB.up();  // SET 07, the last set
+  gB.hold();
+  confirmYes();
+  mark(kTrash, 7, 0);
+  gB.marked();
+  TEST_ASSERT_EQUAL(B::RowKind::Set, kind(gB.selected()));
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(gB.selected()).set);
+}
+
 /// TRACK on an item restores it at once; a stage restored brings its set back; the trash stays, the next item selected.
 void test_restoring_a_stage_brings_its_set_back() {
   const uint32_t t = mark(kTrash, 3, gB.record(5).sequence);  // SET 03 F01, its only stage: the set is gone
   gB.open();
-  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
   gB.openTrash();
   gB.press();
   B::Request r;
@@ -334,7 +356,7 @@ void test_restoring_a_stage_brings_its_set_back() {
   TEST_ASSERT_EQUAL_UINT16(1, gB.selected());  // EMPTY TRASH, the nearest row left
   TEST_ASSERT_FALSE(gB.hidden(5));
   gB.openTrash();
-  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(7, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).set);
 }
 
@@ -408,7 +430,7 @@ void test_trashing_the_last_stage_leaves_the_set_view() {
   mark(kTrash, 3, gB.record(r.record).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);
 }
@@ -443,7 +465,7 @@ void test_a_failed_trash_keeps_the_set_and_retries() {
   gB.failed("TRASH FAILED", "CARD WRITE ERROR");
   TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
   TEST_ASSERT_EQUAL(B::View::Top, gB.listView());
-  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());  // nothing hidden
+  TEST_ASSERT_EQUAL_UINT16(7, gB.rowCount());  // nothing hidden
   gB.press();
   B::Request again;
   TEST_ASSERT_TRUE(gB.takeRequest(again));
@@ -612,6 +634,7 @@ int main(int, char**) {
   RUN_TEST(test_hold_on_a_set_asks_to_trash_it_and_cancel_changes_nothing);
   RUN_TEST(test_a_trashed_set_leaves_the_sets_for_the_trash);
   RUN_TEST(test_the_trash_lists_its_items_newest_first);
+  RUN_TEST(test_the_trash_row_opens_the_trash_and_is_not_the_nearest_set);
   RUN_TEST(test_restoring_a_stage_brings_its_set_back);
   RUN_TEST(test_a_set_item_takes_only_the_stages_still_shown);
   RUN_TEST(test_emptying_the_trash_asks_again_and_removes_for_good);

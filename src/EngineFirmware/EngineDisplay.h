@@ -400,7 +400,8 @@ class EngineDisplay {
     char t[12];
     if (b.itemCount() != 0) snprintf(t, sizeof t, "TRASH %u", b.itemCount());
     else snprintf(t, sizeof t, "TRASH");
-    return static_cast<int16_t>(label(t, 9, y, v) + 8);
+    const int16_t x = static_cast<int16_t>(label(t, 9, y, v) + 4);
+    return static_cast<int16_t>(label("2X TRACK", x, y, kDimText) + 10);  // how to get there (owner 2026-11-09)
   }
   /// The record a row stands for (its date on the spine), or kNone.
   static uint16_t recordOf(const Row& r) {
@@ -518,7 +519,9 @@ class EngineDisplay {
     const bool on = i == b.selected();
     if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
       const Browser::View list = b.shownView();
-      const char* what = list == Browser::View::Bin ? "RESTORE" : list == Browser::View::Set ? "LOAD STAGE" : "LOAD SET";
+      const char* what = list == Browser::View::Bin   ? "RESTORE SET/STAGE"
+                         : list == Browser::View::Set ? "LOAD STAGE"
+                                                      : "LOAD SET";
       label(what, kYearX, y, 7);  // a heading, dimmer than any row
       hline(static_cast<int16_t>(kYearX + strlen(what) * 4 + 3), kDiv - 4, static_cast<int16_t>(y + 2), 6);
       return;
@@ -528,6 +531,13 @@ class EngineDisplay {
     switch (r.kind) {
       case RowKind::Close: label("< CLOSE", kYearX, y, on ? 15 : 11); return;
       case RowKind::Empty: label("EMPTY TRASH", kYearX, y, on ? 15 : b.itemCount() != 0 ? 11 : kDimText); return;
+      case RowKind::Trash: {  // the second way in (owner 2026-11-09), its items on the right as a set's time is
+        label("TRASH", kYearX, y, on ? 15 : 11);
+        char n[8];
+        snprintf(n, sizeof n, "%u", b.itemCount());
+        if (b.itemCount() != 0) rlabel(n, kNoteXR, y, on ? 15 : kDimText);
+        return;
+      }
       case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
       default: break;
@@ -635,6 +645,13 @@ class EngineDisplay {
       case RowKind::Divider:
         h[0] = 0;
         return;
+      case RowKind::Trash:
+        label("TRASH", kDetailX, kMosaicY, 15, 2);
+        snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
+        label(b.itemCount() != 0 ? a : "EMPTY", kDetailX, 30, 11);
+        label("ALSO 2X TRACK", kDetailX, 38, 9);
+        snprintf(h, n, "TRACK: OPEN TRASH");
+        return;
       case RowKind::Empty: {  // DEC-268
         label("EMPTY", kDetailX, kMosaicY, 15, 2);
         snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
@@ -653,7 +670,13 @@ class EngineDisplay {
         else snprintf(a, sizeof a, "SET %02u", r.set);
         snprintf(c, sizeof c, "TRASHED %s", at);
         if (newest != Browser::kNone) drawMilestone(b.record(newest), a, c);
-        snprintf(h, n, t.parent == 0 ? "TRACK: RESTORE SET %02u" : "TRACK: RESTORE", r.set);
+        if (t.parent == 0) {
+          snprintf(h, n, "TRACK: RESTORE SET %02u", r.set);
+        } else {
+          char id[8] = "";
+          if (newest != Browser::kNone) idText(b.record(newest), id, sizeof id);
+          snprintf(h, n, "TRACK: RESTORE STAGE %s", id);
+        }
         return;
       }
       case RowKind::Working:
