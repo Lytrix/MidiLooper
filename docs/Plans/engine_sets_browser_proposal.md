@@ -152,34 +152,92 @@ half:
 * **Two ways in, one grid.** (1) From the sets browser: a stage row's `GET LOOP` (no controller needed), destination
   = the selected slot. (2) From a slot on a controller: a slot gesture opens the sets browser with that slot as the
   destination remembered; choosing a stage enters the same grid. The destination is fixed on entry and always shown:
-  `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only.
+  `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only. Entry is refused while a take is open or armed on
+  any track (`STOP THE TAKE FIRST`: in the picker REC is a move, so a take could not be ended), during NOTE_EDIT or
+  LOOP_EDIT, and while a library job or a load runs.
 * **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves: REC up, PLAY/STOP down, NOTELEN left,
   EDIT right (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
-  the transport). An `EMPTY LOOP` tile comes first, drawn unlike an empty source cell, and is selected on entry:
-  taking it makes the destination an empty loop of the destination's length when it has one, else the new-empty-loop
-  length — shown before KEEP (one undo step).
-* **The panel** shows the loop under the cursor: its piano roll, length and bars, after a short `READING…` state. One
+  the transport; a press of it stops everything and cancels the audition). Cells are drawn about 7 px (8 slots in
+  56 px), not the panel mosaic's 3 px, so the cursor shows. An `EMPTY LOOP` tile comes first, drawn unlike an empty
+  source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
+  new-empty-loop length — shown before KEEP (one undo step). The cursor starts on `EMPTY LOOP` only when the
+  destination is empty; otherwise on the grid cell of the destination's own track and slot, and an empty loop kept
+  over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY LOOP?`), so two reflex presses never wipe a
+  loop.
+* **The panel** shows the loop under the cursor: its piano roll, length and bars (in ticks: the stage's tempo is not
+  applied, the loop plays at the current tempo), after a short `READING…` state. A read starts only once the cursor
+  has rested about 150 ms, never for cells passed over. One
   read in flight; its result is shown or auditioned only when it matches the request in full — the same picker
   session, source stage and cursor request — else it is released (a cursor that came back, or a picker reopened,
   starts a read of its own).
-* **Audition:** TRACK auditions the loop under the cursor at the current position, without touching the history. Once
-  the preview is ready the footer reads `[TRK] KEEP` — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`
-  or `MUTED`; a fresh TRACK press keeps it (one undo step), back to the performance screen with `COPIED TO 3-2` (the
+* **Audition:** TRACK auditions the loop under the cursor without touching the history, switching in on the next beat
+  line (footer `AUDITION AT BEAT`), not mid-beat: a swap at an arbitrary tick plays nothing that started before it
+  until the next cycle and would mislead; a cancel switches back on the same grid. Once the preview is ready the
+  footer reads `[TRK] KEEP` — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`, `NOT PLAYING · PREVIEW
+  ONLY`, `MUTED` or `SOLO ON 2`; a fresh TRACK press keeps it (one undo step), back to the performance screen with `COPIED TO 3-2` (the
   destination is fixed: staying would only invite replacing what was just kept). HOLD TRACK cancels and goes back.
   Moving the cursor ends the audition (browsing never changes the sound); the next TRACK auditions the new loop. After
   leaving, undo still brings the slot's previous loop back.
-* **Whether it sounds:** the audition plays on the destination's track. If that track plays the destination slot, the
-  audition replaces it in place. If it plays another slot or is stopped while the transport runs, it switches to the
-  destination slot for the audition; KEEP leaves it there. With the transport stopped, the audition is the piano roll
-  only. A muted track stays muted (the footer says so).
-* **Cancel restores the playback state, not the time:** a track stopped before the audition is stopped again; one that
-  played its own slot resumes that slot at the current musical position. A cancel caused by the transport stopping
+* **Whether it sounds:** the audition sounds only when the destination's track is playing the destination slot: it
+  replaces that slot's loop in place. A track playing another slot, or stopped, is not switched (that would be a
+  launch nobody asked for, left in place by KEEP): the audition is the piano roll only (`NOT PLAYING · PREVIEW ONLY`).
+  With the transport stopped, the same. A muted track stays muted, a solo elsewhere silences it; the footer says so.
+* **Cancel restores the playback state, not the time:** the track resumes the destination slot's own loop at the
+  current musical position (on the next beat line, as the audition switched in). A cancel caused by the transport stopping
   never restarts anything. Mute and solo changes made during the audition stay.
 * **The audition's contract (engine):** the original stays the history's current state throughout; the auditioned
   state is held by the audition alone. Cancel, a cursor move, HOLD, the browser closing, a transport stop, a failed
   read or no memory for it all put the track back as it was and release it. While it lasts, nothing else may change
   the destination: its track's takes, clear, undo / redo, NOTE_EDIT, LOOP_EDIT and launches are refused. Not enough
   memory to hold both: refused before it sounds (`NOT ENOUGH MEMORY`).
+
+### 6.2 Red team of §6.1 (2026-11-09) — fixes adopted into the plan
+
+Blockers found against the code; each fix is part of slice 6b (the engine ones first, since 6a's serial `get` shares
+them):
+
+1. **A preview read must not starve live takes.** The detached read (DEC-261's path, reused by DEC-270) loads the
+   source slot's whole history — every run and every state, up to 99 — then keeps the current state. While it runs it
+   takes rows (`RowReservations`), runs (520) and manifests (256) from the pools live takes rely on; the manifest
+   budget's static assert has no preview in it, so browsing could make an overdub fail its admission. **Fix:** read
+   only the current state's runs (the slot file lists the runs before the rows and the states last: read the states
+   first, then only the rows the current state lists), within a fixed preview budget of its own (rows, runs, one
+   manifest) outside what takes rely on; a source larger than it is refused (`TOO BIG TO PREVIEW`), never borrowed.
+   The same reader serves `get` (DEC-270 amended).
+2. **The piano-roll preview needs its own render path.** Display tiles are per working-set slot
+   (`DisplayTiles::request(slot, manifest)`), so a source loop would overwrite the destination's tiles; and `request`
+   keeps a manifest id without a reference, so a preview released while its sweep is pending or running could be
+   drawn from a reused or freed entry. **Fix:** a dedicated preview tile buffer; the preview's manifest pinned until
+   the display drops it; the destination's tiles requested again on cancel.
+3. **Entering with a take open would trap it** (REC is a move in the picker). **Fix:** refused on entry (§6.1).
+
+High:
+
+4. **A mid-loop swap misleads.** **Fix:** audition and cancel switch on the next beat line (§6.1). To test: notes held
+   across both swaps, since a loop from an older stage of the same slot can share note ids with what plays.
+5. **`EMPTY LOOP` selected first wipes a loop in two presses.** **Fix:** start there only on an empty destination; an
+   empty loop over a filled one asks again (§6.1).
+6. **Switching a track to the destination for the audition is an unasked launch.** **Fix:** sound only when the track
+   already plays the destination; else preview only (§6.1).
+
+Medium:
+
+7. **Autosave pauses while a library job reads** (`EngineRoot`: the store is not serviced while `libraryWorking()`), so
+   steady browsing delays saving other tracks' takes. **Fix:** read only after the cursor rests ~150 ms, and let the
+   store run between reads (a preview read yields to a due store grain).
+8. **Reclaim churn** from abandoned previews. **Fix:** the same debounce, and one preview buffer reused.
+9. **PLAY/STOP muscle memory:** a reflex stop moves the cursor. **Fix:** the footer names the moves; the transport
+   button still stops everything and cancels the audition without restarting anything (§6.1).
+10. **A solo elsewhere silences the audition.** **Fix:** footer `SOLO ON 2` (§6.1).
+11. **The source changing under the picker** (serial `get`, `load`, `trash`, `empty-trash`, a live load's staging).
+    **Fix:** while the picker is open those are refused (`BUSY`), and no library job starts.
+
+Notes: the stage's tempo is not applied (loops are ticks; said where the length shows); the picker's cells are about
+7 px (§6.1).
+
+**Order:** (a) the current-state reader with its preview budget (fixes 1, and `get`); (b) the audition owner in the
+engine — hold, beat-line switch, cancel and KEEP, the refusals while it lasts, cancellation on transport stop; (c) the
+preview render path (2); (d) the picker screen with 3, 5, 6, 9–11; mockups alongside (b)–(c).
 
 ## 7. Autosave, recovery and live switching
 
