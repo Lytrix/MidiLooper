@@ -150,7 +150,8 @@ The engine half is built (DEC-270: read one slot of a stage for another slot, pl
 half:
 
 * **Two ways in, one grid** (owner 2026-11-10, after the mockups). (1) From the sets browser: a `GET A LOOP` row under
-  `< SETS` in a set's view (no controller needed), destination = the selected slot; TRACK lists the set's stages under
+  `< SETS` in a set's view (no controller needed), destination = the selected slot (its panel: `GET A LOOP INTO 3-2`
+  and the working set's mosaic with that slot boxed); TRACK lists the set's stages under
   `FROM STAGE`, and TRACK on one opens its grid. (2) From a slot on a controller: the slot's long press opens the same
   window with that slot as the destination — the cursor on `EMPTY LOOP` when the slot is empty, on the slot's own
   position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): an empty loop is now the
@@ -163,11 +164,11 @@ half:
   the transport; a press of it stops everything and cancels the audition). Cells are 7 × 4 px (8 tracks in the
   window's height; owner: to be judged on the device), the cursor a hollow bright box; the cursor's slot reads `SLOT
   1-3` against the divider, so it reads on into the panel's `INTO 3-2`; the title names the source stage (`LOOPS  SET 3
-  S01`). An `EMPTY LOOP` tile comes first — one cell the size of the others, a column of its own on the top row, dotted
-  unlike an empty source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
+  S01`). An `EMPTY LOOP` tile comes first — one cell the size of the others, left of slot 1 on the top row at the
+  cells' own spacing, dotted unlike an empty source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
   new-empty-loop length — shown before KEEP (one undo step). The cursor starts on `EMPTY LOOP` only when the
   destination is empty; otherwise on the grid cell of the destination's own track and slot, and an empty loop kept
-  over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY LOOP?`), so two reflex presses never wipe a
+  over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY LOOP?`, centred), so two reflex presses never wipe a
   loop.
 * **The panel** shows the loop under the cursor: its piano roll, length and bars (in ticks: the stage's tempo is not
   applied, the loop plays at the current tempo), after a short `READING…` state. A read starts only once the cursor
