@@ -15188,3 +15188,42 @@ note played twice", first noticed at a set switch).
 - Device (image `d8b90cd6…`): a take on slot 15 played from the host over USB MIDI and stopped 0.4 s after the line:
   loop 4 bars, an Edit run of 3 HideNote rows, no doubled note over the next cycle, the new note heard.
 - Diagnosis tooling kept: `!ENGINE dump-slot S` (a slot's current runs and rows).
+
+## DEC-263 — The sets browser on the DROID: HOLD TRACK opens it, the index lives in memory (sets browser slice 3)
+
+**Status:** Accepted (owner 2026-11-08: the browser opens on a long track switch — "opening / cancelling needs to be a
+long hold" — from any mode, buttons `REC TRK EDIT PLAY`; 2026-11-09: "continue with next stage", the detail panel
+leads with the id).
+**Context:** Slices 1–2 save, load and return through serial commands. The proposal's rules 1–8 and §4 screens put
+them on the four buttons.
+
+### Decision
+
+- **HOLD TRACK** (track switch 37, long) opens the browser once the library is open; an open NOTE_EDIT or LOOP_EDIT is
+  left first, its changes kept. The track switch's long press no longer toggles mute (mute stays on the track buttons'
+  double press and the playing slot's short press); without a library it still does.
+- While open: RECORD up, EDIT down (a quick double or triple acts twice or three times — the browser gives no button a
+  double), TRACK acts on the selected row, HOLD TRACK closes the save popup, then the browser; PLAY stays the transport;
+  other buttons act as usual.
+- **The index in memory** (`ProductionBrowser`, 4,096 records in PSRAM, ~287 KB beside the engine's budgeted line):
+  read at the library's opening in card order, so a row's record is its card index; each published milestone added.
+  The serial `milestone` command numbers from it (no card scan).
+- **The working set** is the set of the newest milestone at boot until the store keeps it (DEC-259's limit); a save's
+  base moves only once the milestone is published.
+- **Requests** go through the slices' paths (save: `beginMilestone`; load / return: `beginLoad`, live at the switch
+  point); success closes the browser with one line (`SAVED  SET 02  S02`, `LOADED …`, `RETURNED  SET 02  10:03`); a
+  failure keeps the screen with what and why, and `NOTHING CHANGED` only when true (`SET NOT AS IT WAS` otherwise).
+- Layout (owner 2026-11-09): a milestone's id three times the label size with its set beside it, the stage (and
+  `LATEST` / `FROM T02`) beneath, the date third, loops and bars dim, the mosaic; a list row's date only on the first
+  milestone of its day and only where it fits.
+
+### Evidence
+
+- Host: `test_content_engine_browser` 11 cases (mutations 11 / 11); `test_content_engine_surface` — HOLD TRACK opens,
+  RECORD / EDIT move without arming or recording, TRACK opens the popup without switching track, HOLD closes the popup
+  then the browser, nothing requested. Full native suite 4,450 passed (195 suites).
+- Device (images `bfaf65ad…` → `8a81ccd1…`, boot verified; buttons sent as the DROID's channel-16 notes over USB MIDI,
+  frames from `!ENGINE fbdump`): the top level, a set's milestones, the popup with next ids; HOLD, TRACK, TRACK saved
+  `S02` (72 ms) with its toast; a load from the list (132 ms) and a return from `< RETURN TO PREVIOUS` (68 ms).
+- Seen twice after a `!REBOOT` from the host scripts: the loop hung in a MIDI output stage (`prev_crumbs` stage 8, then
+  6) — not the browser (stage 9); recorded as a follow-up.

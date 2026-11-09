@@ -53,8 +53,10 @@
 #include <cstring>
 
 #include "ContentEngine/EngineClock.h"
+#include "ContentEngine/Browser.h"
 #include "ContentEngine/EngineRoot.h"
 #include "ContentEngine/StatusView.h"
+#include "ContentEngine/WallClock.h"
 
 namespace EngineFirmware {
 
@@ -74,6 +76,14 @@ struct EditView {
   bool popup = false;      // the length popup (owner 2026-11-08)
   uint8_t popupSlot = 0;
   uint32_t popupLoop = 0;  // the length it shows (ticks)
+};
+
+/// What the sets browser shows beside its model (sets browser slice 3): the working set's save state ("SAVED 14:32"),
+/// what return brings back ("TO SET 02 AS LEFT 14:57"), the time zone for dates.
+struct BrowserInfo {
+  char saved[16] = {};
+  char returnTo[32] = {};
+  int16_t tz = 0;
 };
 
 class EngineDisplay {
@@ -165,6 +175,15 @@ class EngineDisplay {
                   static_cast<unsigned long>(frameMs_), oled_.api.pageFlip());
   }
 
+  /// The sets browser to draw while it is open (slice 3), and what it shows beside its model.
+  void setBrowser(const ContentEngine::ProductionBrowser* b) { browser_ = b; }
+  void setBrowserInfo(const BrowserInfo& info) { browserInfo_ = info; }
+  /// One line over the performance screen for `ms` (rule 6: "SAVED  SET 02  T04").
+  void toast(const char* s, uint32_t nowMs, uint32_t ms = 2500) {
+    snprintf(toast_, sizeof toast_, "%s", s);
+    toastUntil_ = nowMs + ms;
+  }
+
   /// The slot a track shows while it plays nothing (the last one launched or recorded on it).
   void show(uint8_t track, uint8_t slot) {
     if (track < ContentEngine::kTrackCount) shown_[track] = slot;
@@ -249,7 +268,7 @@ class EngineDisplay {
         {'D', 0x6B6E}, {'E', 0x79A7}, {'F', 0x79A4}, {'G', 0x396B}, {'H', 0x5BED}, {'I', 0x7497}, {'J', 0x126A},
         {'K', 0x5BAD}, {'L', 0x4927}, {'M', 0x5F6D}, {'N', 0x6B6D}, {'O', 0x2B6A}, {'P', 0x6BA4}, {'Q', 0x2B6B},
         {'R', 0x6BAD}, {'S', 0x388E}, {'T', 0x7492}, {'U', 0x5B6F}, {'V', 0x5B6A}, {'W', 0x5BFD}, {'X', 0x5AAD},
-        {'Y', 0x5A92}, {'Z', 0x72A7}};
+        {'Y', 0x5A92}, {'Z', 0x72A7}, {':', 0x0410}, {'.', 0x0002}, {'!', 0x2482}, {'<', 0x1511}, {'>', 0x4454}};
     for (const auto& g : kGlyphs)
       if (g.c == c) return g.bits;
     return 0;
@@ -262,6 +281,22 @@ class EngineDisplay {
         if (b & (1u << (14 - i))) px(static_cast<int16_t>(x + i % 3), static_cast<int16_t>(top + i / 3), v);
     }
     return x;
+  }
+  /// A 3 × 5 label `k` times its size (the browser's milestone id: 3).
+  int16_t label(const char* s, int16_t x, int16_t top, uint8_t v, uint8_t k) {
+    for (; *s; ++s, x = static_cast<int16_t>(x + 4 * k)) {
+      const uint16_t b = micro(*s);
+      for (uint8_t i = 0; i < 15; ++i)
+        if (b & (1u << (14 - i)))
+          oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x + (i % 3) * k), static_cast<int16_t>(top + (i / 3) * k),
+                                     static_cast<int16_t>(x + (i % 3) * k + k - 1),
+                                     static_cast<int16_t>(top + (i / 3) * k + k - 1), v);
+    }
+    return x;
+  }
+  /// A 3 × 5 label right-aligned so its last column is `xr`.
+  void rlabel(const char* s, int16_t xr, int16_t top, uint8_t v) {
+    label(s, static_cast<int16_t>(xr - static_cast<int16_t>(strlen(s)) * 4 + 2), top, v);
   }
   enum class Icon : uint8_t { Stop, Play, Rec, Dub, Clock, In };
   /// 5-row icons, one byte a row (bit 4 the left column); `width` columns.
@@ -287,6 +322,10 @@ class EngineDisplay {
   // ---- Frame ---------------------------------------------------------------------------------------------------------
   void draw(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick, uint32_t nowMs) {
     oled_.gfx.fill_buffer(fb(), 0);
+    if (browser_ != nullptr && browser_->isOpen()) {
+      drawBrowser(*browser_);
+      return;
+    }
     auto& x = e.transport();
     const uint8_t sel = e.control().selectedTrack();
     drawTracks(e, clock, sel, nowMs);
@@ -303,6 +342,237 @@ class EngineDisplay {
     }
     drawStatus(e, clock, sel, info, lastTick, nowMs);
     if (edit_.popup) drawPopup();
+    if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();
+  }
+
+  // ---- The sets browser (slice 3; layout: proposal §4, owner 2026-11-09: the id largest, the stage beneath, the date
+  // third) ---------------------------------------------------------------------------------------------------------
+  using Browser = ContentEngine::ProductionBrowser;
+  using Row = Browser::Row;
+  using RowKind = Browser::RowKind;
+  static constexpr int16_t kListX = 24, kRuleX = 112, kDetailX = 116, kMosaicX = 223, kHintY = 58;
+  static void idText(const ContentEngine::library::Record& r, char* out, size_t n) {
+    snprintf(out, n, "%c%02u", ContentEngine::library::stageLetter(r.stage), r.stageNumber);
+  }
+  static uint32_t bars(uint32_t ticks) { return (ticks + kBar - 1) / kBar; }
+  void drawBrowser(const Browser& b) {
+    for (int16_t y = 0; y < 55; ++y) px(kRuleX, y, 2);
+    hline(0, 255, 55, 2);
+    const uint16_t n = b.rowCount();
+    for (uint16_t i = b.first(); i < n && i < b.first() + Browser::kVisible; ++i)
+      drawRow(b, b.row(i), i > 0 ? b.row(static_cast<uint16_t>(i - 1)) : b.row(i),
+              static_cast<int16_t>(3 + (i - b.first()) * 8), i == b.selected(), i > 0);
+    const Row sel = b.row(b.selected());
+    char hint[48];
+    if (b.view() == Browser::View::Failed) {
+      drawTitle(b.failWhat());
+      label(b.failWhy(), kDetailX, 24, 9);
+      label(b.failChanged() ? "SET NOT AS IT WAS" : "NOTHING CHANGED", kDetailX, 31, 9);
+      snprintf(hint, sizeof hint, "TRACK: TRY AGAIN  HOLD: CLOSE");
+    } else {
+      drawDetail(b, sel, hint, sizeof hint);
+    }
+    label(hint, 2, kHintY, 9);
+    if (b.view() == Browser::View::Popup) drawSavePopup(b);
+  }
+  /// A list row; a milestone's date only on the first of its day (the row above another day) and only where it fits.
+  void drawRow(const Browser& b, const Row& r, const Row& above, int16_t y, bool on, bool hasAbove) {
+    if (on) oled_.gfx.draw_rect_filled(fb(), 0, static_cast<int16_t>(y - 1), kRuleX - 1, static_cast<int16_t>(y + 5), 3);
+    const uint8_t v = on ? 15 : 8, nv = on ? 15 : 5;
+    char text[28] = {}, note[16] = {};
+    switch (r.kind) {
+      case RowKind::Return: snprintf(text, sizeof text, "< RETURN TO PREVIOUS"); break;
+      case RowKind::Save: snprintf(text, sizeof text, "+ SAVE MILESTONE"); break;
+      case RowKind::SaveNewSet: snprintf(text, sizeof text, "+ SAVE AS NEW SET"); break;
+      case RowKind::Back: snprintf(text, sizeof text, "< ALL SETS"); break;
+      case RowKind::Working:
+        snprintf(text, sizeof text, "SET %02u NOW", r.set);
+        // The time alone ("14:32"; UNSAVED as it is): SAVED and the time do not fit beside the set.
+        snprintf(note, sizeof note, "%s", strncmp(browserInfo_.saved, "SAVED ", 6) == 0 ? browserInfo_.saved + 6
+                                                                                         : browserInfo_.saved);
+        dotAt(18, static_cast<int16_t>(y + 2), 13, true);
+        break;
+      case RowKind::Set: {
+        const auto& m = b.record(r.record);
+        char id[8];
+        idText(m, id, sizeof id);
+        snprintf(text, sizeof text, "SET %02u  %s", r.set, id);
+        ContentEngine::wallclock::formatDay(m.wallTime, browserInfo_.tz, note, sizeof note);
+        break;
+      }
+      case RowKind::Milestone: {
+        const auto& m = b.record(r.record);
+        char id[8];
+        idText(m, id, sizeof id);
+        snprintf(text, sizeof text, "%s  %s", id, ContentEngine::library::stageName(m.stage));
+        ContentEngine::wallclock::formatDay(m.wallTime, browserInfo_.tz, note, sizeof note);
+        if (hasAbove && above.kind == RowKind::Milestone) {  // the same day as the row above, shown there: not again
+          const auto& a = b.record(above.record);
+          char day[16], aboveText[28];
+          ContentEngine::wallclock::formatDay(a.wallTime, browserInfo_.tz, day, sizeof day);
+          snprintf(aboveText, sizeof aboveText, "%c%02u  %s", ContentEngine::library::stageLetter(a.stage),
+                   a.stageNumber, ContentEngine::library::stageName(a.stage));
+          if (strcmp(day, note) == 0 && fits(aboveText, day)) note[0] = 0;
+        }
+        dotAt(18, static_cast<int16_t>(y + 2), 13, false);
+        break;
+      }
+    }
+    label(text, kListX, y, v);
+    if (note[0] != 0 && strcmp(note, "--") != 0 && fits(text, note)) rlabel(note, kRuleX - 3, y, nv);
+  }
+  /// A row's right-hand note fits beside its text.
+  static bool fits(const char* text, const char* note) {
+    return static_cast<int16_t>(strlen(note)) * 4 <= kRuleX - 3 - kListX - static_cast<int16_t>(strlen(text)) * 4 - 6;
+  }
+  void dotAt(int16_t x, int16_t y, uint8_t v, bool ring) {
+    for (int16_t dy = -1; dy <= 1; ++dy)
+      for (int16_t dx = -1; dx <= 1; ++dx)
+        if (!ring || dx != 0 || dy != 0) px(static_cast<int16_t>(x + dx), static_cast<int16_t>(y + dy), v);
+  }
+  /// An action's word, twice the label size (SAVE, RETURN, LOAD FAILED).
+  void drawTitle(const char* s) { label(s, kDetailX, 4, 15, 2); }
+  /// A milestone: its id largest with the set beside it, the stage beneath, the date, loops and bars; the mosaic.
+  void drawMilestone(const Browser& b, uint16_t i, const char* stageLine, const char* infoLine) {
+    const auto& m = b.record(i);
+    char id[8], set[12], date[24];
+    idText(m, id, sizeof id);
+    const int16_t x = label(id, kDetailX, 4, 15, 3);
+    snprintf(set, sizeof set, "SET %02u", m.set);
+    label(set, static_cast<int16_t>(x + 3), 4, 6);
+    label(stageLine, kDetailX, 23, 12);
+    ContentEngine::wallclock::formatStamp(m.wallTime, browserInfo_.tz, date, sizeof date);
+    label(date, kDetailX, 31, 8);
+    label(infoLine, kDetailX, 39, 4);
+    drawMosaic(m);
+  }
+  void drawMosaic(const ContentEngine::library::Record& m) {
+    static const uint8_t kLevel[4] = {0, 5, 9, 14};
+    for (uint8_t t = 0; t < 8; ++t)
+      for (uint8_t s = 0; s < 8; ++s) {
+        const uint8_t k = static_cast<uint8_t>(t * 8 + s);
+        const uint8_t lv = static_cast<uint8_t>((m.mosaic[k / 4] >> ((k % 4) * 2)) & 3);
+        const int16_t x = static_cast<int16_t>(kMosaicX + s * 4), y = static_cast<int16_t>(4 + t * 4);
+        if (lv == 0) px(static_cast<int16_t>(x + 1), static_cast<int16_t>(y + 1), 1);
+        else oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), kLevel[lv]);
+      }
+  }
+  void drawDetail(const Browser& b, const Row& r, char* hint, size_t n) {
+    char a[40], c[40];
+    switch (r.kind) {
+      case RowKind::Return:
+        drawTitle("RETURN");
+        label(browserInfo_.returnTo, kDetailX, 24, 9);
+        label("NOT A MILESTONE", kDetailX, 31, 5);
+        snprintf(hint, n, "TRACK: RETURN  HOLD: CLOSE");
+        return;
+      case RowKind::Save:
+      case RowKind::SaveNewSet: {
+        const bool fresh = r.kind == RowKind::SaveNewSet;
+        drawTitle(fresh ? "NEW SET" : "SAVE");
+        snprintf(a, sizeof a, "INTO SET %02u", fresh ? b.newSetNumber() : b.workingSet());
+        label(a, kDetailX, 24, 9);
+        const uint16_t base = b.find(b.baseSequence());
+        if (base != Browser::kNone) {
+          char id[8];
+          idText(b.record(base), id, sizeof id);
+          snprintf(c, sizeof c, "FROM %s", id);
+        } else {
+          snprintf(c, sizeof c, "NEW WORK");
+        }
+        label(c, kDetailX, 31, 6);
+        label(browserInfo_.saved, kDetailX, 38, 5);
+        snprintf(hint, n, "TRACK: CHOOSE STAGE  HOLD: CLOSE");
+        return;
+      }
+      case RowKind::Back:
+        drawTitle("ALL SETS");
+        snprintf(hint, n, "TRACK: ALL SETS  HOLD: CLOSE");
+        return;
+      case RowKind::Working:
+      case RowKind::Set: {
+        snprintf(hint, n, "TRACK: OPEN SET %02u  HOLD: CLOSE", r.set);
+        if (r.record == Browser::kNone) {
+          drawTitle("NOW");
+          snprintf(a, sizeof a, "SET %02u", r.set);
+          label(a, kDetailX, 24, 9);
+          label("NO MILESTONES YET", kDetailX, 31, 5);
+          return;
+        }
+        snprintf(a, sizeof a, "%s  LATEST", ContentEngine::library::stageName(b.record(r.record).stage));
+        snprintf(c, sizeof c, "%u MILESTONES", b.milestonesIn(r.set));
+        drawMilestone(b, r.record, a, c);
+        return;
+      }
+      case RowKind::Milestone: {
+        const auto& m = b.record(r.record);
+        const uint16_t parent = m.parent != 0 ? b.find(m.parent) : Browser::kNone;
+        if (parent != Browser::kNone) {
+          char pid[8];
+          idText(b.record(parent), pid, sizeof pid);
+          snprintf(a, sizeof a, "%s  FROM %s", ContentEngine::library::stageName(m.stage), pid);
+        } else {
+          snprintf(a, sizeof a, "%s", ContentEngine::library::stageName(m.stage));
+        }
+        const uint32_t lo = bars(m.shortestLoop), hi = bars(m.longestLoop);
+        if (lo == hi) snprintf(c, sizeof c, "%u LOOPS  %lu BARS", m.loops, static_cast<unsigned long>(hi));
+        else snprintf(c, sizeof c, "%u LOOPS  %lu-%lu BARS", m.loops, static_cast<unsigned long>(lo), static_cast<unsigned long>(hi));
+        drawMilestone(b, r.record, a, c);
+        char id[8];
+        idText(m, id, sizeof id);
+        snprintf(hint, n, "TRACK: LOAD %s  HOLD: CLOSE", id);
+        return;
+      }
+    }
+  }
+  /// The save popup (proposal §3): the six stages with the id each would get, one highlighted, one SUGGESTED.
+  void drawSavePopup(const Browser& b) {
+    constexpr int16_t x0 = 56, y0 = 1, x1 = 200, y1 = 56;
+    oled_.gfx.draw_rect_filled(fb(), x0 + 3, y0 + 3, x1 + 3, y1 + 3, 2);
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 0);
+    for (int16_t x = x0; x <= x1; ++x) {
+      px(x, y0, 10);
+      px(x, static_cast<int16_t>(y0 + 9), 10);
+      px(x, y1, 10);
+    }
+    for (int16_t y = y0; y <= y1; ++y) {
+      px(x0, y, 10);
+      px(x1, y, 10);
+    }
+    for (int16_t y = static_cast<int16_t>(y0 + 2); y < y0 + 9; y += 2) hline(x0 + 1, x1 - 1, y, 5);
+    char title[24];
+    snprintf(title, sizeof title, b.popupNewSet() ? "SAVE AS SET %02u" : "SAVE TO SET %02u", b.popupSet());
+    const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 6, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
+    oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
+    label(title, static_cast<int16_t>(tx + 3), static_cast<int16_t>(y0 + 2), 13);
+    for (uint8_t i = 0; i < Browser::kStages; ++i) {
+      const auto stage = static_cast<ContentEngine::library::Stage>(i);
+      const int16_t y = static_cast<int16_t>(y0 + 13 + i * 7);
+      const bool on = i == b.popupSelected();
+      if (on) oled_.gfx.draw_rect_filled(fb(), x0 + 2, static_cast<int16_t>(y - 1), x1 - 2, static_cast<int16_t>(y + 5), 13);
+      label(ContentEngine::library::stageName(stage), x0 + 6, y, on ? 0 : 7);
+      char id[8];
+      snprintf(id, sizeof id, "%c%02u", ContentEngine::library::stageLetter(stage), b.nextNumber(b.popupSet(), stage));
+      label(id, x0 + 58, y, on ? 0 : 9);
+      if (stage == b.suggested()) label("SUGGESTED", x1 - 40, y, on ? 0 : 5);
+    }
+    oled_.gfx.draw_rect_filled(fb(), 0, kHintY - 1, 255, 63, 0);
+    label("REC/EDIT STAGE  TRACK SAVE  HOLD CANCEL", 2, kHintY, 9);
+  }
+  /// The one line after a save, load or return (rule 6), over the performance screen.
+  void drawToast() {
+    const int16_t tw = static_cast<int16_t>(strlen(toast_)) * 4 + 12, x0 = static_cast<int16_t>((256 - tw) / 2);
+    oled_.gfx.draw_rect_filled(fb(), x0 + 2, 16, static_cast<int16_t>(x0 + tw + 2), 32, 2);
+    oled_.gfx.draw_rect_filled(fb(), x0, 14, static_cast<int16_t>(x0 + tw), 30, 0);
+    for (int16_t x = x0; x <= x0 + tw; ++x) {
+      px(x, 14, 10);
+      px(x, 30, 10);
+    }
+    for (int16_t y = 14; y <= 30; ++y) {
+      px(x0, y, 10);
+      px(static_cast<int16_t>(x0 + tw), y, 10);
+    }
+    label(toast_, static_cast<int16_t>(x0 + 6), 20, 15);
   }
 
   /// The length popup (owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen
@@ -686,6 +956,10 @@ class EngineDisplay {
 
   SSD1322 oled_;
   EditView edit_;
+  const ContentEngine::ProductionBrowser* browser_ = nullptr;
+  BrowserInfo browserInfo_{};
+  char toast_[40] = {};
+  uint32_t toastUntil_ = 0;
   ContentEngine::status::SaveIndicator dots_;
   uint8_t shown_[ContentEngine::kTrackCount] = {};
   uint8_t focus_ = 0xFF;

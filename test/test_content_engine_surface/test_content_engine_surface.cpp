@@ -401,6 +401,45 @@ void test_leds_follow_and_only_changes_are_sent() {
   TEST_ASSERT_EQUAL_UINT32(sends, gLedSends);
 }
 
+// ---- The sets browser (slice 3) ---------------------------------------------------------------------------------------
+static ProductionBrowser gBrowser;
+/// A long track switch opens it (an open edit left first), record / edit move, a short track switch acts, a long one
+/// closes the popup, then the browser; nothing reaches the transport or the mute meanwhile.
+void test_the_browser_takes_record_track_and_edit_while_open() {
+  gBrowser.clear();
+  library::Record r{};
+  r.sequence = 1;
+  r.set = 1;
+  gBrowser.add(r);
+  gBrowser.setWorking(1, 1, false);
+  gS.setBrowser(&gBrowser);
+  tap(S::kTrackSwitchNote, 700);
+  ms(400);
+  TEST_ASSERT_TRUE(gS.browsing());
+  TEST_ASSERT_FALSE(C().muted(0));  // the long press is the browser's now
+  tap(38);  // edit: down
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT16(1, gBrowser.selected());
+  tap(S::kRecordNote);  // record: up, not a take
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT16(0, gBrowser.selected());
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_EQUAL(ProductionControl::kNone, C().queuedRecordSlot(0));
+  tap(S::kTrackSwitchNote);  // + SAVE MILESTONE: the popup
+  ms(800);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Popup, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT8(0, C().selectedTrack());  // not the next track
+  tap(S::kTrackSwitchNote, 700);
+  ms(400);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
+  tap(S::kTrackSwitchNote, 700);
+  ms(400);
+  TEST_ASSERT_FALSE(gS.browsing());
+  ProductionBrowser::Request q;
+  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
+  gS.setBrowser(nullptr);
+}
+
 void test_no_heap() {
   gTrap = true;
   const unsigned long before = gHeapAllocations;
@@ -424,6 +463,7 @@ int main(int, char**) {
   RUN_TEST(test_transport_and_play_stop_buttons);
   RUN_TEST(test_a_transport_start_plays_every_unmuted_track);
   RUN_TEST(test_leds_follow_and_only_changes_are_sent);
+  RUN_TEST(test_the_browser_takes_record_track_and_edit_while_open);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

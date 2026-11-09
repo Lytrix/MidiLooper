@@ -203,8 +203,10 @@ class Browser {
   }
   /// The request succeeded: the browser closes (the owner shows its one line).
   void succeeded() { view_ = View::Closed; }
-  /// The request failed: the screen and the selection stay, with what and why; TRACK tries again.
-  void failed(const char* what, const char* why) {
+  /// The request failed: the screen and the selection stay, with what and why; TRACK tries again. `changed`: the set is
+  /// not as it was (a load that could not restore it) — the screen says so instead of NOTHING CHANGED.
+  void failed(const char* what, const char* why, bool changed = false) {
+    changed_ = changed;
     if (view_ == View::Popup) view_ = list_;
     list_ = view_ == View::Failed ? list_ : view_;
     copy(failWhat_, what);
@@ -213,6 +215,7 @@ class Browser {
   }
   const char* failWhat() const { return failWhat_; }
   const char* failWhy() const { return failWhy_; }
+  bool failChanged() const { return changed_; }
 
   // ---- Rows --------------------------------------------------------------------------------------------------------
   /// The rows of the list shown (the popup's and a failure's: the list under them).
@@ -324,7 +327,7 @@ class Browser {
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
   uint16_t workingSet_ = 1, openSet_ = 0, popupSet_ = 0;
   uint32_t base_ = 0;
-  bool canReturn_ = false, popupNew_ = false;
+  bool canReturn_ = false, popupNew_ = false, changed_ = false;
   View view_ = View::Closed, list_ = View::Top;
   uint16_t selected_ = 0, first_ = 0;
   uint8_t stageSel_ = 0;
@@ -332,5 +335,7 @@ class Browser {
   Request request_{}, pending_{};
   char failWhat_[kText] = {}, failWhy_[kText] = {};
 };
+
+using ProductionBrowser = Browser<>;
 
 }  // namespace ContentEngine

@@ -358,6 +358,12 @@ uint32_t gLibraryStartUs = 0;
 uint32_t gBase = 0;
 uint16_t gSet = 1;
 ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
+// The sets browser (slice 3) and the library's index in memory (4,096 records, PSRAM). `gBrowserOp`: the request it
+// made that is under way (its end answers the browser).
+EXTMEM ProductionBrowser gBrowser;
+enum class BrowserOp : uint8_t { None, Save, Load, Return };
+BrowserOp gBrowserOp = BrowserOp::None;
+bool gBrowserReady = false;
 uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work (DEC-260)
 uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint / stage, clear, read
 uint8_t gSwitchedWas = 0;      // the tracks a live load stopped, as last reported
@@ -404,6 +410,25 @@ void reportLibrary(const char* why) {
                 static_cast<unsigned long>(hasCheckpoint ? cp.sequence : 0));
 }
 /// Opens the library; creating (preallocating 1 GiB) only while stopped, no take open, saving approved (DEC-258).
+/// The index into memory (once, when the library opens): records in card order, so a browser row's record is its card
+/// index; one that does not read keeps its place (shown as set 00).
+void loadIndex() {
+  auto& l = gEngine.library();
+  const uint32_t t = micros();
+  gBrowser.clear();
+  for (uint16_t i = 0; i < l.header().count; ++i) {
+    library::Record r{};
+    if (!l.readRecord(i, r)) r = library::Record{};
+    gBrowser.add(r);
+  }
+  // The working set until the store keeps it (DEC-259: held for the boot only): the newest milestone's set.
+  if (gBase == 0 && gBrowser.count() != 0) gSet = gBrowser.record(static_cast<uint16_t>(gBrowser.count() - 1)).set;
+  gBrowserReady = true;
+  gSurface.setBrowser(&gBrowser);
+  gDisplay.setBrowser(&gBrowser);
+  Serial.printf("#ENGINE,index,count=%u,sets=%u,ms=%lu\n", gBrowser.count(), gBrowser.setCount(),
+                static_cast<unsigned long>((micros() - t) / 1000));
+}
 void openLibrary(const char* why) {
   const bool create = gEngine.persistence().approved() && !gClock.running() &&
                       gEngine.transport().writingSlot() == ProductionTransport::kNoSlot;
@@ -411,6 +436,7 @@ void openLibrary(const char* why) {
   bool created = false;
   gEngine.openLibrary(kLibraryFile, create, created);
   reportLibrary(created ? "created" : why);
+  if (gEngine.library().mounted()) loadIndex();
 }
 void listMilestones() {
   auto& l = gEngine.library();
@@ -431,7 +457,29 @@ void listMilestones() {
   }
   reportLibrary("list");
 }
-/// milestone <S|B|E|T|A|F> [set]: the whole set as it is now, numbered next in its stage (DEC-258).
+/// Starts saving the whole set as milestone `stage` `number` of `set` (DEC-258). nullptr, or why not (nothing written).
+const char* beginMilestone(library::Stage stage, uint16_t set, uint8_t number, uint32_t nowUs) {
+  auto& l = gEngine.library();
+  if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) return "STOP THE TAKE FIRST";
+  if (!l.mounted()) return "LIBRARY NOT READY";
+  if (gEngine.libraryBusy()) return "BUSY";
+  ProductionLibrary::Milestone m;
+  m.set = set;
+  m.stage = stage;
+  m.stageNumber = number;
+  m.parent = gBase;
+  m.wallTime = wallTime();
+  m.tempoTenths = tempoTenthsNow();
+  surfaceNow(m.surface);
+  const ProductionLibrary::Result r = gEngine.saveMilestone(m);
+  if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
+  gLibraryCheckpoint = false;
+  gLibraryStartUs = nowUs;
+  Serial.printf("#ENGINE,milestone,begin,id=SET %02u %c%02u,sectors=%lu\n", set, library::stageLetter(stage), number,
+                static_cast<unsigned long>(l.published().logSectors));
+  return nullptr;
+}
+/// milestone <S|B|E|T|A|F> [set]: the whole set as it is now, numbered next in its stage (the index in memory).
 void saveMilestone(const char* arg, uint32_t nowUs) {
   static const char kLetters[] = "SBETAF";
   const char* at = arg != nullptr ? std::strchr(kLetters, arg[0]) : nullptr;
@@ -441,39 +489,9 @@ void saveMilestone(const char* arg, uint32_t nowUs) {
   }
   const char* setArg = std::strchr(arg, ' ');
   const uint16_t set = static_cast<uint16_t>(setArg != nullptr ? std::atoi(setArg + 1) : gSet);
-  auto& l = gEngine.library();
-  const char* refused = nullptr;
-  if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) refused = "STOP THE TAKE FIRST";
-  else if (!l.mounted()) refused = "LIBRARY NOT READY";
-  else if (gEngine.libraryBusy()) refused = "BUSY";
-  if (refused != nullptr) {
-    Serial.printf("#ENGINE,milestone,refused,why=%s\n", refused);
-    return;
-  }
-  ProductionLibrary::Milestone m;
-  m.set = set;
-  m.stage = static_cast<library::Stage>(at - kLetters);
-  m.stageNumber = 1;
-  for (uint16_t i = 0; i < l.header().count; ++i) {  // the next number in this set and stage
-    library::Record r;
-    if (l.readRecord(i, r) && r.set == set && r.stage == m.stage && r.stageNumber >= m.stageNumber)
-      m.stageNumber = static_cast<uint8_t>(r.stageNumber + 1);
-  }
-  m.parent = gBase;
-  m.wallTime = wallTime();
-  m.tempoTenths = tempoTenthsNow();
-  surfaceNow(m.surface);
-  const ProductionLibrary::Result r = gEngine.saveMilestone(m);
-  if (r != ProductionLibrary::Result::Ok) {
-    Serial.printf("#ENGINE,milestone,refused,why=%s,full=%s\n", libraryRefusal(r), libraryFullWhy(r));
-    return;
-  }
-  gLibraryCheckpoint = false;
-  gLibraryStartUs = nowUs;
-  gBase = l.published().sequence;  // the working set now descends from it
-  gSet = set;
-  Serial.printf("#ENGINE,milestone,begin,id=SET %02u %c%02u,sectors=%lu\n", set, kLetters[at - kLetters],
-                m.stageNumber, static_cast<unsigned long>(l.published().logSectors));
+  const auto stage = static_cast<library::Stage>(at - kLetters);
+  if (const char* why = beginMilestone(stage, set, gBrowser.nextNumber(set, stage), nowUs))
+    Serial.printf("#ENGINE,milestone,refused,why=%s\n", why);
 }
 /// The checkpoint a load writes first: the working set as it is now.
 ProductionLibrary::Checkpoint checkpointNow() {
@@ -500,32 +518,33 @@ void saveCheckpoint(uint32_t nowUs) {
   gLibraryStartUs = nowUs;
   Serial.println("#ENGINE,checkpoint,begin");
 }
-/// load <index>: milestone `index` (0-based, as `milestones` lists it) replaces the set; stopped only (slice 2a).
-/// return: back to the set before the last load.
-void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
-  const bool load = verb[0] == 'l';
-  if (const char* why = gEngine.loadRefusal()) {
-    Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
-    return;
-  }
-  if (load && arg == nullptr) {
-    Serial.println("#ENGINE,load,refused,why=WHICH");
-    return;
-  }
-  const bool live = gClock.running();  // DEC-260: plays on to the switch point, a short gap, then the loaded set
-  const ProductionSetLoad::Result r = load ? gEngine.loadMilestone(static_cast<uint16_t>(std::atoi(arg)), checkpointNow(), live)
-                                           : gEngine.returnToCheckpoint(live);
+/// Starts loading milestone `index` (card order) or, `load` false, returning to the checkpoint; while playing it waits
+/// for the switch point (DEC-260 / 261). nullptr, or why not (nothing changed).
+const char* beginLoad(bool load, uint16_t index, uint32_t nowUs) {
+  if (const char* why = gEngine.loadRefusal()) return why;
+  const bool live = gClock.running();
+  const ProductionSetLoad::Result r =
+      load ? gEngine.loadMilestone(index, checkpointNow(), live) : gEngine.returnToCheckpoint(live);
   static const char* const kWhy[] = {"OK", "LIBRARY NOT READY", "BUSY", "NO SUCH MILESTONE", "NOTHING TO RETURN TO",
                                      "SET TOO LARGE"};
-  if (r != ProductionSetLoad::Result::Ok) {
-    Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, kWhy[static_cast<uint8_t>(r)]);
-    return;
-  }
+  if (r != ProductionSetLoad::Result::Ok) return kWhy[static_cast<uint8_t>(r)];
   gLibraryStartUs = nowUs;
   gLoadGrainMaxUs = 0;
   gLoadPhaseMaxUs[0] = gLoadPhaseMaxUs[1] = gLoadPhaseMaxUs[2] = 0;
   gLoadWas = ProductionSetLoad::Status::Running;
-  Serial.printf("#ENGINE,%s,begin,live=%u,at=%s\n", verb, live ? 1u : 0u, switchAtName());
+  Serial.printf("#ENGINE,%s,begin,live=%u,at=%s\n", load ? "load" : "return", live ? 1u : 0u, switchAtName());
+  return nullptr;
+}
+/// load <index>: milestone `index` (0-based, as `milestones` lists it) replaces the set. return: back to the set before
+/// the last load.
+void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
+  const bool load = verb[0] == 'l';
+  if (load && arg == nullptr) {
+    Serial.println("#ENGINE,load,refused,why=WHICH");
+    return;
+  }
+  if (const char* why = beginLoad(load, load ? static_cast<uint16_t>(std::atoi(arg)) : 0, nowUs))
+    Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
 }
 /// The loaded set's tempo and selection (as the boot restores the saved selection).
 void applyLoaded(const library::BlobHeader& b) {
@@ -590,10 +609,73 @@ void serviceLoad() {
     default:
       break;
   }
+  if (gBrowserOp == BrowserOp::Load || gBrowserOp == BrowserOp::Return) {  // the browser's request (rules 6–7)
+    char line[40];
+    if (st == ProductionSetLoad::Status::Done) {
+      if (load) {
+        snprintf(line, sizeof line, "LOADED  SET %02u  %c%02u", l.record().set, library::stageLetter(l.record().stage),
+                 l.record().stageNumber);
+      } else {
+        char at[8];
+        wallclock::formatClock(l.checkpoint().wallTime, gTzOffset, at, sizeof at);
+        snprintf(line, sizeof line, "RETURNED  SET %02u  %s", l.checkpoint().set, at);
+      }
+      gBrowser.succeeded();
+      gDisplay.toast(line, millis());
+    } else {
+      const char* what = load ? "LOAD FAILED" : "RETURN FAILED";
+      if (st == ProductionSetLoad::Status::Unchanged) gBrowser.failed(what, "CHECKPOINT NOT WRITTEN");
+      else if (st == ProductionSetLoad::Status::Restored) gBrowser.failed(what, "CARD READ ERROR");
+      else gBrowser.failed(what, "SET NOT RESTORED", true);
+    }
+    gBrowserOp = BrowserOp::None;
+  }
   Serial.printf("#ENGINE,%s,grains_us,checkpoint_stage=%lu,clear=%lu,read=%lu\n", verb,
                 static_cast<unsigned long>(gLoadPhaseMaxUs[0]), static_cast<unsigned long>(gLoadPhaseMaxUs[1]),
                 static_cast<unsigned long>(gLoadPhaseMaxUs[2]));
   reportLibrary(verb);
+}
+/// The browser (slice 3): kept current while closed, and what it asks carried out.
+void serviceBrowser(uint32_t nowUs) {
+  if (!gBrowserReady) return;
+  library::CheckpointHeader cp{};
+  const bool hasCheckpoint = gEngine.library().checkpoint(cp);
+  if (!gBrowser.isOpen()) gBrowser.setWorking(gSet, gBase, hasCheckpoint);
+  EngineFirmware::BrowserInfo info;
+  info.tz = gTzOffset;
+  if (gEngine.persistence().unsaved()) {
+    snprintf(info.saved, sizeof info.saved, "UNSAVED");
+  } else {
+    char at[8];
+    wallclock::formatClock(gLastSaveWall, gTzOffset, at, sizeof at);
+    snprintf(info.saved, sizeof info.saved, gLastSaveWall != 0 ? "SAVED %s" : "SAVED", at);
+  }
+  if (hasCheckpoint) {
+    char at[8];
+    wallclock::formatClock(cp.wallTime, gTzOffset, at, sizeof at);
+    snprintf(info.returnTo, sizeof info.returnTo, "TO SET %02u AS LEFT %s", cp.set, at);
+  }
+  gDisplay.setBrowserInfo(info);
+  ProductionBrowser::Request q;
+  if (!gBrowser.takeRequest(q)) return;
+  const char* why = nullptr;
+  switch (q.action) {
+    case ProductionBrowser::Action::Save:
+      gBrowserOp = BrowserOp::Save;
+      if ((why = beginMilestone(q.stage, q.set, q.stageNumber, nowUs)) != nullptr) gBrowser.failed("SAVE FAILED", why);
+      break;
+    case ProductionBrowser::Action::Load:
+      gBrowserOp = BrowserOp::Load;
+      if ((why = beginLoad(true, q.record, nowUs)) != nullptr) gBrowser.failed("LOAD FAILED", why);
+      break;
+    case ProductionBrowser::Action::Return:
+      gBrowserOp = BrowserOp::Return;
+      if ((why = beginLoad(false, 0, nowUs)) != nullptr) gBrowser.failed("RETURN FAILED", why);
+      break;
+    default:
+      break;
+  }
+  if (why != nullptr) gBrowserOp = BrowserOp::None;
 }
 /// A library job's end, reported once.
 void serviceLibrary() {
@@ -611,6 +693,22 @@ void serviceLibrary() {
     Serial.printf("#ENGINE,milestone,%s,id=SET %02u %c%02u,seq=%lu,sectors=%lu,ms=%lu\n", ok ? "done" : "failed",
                   r.set, library::stageLetter(r.stage), r.stageNumber, static_cast<unsigned long>(r.sequence),
                   static_cast<unsigned long>(r.logSectors), ms);
+    if (ok) {  // published: in the index, and the working set descends from it
+      gBrowser.add(r);
+      gBase = r.sequence;
+      gSet = r.set;
+    }
+    if (gBrowserOp == BrowserOp::Save) {
+      if (ok) {
+        char line[40];
+        snprintf(line, sizeof line, "SAVED  SET %02u  %c%02u", r.set, library::stageLetter(r.stage), r.stageNumber);
+        gBrowser.succeeded();
+        gDisplay.toast(line, millis());
+      } else {
+        gBrowser.failed("SAVE FAILED", "CARD WRITE ERROR");
+      }
+      gBrowserOp = BrowserOp::None;
+    }
   }
   reportLibrary(ok ? "saved" : "failed");
 }
@@ -1116,6 +1214,7 @@ void loop() {
   stampSaves();
   serviceLibrary();
   serviceLoad();
+  serviceBrowser(micros());
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT

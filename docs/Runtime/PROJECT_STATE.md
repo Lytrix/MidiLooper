@@ -1,3 +1,12 @@
+**2026-11-09 — Engine sets browser, slice 3 — the browser on the DROID (DEC-263).**
+- HOLD TRACK opens it (an open edit left first); RECORD up / EDIT down / TRACK acts / HOLD TRACK closes. Top level
+  (return, save milestone, save as new set, the working set, the other sets), a set's milestones, the detail panel in
+  the refined layout (id largest, stage beneath, date third, loops / bars, mosaic), the save popup with next ids and the
+  base stage suggested; save, load and return run through slices 1–2 and close with one line; failures keep the screen.
+- Device: saved S02 with HOLD, TRACK, TRACK; loaded E01 and returned from the list. Native 4,450 passed.
+- Open: the store does not yet keep the working set and base milestone over a reboot; a host-script reboot twice left
+  the loop hung in a MIDI output stage (follow-up). Next: slice 4 (the activity-based suggestion).
+
 **2026-11-09 — "First note played twice": a late Record Stop's repeated start notes are hidden (DEC-262).**
 - Traced on the device (USB MIDI and a slot dump): not the set switch nor the launch — slot 56's take was stopped just
   after the bar line while the line was started again, so n84 / n83 / n82 came back at the loop start on top of its own

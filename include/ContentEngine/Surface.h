@@ -32,7 +32,11 @@
 //     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
 //     clear (owner 2026-11-08; overdub stays on record's short press); triple = redo; long = on an empty slot an empty
 //     loop of `kNewLoopBars` bars (owner 2026-11-08: for step entry in NOTE_EDIT; selected, not played);
-//   - track switch 37: short = the next track; double = undo; triple = redo; long = mute toggle;
+//   - track switch 37: short = the next track; double = undo; triple = redo; long = the sets browser (slice 3,
+//     owner: "opening / cancelling needs to be a long hold"; an open NOTE_EDIT or LOOP_EDIT is left first, its changes
+//     kept; without a library: the mute toggle as before — mute stays on the track buttons' double press). While the
+//     browser is open record = up, edit = down, track switch = its action (a quick double or triple acts twice or
+//     three times: the browser gives no button a double), long track switch = close;
 //   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
 //     back to the loop start (stop, then start at the next bar line);
 //   - play / stop 40: short = the selected track stops, or plays its selected slot;
@@ -53,6 +57,7 @@
 
 #include <cstdint>
 
+#include "ContentEngine/Browser.h"
 #include "ContentEngine/EditSurface.h"
 #include "ContentEngine/EngineClock.h"
 #include "Utils/TempoMapping.h"
@@ -355,6 +360,10 @@ class Surface {
   uint8_t selectedSlot(uint8_t t) const { return static_cast<uint8_t>(t * kSlotsPerTrack + slot_[t]); }
   void selectSlot(uint8_t t, uint8_t s) { slot_[t] = s; }
 
+  /// The sets browser (slice 3): opened by a long track switch while the library is ready; nullptr: none.
+  void setBrowser(ProductionBrowser* b) { browser_ = b; }
+  bool browsing() const { return browser_ != nullptr && browser_->isOpen(); }
+
   /// The DROID's fader bank when it is to change (owner 2026-11-06: F2–F4 sent the loop-edit bank's messages in
   /// NOTE_EDIT — the DROID switches banks on a Program Change on channel 16, which the engine never sent): the
   /// note-edit bank while a NOTE_EDIT session is open (as legacy, at the session's opening), else the loop-edit bank;
@@ -434,9 +443,25 @@ class Surface {
     control().queueSwitch(t, slot, q, tick_);
   }
 
+  void browse(uint8_t b, Press p) {
+    const uint8_t times = p == Press::Triple ? 3 : p == Press::Double ? 2 : 1;
+    if (b == kTrackSwitch && p == Press::Long) {
+      browser_->hold();
+      return;
+    }
+    for (uint8_t i = 0; i < times; ++i) {
+      if (b == kRecord && p != Press::Long) browser_->up();
+      else if (b == kEditMode && p != Press::Long) browser_->down();
+      else if (b == kTrackSwitch) browser_->press();
+    }
+  }
   void dispatch(uint8_t b, Press p) {
     const uint8_t t = selected();
     const uint8_t slot = selectedSlot(t);
+    if (browsing() && (b == kRecord || b == kTrackSwitch || b == kEditMode)) {
+      browse(b, p);
+      return;
+    }
     switch (b) {
       case kRecord:
         if (p == Press::Double && edit_.editing()) edit_.undo(nowMs_);
@@ -450,7 +475,12 @@ class Surface {
         if (p == Press::Short) switchTrack(static_cast<uint8_t>((t + 1) % kTracks));
         else if (p == Press::Double) control().undo(slot, tick_, us_, us());
         else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
-        else control().setMute(t, !control().muted(t), us_);
+        else if (browser_ != nullptr) {  // the sets browser, an open edit left first (rule 1)
+          leaveEdit();
+          browser_->open();
+        } else {
+          control().setMute(t, !control().muted(t), us_);
+        }
         return;
       case kTransport:
         if (p == Press::Short) {
@@ -913,6 +943,7 @@ class Surface {
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
+  ProductionBrowser* browser_ = nullptr;  // the sets browser (slice 3)
   struct LoopMotor {
     typename EditSurface<Engine>::MotorMsg m;
     uint32_t at;  // due
