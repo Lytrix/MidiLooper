@@ -169,7 +169,7 @@ half:
   title names the source stage (`LOOPS  SET 3  S01`). Left of slot 1 a column of **empty-loop presets** — 1, 2, 4, 8
   and 16 bars, dotted boxes unlike a loop — with space on both sides (5 px to the window's edge, 6 px to the slots;
   owner: a quick empty loop, and the first choice to reach: left of the slots, not past slot 8). LEFT from a
-  track's slot 1 goes to the nearest preset, RIGHT from a preset back to the nearest track. A preset needs no audition: `[TRK] KEEP` at once (one undo step). The
+  track's slot 1 goes to the nearest preset, RIGHT from a preset back to the nearest track. A preset needs no audition: `[TRK] USE` at once (one undo step; then `EMPTY LOOP IN 3-2`). The
   cursor starts on the 4-bar preset only when the destination is empty; otherwise on the grid cell of the destination's
   own track and slot, and an empty loop kept over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY
   8-BAR LOOP?`, centred), so two reflex presses never wipe a loop.
@@ -185,14 +185,15 @@ half:
   line (owner: "Need beat line"; DEC-271 amendment 1): the window playing is composed from it and joined there, so a
   note sounding across the beat starts at it — heard as if it had been playing — not a bare mid-loop swap that would
   leave out what started before it; a cancel switches back on the same grid. Once the preview is ready the
-  footer reads `[TRK] KEEP` — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`, `NOT PLAYING · PREVIEW
+  footer reads `[TRK] USE` (owner 2026-11-10: USE, one word for a loop and a preset; KEEP read oddly, CONFIRM is the
+  yes/no popups' word; the engine's name for it stays KEEP) — also when it cannot sound, then with `STOPPED · PREVIEW ONLY`, `NOT PLAYING · PREVIEW
   ONLY`, `MUTED` or `SOLO ON 2`; a fresh TRACK press keeps it (one undo step), back to the performance screen with `COPIED TO 3-2` (the
   destination is fixed: staying would only invite replacing what was just kept). HOLD TRACK cancels and goes back.
   Moving the cursor ends the audition (browsing never changes the sound); the next TRACK auditions the new loop. After
   leaving, undo still brings the slot's previous loop back.
 * **Whether it sounds:** the audition sounds only when the destination's track is playing the destination slot: it
   replaces that slot's loop in place. A track playing another slot, or stopped, is not switched (that would be a
-  launch nobody asked for, left in place by KEEP): the audition is the piano roll only (`NOT PLAYING · PREVIEW ONLY`).
+  launch nobody asked for, left in place by USE): the audition is the piano roll only (`NOT PLAYING · PREVIEW ONLY`).
   With the transport stopped, the same. A muted track stays muted, a solo elsewhere silences it; the footer says so.
 * **Cancel restores the playback state, not the time:** the track resumes the destination slot's own loop at the
   current musical position (on the next beat line, as the audition switched in). A cancel caused by the transport stopping
@@ -204,7 +205,7 @@ half:
   memory to hold both: refused before it sounds (`NOT ENOUGH MEMORY`).
 
 Mockups on real frames (2026-11-10; the grid's contents and the roll are illustrative): entry, stage list, grid,
-reading, audition, preview only, `EMPTY LOOP`, its confirmation, after KEEP.
+reading, audition, preview only, `EMPTY LOOP`, its confirmation, after USE (the mockups still read KEEP).
 
 ![](images/get_loop_picker_mockups.png)
 
