@@ -21,6 +21,15 @@ switch point, resuming on the next bar (DEC-260). Then 2b-ii: staged, gapless sw
 **2026-11-09 — slice 2b-ii (owner: "Staged switch (2b-ii)"):** gapless live switching by staging the playing
 tracks' destination slots (DEC-261). Slice 2 complete; slice 3 (browser screen) on the owner's go.
 
+**2026-11-09 — slice 3 (owner: "continue with next stage"; layout refined: the id largest, stage beneath, date third):**
+the browser on the DROID — HOLD TRACK opens / closes it (track-switch long press; mute stays on the track buttons),
+REC up / EDIT down / TRACK acts, PLAY the transport. Top level (`< RETURN TO PREVIOUS`, `+ SAVE MILESTONE`,
+`+ SAVE AS NEW SET`, the working set, the other sets newest first), a set's milestones, the detail panel (id, set,
+stage, date, loops / bars, mosaic), the save popup (six stages with their next ids, a suggestion: the base milestone's
+stage, else Sketch), load / return / save through slices 1–2, a one-line confirmation, failures that keep the screen.
+The index is kept in memory (PSRAM). Non-goals: the activity-based suggestion (slice 4), the timeline strip and fork
+lanes (slice 5), getting a loop (slice 6), the encoder.
+
 **Documentation maintenance (2026-11-08, owner requested):** README and the
 [engine guide](../Guides/FIXED_MEMORY_ENGINE.md) refreshed against the engine sources; legacy guides marked by
 runtime. Browser images remain proposal previews. This docs-only work does not expand the browser slice or close
