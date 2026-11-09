@@ -446,13 +446,13 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   ms(400);
   TEST_ASSERT_TRUE(gS.browsing());
   TEST_ASSERT_FALSE(C().muted(0));  // the long press is the browser's now
-  TEST_ASSERT_EQUAL_UINT16(1, gBrowser.selected());  // SAVE
+  TEST_ASSERT_EQUAL_UINT16(0, gBrowser.selected());  // SAVE
   tap(38);  // edit: down, over the LOAD divider to the working set
   ms(500);
-  TEST_ASSERT_EQUAL_UINT16(3, gBrowser.selected());
+  TEST_ASSERT_EQUAL_UINT16(2, gBrowser.selected());
   tap(S::kRecordNote);  // record: up, not a take
   ms(500);
-  TEST_ASSERT_EQUAL_UINT16(1, gBrowser.selected());
+  TEST_ASSERT_EQUAL_UINT16(0, gBrowser.selected());
   TEST_ASSERT_FALSE(gClk.running());
   TEST_ASSERT_EQUAL(ProductionControl::kNone, C().queuedRecordSlot(0));
   tap(S::kTrackSwitchNote);  // SAVE: the popup

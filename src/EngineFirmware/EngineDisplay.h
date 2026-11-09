@@ -450,14 +450,13 @@ class EngineDisplay {
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
     if (r.kind == RowKind::Divider) {  // LOAD: what the list below is for
-      label("LOAD", kYearX, y, 13);
+      label("LOAD", kYearX, y, 7);  // a heading, dimmer than any row (owner 2026-11-09)
       hline(kYearX + 19, kDiv - 4, static_cast<int16_t>(y + 2), 6);
       return;
     }
-    if (on) oled_.gfx.draw_rect_filled(fb(), kWX0 + 1, static_cast<int16_t>(y - 2), kDiv - 1, static_cast<int16_t>(y + 6), 3);
+    if (on) oled_.gfx.draw_rect_filled(fb(), kWX0 + 1, static_cast<int16_t>(y - 2), kDiv - 1, static_cast<int16_t>(y + 6), 5);
     const uint8_t v = on ? 15 : 10;
     switch (r.kind) {
-      case RowKind::Close: label("CLOSE", kYearX, y, on ? 15 : 11); return;
       case RowKind::Save: label("SAVE", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
       default: break;
@@ -530,11 +529,6 @@ class EngineDisplay {
   void drawDetail(const Browser& b, const Row& r, char* h, size_t n) {
     char a[32], c[32];
     switch (r.kind) {
-      case RowKind::Close:
-        label("CLOSE", kDetailX, kMosaicY, 15, 2);
-        label("BACK TO PLAYING", kDetailX, 30, 9);
-        snprintf(h, n, "TRACK: CLOSE");
-        return;
       case RowKind::Save: {
         label("SAVE", kDetailX, kMosaicY, 15, 2);
         label("CURRENT", kDetailX, 30, 11);

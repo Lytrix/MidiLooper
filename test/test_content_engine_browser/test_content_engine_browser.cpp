@@ -39,32 +39,30 @@ void setUp() {
 }
 void tearDown() {}
 
-/// Owner 2026-11-09: saving and loading split — CLOSE, SAVE, a LOAD divider, then the sets; no return row.
+/// Owner 2026-11-09: saving and loading split — SAVE, a LOAD divider, then the sets; no return or close row.
 void test_opening_selects_save_over_a_load_section_of_sets_newest_first() {
   gB.open();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
-  TEST_ASSERT_EQUAL(B::RowKind::Close, kind(0));
-  TEST_ASSERT_EQUAL(B::RowKind::Save, kind(1));
-  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));
-  TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
-  TEST_ASSERT_EQUAL_UINT16(2, gB.row(3).set);
-  TEST_ASSERT_EQUAL_UINT16(4, gB.row(3).record);  // T01, its newest
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).set);     // the newest other set first
-  TEST_ASSERT_EQUAL_UINT16(7, gB.row(5).set);
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(5).record);  // SET 07's newest: T02
-  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL(B::RowKind::Save, kind(0));
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(1));
+  TEST_ASSERT_EQUAL(B::RowKind::Working, kind(2));
+  TEST_ASSERT_EQUAL_UINT16(2, gB.row(2).set);
+  TEST_ASSERT_EQUAL_UINT16(4, gB.row(2).record);  // T01, its newest
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).set);     // the newest other set first
+  TEST_ASSERT_EQUAL_UINT16(7, gB.row(4).set);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).record);  // SET 07's newest: T02
+  TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
 }
 
-void test_close_closes_and_the_divider_is_passed() {
+/// No close row (owner 2026-11-09): HOLD TRACK closes; the divider is passed both ways.
+void test_hold_closes_and_the_divider_is_passed() {
   gB.open();
   gB.down();
-  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());  // over LOAD to the working set
+  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());  // over LOAD to the working set
   gB.up();
-  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
-  gB.up();
-  TEST_ASSERT_EQUAL(B::RowKind::Close, kind(gB.selected()));
-  gB.press();
+  TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
+  gB.hold();
   TEST_ASSERT_FALSE(gB.isOpen());
   B::Request r;
   TEST_ASSERT_FALSE(gB.takeRequest(r));
@@ -73,10 +71,9 @@ void test_close_closes_and_the_divider_is_passed() {
 void test_record_and_edit_stop_at_both_ends() {
   gB.open();
   gB.up();
-  gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   for (int i = 0; i < 10; ++i) gB.down();
-  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
 }
 
 void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
@@ -107,7 +104,7 @@ void test_back_returns_to_the_set_row() {
   gB.up();
   gB.press();  // < SETS
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(5, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.selected());
 }
 
 void test_the_popup_shows_next_ids_suggests_the_base_stage_and_saves_into_the_working_set() {
@@ -256,8 +253,8 @@ void test_the_list_scrolls_with_the_selection() {
   for (uint16_t s = 10; s < 20; ++s) publish(s, Stage::Sketch);
   gB.open();
   for (int i = 0; i < 8; ++i) gB.down();
-  TEST_ASSERT_EQUAL_UINT16(10, gB.selected());  // over the divider
-  TEST_ASSERT_EQUAL_UINT16(6, gB.first());      // five rows shown
+  TEST_ASSERT_EQUAL_UINT16(9, gB.selected());  // over the divider
+  TEST_ASSERT_EQUAL_UINT16(5, gB.first());      // five rows shown
   for (int i = 0; i < 10; ++i) gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.first());
 }
@@ -350,7 +347,7 @@ void test_the_popup_history_follows_the_base_line() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_opening_selects_save_over_a_load_section_of_sets_newest_first);
-  RUN_TEST(test_close_closes_and_the_divider_is_passed);
+  RUN_TEST(test_hold_closes_and_the_divider_is_passed);
   RUN_TEST(test_record_and_edit_stop_at_both_ends);
   RUN_TEST(test_a_set_opens_on_its_newest_milestone_and_loads_it);
   RUN_TEST(test_back_returns_to_the_set_row);

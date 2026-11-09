@@ -15386,3 +15386,6 @@ dimmed", "AS NEW SET", "Newest at top").
   inside `SET 02` (sticky `2026 NOV`, the day once, times, `E02  EXPLORATION  FROM E01`), the popup (`AS NEW SET 03`,
   the new node S04 wired to SKETCH — no base after a reboot — over E02 / S03 / S02 / E01), and AS NEW SET chosen (the
   node hollow, `S01`).
+- **Amendment (owner 2026-11-09, after trying it):** no `CLOSE` row — HOLD TRACK already closes, and the browser opens
+  on `SAVE`, now row 0. The selection bar is brighter (level 5, was 3) and the `LOAD` heading dimmer (7, was 13), so the
+  highlighted `SAVE` no longer reads as bright as `LOAD`. Image `afa3e651…`, boot `crash=0`, `BOOT,load,ok`.

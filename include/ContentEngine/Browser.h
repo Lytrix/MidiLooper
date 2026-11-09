@@ -7,7 +7,7 @@
 //
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
-// * Views (owner 2026-11-09: saving and loading split, no return row). Top: `CLOSE`, `SAVE`, a `LOAD` divider (not
+// * Views (owner 2026-11-09: saving and loading split, no return row; no close row — HOLD TRACK closes). Top: `SAVE`, a `LOAD` divider (not
 //   selectable), then the working set and the other sets, newest first. A set: `< SETS`, then its milestones newest
 //   first. The save popup (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the
 //   id it would get, the suggested one selected; beside it the working set's history from its base. A failure: what,
@@ -34,7 +34,7 @@ template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Popup, Failed };
-  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone };
+  enum class RowKind : uint8_t { Save, Divider, Working, Set, Back, Milestone };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set: the set
@@ -131,7 +131,7 @@ class Browser {
   void open() {
     view_ = View::Top;
     request_ = Request{};
-    selected_ = 1;
+    selected_ = 0;
     first_ = 0;
     scroll();
   }
@@ -188,9 +188,6 @@ class Browser {
     }
     const Row r = row(selected_);
     switch (r.kind) {
-      case RowKind::Close:
-        view_ = View::Closed;
-        return;
       case RowKind::Save:
         openPopup();
         return;
@@ -250,18 +247,17 @@ class Browser {
   uint16_t rowCount() const {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(1 + members_);
-    return static_cast<uint16_t>(4 + otherSets());
+    return static_cast<uint16_t>(3 + otherSets());
   }
   Row row(uint16_t i) const {
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
       return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - 1))};
     }
-    if (i == 0) return Row{RowKind::Close, workingSet_, kNone};
-    if (i == 1) return Row{RowKind::Save, workingSet_, kNone};
-    if (i == 2) return Row{RowKind::Divider, workingSet_, kNone};
-    if (i == 3) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
-    const uint16_t s = otherSet(static_cast<uint16_t>(i - 4));
+    if (i == 0) return Row{RowKind::Save, workingSet_, kNone};
+    if (i == 1) return Row{RowKind::Divider, workingSet_, kNone};
+    if (i == 2) return Row{RowKind::Working, workingSet_, latestOf(workingSet_)};
+    const uint16_t s = otherSet(static_cast<uint16_t>(i - 3));
     return Row{RowKind::Set, setNumber_[s], setLatest_[s]};
   }
   uint16_t selected() const { return selected_; }

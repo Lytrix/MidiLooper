@@ -3,7 +3,8 @@ performance screen; `CLOSE`, `SAVE`, then `LOAD` and the sets; time down the lis
 the time, a spine broken between months) instead of the top strip; no return row; SAVE opens `SAVE CURRENT` — the
 history as a graph with the new node wired to the chosen stage, every stage listed, `AS NEW SET` on its own lane.
 Device frames captured (image `701dd197…`, commit `b77fe92a`); native suites green. Owner confirmed on the panel
-("Looks right").
+("Looks right"). Then: the `CLOSE` row removed (HOLD TRACK closes), a brighter selection bar and a dimmer `LOAD`
+heading (DEC-267 amendment; image `afa3e651…`).
 
 **2026-11-09 — Browser levels and live mosaic.** The panel barely lights levels 1–4: the browser's rules (4), dim text
 (7) and empty mosaic cells (3) were raised, the mosaic's levels are 7 / 11 / 15, and the save rows show the working
