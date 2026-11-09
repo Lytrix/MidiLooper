@@ -386,17 +386,29 @@ class EngineDisplay {
   }
   /// The bottom row starts with RECORD and EDIT's moves (owner 2026-11-09: `[REC]↑ [EDT]↓`).
   static constexpr const char* kMoves = "[REC]{ [EDT]}  ";
+  /// Hint text: the buttons (`[TRK]`, brackets too) dimmer than the actions beside them (owner 2026-11-09).
+  static constexpr uint8_t kHintV = 9, kButtonV = kDimText;  // the unselected menu text
+  int16_t hintLabel(const char* s, int16_t x, int16_t top) {
+    bool button = false;
+    for (; *s; ++s) {
+      if (*s == '[') button = true;
+      const char c[2] = {*s, 0};
+      x = label(c, x, top, button ? kButtonV : kHintV);
+      if (*s == ']') button = false;
+    }
+    return x;
+  }
   void hint(const char* s) {
     oled_.gfx.draw_rect_filled(fb(), 0, 57, 255, 63, 0);
-    label(s, 2, kHintY, 9);
+    hintLabel(s, 2, kHintY);
   }
-  /// The trash at the bottom right (owner 2026-11-09: actions left, the trash right): `2× [TRK] TRASH` and a can,
-  /// bright inside it (where the double press goes back: `2× [TRK] SETS`), dim when empty.
-  void drawTrashCorner(const Browser& b, bool open) {
-    const uint8_t v = open ? 15 : b.itemCount() != 0 ? 11 : 6;
+  /// The trash at the bottom right (owner 2026-11-09: actions left, the trash right): `2× [TRK] TRASH` and a can
+  /// (inside the trash the double press goes back: `2× [TRK] SETS`), the can as bright as the words beside it.
+  void drawTrashCorner(bool open) {
+    const uint8_t v = kHintV;
     const int16_t y = kHintY, x = 249;  // the can's left column
     const char* what = open ? "2* [TRK] SETS" : "2* [TRK] TRASH";
-    rlabel(what, static_cast<int16_t>(x - 5), y, open ? 9 : v);
+    hintLabel(what, static_cast<int16_t>(x - 5 - static_cast<int16_t>(strlen(what)) * 4 + 2), y);
     hline(x - 1, x + 3, y, v);  // the lid
     for (int16_t yy = static_cast<int16_t>(y + 1); yy <= y + 4; ++yy) {  // the can, ribbed
       px(x, yy, v);
@@ -445,7 +457,7 @@ class EngineDisplay {
       char line[64];
       snprintf(line, sizeof line, "%s%s", kMoves, h);
       hint(line);
-      drawTrashCorner(b, b.shownView() == Browser::View::Bin);
+      drawTrashCorner(b.shownView() == Browser::View::Bin);
     }
     if (confirming) drawConfirm(b);
   }

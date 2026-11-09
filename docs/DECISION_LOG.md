@@ -15474,3 +15474,7 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   list). A failure shows only `[TRK] TRY AGAIN   HOLD [TRK] CLOSE`: there REC, EDIT and the double press do nothing.
   Spelled out (`[REC] UP  [EDT] DOWN`) the set and stage rows needed 298–310 px of 256; two lines would have cost a list
   row. The font gained `↑` and `↓`. Image `52ed6bdc…`, boot `crash=0`; full native 4,472 passed.
+- **Amendment 4 (owner 2026-11-09): two levels on the bottom line.** The buttons (`[REC]`, `[EDT]`, `[TRK]`, brackets
+  included) at the unselected-menu level (`kDimText`), the arrows and actions brighter; the trash's words and can at the
+  same level as the actions, no longer dimmed when the trash is empty. Image `aa428aa6…`, boot `crash=0`; full native
+  4,472 passed.

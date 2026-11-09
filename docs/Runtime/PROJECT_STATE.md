@@ -9,7 +9,8 @@ Host: browser 28, writer +2, loader and surface updated; seven mutations killed;
 Then (owner): `2X TRACK` beside the bin, `TRASH` as the last row of SETS, `RESTORE SET/STAGE` (image `9de0613c…`). Then one button convention on every
 browser page: actions bottom left (`[TRK] LOAD T03   HOLD [TRK] DELETE`), `[TRK]2× TRASH` and the can bottom right
 (image `aa975b80…`). Then, owner's option B: one line —
-`[REC]↑ [EDT]↓  [TRK] LOAD  HOLD [TRK] DELETE … 2× [TRK] TRASH` (image `52ed6bdc…`).
+`[REC]↑ [EDT]↓  [TRK] LOAD  HOLD [TRK] DELETE … 2× [TRK] TRASH` (image `52ed6bdc…`). Then the buttons at the unselected-menu
+level, the actions and the trash with its can one brighter level (image `aa428aa6…`).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
