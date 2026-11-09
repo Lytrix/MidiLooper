@@ -86,6 +86,7 @@ class PlaybackTrack {
     launchLoop_ = 0;
     handoffFinal_ = kNoManifest;
     late_ = joinUnbounded_ = false;
+    joinBeat_ = 0;
     transComp_ = 0;
     transTarget_ = steadyTarget_ = 0;
     stats_ = Stats{};
@@ -94,6 +95,26 @@ class PlaybackTrack {
   /// The slot's current source changed to `manifest` (or it starts playing) at timeline tick `now`. The transition
   /// targets the next boundary after `now`; meanwhile the playing source continues.
   void select(uint8_t slot, ManifestId manifest, uint32_t now) { transition(slot, manifest, now, false); }
+
+  /// Get a loop's audition (DEC-271 amendment 1; owner: "Need beat line"): `manifest` heard from the first beat line
+  /// after `now` (`beatTicks`, 0: the next boundary, as `select`). The window playing is composed from it and joined
+  /// there late: a note it sounds across the join starts at the join (heard as if it had been playing), what the old
+  /// source sounded ends; a join the composition misses moves to the next beat. A beat that is the window's end is the
+  /// boundary: the ordinary switch.
+  void audition(uint8_t slot, ManifestId manifest, uint32_t now, uint32_t beatTicks) {
+    const uint32_t loop = manifests_->manifest(manifest).loopLengthTicks;
+    if (beatTicks == 0 || loop == 0) {
+      select(slot, manifest, now);
+      return;
+    }
+    const uint32_t start = now / loop * loop + now % loop / window_ * window_;
+    const uint32_t end = start + window_ < (now / loop + 1) * loop ? start + window_ : (now / loop + 1) * loop;
+    if ((now / beatTicks + 1) * beatTicks >= end) {
+      select(slot, manifest, now);
+      return;
+    }
+    transition(slot, manifest, now, false, beatTicks);
+  }
 
   /// A NOTE_EDIT publish while playing (owner 2026-11-07: changes heard at once, not from the next boundary): the
   /// window playing is composed from `manifest` and joined at the first tick after `now` it is ready for. Nothing
@@ -112,7 +133,7 @@ class PlaybackTrack {
   }
 
  private:
-  void transition(uint8_t slot, ManifestId manifest, uint32_t now, bool editJoin) {
+  void transition(uint8_t slot, ManifestId manifest, uint32_t now, bool editJoin, uint32_t beat = 0) {
     const auto& m = manifests_->manifest(manifest);
     wanted_ = manifest;
     wantedIdentity_ = m.identity;
@@ -126,7 +147,8 @@ class PlaybackTrack {
     transBoundaries_ = 0;
     transGrains_ = 0;
     loop_ = m.loopLengthTicks;
-    const uint32_t b = editJoin ? now / loop_ * loop_ + now % loop_ / window_ * window_ : nextBoundary(now);  // edit: the window playing
+    const bool join = editJoin || beat != 0;  // an edit, or an audition on the beat: the window playing
+    const uint32_t b = join ? now / loop_ * loop_ + now % loop_ / window_ * window_ : nextBoundary(now);
     const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
     trans_ = freeBuffer();
     buf_[trans_].state = State::Filling;
@@ -140,11 +162,12 @@ class PlaybackTrack {
       cancelTransition();
       return;
     }
-    if (editJoin) {
+    if (join) {
       late_ = true;
       lateBoundary_ = b;
       joinUnbounded_ = true;
-      editJoin_ = true;
+      editJoin_ = editJoin;
+      joinBeat_ = beat;
     }
   }
 
@@ -307,7 +330,7 @@ class PlaybackTrack {
         ++stats_.staleWindows;  // composed only to advance the cursor: discard, compose the next one
       } else {
         complete(trans_);
-        if (late_) beginJoin(lastTick_ + 1);
+        if (late_) beginJoin(joinAt(lastTick_ + 1));
       }
     }
     return true;
@@ -408,8 +431,11 @@ class PlaybackTrack {
     late_ = false;
     joinUnbounded_ = false;
     editJoin_ = false;
+    joinBeat_ = 0;
     handoffFinal_ = kNoManifest;
   }
+  /// The join tick for a join ready at `tick`: that tick, or — an audition on the beat — the first beat line from it.
+  uint32_t joinAt(uint32_t tick) const { return joinBeat_ == 0 ? tick : (tick + joinBeat_ - 1) / joinBeat_ * joinBeat_; }
 
   uint8_t succession(uint32_t t, Emit* out, uint8_t max) {
     // No complete window is ever stale here: a composer that missed a boundary discards every window before its target.
@@ -565,7 +591,7 @@ class PlaybackTrack {
     }
     if (buf_[trans_].state != State::Complete || !joinReady_) return 0;
     if (joinTick_ != t) {
-      if (joinTick_ < t) extendJoin(t + 1);
+      if (joinTick_ < t) extendJoin(joinAt(t + 1));
       return 0;
     }
     return adoptLate(t, out, max);
@@ -602,6 +628,7 @@ class PlaybackTrack {
     late_ = false;
     joinUnbounded_ = false;
     editJoin_ = false;
+    joinBeat_ = 0;
     steadyTarget_ = nextBoundary(t);
     ++stats_.switches;
     ++(edit ? stats_.editJoins : stats_.lateJoins);
@@ -647,6 +674,7 @@ class PlaybackTrack {
   bool late_ = false, joinReady_ = false;
   bool joinUnbounded_ = false;  // a trimmed take's handoff joins late with no limit (E9.8i)
   bool editJoin_ = false;       // the join is a NOTE_EDIT publish's (`edit`): nothing starts late
+  uint32_t joinBeat_ = 0;       // DEC-271: an audition joins on this beat grid (0: at the first tick ready)
   uint16_t scanIdx_ = 0, joinIndex_ = kNoIndex;
   uint16_t sound_[2 * T];  // START entries begun before the join and sounding at it
   uint8_t soundCount_ = 0;

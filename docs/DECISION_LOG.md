@@ -15605,3 +15605,12 @@ B (159,872). Device (image `40022930…`, boot `crash=0`, the board's USB MIDI o
 `AUDITION OPEN`; cancel → 72–84; audition then `audition-keep` → kept in 1 ms, track 1 played 60, slot 0 the 2-run
 2,304-tick loop; `undo 0` → 72–84; an audition then `stop` → ended, `start` → 72–84. The transport-stop cancel is
 verified on the device only (no host test of `TrackControl` for it).
+- **Amendment 1 (owner 2026-11-09: "Need beat line"):** an audition and its cancel switch on the next beat line, not
+  the window boundary. `PlaybackTrack::audition` composes the window playing from the new source and joins it late at
+  the first beat after the gesture (a quarter of the bar, `SlotTransport::beatTicks`): a note the new source sounds
+  across the join starts there (heard as if it had been playing), what the old source sounded ends there; a join the
+  composition misses moves to the next beat (`joinAt`); a beat that is the window's end is the ordinary boundary switch.
+  KEEP stays a boundary switch (the kept copy is the preview's music). Native +2 (two mutations killed), full 4,491
+  passed; RAM2 + 32 B (159,904). Device `252bca64…`, boot `crash=0`, 120 BPM (a beat 0.5 s), USB MIDI captured: after
+  `audition` the old loop (a note every 0.25–0.9 s) played no further note; after `audition-cancel` the slot's loop was
+  back within 0.37 s and 0.60 s (two rounds).

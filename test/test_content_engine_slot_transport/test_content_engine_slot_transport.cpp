@@ -97,6 +97,7 @@ void setUp() {
     tracks[t] = &gTrack[t];
   }
   gX.init(gPool, gRuns, gManifests, gH, gWriter, tracks);
+  gX.setBarTicks(0);  // not reset by init: a test that sets it must not leak into the next
   gOut.clear();
   gClock = 0;
   gAccepted = 0;
@@ -461,6 +462,57 @@ void test_an_audition_off_its_slot_is_silent_and_a_stop_restarts_nothing() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+/// Track 0's NoteOns of `pitch` and NoteOffs of it, as loop positions within local cycle `cycle` (ticks relative to the
+/// cycle start; an off may lie past it).
+static std::vector<uint32_t> onsAt(uint32_t cycle, uint8_t pitch, int cls) {
+  std::vector<uint32_t> v;
+  for (const Emit& e : gOut)
+    if (e.cls == cls && e.pitch == pitch && e.tick >= cycle * kLoop && e.tick < (cycle + 1) * kLoop)
+      v.push_back(e.tick - cycle * kLoop);
+  return v;
+}
+
+/// DEC-271 amendment (owner: "Need beat line"): an audition is heard from the next beat line — the window playing is
+/// composed from the preview and joined there: a preview note sounding across the beat starts at it, what the old
+/// source sounded ends at it — and a cancel goes back on the next beat the same way.
+void test_an_audition_and_its_cancel_switch_on_the_next_beat() {
+  gX.setBarTicks(768);  // beats of 192 ticks
+  recordTake();
+  run(kS + 3 * kLoop + 50);  // cycle 3, position 50: the next beat is 192
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 0, oneNote(0, 80), gClock));
+  run(kS + 4 * kLoop + 50);
+  TEST_ASSERT_TRUE(onsAt(3, 59, 1) == std::vector<uint32_t>{0});    // the old source before the beat
+  TEST_ASSERT_TRUE(onsAt(3, 60, 1) == std::vector<uint32_t>{100});
+  TEST_ASSERT_TRUE(onsAt(3, 60, 0) == std::vector<uint32_t>{192});  // ended at the join
+  TEST_ASSERT_TRUE(onsAt(3, 80, 1) == std::vector<uint32_t>{192});  // 100–200, sounding at the beat: starts there
+  TEST_ASSERT_TRUE(onsAt(3, 80, 0) == std::vector<uint32_t>{200});
+  TEST_ASSERT_TRUE(onsAt(3, 67, 1).empty());                         // nothing of the old source after it
+  // Cancel at cycle 4, position 50 (the preview's 80 plays at 100): back on the beat at 192.
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionCancel(gClock));
+  run(kS + 6 * kLoop + 1);
+  TEST_ASSERT_TRUE(onsAt(4, 80, 1) == std::vector<uint32_t>{100});
+  TEST_ASSERT_TRUE(onsAt(4, 80, 0) == std::vector<uint32_t>{192});  // ended at the join
+  TEST_ASSERT_TRUE(onsAt(4, 60, 1) == std::vector<uint32_t>{192});  // the slot's 100–400 sounding there: starts
+  TEST_ASSERT_TRUE(onsAt(4, 67, 1) == std::vector<uint32_t>{1000});  // and its loop plays on
+  expectCycle(5, kA);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+/// A beat that is the window's end is the boundary: the switch is the ordinary one there.
+void test_an_audition_on_the_last_beat_of_a_window_switches_at_the_boundary() {
+  gX.setBarTicks(768);
+  recordTake();
+  run(kS + 3 * kLoop + kWin - 100);  // the next beat is the window's end (1536)
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionStart(0, 0, oneNote(0, 80), gClock));
+  run(kS + 5 * kLoop + 1);
+  TEST_ASSERT_TRUE(onsAt(3, 58, 1) == std::vector<uint32_t>{1535});  // the old source to the window's end
+  TEST_ASSERT_TRUE(onsAt(3, 80, 1).empty());                         // 80 lies before the switch in this cycle
+  TEST_ASSERT_TRUE(onsAt(3, 64, 1).empty());                         // nothing of the old source past it
+  TEST_ASSERT_TRUE(onsAt(4, 80, 1) == std::vector<uint32_t>{100});
+  TEST_ASSERT_EQUAL(R::Ok, gX.auditionCancel(gClock));
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_an_undo_on_a_boundary_is_heard_from_that_boundary() {
   recordTake();
   run(kS + kLoop + 10);
@@ -592,6 +644,8 @@ int main(int, char**) {
   RUN_TEST(test_an_audition_is_heard_and_cancel_brings_the_slot_back);
   RUN_TEST(test_keeping_an_audition_is_one_undo_step);
   RUN_TEST(test_an_audition_off_its_slot_is_silent_and_a_stop_restarts_nothing);
+  RUN_TEST(test_an_audition_and_its_cancel_switch_on_the_next_beat);
+  RUN_TEST(test_an_audition_on_the_last_beat_of_a_window_switches_at_the_boundary);
   RUN_TEST(test_an_undo_on_a_boundary_is_heard_from_that_boundary);
   RUN_TEST(test_one_writer_and_named_refusals);
   RUN_TEST(test_a_full_run_list_ends_the_take_at_a_wrap);

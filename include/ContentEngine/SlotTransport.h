@@ -294,7 +294,7 @@ class SlotTransport {
 
   // ---- Get a loop's audition (DEC-271) --------------------------------------------------------------------------------
   /// Starts auditioning `m` — a preview state made for `slot` (one reference, now the audition's) — as `track`'s
-  /// `slot`: when the track plays that slot it plays `m` instead from its next boundary, heard as an undo is; the
+  /// `slot`: when the track plays that slot it plays `m` instead from the next beat line (`PlaybackTrack::audition`); the
   /// history is not touched. Otherwise it is a silent preview (`auditionSounding` false): nothing is launched. One at a
   /// time; refused (nothing taken) while the track or the slot is written or the track has a launch in progress. While
   /// it lasts the slot refuses clear, undo / redo, place, resize, rotate and an empty loop, the track takes and
@@ -306,17 +306,17 @@ class SlotTransport {
     audSlot_ = slot;
     audState_ = m;
     audSounding_ = playing_[track] && slot_[track] == slot;
-    if (audSounding_) tracks_[track]->select(slot, m, gestureTick(track, clock));
+    if (audSounding_) tracks_[track]->audition(slot, m, gestureTick(track, clock), beatTicks());
     return Result::Ok;
   }
-  /// Ends the audition: a track still playing the slot goes back to the slot's own state from its next boundary; a
+  /// Ends the audition: a track still playing the slot goes back to the slot's own state from the next beat line; a
   /// stopped one stays stopped. The preview is released (the track keeps its own pin while it still plays it).
   Result auditionCancel(uint32_t clock) {
     if (audSlot_ == kNoSlot) return Result::NoChange;
     const uint8_t t = audTrack_, slot = audSlot_;
     const ManifestId own = contentOf(slot);
     if (audSounding_ && playing_[t] && slot_[t] == slot && own != kNoManifest)
-      tracks_[t]->select(slot, own, gestureTick(t, clock));
+      tracks_[t]->audition(slot, own, gestureTick(t, clock), beatTicks());
     endAudition();
     return Result::Ok;
   }
@@ -540,6 +540,8 @@ class SlotTransport {
     const uint32_t l = local(track, clock);
     return l == 0 ? 0 : l - 1;
   }
+  /// A beat (DEC-271 amendment 1: an audition switches on the beat): a quarter of the bar; 0 without one.
+  uint32_t beatTicks() const { return barTicks_ / 4; }
   /// The audition (DEC-271) holds `track` (any of its slots) or `slot`.
   bool auditionLocks(uint8_t track, uint8_t slot) const {
     return audSlot_ != kNoSlot && (track == audTrack_ || slot == audSlot_);
