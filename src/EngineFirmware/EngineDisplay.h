@@ -271,7 +271,7 @@ class EngineDisplay {
         {'R', 0x6BAD}, {'S', 0x388E}, {'T', 0x7492}, {'U', 0x5B6F}, {'V', 0x5B6A}, {'W', 0x5BFD}, {'X', 0x5AAD},
         {'Y', 0x5A92}, {'Z', 0x72A7}, {':', 0x0410}, {'.', 0x0002}, {'!', 0x2482}, {'<', 0x1511}, {'>', 0x4454},
         {'?', 0x6282}, {'(', 0x2922}, {')', 0x224A}, {'[', 0x6926}, {']', 0x324B},
-        {'*', 0x0AA8}};  // `*` draws as ×: `[TRK]2*` is a double TRACK (owner 2026-11-09)  // ? ( ): the delete popup (DEC-268) and a provisional suggestion
+        {'*', 0x0AA8}, {'{', 0x2E92}, {'}', 0x24BA}};  // ? ( ) the trash popups; [ ] * (×) { (↑) } (↓) the buttons
     for (const auto& g : kGlyphs)
       if (g.c == c) return g.bits;
     return 0;
@@ -384,16 +384,18 @@ class EngineDisplay {
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 3), static_cast<int16_t>(y0 + 2), 13);
   }
+  /// The bottom row starts with RECORD and EDIT's moves (owner 2026-11-09: `[REC]↑ [EDT]↓`).
+  static constexpr const char* kMoves = "[REC]{ [EDT]}  ";
   void hint(const char* s) {
     oled_.gfx.draw_rect_filled(fb(), 0, 57, 255, 63, 0);
     label(s, 2, kHintY, 9);
   }
-  /// The trash at the bottom right (owner 2026-11-09: actions left, the trash right): `[TRK]2× TRASH` and a can, bright
-  /// inside it (where the double press goes back: `[TRK]2× SETS`), dim when empty.
+  /// The trash at the bottom right (owner 2026-11-09: actions left, the trash right): `2× [TRK] TRASH` and a can,
+  /// bright inside it (where the double press goes back: `2× [TRK] SETS`), dim when empty.
   void drawTrashCorner(const Browser& b, bool open) {
     const uint8_t v = open ? 15 : b.itemCount() != 0 ? 11 : 6;
     const int16_t y = kHintY, x = 249;  // the can's left column
-    const char* what = open ? "[TRK]2* SETS" : "[TRK]2* TRASH";
+    const char* what = open ? "2* [TRK] SETS" : "2* [TRK] TRASH";
     rlabel(what, static_cast<int16_t>(x - 5), y, open ? 9 : v);
     hline(x - 1, x + 3, y, v);  // the lid
     for (int16_t yy = static_cast<int16_t>(y + 1); yy <= y + 4; ++yy) {  // the can, ribbed
@@ -433,12 +435,18 @@ class EngineDisplay {
       label(b.failWhat(), kDetailX, 14, 15);
       label(b.failWhy(), kDetailX, 24, 9);
       label(b.failChanged() ? "SET NOT AS IT WAS" : "NOTHING CHANGED", kDetailX, 32, 9);
-      snprintf(h, sizeof h, "[TRK] TRY AGAIN   HOLD [TRK] CLOSE");
+      snprintf(h, sizeof h, "[TRK] TRY AGAIN   HOLD [TRK] CLOSE");  // REC / EDIT and the trash do nothing here
     } else {
       drawDetail(b, b.row(b.selected()), h, sizeof h);
     }
-    hint(h);  // the buttons' actions on the left, the trash on the right (owner 2026-11-09)
-    drawTrashCorner(b, b.shownView() == Browser::View::Bin);
+    if (b.view() == Browser::View::Failed) {
+      hint(h);
+    } else {  // owner 2026-11-09: one line — the moves, the actions, and the trash on the right
+      char line[64];
+      snprintf(line, sizeof line, "%s%s", kMoves, h);
+      hint(line);
+      drawTrashCorner(b, b.shownView() == Browser::View::Bin);
+    }
     if (confirming) drawConfirm(b);
   }
   /// DEC-268: the target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
@@ -483,7 +491,7 @@ class EngineDisplay {
       const int16_t tw = static_cast<int16_t>(strlen(kButtons[k]) * 4 - 1);
       label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), kButtonY, on ? 0 : 10);
     }
-    hint("[REC][EDT] CHOOSE   [TRK] CONFIRM   HOLD [TRK] CANCEL");
+    hint("[REC]{ [EDT]}  [TRK] CONFIRM  HOLD [TRK] CANCEL");
   }
   /// The spine: a line down the dated rows (sets, stages), broken between months.
   void drawSpine(const Browser& b) {
@@ -648,7 +656,7 @@ class EngineDisplay {
         label("TRASH", kDetailX, kMosaicY, 15, 2);
         snprintf(a, sizeof a, "%u ITEMS", b.itemCount());
         label(b.itemCount() != 0 ? a : "EMPTY", kDetailX, 30, 11);
-        label("ALSO [TRK]2*", kDetailX, 38, 9);
+        label("ALSO 2* [TRK]", kDetailX, 38, 9);
         snprintf(h, n, "[TRK] OPEN TRASH");
         return;
       case RowKind::Empty: {  // DEC-268
@@ -680,16 +688,16 @@ class EngineDisplay {
       }
       case RowKind::Working:
       case RowKind::Set:
-        snprintf(h, n, "[TRK] OPEN SET %02u   HOLD [TRK] DELETE", r.set);
+        snprintf(h, n, "[TRK] OPEN  HOLD [TRK] DELETE");
         if (r.record == Browser::kNone) {
-          snprintf(h, n, "[TRK] OPEN SET %02u", r.set);
+          snprintf(h, n, "[TRK] OPEN");
           snprintf(a, sizeof a, "SET %02u", r.set);
           label(a, kDetailX, kMosaicY, 15, 2);
           label("NO STAGES YET", kDetailX, 30, kDimText);
           drawLiveMosaic();
           return;
         }
-        snprintf(c, sizeof c, "%u STAGES", b.milestonesIn(r.set));
+        snprintf(c, sizeof c, "%u STAGE%s", b.milestonesIn(r.set), b.milestonesIn(r.set) == 1 ? "" : "S");
         drawMilestone(b.record(r.record), r.kind == RowKind::Working ? "LATEST  NOW" : "LATEST", c);
         return;
       case RowKind::Milestone: {
@@ -701,8 +709,7 @@ class EngineDisplay {
           snprintf(a, sizeof a, "FROM %s", id);
         }
         drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
-        idText(m, id, sizeof id);
-        snprintf(h, n, "[TRK] LOAD %s   HOLD [TRK] DELETE", id);
+        snprintf(h, n, "[TRK] LOAD  HOLD [TRK] DELETE");
         return;
       }
     }
@@ -818,8 +825,7 @@ class EngineDisplay {
       }
       label("S01", kLabel, kHeadY - 2, 9);
     }
-    hint(b.suggestedProvisional() ? "[REC][EDT] CHOOSE  [TRK] SAVE  HOLD [TRK] CANCEL  ? LIKELY"
-                                  : "[REC][EDT] CHOOSE  [TRK] SAVE  HOLD [TRK] CANCEL  < SUGGESTED");
+    hint("[REC]{ [EDT]}  [TRK] SAVE  HOLD [TRK] CANCEL");  // the suggestion: `<` (`?` likely) in the list
   }
   /// The one line after a save, load or return (rule 6), over the performance screen.
   void drawToast() {

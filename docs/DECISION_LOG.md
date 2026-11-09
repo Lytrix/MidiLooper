@@ -15467,3 +15467,10 @@ emptied", with the gesture, Trash, restore and empty rules below; "No automatic 
   CANCEL`; the trash on the right, `[TRK]2× TRASH` and the can (`[TRK]2× SETS` inside it). The micro font gained `[`,
   `]` and `×` (written `*`). The hold reads DELETE, as the owner wrote it; its confirmation still says MOVE … TO TRASH.
   Image `aa975b80…`, boot `crash=0`.
+- **Amendment 3 (owner 2026-11-09, option B of two mockups): one bottom line on every page.** `[REC]↑ [EDT]↓`, then
+  the actions (`[TRK] LOAD  HOLD [TRK] DELETE`, `[TRK] OPEN`, `[TRK] SAVE  HOLD [TRK] CANCEL`, …), then `2× [TRK] TRASH`
+  and the can on the right — the count before the button, as `HOLD [TRK]`. The selected id no longer follows LOAD or
+  OPEN (the panel shows it large), and `< SUGGESTED` left the save popup's line (its `<` / `?` marker stays in the
+  list). A failure shows only `[TRK] TRY AGAIN   HOLD [TRK] CLOSE`: there REC, EDIT and the double press do nothing.
+  Spelled out (`[REC] UP  [EDT] DOWN`) the set and stage rows needed 298–310 px of 256; two lines would have cost a list
+  row. The font gained `↑` and `↓`. Image `52ed6bdc…`, boot `crash=0`; full native 4,472 passed.
