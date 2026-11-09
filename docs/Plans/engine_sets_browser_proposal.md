@@ -153,23 +153,25 @@ half:
   `< SETS` in a set's view (no controller needed), destination = the selected slot (its panel: `GET A LOOP INTO 3-2`
   and the working set's mosaic with that slot boxed); TRACK lists the set's stages under
   `FROM STAGE`, and TRACK on one opens its grid. (2) From a slot on a controller: the slot's long press opens the same
-  window with that slot as the destination — the cursor on `EMPTY LOOP` when the slot is empty, on the slot's own
-  position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): an empty loop is now the
-  `EMPTY LOOP` tile, kept with TRACK. The destination is fixed on entry and always shown:
+  window with that slot as the destination — the cursor on the 4-bar empty preset when the slot is empty, on the
+  slot's own position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): long press,
+  then TRACK on a preset. The destination is fixed on entry and always shown:
   `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only. Entry is refused while a take is open or armed on
   any track (`STOP THE TAKE FIRST`: in the picker REC is a move, so a take could not be ended), during NOTE_EDIT or
   LOOP_EDIT, and while a library job or a load runs.
 * **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves (owner 2026-11-10): NOTELEN up,
   PLAY/STOP down, REC left, EDIT right — footer `[LEN]↑ [PLY]↓ [REC]< [EDT]>` (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
-  the transport; a press of it stops everything and cancels the audition). Cells are 7 × 4 px (8 tracks in the
-  window's height; owner: to be judged on the device), the cursor a hollow bright box; the cursor's slot reads `SLOT
-  1-3` against the divider, so it reads on into the panel's `INTO 3-2`; the title names the source stage (`LOOPS  SET 3
-  S01`). An `EMPTY LOOP` tile comes first — one cell the size of the others, left of slot 1 on the top row at the
-  cells' own spacing, dotted unlike an empty source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
-  new-empty-loop length — shown before KEEP (one undo step). The cursor starts on `EMPTY LOOP` only when the
-  destination is empty; otherwise on the grid cell of the destination's own track and slot, and an empty loop kept
-  over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY LOOP?`, centred), so two reflex presses never wipe a
-  loop.
+  the transport; a press of it stops everything and cancels the audition). Layout A (owner 2026-11-10, of three
+  mocked): slots are 4 × 4 px squares as the panel mosaic draws them (levels for content, a dim dot for an empty one)
+  at a 6 px pitch across and 5 px down — 8 tracks fill the window's height — the cursor a hollow bright box; the
+  cursor's slot reads `SLOT 1-3` against the divider, so it reads on into the panel's `INTO 3-2`; the title names the
+  source stage (`LOOPS  SET 3  S01`). Left of slot 1, at the slots' own gap, a column of **empty-loop presets** — 1, 2,
+  4, 8 and 16 bars, dotted boxes unlike a loop (owner: a quick empty loop, and the first choice to reach: left of the
+  slots, not past slot 8). LEFT from a track's slot 1 goes to the nearest preset, RIGHT from a preset back to the
+  nearest track; the label reads `EMPTY 4`. A preset needs no audition: `[TRK] KEEP` at once (one undo step). The
+  cursor starts on the 4-bar preset only when the destination is empty; otherwise on the grid cell of the destination's
+  own track and slot, and an empty loop kept over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY
+  8-BAR LOOP?`, centred), so two reflex presses never wipe a loop.
 * **The panel** shows the loop under the cursor: its piano roll — the whole loop however long (owner 2026-11-10: all
   bars for now; a 32-bar loop reads as its shape, not its notes — an 8-bar window under a strip of the whole loop,
   following the playhead in an audition, is the mocked alternative if it proves too dense) — length and bars (in ticks: the stage's tempo is not
@@ -204,6 +206,10 @@ Mockups on real frames (2026-11-10; the grid's contents and the roll are illustr
 reading, audition, preview only, `EMPTY LOOP`, its confirmation, after KEEP.
 
 ![](images/get_loop_picker_mockups.png)
+
+The grid as chosen (layout A, presets against slot 1): a loop selected, the 4-bar preset, track 4's slot 1.
+
+![](images/get_loop_picker_grid.png)
 
 ### 6.2 Red team of §6.1 (2026-11-09) — fixes adopted into the plan
 
