@@ -15389,3 +15389,6 @@ dimmed", "AS NEW SET", "Newest at top").
 - **Amendment (owner 2026-11-09, after trying it):** no `CLOSE` row — HOLD TRACK already closes, and the browser opens
   on `SAVE`, now row 0. The selection bar is brighter (level 5, was 3) and the `LOAD` heading dimmer (7, was 13), so the
   highlighted `SAVE` no longer reads as bright as `LOAD`. Image `afa3e651…`, boot `crash=0`, `BOOT,load,ok`.
+- **Amendment 2 (owner 2026-11-09):** the day follows the month with the gap of `2026 NOV` (`NOV 9`, left-aligned, was
+  right-aligned at a fixed column), and the window is 201 px wide and centred (was 227): the list ends earlier, the
+  detail and the save popup moved with it. Image `9381eb27…`, boot `crash=0`.

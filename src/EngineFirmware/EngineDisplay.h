@@ -353,10 +353,11 @@ class EngineDisplay {
   using Row = Browser::Row;
   using RowKind = Browser::RowKind;
   using Record = ContentEngine::library::Record;
-  // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail.
-  static constexpr int16_t kWX0 = 14, kWY0 = 1, kWX1 = 241, kWY1 = 56, kDiv = 150;
-  static constexpr int16_t kYearX = 18, kMonX = 36, kDayXR = 61, kSpineX = 66, kIdX = 72, kNoteXR = 146;
-  static constexpr int16_t kDetailX = 155, kMosaicX = 205, kMosaicY = 14, kRow0 = 13, kPitch = 9, kHintY = 59;
+  // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. Owner
+  // 2026-11-09: the day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
+  static constexpr int16_t kWX0 = 27, kWY0 = 1, kWX1 = 228, kWY1 = 56, kDiv = 137;
+  static constexpr int16_t kYearX = 31, kMonX = 49, kDayX = 65, kSpineX = 77, kIdX = 83, kNoteXR = 133;
+  static constexpr int16_t kDetailX = 142, kMosaicX = 192, kMosaicY = 14, kRow0 = 13, kPitch = 9, kHintY = 59;
   static constexpr uint8_t kRuleLevel = 4, kDimText = 7;
   static void idText(const Record& r, char* out, size_t n) {
     snprintf(out, n, "%c%02u", ContentEngine::library::stageLetter(r.stage), r.stageNumber);
@@ -484,7 +485,7 @@ class EngineDisplay {
       }
       if (newDay) {
         snprintf(buf, sizeof buf, "%u", l.day);
-        rlabel(buf, kDayXR, y, on ? 15 : 9);
+        label(buf, kDayX, y, on ? 15 : 9);
       }
     }
     // The node: the working set a ring; a stage off the line hollow; the selected one larger and bright.
@@ -621,18 +622,19 @@ class EngineDisplay {
   void drawSavePopup(const Browser& b) {
     window(kWX0, kWY0, kWX1, kWY1, "SAVE CURRENT");
     const uint8_t sel = b.popupSelected();
-    constexpr int16_t kMain = 44, kSide = 34, kLabel = 54, kNewY = 13, kHeadY = 24, kListX = 128, kListXR = 236;
+    constexpr int16_t kMain = kWX0 + 30, kSide = kWX0 + 20, kLabel = kWX0 + 40, kNewY = 13, kHeadY = 24;
+    constexpr int16_t kNode = kWX0 + 8, kDayX2 = kWX0 + 58, kWireX = kWX0 + 98, kListX = kWX1 - 81, kListXR = kWX1 - 5;
     // AS NEW SET: a hollow node, nothing wired.
     char buf[24];
-    if (sel == 0) oled_.gfx.draw_rect_filled(fb(), kWX0 + 2, kNewY - 3, 116, kNewY + 5, 13);
+    if (sel == 0) oled_.gfx.draw_rect_filled(fb(), kWX0 + 2, kNewY - 3, kWX0 + 102, kNewY + 5, 13);
     snprintf(buf, sizeof buf, "AS NEW SET %02u", b.newSetNumber());
-    label(buf, 30, kNewY - 1, sel == 0 ? 0 : 9);
+    label(buf, kWX0 + 16, kNewY - 1, sel == 0 ? 0 : 9);
     for (int16_t d = -2; d <= 2; ++d) {
       const uint8_t v = sel == 0 ? 0 : 11;
-      px(static_cast<int16_t>(22 + d), kNewY - 1, v);
-      px(static_cast<int16_t>(22 + d), kNewY + 3, v);
-      px(20, static_cast<int16_t>(kNewY + 1 + d), v);
-      px(24, static_cast<int16_t>(kNewY + 1 + d), v);
+      px(static_cast<int16_t>(kNode + d), kNewY - 1, v);
+      px(static_cast<int16_t>(kNode + d), kNewY + 3, v);
+      px(kNode - 2, static_cast<int16_t>(kNewY + 1 + d), v);
+      px(kNode + 2, static_cast<int16_t>(kNewY + 1 + d), v);
     }
     // The history: up to four rows around the base, newest first.
     const uint16_t count = b.historyCount(), base = b.historyBase();
@@ -654,7 +656,7 @@ class EngineDisplay {
       idText(m, buf, sizeof buf);
       label(buf, kLabel, static_cast<int16_t>(y - 2), k == base ? 12 : 9);
       ContentEngine::wallclock::formatDay(m.wallTime, browserInfo_.tz, buf, sizeof buf);
-      if (strcmp(buf, "--") != 0) label(buf, 72, static_cast<int16_t>(y - 2), 6);
+      if (strcmp(buf, "--") != 0) label(buf, kDayX2, static_cast<int16_t>(y - 2), 6);
     }
     if (lineTop >= 0)
       for (int16_t y = lineTop; y <= (count > from + 4 ? kWY1 - 1 : lineBottom); ++y) px(kMain, y, 7);
@@ -680,9 +682,9 @@ class EngineDisplay {
       oled_.gfx.draw_rect_filled(fb(), kMain - 2, kHeadY - 2, kMain + 2, kHeadY + 2, 15);
       snprintf(buf, sizeof buf, "%c%02u", ContentEngine::library::stageLetter(stage), b.nextNumber(b.popupSet(), stage));
       label(buf, kLabel, kHeadY - 2, 15);
-      hline(68, 112, kHeadY, 13);
-      for (int16_t y = ty < kHeadY ? ty : kHeadY; y <= (ty < kHeadY ? kHeadY : ty); ++y) px(112, y, 13);
-      hline(112, kListX - 5, ty, 13);
+      hline(kWX0 + 54, kWireX, kHeadY, 13);
+      for (int16_t y = ty < kHeadY ? ty : kHeadY; y <= (ty < kHeadY ? kHeadY : ty); ++y) px(kWireX, y, 13);
+      hline(kWireX, kListX - 5, ty, 13);
     } else {
       for (int16_t d = -2; d <= 2; ++d) {  // no stage: the new set's first, S01, dim
         px(static_cast<int16_t>(kMain + d), kHeadY - 2, 6);
