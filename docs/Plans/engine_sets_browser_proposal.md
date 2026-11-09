@@ -149,17 +149,22 @@ the destination popup, reusing the same list and popup components — the browse
 The engine half is built (DEC-270: read one slot of a stage for another slot, place it as one undo step). The browser
 half:
 
-* **Two ways in, one grid.** (1) From the sets browser: a stage row's `GET LOOP` (no controller needed), destination
-  = the selected slot. (2) From a slot on a controller: a slot gesture opens the sets browser with that slot as the
-  destination remembered; choosing a stage enters the same grid. The destination is fixed on entry and always shown:
+* **Two ways in, one grid** (owner 2026-11-10, after the mockups). (1) From the sets browser: a `GET A LOOP` row under
+  `< SETS` in a set's view (no controller needed), destination = the selected slot; TRACK lists the set's stages under
+  `FROM STAGE`, and TRACK on one opens its grid. (2) From a slot on a controller: the slot's long press opens the same
+  window with that slot as the destination — the cursor on `EMPTY LOOP` when the slot is empty, on the slot's own
+  position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): an empty loop is now the
+  `EMPTY LOOP` tile, kept with TRACK. The destination is fixed on entry and always shown:
   `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only. Entry is refused while a take is open or armed on
   any track (`STOP THE TAKE FIRST`: in the picker REC is a move, so a take could not be ended), during NOTE_EDIT or
   LOOP_EDIT, and while a library job or a load runs.
-* **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves: REC up, PLAY/STOP down, NOTELEN left,
-  EDIT right (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
-  the transport; a press of it stops everything and cancels the audition). Cells are drawn about 7 px (8 slots in
-  56 px), not the panel mosaic's 3 px, so the cursor shows. An `EMPTY LOOP` tile comes first, drawn unlike an empty
-  source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
+* **The grid** is the stage's mosaic: tracks as rows, slots as columns. Moves (owner 2026-11-10): NOTELEN up,
+  PLAY/STOP down, REC left, EDIT right — footer `[LEN]↑ [PLY]↓ [REC]< [EDT]>` (on this screen PLAY/STOP is a move; the footer names the moves, and the global transport button stays
+  the transport; a press of it stops everything and cancels the audition). Cells are 7 × 4 px (8 tracks in the
+  window's height; owner: to be judged on the device), the cursor a hollow bright box; the cursor's slot reads `SLOT
+  1-3` against the divider, so it reads on into the panel's `INTO 3-2`; the title names the source stage (`LOOPS  SET 3
+  S01`). An `EMPTY LOOP` tile comes first — one cell the size of the others, a column of its own on the top row, dotted
+  unlike an empty source cell: taking it makes the destination an empty loop of the destination's length when it has one, else the
   new-empty-loop length — shown before KEEP (one undo step). The cursor starts on `EMPTY LOOP` only when the
   destination is empty; otherwise on the grid cell of the destination's own track and slot, and an empty loop kept
   over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY LOOP?`), so two reflex presses never wipe a
@@ -191,6 +196,11 @@ half:
   read or no memory for it all put the track back as it was and release it. While it lasts, nothing else may change
   the destination: its track's takes, clear, undo / redo, NOTE_EDIT, LOOP_EDIT and launches are refused. Not enough
   memory to hold both: refused before it sounds (`NOT ENOUGH MEMORY`).
+
+Mockups on real frames (2026-11-10; the grid's contents and the roll are illustrative): entry, stage list, grid,
+reading, audition, preview only, `EMPTY LOOP`, its confirmation, after KEEP.
+
+![](images/get_loop_picker_mockups.png)
 
 ### 6.2 Red team of §6.1 (2026-11-09) — fixes adopted into the plan
 
