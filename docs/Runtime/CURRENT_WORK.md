@@ -48,6 +48,10 @@ reusing set numbers, compaction.
 Serial `get <index> <T-S> <T-S>`. Done (native + device). Next, 6b on the owner's layout call: the browser's
 `GET A LOOP` entry, a stage's loop list and the destination popup. Non-goals in 6a: add as layer, multi-select.
 
+**2026-11-09 — slice 6b, get-a-loop picker (owner: "create a new branch for this and start with step a"; branch
+`feature/engine-get-a-loop`; design: plan §6.1–6.2).** Order: (a) the current-state reader (a1 done) and the preview
+budget (a2: owner's size); (b) the audition owner; (c) the preview render path; (d) the picker screen.
+
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
 if a board-side USB stop recurs (read `prev_crumbs` c4–c6 after the PROGRAM press).

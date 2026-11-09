@@ -15553,3 +15553,11 @@ the slot is overdubbed with the caller keeping it; four mutations killed; full n
 (`kPsramBudget` 6,822,032). Device (image `3b915713…`, boot `crash=0`): `get 9 1-1 8-8` → done in 2 ms, slot 8-8 now
 the stage's 5-run, 768-tick loop (new run ids); `get 9 8-7 8-8` → `SLOT EMPTY THERE,NOTHING CHANGED`; a bad slot and
 stage refused; `undo 63` → the slot empty again.
+- **Amendment 1 (2026-11-09, plan §6.2 fix 1, step a1; branch `feature/engine-get-a-loop`):** a get reads only the
+  source slot's current state. `StateReader` streams the slot file once for its CRC (the run directory and the current
+  state's run list kept, no rows), then reads just the rows of the runs that state lists, admitted before any is read;
+  nothing of the rest of the history is allocated, reserved or left to reclaim, and a damaged row anywhere still fails
+  it. DEC-261's detached read (staging) is unchanged. A get is a one-shot user action admitted like any new content;
+  the browsing preview's separate budget is step a2 (owner's size decision). Native +2 (two mutations killed), full
+  4,484 passed; PSRAM + 3,752 B on the host (`kPsramBudget` 6,825,784). Device `dac5b1f9…`, boot `crash=0`: the same
+  `get` checks as before pass.

@@ -651,9 +651,13 @@ void endGet(ProductionSetLoad::Status st, unsigned long ms) {
     }
     Serial.printf("#ENGINE,get,failed,why=SLOT %s BUSY,NOTHING CHANGED,ms=%lu\n", into, ms);
   } else {
-    const auto why = gEngine.setLoad().failedWhy();
+    using Why = decltype(gEngine.setLoad().getWhy());
+    const Why why = gEngine.setLoad().getWhy();
     Serial.printf("#ENGINE,get,failed,why=%s,NOTHING CHANGED,ms=%lu\n",
-                  why == ProductionSetLoad::Reader::Why::None ? "SLOT EMPTY THERE" : "READ FAILED", ms);
+                  why == Why::Empty      ? "SLOT EMPTY THERE"
+                  : why == Why::Capacity ? "NOT ENOUGH MEMORY"
+                                         : "READ FAILED",
+                  ms);
   }
   gDisplay.toast("GET FAILED  NOTHING CHANGED", millis());
 }

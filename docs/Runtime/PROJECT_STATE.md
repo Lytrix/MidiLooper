@@ -30,7 +30,9 @@ another slot (no checkpoint, no clear), `SlotTransport::place` puts it on as one
 Native +3 (four mutations killed), full 4,482 passed; device `3b915713…`: placed in 2 ms, empty source and bad names
 refused or unchanged, undone. **Incident:** the "Show SET 1" frame capture's script pressed TRACK on SET 2 T03 and
 loaded it (checkpoint 36 holds the SET 3 working set from before); owner: every set is dev testing, no restore
-needed — the board stays on SET 2 T03.
+needed — the board stays on SET 2 T03. **Slice 6b step a1 (branch `feature/engine-get-a-loop`):** a get reads only
+the current state (`StateReader`: one CRC pass over the slot file, then only the listed runs' rows); native 4,484
+passed; device `dac5b1f9…` same checks pass. Next: a2, the preview budget's size (owner).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

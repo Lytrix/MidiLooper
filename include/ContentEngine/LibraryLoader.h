@@ -9,9 +9,9 @@
 //   transaction: a failure there changes nothing), then clears every slot's history, then loads the milestone. A load
 //   that fails after the clear is undone by loading the checkpoint back (`Restored`); only when that fails as well is
 //   the set left as far as it got (`Lost`). Return clears and loads the checkpoint, writing nothing.
-// * Get a loop (DEC-270): one slot of a milestone read, detached, into another slot's tables — its current state
-//   only, the caller's to place (`takeGot`); no checkpoint, no clear, no history touched; a failed read or an empty
-//   source slot changes nothing (`Unchanged`).
+// * Get a loop (DEC-270): `StateReader` reads one slot of a milestone for another slot — its current state only, the
+//   caller's to place (`takeGot`); no checkpoint, no clear, no history touched; a failed read or an empty source slot
+//   changes nothing (`Unchanged`).
 // * The caller loads only with the transport stopped, no take and no NOTE_EDIT session open, and resets the tracks in
 //   `clear` (pending launches dropped) before any history is touched; the surface state and tempo the blob carried are
 //   the caller's to apply (`blob()`). No heap.
@@ -57,13 +57,11 @@ class BlobReader {
 
   /// Starts loading the set whose header is library sector `at`, written as sequence `sequence`: the slots in `slots`
   /// (bit s), or — `detached` (DEC-261) — only their current states, as manifests the caller owns (`detachedState`).
-  /// `into` (DEC-270, detached, one slot): the slot read is made for that slot (its runs and state bound to it).
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res,
              NoteIdSource& ids, uint32_t at, uint32_t sequence, uint8_t* scratch, uint64_t slots = ~0ull,
              bool detached = false, const uint8_t* adoptSlot = nullptr, const ManifestId* adoptState = nullptr,
-             uint8_t adoptCount = 0, uint8_t into = kSame) {
+             uint8_t adoptCount = 0) {
     load_.cancel();
-    into_ = into;
     adoptSlot_ = adoptSlot;
     adoptState_ = adoptState;
     adoptCount_ = adoptCount;
@@ -118,8 +116,7 @@ class BlobReader {
     ManifestId adopt = kNoManifest;  // a staged state for this slot (DEC-261)
     for (uint8_t k = 0; k < adoptCount_; ++k)
       if (adoptSlot_[k] == slot_) adopt = adoptState_[k];
-    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, into_ != kSame ? into_ : slot_, source_,
-                    scratch_, detached_, adopt) !=
+    if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, slot_, source_, scratch_, detached_, adopt) !=
         Load::Status::Running)
       return fail(Why::Slot);
     return status_;
@@ -137,7 +134,6 @@ class BlobReader {
   const library::BlobHeader& blob() const { return blob_; }
   /// A detached load's state for `slot` (one reference, the caller's; kNoManifest: none).
   ManifestId detachedState(uint8_t slot) const { return slot < Slots ? detachedState_[slot] : kNoManifest; }
-  static constexpr uint8_t kSame = 0xFF;
 
  private:
   Status fail(Why w) {
@@ -160,7 +156,7 @@ class BlobReader {
   uint8_t sector_[library::kSector] = {};
   uint32_t at_ = 0, sequence_ = 0, next_ = 0, slotAt_ = 0, left_ = 0;
   uint16_t fill_ = library::kSector;
-  uint8_t slot_ = 0, loaded_ = 0, into_ = kSame;
+  uint8_t slot_ = 0, loaded_ = 0;
   bool header_ = false, detached_ = false;
   uint64_t slots_ = ~0ull;
   ManifestId detachedState_[Slots] = {};
@@ -168,6 +164,255 @@ class BlobReader {
   const ManifestId* adoptState_ = nullptr;
   uint8_t adoptCount_ = 0;
   Why why_ = Why::None;
+  Status status_ = Status::Idle;
+};
+
+/// Get a loop (DEC-270; plan §6.2 fix 1: a read must not take what live takes rely on): one slot file of a set written
+/// by `LibraryWriter`, its current state made for slot `into` — only the runs that state lists — detached (one
+/// reference, the caller's: `take`). Pass 1 streams the whole file once for its CRC, keeping the run directory and the
+/// current state's run list, no rows; pass 2 reads just those runs' rows (admitted before any is read, written as owed
+/// rows). A bad file, an empty current state or no room fails with nothing left taken. At most `kGrainBytes` read a
+/// grain. No heap.
+template <typename Card, typename Pool, typename Runs, typename Manifests>
+class StateReader {
+ public:
+  enum class Status : uint8_t { Idle, Running, Done, Failed };
+  enum class Why : uint8_t { None, Read, BadBlob, BadFile, Empty, Capacity };
+  using Reservations = RowReservations<Pool, Runs>;
+  static constexpr uint32_t kGrainBytes = 2048;
+
+  /// Starts reading slot `from` of the set whose header is library sector `at` (written as `sequence`) for `into`.
+  void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, Reservations& res, NoteIdSource& ids,
+             uint32_t at, uint32_t sequence, uint8_t from, uint8_t into) {
+    cancel();
+    if (got_ != kNoManifest) manifests.release(got_, runs);
+    got_ = kNoManifest;
+    card_ = &card;
+    pool_ = &pool;
+    runs_ = &runs;
+    manifests_ = &manifests;
+    res_ = &res;
+    ids_ = &ids;
+    at_ = at;
+    sequence_ = sequence;
+    from_ = from;
+    into_ = into;
+    taken_ = 0;
+    cached_ = kNoSector;
+    why_ = Why::None;
+    phase_ = Phase::Blob;
+    status_ = Status::Running;
+  }
+  /// One grain.
+  Status step() {
+    if (status_ != Status::Running) return status_;
+    switch (phase_) {
+      case Phase::Blob: {
+        uint8_t h[library::kSector];
+        library::BlobHeader b;
+        if (!card_->readLibrarySector(at_, h)) return fail(Why::Read);
+        if (!library::decode(h, b) || b.sequence != sequence_) return fail(Why::BadBlob);
+        if (from_ >= library::kSlots || b.slotBytes[from_] == 0) return fail(Why::Empty);
+        base_ = at_ + 1;
+        for (uint8_t s = 0; s < from_; ++s) base_ += (b.slotBytes[s] + library::kSector - 1) / library::kSector;
+        bytes_ = b.slotBytes[from_];
+        pos_ = 0;
+        crc_ = 0;
+        uint8_t f[24];
+        if (bytes_ < sizeof f + 4 || !read(f, sizeof f, true)) return fail(Why::BadFile);
+        if (get32(f) != kSetFileMagic || get16(f + 4) < kSetFileOldestVersion || get16(f + 4) > kSetFileVersion)
+          return fail(Why::BadFile);
+        runCount_ = get16(f + 12);
+        states_ = f[14];
+        current_ = static_cast<int8_t>(f[15]);
+        noteIdHigh_ = get32(f + 20);
+        if (runCount_ > Runs::kRunCount) return fail(Why::BadFile);
+        r_ = 0;
+        rowsTotal_ = 0;
+        phase_ = Phase::Directory;
+        return status_;
+      }
+      case Phase::Directory:
+        for (uint32_t n = 0; n < kGrainBytes / 8 && r_ < runCount_; ++n, ++r_) {
+          uint8_t d[8];
+          if (!read(d, sizeof d, true)) return fail(Why::BadFile);
+          kind_[r_] = d[0];
+          rows_[r_] = get32(d + 4);
+          rowsTotal_ += rows_[r_];
+        }
+        if (r_ < runCount_) return status_;
+        rowsAt_ = pos_;
+        if (static_cast<uint64_t>(rowsAt_) + rowsTotal_ * kSetFileRowBytes + 4 > bytes_) return fail(Why::BadFile);
+        rowsEnd_ = rowsAt_ + static_cast<uint32_t>(rowsTotal_) * kSetFileRowBytes;
+        phase_ = Phase::Skip;
+        return status_;
+      case Phase::Skip: {  // pass 1: every row into the CRC, none kept
+        uint32_t budget = kGrainBytes;
+        while (budget != 0 && pos_ < rowsEnd_) {
+          const uint32_t off = pos_ % library::kSector;
+          uint32_t span = library::kSector - off;
+          if (span > rowsEnd_ - pos_) span = rowsEnd_ - pos_;
+          if (span > budget) span = budget;
+          if (!fill(pos_)) return fail(Why::Read);
+          crc_ = crc32Update(crc_, sector_ + off, span);
+          pos_ += span;
+          budget -= span;
+        }
+        if (pos_ < rowsEnd_) return status_;
+        i_ = 0;
+        count_ = 0;
+        phase_ = Phase::States;
+        return status_;
+      }
+      case Phase::States: {
+        for (; i_ < states_; ++i_) {
+          uint8_t h[9];
+          if (!read(h, sizeof h, true)) return fail(Why::BadFile);
+          const uint8_t count = h[8];
+          if (count > Manifests::kMaxRuns) return fail(Why::BadFile);
+          uint16_t list[Manifests::kMaxRuns];
+          for (uint8_t k = 0; k < count; ++k) {
+            uint8_t ix[2];
+            if (!read(ix, 2, true)) return fail(Why::BadFile);
+            list[k] = get16(ix);
+            if (list[k] >= runCount_) return fail(Why::BadFile);
+          }
+          if (i_ != current_) continue;
+          revision_ = get32(h);
+          loop_ = get32(h + 4);
+          count_ = count;
+          for (uint8_t k = 0; k < count; ++k) list_[k] = list[k];
+        }
+        uint8_t t[4];
+        if (!read(t, sizeof t, false) || get32(t) != crc_) return fail(Why::BadFile);
+        if (current_ < 0 || current_ >= static_cast<int8_t>(states_)) return fail(Why::Empty);
+        phase_ = Phase::Admit;
+        return status_;
+      }
+      case Phase::Admit: {  // only the current state's runs: allocated, every row reserved before any is read
+        if (count_ > runs_->freeCount() || manifests_->freeCount() == 0) return fail(Why::Capacity);
+        uint32_t at = rowsAt_;
+        for (uint16_t j = 0; j < runCount_; ++j) {
+          for (uint8_t k = 0; k < count_; ++k)
+            if (list_[k] == j) off_[k] = at;
+          at += rows_[j] * kSetFileRowBytes;
+        }
+        for (uint8_t k = 0; k < count_; ++k) {
+          run_[k] = runs_->allocate(into_, kind_[list_[k]]);
+          if (run_[k] == kNoRun) return fail(Why::Capacity);
+          taken_ = static_cast<uint8_t>(k + 1);
+          if (res_->reserve(run_[k], rows_[list_[k]]) != Admission::Ok) return fail(Why::Capacity);
+        }
+        k_ = 0;
+        row_ = 0;
+        phase_ = Phase::Rows;
+        return status_;
+      }
+      case Phase::Rows: {  // pass 2: the listed runs' rows (pass 1 checked them)
+        uint32_t budget = kGrainBytes / kSetFileRowBytes;
+        while (budget != 0 && k_ < count_) {
+          if (row_ == rows_[list_[k_]]) {
+            ++k_;
+            row_ = 0;
+            continue;
+          }
+          pos_ = off_[k_] + row_ * kSetFileRowBytes;
+          uint8_t b[kSetFileRowBytes];
+          if (!read(b, sizeof b, false)) return fail(Why::Read);
+          PassEvent e{};
+          e.tick = get32(b);
+          e.noteId = get32(b + 4);
+          e.seq = get32(b + 8);
+          e.status = b[12];
+          e.data1 = b[13];
+          e.data2 = b[14];
+          e.origin = b[15];
+          if (!res_->writeOwed(run_[k_], e)) return fail(Why::BadFile);
+          ++row_;
+          --budget;
+        }
+        if (k_ < count_) return status_;
+        for (uint8_t k = 0; k < count_; ++k) runs_->seal(run_[k]);
+        const ManifestId m = manifests_->create(into_, revision_, loop_, run_, count_, *runs_);
+        if (m == kNoManifest) return fail(Why::Capacity);
+        for (uint8_t k = 0; k < count_; ++k) runs_->release(run_[k]);  // the state holds them now
+        taken_ = 0;
+        got_ = m;
+        while (ids_->peek() <= noteIdHigh_) ids_->advance();  // ids are never reused
+        return status_ = Status::Done;
+      }
+    }
+    return status_;
+  }
+  void cancel() {
+    if (status_ == Status::Running) fail(Why::None);
+    status_ = Status::Idle;
+  }
+  Status status() const { return status_; }
+  Why why() const { return why_; }
+  /// The state read (one reference, now the caller's), once; kNoManifest: none.
+  ManifestId take() {
+    const ManifestId m = got_;
+    got_ = kNoManifest;
+    return m;
+  }
+
+ private:
+  enum class Phase : uint8_t { Blob, Directory, Skip, States, Admit, Rows };
+  static constexpr uint32_t kNoSector = 0xFFFFFFFFu;
+
+  /// The sector holding byte `pos` of the slot file, in `sector_`.
+  bool fill(uint32_t pos) {
+    const uint32_t s = base_ + pos / library::kSector;
+    if (s == cached_) return true;
+    if (!card_->readLibrarySector(s, sector_)) return false;
+    cached_ = s;
+    return true;
+  }
+  bool read(uint8_t* d, uint32_t n, bool crc) {
+    if (pos_ + n > bytes_) return false;
+    for (uint32_t i = 0; i < n; ++i, ++pos_) {
+      if (!fill(pos_)) return false;
+      d[i] = sector_[pos_ % library::kSector];
+    }
+    if (crc) crc_ = crc32Update(crc_, d, n);
+    return true;
+  }
+  /// Releases everything taken: the runs (their rows reach reclaim) and their reservations.
+  Status fail(Why w) {
+    for (uint8_t k = 0; k < taken_; ++k) {
+      res_->forgive(run_[k]);
+      runs_->seal(run_[k]);
+      runs_->release(run_[k]);
+    }
+    taken_ = 0;
+    why_ = w;
+    return status_ = Status::Failed;
+  }
+  static uint16_t get16(const uint8_t* b) { return static_cast<uint16_t>(b[0] | (b[1] << 8)); }
+  static uint32_t get32(const uint8_t* b) { return get16(b) | (static_cast<uint32_t>(get16(b + 2)) << 16); }
+
+  Card* card_ = nullptr;
+  Pool* pool_ = nullptr;
+  Runs* runs_ = nullptr;
+  Manifests* manifests_ = nullptr;
+  Reservations* res_ = nullptr;
+  NoteIdSource* ids_ = nullptr;
+  uint8_t sector_[library::kSector] = {};
+  uint32_t at_ = 0, sequence_ = 0, base_ = 0, bytes_ = 0, pos_ = 0, crc_ = 0, cached_ = kNoSector;
+  uint32_t rowsAt_ = 0, rowsEnd_ = 0, noteIdHigh_ = 0, revision_ = 0, loop_ = 0, row_ = 0;
+  uint64_t rowsTotal_ = 0;
+  uint16_t runCount_ = 0, r_ = 0;
+  uint8_t states_ = 0, i_ = 0, count_ = 0, k_ = 0, taken_ = 0, from_ = 0, into_ = 0;
+  int8_t current_ = -1;
+  uint8_t kind_[Runs::kRunCount] = {};
+  uint32_t rows_[Runs::kRunCount] = {};
+  uint16_t list_[Manifests::kMaxRuns] = {};
+  uint32_t off_[Manifests::kMaxRuns] = {};
+  RunId run_[Manifests::kMaxRuns] = {};
+  ManifestId got_ = kNoManifest;
+  Why why_ = Why::None;
+  Phase phase_ = Phase::Blob;
   Status status_ = Status::Idle;
 };
 
@@ -227,23 +472,19 @@ class SetLoad {
     if (busy() || writer_->busy()) return Result::Busy;
     if (from >= Slots || into >= Slots || from >= library::kSlots) return Result::NoSlot;
     if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
-    dropGot();
     kind_ = Kind::Get;
     getFrom_ = from;
     hold_ = false;
     stageTracks_ = 0;
     start();
-    reader_.start(*card_, *pool_, *runs_, *manifests_, *history_, *res_, *ids_, setAt(), setSequence(), scratch_,
-                  1ull << from, true, nullptr, nullptr, 0, into);
-    phase_ = Phase::Read;
+    getter_.start(*card_, *pool_, *runs_, *manifests_, *res_, *ids_, setAt(), setSequence(), from, into);
+    phase_ = Phase::Get;
     return Result::Ok;
   }
   /// The state a get read (one reference, now the caller's), once; kNoManifest: none.
-  ManifestId takeGot() {
-    const ManifestId m = got_;
-    got_ = kNoManifest;
-    return m;
-  }
+  ManifestId takeGot() { return getter_.take(); }
+  /// Why a get changed nothing.
+  typename StateReader<Card, Pool, Runs, Manifests>::Why getWhy() const { return getter_.why(); }
   /// Starts returning to the checkpoint (the working set before the last load).
   Result beginReturn(bool atSwitch = false, uint8_t stageTracks = 0) {
     if (!writer_->mounted()) return Result::NotMounted;
@@ -285,17 +526,15 @@ class SetLoad {
                       false, stageSlot_, staged_, restoring_ ? 0 : kTracks);
         phase_ = Phase::Read;
         return status_;
+      case Phase::Get: {  // nothing else is touched: a failure leaves the set as it is
+        const auto st = getter_.step();
+        if (st == StateReader<Card, Pool, Runs, Manifests>::Status::Running) return status_;
+        return status_ = st == StateReader<Card, Pool, Runs, Manifests>::Status::Done ? Status::Done
+                                                                                       : Status::Unchanged;
+      }
       case Phase::Read: {
         const typename Reader::Status st = reader_.step();
         if (st == Reader::Status::Running) return status_;
-        if (kind_ == Kind::Get) {  // nothing else was touched: a failure leaves the set as it is
-          got_ = st == Reader::Status::Done ? reader_.detachedState(getFrom_) : kNoManifest;
-          if (st != Reader::Status::Done) {
-            failedWhy_ = reader_.why();
-            failedSlot_ = getFrom_;
-          }
-          return status_ = got_ != kNoManifest ? Status::Done : Status::Unchanged;
-        }
         if (st == Reader::Status::Done) return status_ = restoring_ ? Status::Restored : Status::Done;
         if (kind_ == Kind::Return || restoring_) return status_ = Status::Lost;
         // The load failed after the clear: the working set back from the checkpoint written just before.
@@ -326,7 +565,7 @@ class SetLoad {
   /// Ready to clear, waiting for the switch point (`release`).
   bool waiting() const { return status_ == Status::Running && phase_ == Phase::Clear && hold_; }
   void release() { hold_ = false; }
-  /// Diagnostics: 0 checkpoint, 1 stage, 2 clear (or waiting), 3 reclaim, 4 read; a restore reads again.
+  /// Diagnostics: 0 checkpoint, 1 stage, 2 clear (or waiting), 3 reclaim, 4 read, 5 get; a restore reads again.
   uint8_t phase() const { return static_cast<uint8_t>(phase_); }
   Status status() const { return status_; }
   Kind kind() const { return kind_; }
@@ -340,7 +579,7 @@ class SetLoad {
   uint8_t failedSlot() const { return failedSlot_; }
 
  private:
-  enum class Phase : uint8_t { Checkpoint, Stage, Clear, Reclaim, Read };
+  enum class Phase : uint8_t { Checkpoint, Stage, Clear, Reclaim, Read, Get };
   static constexpr uint8_t kTracks = 8, kNoSlot = 0xFF;
   static constexpr uint32_t kReclaimUnits = 64;  // as the reclaim job's grain
 
@@ -413,10 +652,7 @@ class SetLoad {
     phase_ = Phase::Reclaim;
   }
   uint8_t region() const { return writer_->checkpointRegion(); }
-  void dropGot() {  // a state read and never taken
-    if (got_ != kNoManifest) manifests_->release(got_, *runs_);
-    got_ = kNoManifest;
-  }
+
 
   Card* card_ = nullptr;
   Writer* writer_ = nullptr;
@@ -439,7 +675,7 @@ class SetLoad {
   uint8_t stageSlot_[kTracks] = {};
   ManifestId staged_[kTracks] = {};
   uint32_t readAt_ = 0, readSequence_ = 0;
-  ManifestId got_ = kNoManifest;
+  StateReader<Card, Pool, Runs, Manifests> getter_;
   uint8_t getFrom_ = 0;
   typename Reader::Why failedWhy_ = Reader::Why::None;
   uint8_t failedSlot_ = 0;

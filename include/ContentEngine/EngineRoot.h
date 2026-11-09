@@ -153,12 +153,13 @@ struct EngineRam2 {
 // (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
 // library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
 // reader and slot-file load job; DEC-261: its staged states; DEC-269: + 16 B the working set in the writer's two index
-// headers; DEC-270: + 8 B the got state and its slots). The line is the host's 64-bit layout, 568 B above the Teensy's
-// 6,821,464. RAM2: the
+// headers; DEC-270: + 8 B the got state and its slots; + 3,752 B (host) the get's state reader: one sector, the
+// run directory's kinds and row counts, the current state's run list — plan §6.2 fix 1). The line is the host's 64-bit
+// layout; the Teensy's is a few hundred bytes below it. RAM2: the
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 6822032u;
+constexpr size_t kPsramBudget = 6825784u;
 constexpr size_t kRam2Budget = 154424u;  // measured (sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");

@@ -447,6 +447,60 @@ void test_a_get_that_finds_nothing_or_fails_changes_nothing() {
   TEST_ASSERT_EQUAL(Loader::Result::NoMilestone, gL.beginGet(1, 1, 2));
 }
 
+/// Slot 1: x replaced by y (current y); slot 3: p replaced by q, then undone (current p). Saved as milestone 0.
+static void saveHistories() {
+  const RunId x = run(1, RunKind::kRecord, {row(10, 30, 0x90, 61, 100), row(20, 30, 0x80, 61, 0)});
+  const RunId y = run(1, RunKind::kRecord, {row(30, 31, 0x90, 62, 100), row(40, 31, 0x80, 62, 0)});
+  const RunId p = run(3, RunKind::kRecord, {row(50, 32, 0x90, 63, 100), row(60, 32, 0x80, 63, 0)});
+  const RunId q = run(3, RunKind::kRecord, {row(70, 33, 0x90, 64, 100), row(80, 33, 0x80, 64, 0)});
+  commit(1, {x}, 10);
+  commit(1, {y}, 11);
+  commit(3, {p}, 12);
+  commit(3, {q}, 13);
+  gH.undo(3);
+  for (RunId k : {x, y, p, q}) gRuns.release(k);
+  saveMilestone();
+}
+
+/// Red team fix 1 (plan §6.2): a get reads only the slot's current state — the runs it lists, nothing of the rest of
+/// the history is allocated, reserved or left to reclaim.
+void test_a_get_reads_only_the_current_states_runs() {
+  saveHistories();
+  for (uint8_t from : {1, 3}) {
+    const uint16_t runs = gRuns.freeCount(), pending = gRuns.reclaimPendingRuns();
+    TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, from, 0));
+    TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
+    const ManifestId m = gL.takeGot();
+    TEST_ASSERT_TRUE(m != kNoManifest);
+    const auto& st = gManifests.manifest(m);
+    TEST_ASSERT_EQUAL_UINT8(1, st.runCount);
+    TEST_ASSERT_EQUAL_UINT32(from == 1 ? 11 : 12, st.revision);  // y; p (the undone-to current)
+    TEST_ASSERT_EQUAL_UINT8(from == 1 ? 62 : 63, gRuns.rowAt(st.runs[0], 0, gPool).data1);
+    TEST_ASSERT_EQUAL_UINT16(runs - 1, gRuns.freeCount());  // one run taken, none other
+    TEST_ASSERT_EQUAL_UINT16(pending, gRuns.reclaimPendingRuns());  // nothing read and dropped
+    gManifests.release(m, gRuns);
+  }
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
+/// The whole slot file is still checked: a damaged row of a run the current state does not list fails the get.
+void test_a_get_checks_the_whole_slot_file() {
+  saveHistories();
+  Record r;
+  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  uint8_t h[kSector];
+  gCard.readLibrarySector(kLogBase + r.logSector, h);
+  BlobHeader bh;
+  TEST_ASSERT_TRUE(decode(h, bh));
+  const uint32_t at = kLogBase + r.logSector + 1;  // slot 0 empty: slot 1's file first
+  TEST_ASSERT_EQUAL_UINT32(0, bh.slotBytes[0]);
+  gCard.sectors[at][24 + 2 * 8 + 13] ^= 0x01;  // x's first row (the directory lists x, then y), its pitch
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 1, 0));
+  TEST_ASSERT_EQUAL(Loader::Status::Unchanged, loadToEnd());
+  TEST_ASSERT_EQUAL(kNoManifest, gL.takeGot());
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_refusals() {
   buildSet();
   TEST_ASSERT_EQUAL(Loader::Result::NoCheckpoint, gL.beginReturn());
@@ -499,6 +553,8 @@ int main(int, char**) {
   RUN_TEST(test_staging_loads_the_selected_slot_beside_the_set);
   RUN_TEST(test_getting_a_loop_reads_one_slot_for_another_and_touches_nothing);
   RUN_TEST(test_a_get_that_finds_nothing_or_fails_changes_nothing);
+  RUN_TEST(test_a_get_reads_only_the_current_states_runs);
+  RUN_TEST(test_a_get_checks_the_whole_slot_file);
   RUN_TEST(test_refusals);
   RUN_TEST(test_clearing_releases_the_set);
   RUN_TEST(test_no_heap);
