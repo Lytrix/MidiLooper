@@ -1,3 +1,15 @@
+**2026-11-09 — Engine hangs after `!REBOOT`: a hardware watchdog, a USB health check, boot phases (DEC-266).** The
+2026-11-08/09 "hangs" (serial dead, the uploader unable to reboot, PROGRAM needed) were reproduced in reboot soaks as
+**USB stopping while the main loop ran** (screen and DROID fine, no output call blocked: every send is bounded);
+once the Mac's serial driver was the stuck side (the uploader still reached the board), and python-rtmidi's
+`MidiIn.close_port` deadlocked in CoreMIDI four times on the host. The old crumbs could not place a hang (`!REBOOT`
+ran on until the reset landed; `setup` cleared them unflushed). Now: WDOG1 (4 s) from the earliest startup hook, its
+warning recording PC / LR / exception; boot phases; the live USB state in breadcrumbs 4–6 and a self-reset on a
+USB wedge the board can see (stopped only); a quiet `!REBOOT`; 512 B more DIN transmit buffer; `!ENGINE boot`,
+`!ENGINE hang [irq]`; `scripts/engine_reboot_soak.py`. Device, image `137de137…`: 120 reboot cycles with ports
+reopened, no stop; watchdog tests reset in ~4 s. Native 4,456 passed. Open: a board-side USB stop, if one recurs, is
+placed by `prev_crumbs` c4–c6 after the PROGRAM press.
+
 **2026-11-09 — Engine sets browser, slice 5 — timeline strip and fork lanes (DEC-265).** The browser's top rows show
 the months to now with a tick per day of milestones and the selected one marked; inside a set the line from the newest
 milestone runs on one lane and branched-off milestones on another, joined where they grew from. Native 4,456 passed;

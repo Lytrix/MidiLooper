@@ -126,14 +126,22 @@ void hostSend(uint8_t type, uint8_t d1, uint8_t d2, uint8_t channel) {
 constexpr uint32_t kBlockUs = 2000;       // B_max: the longest non-engine block of a pass (input, USB, serial)
 constexpr uint8_t kInputPerPass = 32;     // messages a port a pass
 constexpr uint8_t kSendPerPass = 32;      // messages a port a pass
+// The watchdog's timeout: no pass and no boot phase takes this long (the longest, `!ENGINE cardfree`, ~1 s).
+constexpr uint32_t kWatchdogS = 4;
+// DIN's transmit buffer beyond the core's 40 bytes: a pass's 32 messages per port, the LEDs, bank and motor feedback
+// (3 bytes each) fit, so `Serial8.write` stores and returns instead of waiting for the 31,250-baud line (320 us a byte).
+DMAMEM uint8_t gDinTx[512];
+bool reportBootReset();
+void crumb(uint32_t stage);
+[[noreturn]] void quietReboot(uint32_t stage);
 constexpr uint8_t kGrainsPerPass = 8;     // the scheduler's own slack check decides; this bounds one pass
 constexpr uint32_t kDefaultTempo = 12000;  // 120 BPM until a tempo is set or an external clock arrives
 
 uint32_t gLastTick = 0;
-enum Stage : uint32_t { kInput = 1, kSerial, kTicks, kJobs, kGrains, kSend, kSurface, kLeds, kScreen, kIdle };
+enum Stage : uint32_t { kInput = 1, kSerial, kTicks, kJobs, kGrains, kSend, kSurface, kLeds, kScreen, kIdle, kRebooting, kUsbWedged };
 // Diagnostics: the worst time each main-loop stage took since the last `!ENGINE take` (the time between two crumbs is
 // the earlier stage's).
-uint32_t gStageMaxUs[kIdle + 1] = {};
+uint32_t gStageMaxUs[kUsbWedged + 1] = {};
 uint32_t gStageAtUs = 0, gStage = 0;
 // USB heartbeat: while following an external clock, an Active Sensing byte goes to the USB host whenever the port has
 // been quiet for `kHeartbeatUs`. Without it, Ableton's USB stream (clock and notes) stalled while the Teensy sent
@@ -748,8 +756,7 @@ void command(char* line, uint32_t nowUs) {
     Serial.println("[Engine] host-requested reboot");
     Serial.flush();
     delay(20);
-    SCB_AIRCR = 0x05FA0004;
-    return;
+    quietReboot(kRebooting);
   }
   if (std::strncmp(line, "!ENGINE ", 8) != 0) return;
   char* verb = line + 8;
@@ -989,6 +996,16 @@ void command(char* line, uint32_t nowUs) {
     Serial.printf("#ENGINE,cardfree,free_clusters=%ld,cluster_sectors=%u,clusters=%lu,ms=%lu\n",
                   static_cast<long>(free), static_cast<unsigned>(SD.sdfs.sectorsPerCluster()),
                   static_cast<unsigned long>(SD.sdfs.clusterCount()), static_cast<unsigned long>(millis() - t));
+  } else if (std::strcmp(verb, "boot") == 0) {  // the boot's reset cause and the previous boot's breadcrumbs
+    reportBootReset();
+  } else if (std::strcmp(verb, "hang") == 0) {  // hang [irq]: the watchdog's test — the loop stops (stopped only)
+    if (gClock.running()) return;
+    const bool irq = arg != nullptr && std::strcmp(arg, "irq") == 0;
+    Serial.printf("#ENGINE,hang,irq=%u,watchdog_s=%lu\n", irq ? 1u : 0u, static_cast<unsigned long>(kWatchdogS));
+    Serial.flush();
+    if (irq) __disable_irq();  // as a hang with interrupts off: USB is dead too, only the watchdog resets the board
+    for (;;) {
+    }
   } else if (std::strcmp(verb, "status") == 0) {
     EditNote n{};
     const bool note = gSurface.edit().selected(n);
@@ -1084,8 +1101,152 @@ void sendLed(uint8_t note, uint8_t velocity) {
   hostSend(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
 }
 
-// ---- Breadcrumbs -----------------------------------------------------------------------------------------------------
+// ---- Breadcrumbs and the watchdog -----------------------------------------------------------------------------------
+// The previous boot's breadcrumbs, copied by `startup_early_hook` before this boot writes any (DMAMEM is not cleared).
 DMAMEM uint32_t gPrevCrumbs[8];
+uint32_t gResetCause = 0;  // SRC_SRSR at boot: why the board reset (`kWatchdogReset` is the watchdog's)
+constexpr uint32_t kWatchdogReset = SRC_SRSR_WDOG_RST_B;
+// Boot phases (breadcrumb 3): how far a boot came, so a hang before the main loop is placed too. `kPhaseReset` and
+// `kPhaseClocks` are written by the core's startup hooks, the rest by `setup`.
+enum Phase : uint32_t {
+  kPhaseReset = 1,  // the reset handler ran (startup_early_hook)
+  kPhaseClocks,     // clocks, caches, PSRAM, before USB (startup_middle_hook)
+  kPhaseSetup,      // USB started, constructors run, setup entered
+  kPhaseSerial,     // the USB serial wait is over
+  kPhaseEngine,     // the engine is initialised
+  kPhaseDisplay,    // the display is started
+  kPhasePorts,      // DIN and the USB host are started
+  kPhaseCard,       // the card is mounted (or absent)
+  kPhaseLoop,       // the main loop runs (breadcrumb 1 then holds its stage)
+};
+
+/// The watchdog's service: a pass (or a boot phase) that does not come back within `kWatchdogS` resets the board.
+constexpr uint16_t kWicrWie = 1u << 15, kWicrWtis = 1u << 14;  // WDOG1_WICR: warning interrupt enable, its status
+inline void feedWatchdog() {
+  WDOG1_WSR = 0x5555;
+  WDOG1_WSR = 0xAAAA;
+}
+
+void phase(uint32_t p) {
+  feedWatchdog();
+  CrashReport.breadcrumb(3, p);
+}
+
+/// Resets the board now: the given stage stays as the last crumb; nothing runs after the request (it takes effect some
+/// time after the write — the loop used to run on, its card, USB and PSRAM traffic cut off wherever the reset landed);
+/// the watchdog backs it up.
+[[noreturn]] void quietReboot(uint32_t stage) {
+  crumb(stage);
+  __disable_irq();
+  asm volatile("dsb" ::: "memory");
+  SCB_AIRCR = 0x05FA0004;
+  asm volatile("dsb" ::: "memory");
+  for (;;) {
+  }
+}
+
+// The USB device's health (the watchdog cannot see it: the loop runs on). Wedged twice on 2026-11-09 during reboot
+// soaks: the loop and the surface ran, but the host's open of the serial port and its writes blocked and the uploader
+// could not reboot the board (the 2026-11-08/09 incidents). Every `kUsbCheckMs` the live USB state goes to breadcrumbs
+// 4–6, so the boot after a PROGRAM press shows it (`usbState`); a wedge the board can see itself, held for
+// `kUsbWedgedChecks` checks, is recorded as stage `kUsbWedged` and, while stopped, resets the board.
+constexpr uint32_t kUsbCheckMs = 250;
+constexpr uint8_t kUsbWedgedChecks = 4;
+constexpr uint32_t kUsbIrqOff = 1, kUsbIrqStuck = 2, kUsbRxUnprimed = 4;  // wedge flags (breadcrumb 6, bits 0–2)
+uint32_t gUsbCheckMs = 0, gUsbStuckStatus = 0, gUsbWedges = 0;
+uint8_t gUsbWedgedFor = 0;
+volatile uint32_t gUsbIsrs = 0;  // USB device interrupts served (`usbIsrCounted`)
+uint32_t gUsbIsrsAtCheck = 0;
+
+/// Breadcrumbs 4–6: (4) USBSTS bits 0–15, PORTSC1 bits 0–9 (connect, enabled, suspend, reset, high speed) at 16–25 and
+/// its port speed at 28–29; (5) ENDPTSTATUS (primed endpoints: receive 0–7, transmit 16–23); (6) the wedge flags,
+/// the interrupt enabled (bit 4) and pending (bit 5) in the NVIC, the configuration (bits 8–15), the serial bytes
+/// waiting (16–23, at most 255) and the USB interrupts served since the last check (24–31, at most 255).
+void usbState(uint32_t flags) {
+  const uint32_t portsc = USB1_PORTSC1;
+  const uint32_t isrs = gUsbIsrs, served = isrs - gUsbIsrsAtCheck;
+  gUsbIsrsAtCheck = isrs;
+  const int waiting = Serial.available();
+  CrashReport.breadcrumb(4, (USB1_USBSTS & 0xFFFF) | (portsc & 0x3FF) << 16 | ((portsc >> 26) & 3) << 28);
+  CrashReport.breadcrumb(5, USB1_ENDPTSTATUS);
+  CrashReport.breadcrumb(6, flags | (NVIC_IS_ENABLED(IRQ_USB1) ? 0x10u : 0u) | (NVIC_IS_PENDING(IRQ_USB1) ? 0x20u : 0u) |
+                                static_cast<uint32_t>(usb_configuration) << 8 |
+                                static_cast<uint32_t>(waiting > 255 ? 255 : waiting) << 16 |
+                                (served > 255 ? 255u : served) << 24);
+}
+
+void checkUsb(uint32_t nowMs) {
+  if (nowMs - gUsbCheckMs < kUsbCheckMs) return;
+  gUsbCheckMs = nowMs;
+  uint32_t flags = 0;
+  const uint32_t pending = USB1_USBSTS & USB1_USBINTR;
+  if (usb_configuration) {  // enumerated: the device must be serviced
+    if (!NVIC_IS_ENABLED(IRQ_USB1)) flags |= kUsbIrqOff;
+    // An enabled interrupt the handler has not cleared since the last check (it clears its bits within microseconds).
+    if (pending != 0 && (pending & gUsbStuckStatus) != 0) flags |= kUsbIrqStuck;
+    // The serial receive endpoint (3) with no transfer primed and nothing buffered: the host's data can never land.
+    if ((USB1_ENDPTSTATUS & (1u << 3)) == 0 && Serial.available() == 0) flags |= kUsbRxUnprimed;
+  }
+  gUsbStuckStatus = pending;
+  usbState(flags);
+  if (flags == 0) {
+    gUsbWedgedFor = 0;
+    return;
+  }
+  if (++gUsbWedgedFor < kUsbWedgedChecks) return;
+  gUsbWedgedFor = 0;
+  ++gUsbWedges;
+  if (!gClock.running()) quietReboot(kUsbWedged);  // while playing, DIN plays on; the reset waits for a stop
+}
+
+}  // namespace
+
+/// The watchdog's warning, half a second before it resets the board (highest priority, so it interrupts a hung ISR
+/// too, though not code running with interrupts off): where the board hung — the interrupted code's PC and LR, and its
+/// exception number (0: the main loop; 16 + IRQ: an interrupt handler) — as breadcrumbs 4–6 for the next boot.
+extern "C" void watchdogWarning(const uint32_t* frame) {  // the stacked r0–r3, r12, lr, pc, xPSR
+  CrashReport.breadcrumb(4, frame[6]);
+  CrashReport.breadcrumb(5, frame[5]);
+  CrashReport.breadcrumb(6, frame[7] & 0x1FF);
+  WDOG1_WICR |= kWicrWtis;  // acknowledged; the reset still comes (the watchdog is not fed)
+}
+
+extern "C" void usb_isr(void);
+/// The core's USB device interrupt, counted (`usbState`).
+void usbIsrCounted() {
+  ++gUsbIsrs;
+  usb_isr();
+}
+
+extern "C" __attribute__((naked)) void watchdogWarningIsr() {
+  asm volatile(
+      "tst lr, #4\n"
+      "ite eq\n"
+      "mrseq r0, msp\n"
+      "mrsne r0, psp\n"
+      "b watchdogWarning\n");
+}
+
+namespace {
+
+/// The boot's reset rows (also `!ENGINE boot`, for a host that opened the port after the boot printed them): the reset
+/// cause, and the previous boot's last main-loop stage and tick and how far it booted (bitmask, stage, tick, phase) —
+/// where a hang stopped it. A stage with phase < kPhaseLoop is the boot before that one's (the hang came before the loop).
+/// c4–c6: after a watchdog reset where it hung — PC, LR, exception number (0: the main loop; 16 + IRQ: a handler), or
+/// the USB state if interrupts were off (the warning never ran); otherwise the last USB state (`usbState`), the
+/// wedge's with stage 12 (`kUsbWedged`).
+bool reportBootReset() {
+  const bool crashed = static_cast<bool>(CrashReport);
+  Serial.printf("#CAP,%lu,DIAG,boot_reset,crash=%u,cause=%lx,watchdog=%u\n", static_cast<unsigned long>(micros()),
+                crashed ? 1u : 0u, static_cast<unsigned long>(gResetCause), (gResetCause & kWatchdogReset) ? 1u : 0u);
+  Serial.printf("#CAP,%lu,DIAG,prev_crumbs,mask=%lx,stage=%lu,tick=%lu,phase=%lu,c4=%lx,c5=%lx,c6=%lx\n",
+                static_cast<unsigned long>(micros()), static_cast<unsigned long>(gPrevCrumbs[0]),
+                static_cast<unsigned long>(gPrevCrumbs[1]), static_cast<unsigned long>(gPrevCrumbs[2]),
+                static_cast<unsigned long>(gPrevCrumbs[3]), static_cast<unsigned long>(gPrevCrumbs[4]),
+                static_cast<unsigned long>(gPrevCrumbs[5]), static_cast<unsigned long>(gPrevCrumbs[6]));
+  return crashed;
+}
+
 void crumb(uint32_t stage) {
   const uint32_t t = micros();
   if (gStage != 0 && t - gStageAtUs > gStageMaxUs[gStage]) gStageMaxUs[gStage] = t - gStageAtUs;
@@ -1123,28 +1284,51 @@ void reportBootLoad() {
 
 }  // namespace
 
+// The core's startup hooks (weak in `startup.c`). The early hook runs before the caches and ITCM are set up, so it is
+// FLASHMEM and writes RAM directly: it keeps the previous boot's breadcrumbs (the struct at the end of RAM2 survives a
+// warm reset), starts this boot's clean, and arms the watchdog (WDOG1, its own 32 kHz clock), so a hang anywhere from
+// here on — PSRAM, USB start, setup, the main loop — resets the board by itself instead of waiting for a PROGRAM press.
+extern "C" FLASHMEM void startup_early_hook(void) {
+  volatile uint32_t* bc = reinterpret_cast<volatile uint32_t*>(0x2027FFC0);
+  for (int i = 0; i < 8; ++i) gPrevCrumbs[i] = bc[i];
+  for (int i = 0; i < 8; ++i) bc[i] = 0;
+  bc[3] = kPhaseReset;  // breadcrumb 3 (bc[0] is the mask, bc[1..6] the values)
+  bc[0] = 1u << 2;
+  CCM_CCGR3 |= CCM_CCGR3_WDOG1(CCM_CCGR_ON);
+  WDOG1_WMCR = 0;  // the power-down counter off
+  // Timeout (WT + 1) / 2 s; suspended under a debugger; no WDOG_B pin, no software reset.
+  WDOG1_WCR = WDOG_WCR_WT(kWatchdogS * 2 - 1) | WDOG_WCR_WDBG | WDOG_WCR_WDE | WDOG_WCR_SRS | WDOG_WCR_WDA;
+  WDOG1_WSR = 0x5555;  // fed here directly: nothing outside FLASHMEM runs yet
+  WDOG1_WSR = 0xAAAA;
+}
+
+extern "C" FLASHMEM void startup_middle_hook(void) { phase(kPhaseClocks); }
+
 void setup() {
-  // The previous boot's breadcrumbs, before this boot writes any: the struct (end of RAM2) survives a warm reset.
-  {
-    volatile uint32_t* bc = reinterpret_cast<volatile uint32_t*>(0x2027FFC0);
-    for (int i = 0; i < 8; ++i) gPrevCrumbs[i] = bc[i];
-    for (int i = 0; i < 7; ++i) bc[i] = 0;  // this boot's crumbs start clean (the mask too)
-  }
+  phase(kPhaseSetup);
+  gResetCause = SRC_SRSR;
+  SRC_SRSR = gResetCause;  // write-one-to-clear: the next boot reports its own cause
+  attachInterruptVector(IRQ_WDOG1, watchdogWarningIsr);
+  NVIC_SET_PRIORITY(IRQ_WDOG1, 0);
+  WDOG1_WICR = kWicrWie | kWicrWtis | 1;  // the warning 0.5 s before the reset
+  NVIC_ENABLE_IRQ(IRQ_WDOG1);
+  attachInterruptVector(IRQ_USB1, usbIsrCounted);
   Serial.begin(115200);
-  while (!Serial && millis() < 3000) delay(10);
-  const bool crashed = static_cast<bool>(CrashReport);
-  Serial.printf("#CAP,%lu,DIAG,boot_reset,crash=%u\n", static_cast<unsigned long>(micros()), crashed ? 1u : 0u);
-  // The previous boot's last main-loop stage and tick (bitmask, stage, tick): where a hang stopped it.
-  Serial.printf("#CAP,%lu,DIAG,prev_crumbs,mask=%lx,stage=%lu,tick=%lu\n", static_cast<unsigned long>(micros()),
-                static_cast<unsigned long>(gPrevCrumbs[0]), static_cast<unsigned long>(gPrevCrumbs[1]),
-                static_cast<unsigned long>(gPrevCrumbs[2]));
+  while (!Serial && millis() < 3000) {
+    feedWatchdog();
+    delay(10);
+  }
+  phase(kPhaseSerial);
+  const bool crashed = reportBootReset();
   if (crashed) Serial.print(CrashReport);
   loadTzOffset();
   reportTime();
   if (!gEngine.init(gPsram, gRam2, kBlockUs)) {
     Serial.println("#CAP,BOOT,engine,init_failed");
+    phase(kPhaseLoop);  // the loop still runs (and feeds the watchdog); nothing else starts
     return;
   }
+  phase(kPhaseEngine);
   EngineRoot::census([](EngineRoot::Region r, const char* name, size_t bytes) {
     Serial.printf("#CAP,MEM_REGION,%s,%s,%u\n", r == EngineRoot::Region::Psram ? "psram" : "ram2", name,
                   static_cast<unsigned>(bytes));
@@ -1156,8 +1340,11 @@ void setup() {
   loadSwitchAt();
   gSurface.init(gEngine, gClock);
   gDisplay.begin();
+  phase(kPhaseDisplay);
   Serial8.begin(31250);
+  Serial8.addMemoryForWrite(gDinTx, sizeof gDinTx);
   gHost.begin();
+  phase(kPhasePorts);
   gBootStartUs = micros();
   if (gCard.begin()) {
     gEngine.attachCard(gCard);
@@ -1174,10 +1361,17 @@ void setup() {
                   static_cast<unsigned long>(mbr[454] | mbr[455] << 8 | mbr[456] << 16 | uint32_t(mbr[457]) << 24),
                   mbr[0], reinterpret_cast<const char*>(mbr + 3));
   }
+  phase(kPhaseCard);
 }
 
 void loop() {
   static uint32_t passStart = 0;
+  static bool looping = false;
+  if (!looping) {
+    looping = true;
+    phase(kPhaseLoop);
+  }
+  feedWatchdog();
   {
     const uint32_t t = micros();
     if (passStart != 0 && t - passStart > gPassMaxUs) gPassMaxUs = t - passStart;
@@ -1275,6 +1469,7 @@ void loop() {
   crumb(kScreen);
   gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
   crumb(kIdle);
+  checkUsb(millis());
 }
 
 #endif  // ENGINE_FIRMWARE

@@ -15257,49 +15257,6 @@ them on the four buttons.
   passed; heap gate OK. RAM2 + 8 B.
 - Device: pending (the board was in use by the hang investigation).
 
-## DEC-265 — A hardware watchdog resets a hung engine; boot phases place the hang
-
-**Status:** Accepted (task from the sets-browser session, 2026-11-09: "consider a hardware watchdog so a hang recovers
-by itself"; engine firmware only).
-
-### Context
-
-The engine hung three times on 2026-11-08/09, each shortly after a host script sent `!REBOOT` and reopened the serial
-and 'Teensy MIDI' ports: serial dead, the uploader unable to reboot the board, a PROGRAM press needed. The next boot's
-`prev_crumbs` showed stage 8 once and stage 6 twice, tick 0, stopped. Findings (2026-11-09):
-
-- Every engine output call is bounded in software: USB device MIDI gives up after 40 ms and then drops at once until
-  the host reads again, USB serial after 120 ms (core `usb_midi.c` / `usb_serial.c`), DIN waits only for the
-  31,250-baud line, the DROID host port is admitted (`HostTx.h`, a437083a). At boot the host is not yet reading the
-  MIDI endpoint: `!ENGINE take` shows `send` ≈ 28 ms and `leds` ≈ 40 ms worst stages — the 40 ms timeout, not a hang.
-- The crumbs did not place the hang. `!REBOOT` wrote `SCB_AIRCR` and returned: the loop ran on until the reset
-  landed, and the next boot's `prev_crumbs` after a plain reboot reads stage 3–7 at tick 0 (stage 4 most, 6 often).
-  The old `setup` cleared the crumbs without a cache flush, so a boot that hung before its first main-loop crumb left
-  the *previous* boot's landing stage in RAM — exactly "stage 6, tick 0, stopped". The incidents therefore fit a hang
-  before the main loop as well as one in it.
-- A hang that also stops USB (the uploader could not reboot the board) needs interrupts off or a stuck interrupt
-  handler: a main-loop spin leaves the USB interrupt answering the uploader's reboot request. The core's USB device
-  interrupt waits without a timeout on `USB1_ENDPTPRIME` (bus reset, `usb.c`; endpoint 0) — a candidate that only the
-  hang's PC can confirm.
-
-### Decision
-
-- WDOG1, 4 s, armed by `startup_early_hook` (before PSRAM, USB and constructors) and fed every main-loop pass and
-  boot phase. A timeout is a full system reset; the boot reports it (`boot_reset,…,cause=<SRC_SRSR>,watchdog=1`).
-- Its warning interrupt (priority 0, 0.5 s before the reset) records the interrupted PC, LR and exception number as
-  breadcrumbs 4–6; all 0 means interrupts were off.
-- Boot phases (breadcrumb 3, written and flushed from the startup hooks and `setup`): reset handler, clocks / PSRAM,
-  setup, serial wait, engine, display, ports, card, main loop. The early hook copies the previous boot's crumbs before
-  writing any. `prev_crumbs` prints mask, stage, tick, phase, pc, lr, exception.
-- `!REBOOT` is quiet: it marks stage 11 (rebooting), turns interrupts off, requests the reset between DSBs and spins;
-  the watchdog backs it up.
-- DIN gets 512 bytes of transmit buffer beyond the core's 40, so a pass's messages are stored, not waited for.
-- `!ENGINE boot` re-prints the two boot rows; `!ENGINE hang [irq]` (stopped only) tests the watchdog.
-
-### Evidence
-
-- See the 2026-11-09 status entry in `PROJECT_STATE.md` (soak counts, hex, watchdog tests).
-
 ## DEC-265 — The browser's timeline strip and fork lanes (sets browser slice 5)
 
 **Status:** Accepted (owner 2026-11-08: the proposal's timeline and ancestry, walkthroughs 3–5; 2026-11-09: "continue
@@ -15323,3 +15280,67 @@ with next step").
 - Host: `test_content_engine_browser` (the line and its side branch joining at T02; a straight history has one lane),
   `test_content_engine_wall_clock` (day numbers of dates for the month starts). Full native suite 4,456 passed.
 - Device: pending (the board was in use by the hang investigation).
+
+## DEC-266 — A hardware watchdog and a USB health check reset a hung engine; boot phases place the hang
+
+**Status:** Accepted (task from the sets-browser session, 2026-11-09: "consider a hardware watchdog so a hang recovers
+by itself"; engine firmware only).
+
+### Context
+
+The engine hung three times on 2026-11-08/09, each shortly after a host script sent `!REBOOT` and reopened the serial
+and 'Teensy MIDI' ports: serial dead, the uploader unable to reboot the board, a PROGRAM press needed. The next boot's
+`prev_crumbs` showed stage 8 once and stage 6 twice, tick 0, stopped. Findings (2026-11-09):
+
+- Every engine output call is bounded in software: USB device MIDI gives up after 40 ms and then drops at once until
+  the host reads again, USB serial after 120 ms (core `usb_midi.c` / `usb_serial.c`), DIN waits only for the
+  31,250-baud line, the DROID host port is admitted (`HostTx.h`, a437083a). At boot the host is not yet reading the
+  MIDI endpoint: `!ENGINE take` shows `send` ≈ 28 ms and `leds` ≈ 40 ms worst stages — the 40 ms timeout, not a hang.
+- The crumbs did not place the hang. `!REBOOT` wrote `SCB_AIRCR` and returned: the loop ran on until the reset
+  landed, and the next boot's `prev_crumbs` after a plain reboot reads stage 3–7 at tick 0 (stage 4 most, 6 often).
+  The old `setup` cleared the crumbs without a cache flush, so a boot that hung before its first main-loop crumb left
+  the *previous* boot's landing stage in RAM — exactly "stage 6, tick 0, stopped". The incidents therefore fit a hang
+  before the main loop as well as one in it.
+- **Reproduced twice (2026-11-09, reboot soaks): the main loop ran but the host could no longer talk to the board.**
+  Cycle 39 (image `a7054430…`): the OLED and DROID buttons responded, the watchdog never fired (the USB session id
+  stayed the same for minutes), the host's serial write blocked in `tcdrain`, a new `open()` blocked, and
+  `pio … -t upload` printed "Teensy did not respond to a USB-based request to enter program mode" — the incidents'
+  symptoms; a PROGRAM press recovered it. Cycle 28 of a later soak (image `b6312ed0…`, with `checkUsb`): the same
+  host symptoms, `checkUsb` saw nothing to reset, and this time the uploader rebooted the board over USB without a
+  press — so the board's USB control endpoint was being serviced and the stuck side was the Mac's serial driver.
+  Which side failed at cycle 39 is not proven.
+- The host side hangs on its own: python-rtmidi's `MidiIn.close_port` blocked forever in CoreMIDI four times (twice
+  with the board healthy and answering on serial), and a drain or close of the serial port blocks while the port
+  takes no data. Once the soak opened MIDI in a killable child process and never drained without a bound, 120
+  reboot cycles ran with no stop (two CoreMIDI hangs killed and counted).
+
+### Decision
+
+- WDOG1, 4 s, armed by `startup_early_hook` (before PSRAM, USB and constructors) and fed every main-loop pass and
+  boot phase. A timeout is a full system reset; the boot reports it (`boot_reset,…,cause=<SRC_SRSR>,watchdog=1`).
+- Its warning interrupt (priority 0, 0.5 s before the reset) records the interrupted PC, LR and exception number as
+  breadcrumbs 4–6; all 0 means interrupts were off.
+- Boot phases (breadcrumb 3, written and flushed from the startup hooks and `setup`): reset handler, clocks / PSRAM,
+  setup, serial wait, engine, display, ports, card, main loop. The early hook copies the previous boot's crumbs before
+  writing any. `prev_crumbs` prints mask, stage, tick, phase, pc, lr, exception.
+- `!REBOOT` is quiet: it marks stage 11 (rebooting), turns interrupts off, requests the reset between DSBs and spins;
+  the watchdog backs it up.
+- DIN gets 512 bytes of transmit buffer beyond the core's 40, so a pass's messages are stored, not waited for.
+- **USB health check** (`checkUsb`, every 250 ms): the live USB state goes to breadcrumbs 4–6 (USBSTS and PORTSC1;
+  ENDPTSTATUS; wedge flags, NVIC enabled / pending, configuration, serial bytes waiting, USB interrupts served), so
+  the boot after any PROGRAM press shows which side was stuck. A wedge the board can see — the USB interrupt disabled
+  in the NVIC, an enabled interrupt status left uncleared, or the serial receive endpoint unprimed with nothing
+  buffered — held for 1 s records stage 12 and, while stopped, resets the board quietly (while playing, DIN plays on).
+  Healthy baseline (120 soak boots): `c5=18` (serial and MIDI receive endpoints primed), `c6=…000110` (interrupt
+  enabled, configured, ~24 interrupts per 250 ms).
+- `!ENGINE boot` re-prints the two boot rows; `!ENGINE hang [irq]` (stopped only) tests the watchdog.
+- Host tooling: `scripts/engine_reboot_soak.py` (reboot, reopen serial and MIDI, count watchdog / USB-wedge resets and
+  host CoreMIDI hangs). Host scripts must not close a 'Teensy MIDI' port in-process without a bound.
+
+### Evidence
+
+- Device, image `137de137…` (build, flash, boot `boot_reset,crash=0`, `BOOT,load,ok`): 120 reboot cycles with serial
+  and MIDI reopened (60 closing at once after `!REBOOT`, 60 waiting for its reply) — no watchdog reset, no USB-wedge
+  reset, every previous stage 11. `!ENGINE hang` → reset in ~4 s, `watchdog=1`, PC resolves to `loop`;
+  `!ENGINE hang irq` → reset, `watchdog=1`, PC 0 (interrupts off). Full native suite 4,456 passed.
+- Open: the cause of a board-side USB stop, if cycle 39 was one; the next one is placed by c4–c6.

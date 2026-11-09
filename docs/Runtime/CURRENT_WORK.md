@@ -30,6 +30,10 @@ stage, else Sketch), load / return / save through slices 1–2, a one-line confi
 The index is kept in memory (PSRAM). Non-goals: the activity-based suggestion (slice 4), the timeline strip and fork
 lanes (slice 5), getting a loop (slice 6), the encoder.
 
+**2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
+boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
+if a board-side USB stop recurs (read `prev_crumbs` c4–c6 after the PROGRAM press).
+
 **Documentation maintenance (2026-11-08, owner requested):** README and the
 [engine guide](../Guides/FIXED_MEMORY_ENGINE.md) refreshed against the engine sources; legacy guides marked by
 runtime. Browser images remain proposal previews. This docs-only work does not expand the browser slice or close
