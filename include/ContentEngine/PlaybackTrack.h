@@ -84,6 +84,8 @@ class PlaybackTrack {
     prepared_ = false;
     launching_ = false;
     launchLoop_ = 0;
+    launchStart_ = 0;
+    launchJoin_ = false;
     handoffFinal_ = kNoManifest;
     late_ = joinUnbounded_ = false;
     joinBeat_ = 0;
@@ -232,9 +234,17 @@ class PlaybackTrack {
   /// E9.4, a slot launch: `manifest` will start from its loop start — a fresh start, nothing carried — when the caller
   /// commits it. Its window 0 composes now, without warm-up, while what plays continues; the transition takes no part
   /// in succession until `commitLaunch`.
-  void launch(uint8_t slot, ManifestId manifest) {
+  /// `position` (surface slice C, a step or bar button; < the loop): it starts there instead — the caller's timeline
+  /// restarts at `launchStart()` (cycle 1, as a mid-loop cold start: notes crossing into it carried). The window holding
+  /// it composes now (from a checkpoint, else a warm-up), and the join at `position` is prepared as a late join:
+  /// what sounds across it starts there, heard as if it had been playing.
+  void launch(uint8_t slot, ManifestId manifest, uint32_t position = 0) {
     cancelTransition();
     const auto& m = manifests_->manifest(manifest);
+    if (position != 0 && position < m.loopLengthTicks) {
+      launchFrom(slot, manifest, position);
+      return;
+    }
     const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
     trans_ = freeBuffer();
     buf_[trans_].state = State::Filling;
@@ -257,6 +267,8 @@ class PlaybackTrack {
     }
   }
   bool launchPending() const { return launching_ && transActive_; }
+  /// The launch's first timeline tick (`commitLaunch` restarts the caller's timeline there): 0, or a position's in cycle 1.
+  uint32_t launchStart() const { return launchPending() ? launchStart_ : 0; }
   /// A launch in progress is dropped; what plays continues.
   void cancelLaunch() {
     if (launching_) cancelTransition();
@@ -277,7 +289,16 @@ class PlaybackTrack {
     launching_ = false;
     steadyTarget_ = 0;  // the timeline restarts: no old target may mark the new windows stale
     ++stats_.launches;
-    return player_->stopAll(0, out, max);
+    const uint32_t start = launchStart_;
+    launchStart_ = 0;
+    if (launchJoin_) {  // a position inside its window: joined late there (prepared already when the window is ready)
+      launchJoin_ = false;
+      late_ = true;
+      lateBoundary_ = start / window_ * window_;
+      joinUnbounded_ = true;
+      lastTick_ = start - 1;
+    }
+    return player_->stopAll(start, out, max);
   }
 
   uint32_t windowTicks() const { return window_; }
@@ -299,7 +320,7 @@ class PlaybackTrack {
 
   /// The transition: cold-start replay, then its window. Late is allowed (the old source keeps playing).
   bool transitionWorkPending() const {
-    return transActive_ && (buf_[trans_].state != State::Complete || (late_ && !joinReady_));
+    return transActive_ && (buf_[trans_].state != State::Complete || ((late_ || launchJoin_) && !joinReady_));
   }
   bool workTransition(uint32_t maxRows) {
     if (!transitionWorkPending()) return false;
@@ -331,6 +352,7 @@ class PlaybackTrack {
       } else {
         complete(trans_);
         if (late_) beginJoin(joinAt(lastTick_ + 1));
+        else if (launchJoin_) beginJoin(launchStart_);  // a launch at a position: its join, before the commit
       }
     }
     return true;
@@ -433,6 +455,36 @@ class PlaybackTrack {
     editJoin_ = false;
     joinBeat_ = 0;
     handoffFinal_ = kNoManifest;
+    launchJoin_ = false;
+    launchStart_ = 0;
+  }
+  /// The launch at `position` (`launch`): cycle 1's window holding it, from a checkpoint or a warm-up.
+  void launchFrom(uint8_t slot, ManifestId manifest, uint32_t position) {
+    const auto& m = manifests_->manifest(manifest);
+    const uint32_t loop = m.loopLengthTicks, start = loop + position, boundary = loop + position / window_ * window_;
+    const uint8_t tc = steady_ == kNone ? 0 : static_cast<uint8_t>(1 - steady_);
+    trans_ = freeBuffer();
+    buf_[trans_].state = State::Filling;
+    transComp_ = tc;
+    transActive_ = true;
+    transTarget_ = boundary;
+    transComposing_ = false;
+    launching_ = true;
+    launchLoop_ = loop;
+    launchStart_ = start;
+    launchJoin_ = start != boundary;
+    joinReady_ = false;
+    wanted_ = manifest;
+    wantedIdentity_ = m.identity;
+    ++stats_.accepted;
+    selectTick_ = start;
+    transBoundaries_ = 0;
+    transGrains_ = 0;
+    if (cold_[tc].start(*comp_[tc], *table_, *manifests_, *runs_, slot, manifest, boundary - loop, 1, window_) ==
+        Cold::Status::Refused) {
+      ++stats_.refusedStarts;
+      cancelTransition();
+    }
   }
   /// The join tick for a join ready at `tick`: that tick, or — an audition on the beat — the first beat line from it.
   uint32_t joinAt(uint32_t tick) const { return joinBeat_ == 0 ? tick : (tick + joinBeat_ - 1) / joinBeat_ * joinBeat_; }
@@ -682,6 +734,8 @@ class PlaybackTrack {
   uint16_t events_[kJoinEvents];
   uint8_t eventCount_ = 0;
   uint32_t launchLoop_ = 0;
+  uint32_t launchStart_ = 0;  // a launch at a position (slice C): its first timeline tick
+  bool launchJoin_ = false;   // ... inside its window: joined late there
   uint8_t handoffSlot_ = 0;
   ManifestId handoffFinal_ = kNoManifest;  // selected once the prepared window it follows is adopted
   uint32_t transTarget_ = 0, steadyTarget_ = 0, selectTick_ = 0, transGrains_ = 0, transBoundaries_ = 0;

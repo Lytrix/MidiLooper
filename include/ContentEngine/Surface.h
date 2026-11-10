@@ -45,7 +45,11 @@
 //   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
 //     back to the loop start (stop, then start at the next bar line);
 //   - play / stop 40: short = the selected track stops, or plays its selected slot;
-//   - tracks 60–67: short = select; double = mute toggle; long = solo toggle.
+//   - tracks 60–67: short = select; double = mute toggle; long = solo toggle;
+//   - step buttons 0–15 and bar buttons 17–24 (slice C, legacy `BarStepButtonHandler`; performance only — not in an
+//     edit, the browser or a popup): on the press, the selected track's playing slot restarts at that position at the
+//     next launch step (`TrackControl::queueSeek`; a queued switch replaced) — a 16th of the bar playing, a bar of the
+//     8-bar page playing, modulo the loop (as legacy). A stopped or taking track ignores them.
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
 //   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
@@ -195,6 +199,7 @@ class Surface {
   static constexpr uint32_t kVelocityHoldMs = 600;
   static constexpr uint32_t kNewLoopBars = 4;  // an empty loop's length (owner 2026-11-10: 4; a global setting later)  // NOTELEN held this long: velocity mode (the long press)
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
+  static constexpr uint8_t kBarStepBase = 17, kStepNotes = 25;  // 16ths 0–15, bars 17–24 (channel 16; 16 unused)
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
   static constexpr uint8_t kLoopEditBank = 0, kNoteEditBank = 1;
@@ -284,6 +289,10 @@ class Surface {
       return;
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
+    if (d1 < kStepNotes) {  // the step and bar buttons act on the press
+      if (type == 0x90 && d2 != 0) stepPress(d1);
+      return;
+    }
     const uint8_t b = buttonOf(d1);
     if (b == 0xFF) return;
     if (popup_ && b == popupButton_) {  // the length popup takes the button that opened it: taps
@@ -370,6 +379,8 @@ class Surface {
   /// launch point until the switch (`shownQueued`) — else the playing slot, else the selected one.
   uint8_t shown(uint8_t t) { return shownSlot(t); }
   bool shownQueued(uint8_t t) { return control().switchQueued(t); }
+  /// The loop position a queued switch starts at (a step or bar button's; 0: the loop start).
+  uint32_t shownQueuedPosition(uint8_t t) { return control().queuedPosition(t); }
   void setBrowser(ProductionBrowser* b) {
     browser_ = b;
     if (b != nullptr) b->setNewLoopBars(kNewLoopBars);  // the picker starts on the preset closest to it (DEC-272)
@@ -866,6 +877,22 @@ class Surface {
     play(t, slot, Engine::Control::Quantize::NextGrid);
   }
 
+  /// A step (0–15) or bar (17–24) button pressed (slice C): the selected track's playing slot restarts there at the
+  /// next launch step — a 16th of the bar playing, or a bar of the 8-bar page playing.
+  void stepPress(uint8_t note) {
+    if (note == kBarStepBase - 1 || edit_.editing() || edit_.entering() || loopEdit_ || popup_ || browsing()) return;
+    const uint8_t t = selected();
+    const auto& x = transport();
+    if (!x.playing(t) || x.writingTrack() == t) return;
+    const ManifestId m = x.contentOf(x.playingSlot(t));
+    const uint32_t loop = m == kNoManifest ? 0 : x.loopLength(m);
+    if (loop == 0) return;
+    const uint32_t pos = (tick_ - x.origin(t)) % loop;
+    constexpr uint32_t kPage = 8 * kBar;
+    const uint32_t target = note < kBarStepBase ? pos / kBar * kBar + note * kSixteenth
+                                                : pos / kPage * kPage + (note - kBarStepBase) * kBar;
+    control().queueSeek(t, target, tick_);
+  }
   /// A slot's double press (slice B): the filled slot plays at the next launch step, its arm or queue replaced.
   void launch(uint8_t t, uint8_t s) {
     const uint8_t slot = static_cast<uint8_t>(t * kSlotsPerTrack + s);

@@ -301,6 +301,50 @@ void test_slot_double_press_launches_at_the_next_launch_step() {
   TEST_ASSERT_EQUAL_UINT8(5, C().queuedRecordSlot(0));
 }
 
+// Slice C (legacy `BarStepButtonHandler`): a step button (0–15) restarts the playing slot at that 16th of the bar
+// playing, a bar button (17–24) at that bar of the 8-bar page playing (modulo the loop), at the next launch step; the
+// queued restart shows parked where it will start; note 16 is no button.
+static void press(uint8_t note) {
+  gS.input(0x9F, note, 127, gUs / 1000);
+  gS.input(0x8F, note, 0, gUs / 1000);
+}
+static void restartsAt(uint8_t note, uint32_t position, uint32_t loop) {
+  press(note);
+  TEST_ASSERT_TRUE(C().switchQueued(0));
+  TEST_ASSERT_EQUAL_UINT32(position, C().queuedPosition(0));
+  TEST_ASSERT_TRUE(gS.shownQueued(0));
+  TEST_ASSERT_EQUAL_UINT32(position, gS.shownQueuedPosition(0));
+  const uint32_t pressed = gLast;
+  const uint32_t at = until(kBarUs, [] { return !C().switchQueued(0); });
+  TEST_ASSERT_TRUE(at - pressed <= 48);
+  TEST_ASSERT_EQUAL_UINT32(position, (at - X().origin(0)) % loop);
+}
+void test_step_and_bar_buttons_restart_the_playing_slot_there() {
+  recordOneBar(0, 60);
+  run(gUs + 100 * kTick);
+  restartsAt(8, 384, 768);  // the 9th 16th
+  restartsAt(0, 0, 768);
+  restartsAt(20, 0, 768);   // bar 4 of a 1-bar loop: its start
+  // A 4-bar loop on slot 1, launched by its double press.
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().createEmpty(1, 4 * 768));
+  tap(S::kSlotBase + 1);
+  ms(100);
+  tap(S::kSlotBase + 1);
+  until(2 * kBarUs, [] { return X().playingSlot(0) == 1 && !C().switchQueued(0); });
+  run(gUs + 100 * kTick);
+  restartsAt(19, 2 * 768, 4 * 768);  // bar 3 of the page
+  restartsAt(24, 3 * 768, 4 * 768);  // bar 8: 7 bars on, modulo the loop
+  run(gUs + kBarUs / 2);            // in bar 4 now
+  restartsAt(15, 3 * 768 + 15 * 48, 4 * 768);  // the last 16th of the bar playing
+  press(16);  // no button
+  TEST_ASSERT_FALSE(C().switchQueued(0));
+  tap(S::kPlayStopNote);  // stopped: the buttons do nothing
+  ms(500);
+  TEST_ASSERT_FALSE(X().playing(0));
+  press(3);
+  TEST_ASSERT_FALSE(C().switchQueued(0));
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -670,6 +714,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_buttons_record_play_switch_and_mute);
   RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
+  RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);

@@ -15748,3 +15748,36 @@ it and record's long clears. Full 4,501 passed. Device (image `2dd0ee38…`, boo
 16 by default, `bar` kept across a reboot, `3` refused; 1-1 playing, 1-2 double-pressed at tick ~3,130 played by tick
 3,361 (1-1's loop end 3,840); with `bar`, a double queued at 1,209 switched on the 1,536 bar line; set back to 16,
 transport stopped.
+
+## DEC-275 — Step and bar buttons restart the playing slot there at the next launch step (surface slice C)
+
+**Date:** 2026-11-10. **Owner:** "16th/bar buttons in performance mode move currenttick in global quantization";
+chosen: the bar buttons are the 8-bar page playing (16ths the bar playing). Legacy: `BarStepButtonHandler` (channel
+16 notes 0–15 and 17–24, on the press) → `TrackManager::queueBarPlaybackStart`. Scope: `CURRENT_WORK` performance and
+step surface, slice C.
+
+**Decision:**
+- **The surface** (performance only: not in NOTE_EDIT, LOOP_EDIT, the browser or a popup): a step button 0–15 is that
+  16th of the bar playing, a bar button 17–24 that bar of the 8-bar page playing, taken modulo the loop (as legacy);
+  the position is read on the press. A stopped or taking track ignores them; note 16 is no button.
+- **The restart** is a queued switch of the playing slot to itself at that position (`TrackControl::queueSeek`, the
+  `NextGrid` launch step of DEC-274; a queued switch replaced, as legacy `cancelPendingSlotSwitch`). It composes ahead
+  on the launch path: `SlotTransport::launch(track, slot, position)` and `PlaybackTrack::launch(…, position)` start the
+  window holding it in cycle 1 (a mid-loop cold start: from a checkpoint, else a warm-up, so notes crossing into it
+  carry), and the join at the position is prepared before the commit as a late join — the note sounding there starts
+  at the join, heard as if it had been playing; a position on a window boundary is the ordinary adoption. At the
+  commit the track's origin moves so its timeline is at that position; what sounded ends.
+- **The screen**: the queued restart shows as slice A's queued slot, its playhead parked at the restart position (its
+  page shown), flashing, with the countdown. `!ENGINE track T` adds the loop, position and queued position.
+- RAM2 + 96 B (160,072, measured on the Teensy): each track's launch start and join flag, the transport's launch
+  positions, the queued position.
+
+**Evidence:** native: three positioned-launch cases (inside a window: n79 starts at the join, n78 47 ticks on, every
+note at its line position, none doubled; on a window boundary: silence to the wrap, then the line; a 16-bar loop from
+checkpoints with 1 and 2 grains a tick: every note at its place) — origin-ignored, no-join and join-not-begun mutations
+fail them; a surface case (16ths of the bar playing, bars of the page, modulo a 1-bar and a 4-bar loop, the queued
+position shown, note 16 and a stopped track ignored) — a mutation dropping the bar playing fails it. Full 4,505 passed.
+Device (image `5b5cad21…`, boot `crash=0`, `BOOT,load,ok`; 1-4, a 9-bar loop): step 9 → position 385, step 1 → 1,
+bar 3 → 1,539, bar 8 → 5,379 (the target plus the ticks to the read); with `launch-q bar`, bar 4 queued at position 848
+showed the parked playhead on bar 4 counting down, and restarted on the 4,608 bar line (position 2,531 at 4,835).
+Transport stopped, launch-q back to 16.

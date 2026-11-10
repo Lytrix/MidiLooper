@@ -249,10 +249,12 @@ class EngineDisplay {
 
   /// The slot a track's piano roll shows (`Surface::shown`): a queued switch's slot (`queued`: its playhead parked at
   /// the launch point, flashing, until the switch — legacy), else the playing one, else the selected one.
-  void show(uint8_t track, uint8_t slot, bool queued = false) {
+  /// `queuedPos`: where the queued switch starts (a step or bar button's restart, slice C; 0: the loop start).
+  void show(uint8_t track, uint8_t slot, bool queued = false, uint32_t queuedPos = 0) {
     if (track >= ContentEngine::kTrackCount) return;
     shown_[track] = slot;
     queued_[track] = queued;
+    queuedPos_[track] = queuedPos;
   }
 
   /// Once per main-loop pass: a frame when one is due and the previous transfer is done. Returns the frame's draw time
@@ -1243,6 +1245,8 @@ class EngineDisplay {
       }
     } else if (playing && loop != 0) {
       pos = (lastTick - x.origin(track)) % loop;
+    } else if (queued && loop != 0) {  // parked where it will start: its page shown
+      pos = queuedPos_[track] % loop;
     }
     info.loop = loop;
     info.pos = pos;
@@ -1300,8 +1304,9 @@ class EngineDisplay {
     if (playing || writing) {
       const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
       oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
-    } else if (queued && (drawMs_ / 250) % 2 == 0) {  // queued: parked at its launch point (its loop start), flashing
-      oled_.gfx.draw_vline(fb(), kX0, kRollY0, kRollY1, 15);
+    } else if (queued && (drawMs_ / 250) % 2 == 0) {  // queued: parked at its launch point, flashing
+      const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
+      oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
     }
     if (editing && edit_.ready && edit_.bracket >= first && edit_.bracket < first + viewTicks) {  // the bracket, dotted
       const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - first) * w / viewTicks);
@@ -1534,6 +1539,7 @@ class EngineDisplay {
   ContentEngine::status::SaveIndicator dots_;
   uint8_t shown_[ContentEngine::kTrackCount] = {};
   bool queued_[ContentEngine::kTrackCount] = {};
+  uint32_t queuedPos_[ContentEngine::kTrackCount] = {};
   uint32_t drawMs_ = 0;  // the frame being drawn (a queued slot's playhead flashes on it)
   uint8_t focus_ = 0xFF;
   bool started_ = false;

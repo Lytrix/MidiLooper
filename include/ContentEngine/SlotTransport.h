@@ -118,6 +118,7 @@ class SlotTransport {
       tracks_[i] = tracks[i];
       slot_[i] = kNoSlot;
       origin_[i] = 0;
+      launchPos_[i] = 0;
       playing_[i] = false;
       launchSlot_[i] = kNoSlot;
       staged_[i] = kNoManifest;
@@ -459,17 +460,20 @@ class SlotTransport {
     history_->commit(slot, m);
   }
 
-  /// Starts composing `slot` for `track` from its loop start; `commitLaunch` makes it play.
-  Result launch(uint8_t track, uint8_t slot) {
+  /// Starts composing `slot` for `track` from its loop start — or from `position` (surface slice C: a step or bar
+  /// button restarting the playing slot there); `commitLaunch` makes it play.
+  Result launch(uint8_t track, uint8_t slot, uint32_t position = 0) {
     if ((mode_ != Mode::Idle && wTrack_ == track) || auditionLocks(track, slot)) return Result::Busy;
     const ManifestId m = contentOf(slot);
     if (m == kNoManifest) return Result::Empty;
-    tracks_[track]->launch(slot, m);
+    tracks_[track]->launch(slot, m, position);
     launchSlot_[track] = slot;
+    launchPos_[track] = position;
     return Result::Ok;
   }
-  /// The launched slot plays on `track` from Clock tick `clock` (before that tick is played): its loop position 0.
-  /// What sounded ends now (`out`, at least T). Without a launch in progress (an Undo superseded it), one starts now.
+  /// The launched slot plays on `track` from Clock tick `clock` (before that tick is played): its loop position 0, or
+  /// the launch's position. What sounded ends now (`out`, at least T). Without a launch in progress (an Undo superseded
+  /// it), one starts now.
   Result commitLaunch(uint8_t track, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
     const uint8_t slot = launchSlot_[track];
@@ -481,10 +485,12 @@ class SlotTransport {
       emitted = stopTrack(track, clock, out, max);
       return Result::Empty;
     }
-    if (!tracks_[track]->launchPending()) tracks_[track]->launch(slot, m);
+    if (!tracks_[track]->launchPending()) tracks_[track]->launch(slot, m, launchPos_[track]);
+    launchPos_[track] = 0;
+    const uint32_t start = tracks_[track]->launchStart();  // the track's timeline restarts there
+    origin_[track] = clock - start;
     emitted = stamp(track, out, tracks_[track]->commitLaunch(out, max));
     slot_[track] = slot;
-    origin_[track] = clock;
     playing_[track] = true;
     return Result::Ok;
   }
@@ -517,6 +523,7 @@ class SlotTransport {
   /// A launch in progress for `track` is dropped (a queued switch cancelled or replaced).
   void stopLaunch(uint8_t track) {
     staged_[track] = kNoManifest;
+    launchPos_[track] = 0;
     if (launchSlot_[track] == kNoSlot) return;
     launchSlot_[track] = kNoSlot;
     tracks_[track]->cancelLaunch();
@@ -857,6 +864,7 @@ class SlotTransport {
   ManifestId audState_ = kNoManifest;
   bool audSounding_ = false;
   uint32_t origin_[Tracks] = {};
+  uint32_t launchPos_[Tracks] = {};  // a launch's position (slice C; 0: the loop start)
   Mode mode_ = Mode::Idle;
   uint8_t wTrack_ = 0, wSlot_ = kNoSlot;
   uint32_t wStart_ = 0, loop_ = 0, revision_ = 0;

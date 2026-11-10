@@ -6,6 +6,9 @@
 // 2026-11-09: "the first note played twice"). On the device the doubles were the slot's own content: a take stopped
 // after the bar line keeps the notes played after it, which come back at the loop start (E9.8i) on top of its first
 // notes. The launch path itself plays each note once; these cases keep it so.
+// Surface slice C (a step or bar button, `TrackControl::queueSeek`): the playing slot restarts at a loop position at the
+// next launch step — inside a window (a late join: the note sounding there starts at the join), on a window boundary,
+// and with few grains a tick — each note once, at its own position from then on.
 
 #include <unity.h>
 
@@ -196,8 +199,93 @@ void test_a_stop_on_the_bar_hides_nothing() {
   TEST_ASSERT_EQUAL_UINT32(0, gE.transport().stats().repeatsHidden);
 }
 
+/// The line's note on `pitch` starts at this loop position (84 at 0, then 83 at 47, 82 at 95 …).
+static uint32_t lineStart(uint8_t pitch) { return pitch == 84 ? 0 : 48u * (84 - pitch) - 1; }
+/// Queues a restart at `position` on track 7 (slot 56, the line over `bars`, playing) and runs 2 bars: the commit tick.
+static uint32_t seek(uint32_t position, uint32_t bars = 4) {
+  const uint32_t queued = gClock;
+  TEST_ASSERT_EQUAL(R::Ok, gE.control().queueSeek(7, position, gClock));
+  TEST_ASSERT_EQUAL_UINT32(position, gE.control().queuedPosition(7));
+  uint32_t commit = 0;
+  while (commit == 0) {
+    run(gClock + 1);
+    if (gE.control().queuedSwitchSlot(7) == ProductionControl::kNone) commit = gClock - 1;
+    TEST_ASSERT_TRUE(gClock - queued <= 49);
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, commit % 48);  // the next 16th
+  TEST_ASSERT_EQUAL_UINT32(position, (commit - gE.transport().origin(7)) % (bars * kBar));
+  run(gClock + 2 * kBar);
+  return commit;
+}
+/// Every NoteOn from `from` at its line position; the first may be the join's (inside its note, at `join`).
+static void checkPositions(uint32_t from, uint32_t join) {
+  const uint32_t origin = gE.transport().origin(7), loop = 4 * kBar;
+  bool first = true;
+  for (const Out& o : gOut) {
+    if (o.clock < from || (o.status & 0xF0) != 0x90 || o.d2 == 0) continue;
+    const uint32_t pos = (o.clock - origin) % loop;
+    if (first && pos == join) {
+      TEST_ASSERT_TRUE(lineStart(o.d1) <= join && join < lineStart(o.d1) + 48);
+    } else {
+      TEST_ASSERT_EQUAL_UINT32(lineStart(o.d1), pos);
+    }
+    first = false;
+  }
+}
+
+void test_a_seek_inside_a_window_joins_there() {
+  recordLine(7, 56);
+  run(gClock + 2 * kBar + 100);  // playing, mid-loop
+  const uint32_t lateJoins = gE.track(7).stats().lateJoins;
+  const uint32_t c = seek(240);  // n79 sounds from 239: it starts at the join
+  TEST_ASSERT_EQUAL_UINT32(lateJoins + 1, gE.track(7).stats().lateJoins);
+  bool joined = false, next = false;
+  for (const Out& o : gOut) {
+    if ((o.status & 0xF0) != 0x90 || o.d2 == 0 || o.clock < c) continue;
+    joined |= o.d1 == 79 && o.clock == c;
+    next |= o.d1 == 78 && o.clock == c + 47;
+  }
+  TEST_ASSERT_TRUE(joined);
+  TEST_ASSERT_TRUE(next);
+  checkPositions(c, 240);
+  TEST_ASSERT_EQUAL_UINT32(0, doubled(c).size());
+}
+
+void test_a_seek_on_a_window_boundary_plays_from_it() {
+  recordLine(7, 56);
+  run(gClock + kBar + 300);
+  const uint32_t c = seek(2 * kBar);  // bar 3: silence until the wrap
+  for (const Out& o : gOut)
+    if (o.clock >= c && o.clock < c + 2 * kBar) TEST_ASSERT_FALSE((o.status & 0xF0) == 0x90 && o.d2 != 0);
+  run(gClock + kBar);
+  bool wrapped = false;
+  for (const Out& o : gOut) wrapped |= (o.status & 0xF0) == 0x90 && o.d2 != 0 && o.d1 == 84 && o.clock == c + 2 * kBar;
+  TEST_ASSERT_TRUE(wrapped);
+  checkPositions(c, 0);
+  TEST_ASSERT_EQUAL_UINT32(0, doubled(c).size());
+}
+
+void test_a_late_seek_window_plays_each_note_once_at_its_place() {
+  recordLine(7, 56, 16);
+  run(gClock + 17 * kBar);  // checkpoints swept
+  for (uint32_t grains : {1u, 2u}) {
+    gGrainsPerTick = grains;
+    const uint32_t c = seek(5 * kBar + 400, 16);
+    gGrainsPerTick = 0xFFFFFFFFu;
+    run(gClock + 16 * kBar);  // to the line, after the wrap
+    const uint32_t origin = gE.transport().origin(7), loop = 16 * kBar;
+    for (const Out& o : gOut)
+      if (o.clock >= c && (o.status & 0xF0) == 0x90 && o.d2 != 0)
+        TEST_ASSERT_EQUAL_UINT32(lineStart(o.d1), (o.clock - origin) % loop);
+    TEST_ASSERT_EQUAL_UINT32(0, doubled(c).size());
+  }
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
+  RUN_TEST(test_a_seek_inside_a_window_joins_there);
+  RUN_TEST(test_a_seek_on_a_window_boundary_plays_from_it);
+  RUN_TEST(test_a_late_seek_window_plays_each_note_once_at_its_place);
   RUN_TEST(test_a_relaunch_while_playing_plays_each_note_once);
   RUN_TEST(test_a_late_launch_window_plays_each_note_once);
   RUN_TEST(test_a_relaunch_from_a_checkpoint_plays_each_note_once);

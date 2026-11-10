@@ -148,9 +148,31 @@ class TrackControl {
     p.switchSlot = slot;
     p.switchQ = q;
     p.switchAt = clock;
+    p.switchPos = 0;
     if (x_->contentOf(slot) != kNoManifest && x_->writingTrack() != t) x_->launch(t, slot);  // composes from now on
     return Result::Ok;
   }
+  /// Surface slice C (a step or bar button; legacy `queueBarPlaybackStart`): the playing slot restarts at loop position
+  /// `position` (taken modulo its loop) at the next launch step, a queued switch replaced. Refused while the track is
+  /// not playing (NoChange), takes (Busy) or plays nothing (Empty).
+  Result queueSeek(uint8_t t, uint32_t position, uint32_t clock) {
+    if (!x_->playing(t)) return Result::NoChange;
+    if (x_->writingTrack() == t) return Result::Busy;
+    const uint8_t slot = x_->playingSlot(t);
+    const ManifestId m = x_->contentOf(slot);
+    const uint32_t loop = m == kNoManifest ? 0 : x_->loopLength(m);
+    if (loop == 0) return Result::Empty;
+    ++stats_.exploreGestures;
+    Pending& p = pending_[t];
+    if (p.switchSlot != kNone) x_->stopLaunch(t);
+    p.switchSlot = slot;
+    p.switchQ = Quantize::NextGrid;
+    p.switchAt = clock;
+    p.switchPos = position % loop;
+    return x_->launch(t, slot, p.switchPos);
+  }
+  /// The loop position a queued switch starts at (0: its loop start; slice C).
+  uint32_t queuedPosition(uint8_t t) const { return pending_[t].switchSlot == kNone ? 0 : pending_[t].switchPos; }
 
   Result clear(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
@@ -363,6 +385,7 @@ class TrackControl {
     uint8_t switchSlot = kNone;
     Quantize switchQ = Quantize::NextGrid;
     uint32_t switchAt = 0;
+    uint32_t switchPos = 0;  // a seek's loop position (slice C)
   };
   struct Heard {  // a live note while no take writes (E9.8j)
     uint32_t onUs, offUs;
@@ -476,7 +499,9 @@ class TrackControl {
   void commitSwitch(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Pending& p = pending_[t];
     const uint8_t slot = p.switchSlot;
+    const uint32_t position = p.switchPos;
     p.switchSlot = kNone;
+    p.switchPos = 0;
     if (x_->writingTrack() == t) stopNow(clock, nowUs, usPerTick);  // a take on the track ends first
     Emit buf[T];
     uint8_t n = 0;
@@ -484,7 +509,7 @@ class TrackControl {
       if (x_->playing(t)) n = x_->stopTrack(t, clock, buf, T);
       x_->assign(t, slot);
     } else {
-      if (x_->launchingSlot(t) != slot) x_->launch(t, slot);
+      if (x_->launchingSlot(t) != slot) x_->launch(t, slot, position);
       x_->commitLaunch(t, clock, buf, T, n);
     }
     out_->route(buf, n, nowUs, usPerTick);

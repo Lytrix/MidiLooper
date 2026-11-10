@@ -1304,8 +1304,14 @@ void command(char* line, uint32_t nowUs) {
     if (t >= kTrackCount) return;
     const auto& x = gEngine.transport();
     auto& c = gEngine.control();
-    Serial.printf("#ENGINE,track,%u,tick=%lu,playing=%d,slot=%u,queued=%u,to_queued=%lu,launch_q=%s\n", t,
-                  static_cast<unsigned long>(gLastTick), x.playing(t) ? 1 : 0, x.playingSlot(t), c.queuedSwitchSlot(t),
+    const ManifestId m = x.playing(t) ? x.contentOf(x.playingSlot(t)) : kNoManifest;
+    const uint32_t loop = m == kNoManifest ? 0 : x.loopLength(m);
+    Serial.printf("#ENGINE,track,%u,tick=%lu,playing=%d,slot=%u,loop=%lu,pos=%lu,queued=%u,queued_pos=%lu,to_queued=%lu,"
+                  "launch_q=%s\n",
+                  t, static_cast<unsigned long>(gLastTick), x.playing(t) ? 1 : 0, x.playingSlot(t),
+                  static_cast<unsigned long>(loop),
+                  static_cast<unsigned long>(loop == 0 ? 0 : (gLastTick - x.origin(t)) % loop), c.queuedSwitchSlot(t),
+                  static_cast<unsigned long>(c.queuedPosition(t)),
                   static_cast<unsigned long>(c.ticksToQueued(t, gLastTick)), launchGridName());
   } else if (std::strcmp(verb, "dump-slot") == 0) {  // dump-slot S: the slot's current state, its runs and rows
     const ManifestId m = gEngine.history().current(static_cast<uint8_t>(a));
@@ -1954,7 +1960,7 @@ void loop() {
     if (!hostTxRoom()) ++gHostDeferred;  // the DROID is not taking packets: the surface keeps its LEDs until it does
     else if (gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   }
-  for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t));
+  for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t), gSurface.shownQueuedPosition(t));
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
   ev.loop = gSurface.loopEdit();
