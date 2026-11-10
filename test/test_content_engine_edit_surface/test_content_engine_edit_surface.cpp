@@ -1804,11 +1804,23 @@ void test_copy_mode_copies_notes_and_bars() {
   dbl(S::kRecordNote);
   ms(450);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
-  // A long hold of a target bar ends it at once, nothing copied.
+  // A long hold of another bar makes it the source (owner 2026-11-10), nothing copied; a long hold of a step (not a bar
+  // target) ends it.
   hold(17, 700);
   hold(18, 700);
-  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL(S::Copy::Bar, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT8(1, gS.copySourceBar());
   TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
+  hold(5, 700);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  // A long hold of another step with a note makes it the source: step 2 held, then step 8 (67 @ 384) held, pasted on 10.
+  hold(2, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  hold(8, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  shortPress(10);
+  TEST_ASSERT_TRUE(noteAt(480) >= 0);
+  TEST_ASSERT_EQUAL_UINT8(67, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
 }
 
 int main(int, char**) {

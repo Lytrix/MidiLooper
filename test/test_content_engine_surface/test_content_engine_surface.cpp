@@ -519,18 +519,23 @@ void test_copy_mode_counts_down_and_a_double_press_clears_the_source() {
   ms(500);
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
   TEST_ASSERT_EQUAL_UINT16(pasted, X().contentOf(2));
-  // A long hold of another slot ends it at once, nothing copied (DEC-279 amendment 5).
+  // A long hold of another slot makes it the source (owner 2026-11-10), nothing copied; a long hold of anything else
+  // (a track button) ends copy mode at once.
   gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
   ms(650);
   gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
   ms(100);
-  gS.input(0x9F, S::kSlotBase + 4, 127, gUs / 1000);
+  gS.input(0x9F, S::kSlotBase + 2, 127, gUs / 1000);
   ms(650);
-  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
-  gS.input(0x8F, S::kSlotBase + 4, 0, gUs / 1000);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT8(2, gS.copySourceSlot());
+  gS.input(0x8F, S::kSlotBase + 2, 0, gUs / 1000);
   ms(400);
-  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(4));
-  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // and its release starts nothing
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());  // its release keeps it
+  shortPress(S::kSlotBase + 4);  // slot 3's copy onto slot 5
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(rowsOf(2), rowsOf(4));
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
 }
 
 // Owner 2026-11-10: with the transport stopped a filled slot's press only selects it — the clock stays stopped — and

@@ -15989,3 +15989,14 @@ and every copy undone (1-3 and 1-5 empty again).
   `test_holding_the_copy_source_again_opens_the_picker` — their mutations fail them; full native 4,517 passed. Device (image `f863c59b…`): from
   stopped, 1-2 pressed → SLOT 2 selected, `running=0`, nothing playing; 1-1 held → the copy window with the new hint,
   held again → the picker for 1-1; a long REC → playing screen.
+- **Amendment 7 (owner 2026-11-10: "a long hold on another slot/bar/16th should change the to be copied slot to that
+  slot"):** in copy mode a long hold (600 ms) of another slot, bar or step — a step with a note — makes it the source
+  (`Surface::reSource`; copy mode starts again from it, its release keeps it, nothing is copied); the source slot held
+  again stays LOAD LOOP, the source bar or step held again and every other button's long press end copy mode. Native:
+  the copy-mode tests (slot 1 → slot 3 as the source, its copy pasted on slot 5; bar 1 → bar 2; step 2 → step 8,
+  its note 67 pasted on step 10) — the mutation removing it fails them; full 4,517 passed. Device (image
+  `5c69ec4d…`, on 1-2 copied onto 1-3, and on 1-2 itself, both put back): bar 1 held, then bar 3 held → `COPY BAR 3`;
+  the step clear (a double press of the held step 4) emptied that 16th of the bracket's bar and kept step 5; the bar
+  clear (bar 2's double press) emptied bar 2 and kept bar 3. 1-2's visit undone (its own state again); 1-3 cleared
+  back to empty — its undo history had kept a test copy across the reboot (the undo-before-save race, proposed
+  separately), so it no longer reached the empty state.

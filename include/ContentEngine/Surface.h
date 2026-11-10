@@ -73,8 +73,8 @@
 //   three times) and copy mode ends (owner 2026-11-10: the window closes after the copy; a refused paste keeps it). It
 //   also closes `kCopyIdleMs` after the source's release with nothing pasted (owner: a countdown, restarted by a track
 //   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
-//   step) — one undo step, it flashes, and the window closes; a long press of any button (another slot / bar / step
-//   included) closes it at once. The track
+//   step) — one undo step, it flashes, and the window closes. A long hold of another slot / bar / step (one with a note)
+//   makes it the source (owner 2026-11-10); a long press of any other button closes copy mode at once. The track
 //   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press, or the source slot held again, is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
@@ -1275,6 +1275,7 @@ class Surface {
         loadLoop();
         return;
       }
+      if (copyTarget(b) && press_.heldMs(b, ms) >= kCopyHoldMs && reSource(b, ms)) return;
       if (press_.heldMs(b, ms) >= kCopyHoldMs) {
         press_.consume(b);
         exitButton_ = b;  // the hold that ended it starts none until released
@@ -1285,10 +1286,36 @@ class Surface {
     for (uint8_t bar = 0; bar < 8 && edit_.editing(); ++bar)
       if (((barsHeld_ >> bar) & 1u) && !(copyHolding_ && copy_ == Copy::Bar && bar == copyButton_) &&
           ms - barDownMs_[bar] >= kCopyHoldMs) {
+        if (copy_ == Copy::Bar && bar != copyButton_) {  // another bar held: it is the source now (owner 2026-11-10)
+          beginCopy(Copy::Bar, bar, ms);
+          copyBar_ = edit_.barStart(bar);
+          return;
+        }
         exitBars_ = static_cast<uint8_t>(exitBars_ | (1u << bar));
         endCopy();
         return;
       }
+  }
+  /// Another slot / step held in copy mode (owner 2026-11-10): it becomes the source — copy mode starts again from it.
+  /// False: the source itself (on its own track), or a step with no note (the hold then ends copy mode).
+  bool reSource(uint8_t b, uint32_t ms) {
+    if (copy_ == Copy::Slot) {
+      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
+      const uint8_t slot = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
+      if (slot == copySlot_) return false;
+      press_.consume(b);
+      beginCopy(Copy::Slot, s, ms);
+      copySlot_ = slot;
+      return true;
+    }
+    const uint8_t k = static_cast<uint8_t>(b - kStep0);
+    if (k == copyButton_) return false;
+    const int16_t note = edit_.firstNoteAt(k);
+    if (note < 0) return false;
+    press_.consume(b);
+    beginCopy(Copy::Note, k, ms);
+    copyNote_ = note;
+    return true;
   }
   void beginCopy(Copy c, uint8_t button, uint32_t ms) {
     copy_ = c;

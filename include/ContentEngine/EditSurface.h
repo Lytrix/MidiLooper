@@ -527,6 +527,13 @@ class EditSurface {
     drive(kMotorAll, ms);
   }
   bool locked() const { return lock_; }
+  /// Step `k`'s first note (F1's stack order; < 0: none or outside the window): a copy's new source.
+  int16_t firstNoteAt(uint8_t k) {
+    uint32_t tick;
+    if (!stepTick(k, tick)) return -1;
+    int16_t stack[32];
+    return stackAt(tick, stack) == 0 ? static_cast<int16_t>(-1) : stack[0];
+  }
   /// The selected note's index (< 0: none): a copy's source.
   int16_t selection() const { return editing() ? sel_ : static_cast<int16_t>(-1); }
   /// The lock changed its note (a fader or the encoder moved it): it was a parameter lock, not a copy's hold.
