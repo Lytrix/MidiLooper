@@ -90,11 +90,12 @@ void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
   gB.press();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   TEST_ASSERT_EQUAL(B::RowKind::Back, kind(0));
-  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(1));  // LOAD STAGE (owner 2026-11-09)
-  TEST_ASSERT_EQUAL_UINT16(4, gB.rowCount());
-  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(2).record);  // T02 first
-  TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).record);
+  TEST_ASSERT_EQUAL(B::RowKind::GetLoop, kind(1));  // GET A LOOP (DEC-272)
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));  // LOAD STAGE (owner 2026-11-09)
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).record);  // T02 first
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(4).record);
   gB.down();
   gB.press();
   B::Request r;
@@ -110,7 +111,9 @@ void test_back_returns_to_the_set_row() {
   gB.open();
   for (int i = 0; i < 3; ++i) gB.down();
   gB.press();
-  gB.up();  // over LOAD STAGE
+  gB.up();  // over LOAD STAGE to GET A LOOP
+  TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
+  gB.up();
   TEST_ASSERT_EQUAL_UINT16(0, gB.selected());
   gB.press();  // < SETS
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
@@ -414,9 +417,9 @@ void test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage() {
   mark(kTrash, 7, gB.record(3).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.rowCount());
-  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(1, gB.row(2).record);  // T01
+  TEST_ASSERT_EQUAL_UINT16(4, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).record);  // T01
   TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
 }
 
@@ -495,7 +498,7 @@ void test_a_failure_keeps_the_screen_and_selection_and_track_tries_again() {
   TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
   TEST_ASSERT_EQUAL(B::View::Set, gB.listView());
   TEST_ASSERT_EQUAL_STRING("LOAD FAILED", gB.failWhat());
-  TEST_ASSERT_EQUAL_UINT16(2, gB.selected());
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
   gB.press();  // try again
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   B::Request again;
@@ -555,13 +558,13 @@ void test_the_line_and_its_side_branch() {
   gB.down();
   gB.press();  // the working set: A01, T03, B04, T02
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
-  TEST_ASSERT_FALSE(gB.onLine(1));  // the LOAD STAGE divider
-  TEST_ASSERT_TRUE(gB.onLine(2));   // A01
-  TEST_ASSERT_FALSE(gB.onLine(3));  // T03
-  TEST_ASSERT_FALSE(gB.onLine(4));  // B04
-  TEST_ASSERT_TRUE(gB.onLine(5));   // T02
+  TEST_ASSERT_FALSE(gB.onLine(2));  // the LOAD STAGE divider
+  TEST_ASSERT_TRUE(gB.onLine(3));   // A01
+  TEST_ASSERT_FALSE(gB.onLine(4));  // T03
+  TEST_ASSERT_FALSE(gB.onLine(5));  // B04
+  TEST_ASSERT_TRUE(gB.onLine(6));   // T02
   TEST_ASSERT_TRUE(gB.hasSide());
-  TEST_ASSERT_EQUAL_UINT16(5, gB.joinRow());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.joinRow());
 }
 void test_a_straight_history_has_one_lane() {
   gB.open();
@@ -656,6 +659,210 @@ void test_a_card_naming_no_working_set_falls_back_to_the_newest() {
   TEST_ASSERT_EQUAL_UINT16(1, gB.bootWorking(h).set);  // an empty library
 }
 
+// ---- Get a loop's picker (DEC-272) ----------------------------------------------------------------------------------
+/// A milestone of SET 05 whose mosaic has loops in slots 2 (track 1 slot 3, level 3) and 9 (track 2 slot 2, level 2).
+static uint16_t stageWithLoops() {
+  Record r{};
+  r.sequence = ++gSeq;
+  r.set = 5;
+  r.stage = Stage::Take;
+  r.stageNumber = gB.nextNumber(5, Stage::Take);
+  r.mosaic[0] = static_cast<uint8_t>(3u << (2 * 2));
+  r.mosaic[2] = static_cast<uint8_t>(2u << (2 * 1));
+  TEST_ASSERT_TRUE(gB.add(r));
+  return static_cast<uint16_t>(gB.count() - 1);
+}
+/// SETS → SET 05 (the newest other set) → GET A LOOP → its stages → SELECT STAGE: the picker.
+static void openPickerOn(uint8_t dest, bool filled) {
+  gB.setPickDestination(dest, filled);
+  gB.open();
+  gB.down();
+  gB.down();  // SET 05: the newest other set
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Set, gB.view());
+  gB.up();  // over LOAD STAGE to GET A LOOP
+  TEST_ASSERT_EQUAL(B::RowKind::GetLoop, kind(gB.selected()));
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Stages, gB.view());
+  TEST_ASSERT_EQUAL(B::RowKind::Back, kind(0));
+  TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(1));  // FROM STAGE
+  TEST_ASSERT_EQUAL_UINT16(B::kStagesHead, gB.selected());
+  gB.press();  // SELECT STAGE
+  TEST_ASSERT_EQUAL(B::View::Picker, gB.view());
+}
+
+/// DEC-272: entry 1 — a set's GET A LOOP, its stages, the picker for the selected slot; the cursor on the 4-bar preset
+/// for an empty destination, on the destination's own position for a filled one; HOLD back to the stages, then the set.
+void test_the_picker_opens_from_a_sets_get_a_loop() {
+  const uint16_t stage = stageWithLoops();
+  openPickerOn(17, false);
+  TEST_ASSERT_EQUAL_UINT16(stage, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT8(17, gB.pickDestination());
+  TEST_ASSERT_EQUAL_UINT8(B::kStartPreset, gB.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(4, B::kPresetBars[gB.pickPreset()]);
+  TEST_ASSERT_EQUAL_UINT8(3, gB.pickLevel(2));
+  TEST_ASSERT_EQUAL_UINT8(2, gB.pickLevel(9));
+  TEST_ASSERT_EQUAL_UINT8(0, gB.pickLevel(3));
+  gB.hold();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::LeavePicker, r.action);
+  TEST_ASSERT_EQUAL(B::View::Stages, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(stage, gB.row(gB.selected()).record);  // the stage it came from
+  gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Set, gB.view());
+  gB.close();
+  openPickerOn(10, true);  // a filled destination: its own position
+  TEST_ASSERT_EQUAL_UINT8(B::kNoPreset, gB.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.pickTrack());
+  TEST_ASSERT_EQUAL_UINT8(2, gB.pickSlotIndex());
+}
+
+/// DEC-272: the moves — the presets left of slot 1, reached from any track's slot 1 at the nearest height, and back;
+/// the edges stop; each move is a new preview generation; a preview is wanted only for a loop under the cursor.
+void test_the_picker_cursor_moves_and_wants_a_preview_per_position() {
+  stageWithLoops();
+  openPickerOn(0, true);  // track 1 slot 1
+  uint32_t g0 = gB.pickGeneration(), gen = 0;
+  uint16_t rec = 0;
+  uint8_t slot = 0;
+  TEST_ASSERT_FALSE(gB.previewWanted(gen, rec, slot));  // slot 1 of track 1: empty in the stage
+  gB.pickRight();
+  gB.pickRight();  // track 1 slot 3: a loop
+  TEST_ASSERT_TRUE(gB.previewWanted(gen, rec, slot));
+  TEST_ASSERT_EQUAL_UINT8(2, slot);
+  TEST_ASSERT_TRUE(gen == g0 + 2);
+  gB.pickUp();  // the top edge: nothing
+  TEST_ASSERT_TRUE(gB.pickGeneration() == g0 + 2);
+  for (int i = 0; i < 7; ++i) gB.pickDown();
+  TEST_ASSERT_EQUAL_UINT8(7, gB.pickTrack());
+  gB.pickDown();
+  TEST_ASSERT_EQUAL_UINT8(7, gB.pickTrack());
+  gB.pickLeft();
+  gB.pickLeft();
+  gB.pickLeft();  // past slot 1: the nearest preset to track 8 is 16 bars
+  TEST_ASSERT_EQUAL_UINT8(4, gB.pickPreset());
+  TEST_ASSERT_FALSE(gB.previewWanted(gen, rec, slot));
+  gB.pickLeft();  // the left edge
+  TEST_ASSERT_EQUAL_UINT8(4, gB.pickPreset());
+  gB.pickUp();
+  gB.pickUp();  // 4 bars
+  gB.pickRight();  // the nearest track to it: track 4 (round 8 × 2 / 5)
+  TEST_ASSERT_EQUAL_UINT8(B::kNoPreset, gB.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(3, gB.pickTrack());
+  TEST_ASSERT_EQUAL_UINT8(0, gB.pickSlotIndex());
+  for (int i = 0; i < 9; ++i) gB.pickRight();
+  TEST_ASSERT_EQUAL_UINT8(7, gB.pickSlotIndex());
+  // A stale preview (an older generation) is ignored; this one's lands.
+  const uint32_t now = gB.pickGeneration();
+  gB.setPreview(now - 1, B::Preview::Ready, 4);
+  TEST_ASSERT_EQUAL(B::Preview::None, gB.preview());
+  gB.setPreview(now, B::Preview::Ready, 4);
+  TEST_ASSERT_EQUAL(B::Preview::Ready, gB.preview());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.previewBars());
+}
+
+/// DEC-272: TRACK on a loop asks to audition it (not twice while it is not heard yet), then to USE it; a move ends the
+/// audition; a failed USE keeps the picker and TRACK asks again.
+void test_the_picker_auditions_then_uses_a_loop() {
+  const uint16_t stage = stageWithLoops();
+  openPickerOn(20, true);  // track 3 slot 5
+  gB.pickUp();
+  gB.pickUp();  // track 1 slot 5: empty in the stage
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_FALSE(gB.takeRequest(r));  // nothing to get
+  gB.pickDown();
+  for (int i = 0; i < 3; ++i) gB.pickLeft();  // track 2 slot 2: a loop
+  gB.press();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Audition, r.action);
+  TEST_ASSERT_EQUAL_UINT16(stage, r.record);
+  TEST_ASSERT_EQUAL_UINT8(9, r.from);
+  TEST_ASSERT_EQUAL_UINT8(20, r.into);
+  TEST_ASSERT_EQUAL(B::Audition::Pending, gB.audition());
+  gB.press();
+  TEST_ASSERT_FALSE(gB.takeRequest(r));  // not heard yet
+  gB.setAudition(B::Audition::Sounding);
+  gB.press();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Use, r.action);
+  TEST_ASSERT_EQUAL_UINT8(9, r.from);
+  gB.failed("GET FAILED", "CARD READ ERROR");
+  TEST_ASSERT_EQUAL(B::View::Failed, gB.view());
+  gB.press();  // try again
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Use, r.action);
+  TEST_ASSERT_EQUAL(B::View::Picker, gB.view());
+  gB.pickRight();  // a move ends the audition
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::CancelAudition, r.action);
+  TEST_ASSERT_EQUAL(B::Audition::None, gB.audition());
+  gB.setAudition(B::Audition::Sounding);  // a late answer for the one ended: not this position's
+  TEST_ASSERT_EQUAL(B::Audition::None, gB.audition());
+  gB.pickLeft();
+  gB.press();
+  gB.setAudition(B::Audition::Silent, 1);  // a preview only (the destination's track not playing it)
+  gB.press();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Use, r.action);
+  gB.succeeded();
+  TEST_ASSERT_FALSE(gB.isOpen());
+}
+
+/// DEC-272: a preset makes an empty loop at once on an empty destination; over a filled one it asks (CANCEL selected:
+/// back, nothing asked), YES makes it.
+void test_a_preset_uses_an_empty_loop_asking_over_a_filled_slot() {
+  stageWithLoops();
+  openPickerOn(5, false);
+  gB.press();  // the 4-bar preset
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::UseEmpty, r.action);
+  TEST_ASSERT_EQUAL_UINT8(4, r.bars);
+  TEST_ASSERT_EQUAL_UINT8(5, r.into);
+  gB.close();
+  openPickerOn(5, true);
+  for (int i = 0; i < 6; ++i) gB.pickLeft();  // to the presets: 1 bar (track 1)
+  gB.pickDown();
+  gB.pickDown();
+  gB.pickDown();  // 8 bars
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());
+  TEST_ASSERT_EQUAL(B::Confirm::EmptyLoop, gB.confirmKind());
+  TEST_ASSERT_EQUAL_UINT8(8, gB.confirmBars());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.confirmSelected());  // CANCEL
+  gB.press();
+  TEST_ASSERT_EQUAL(B::View::Picker, gB.view());
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
+  gB.press();
+  gB.up();  // YES
+  gB.press();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::UseEmpty, r.action);
+  TEST_ASSERT_EQUAL_UINT8(8, r.bars);
+}
+
+/// DEC-272: entry 2 — a slot's long press opens the picker over the working set's base stage for that slot; HOLD back
+/// to the working set's stages.
+void test_a_slots_long_press_opens_the_picker_on_the_base_stage() {
+  gB.openPickerFromSlot(9, true);  // setUp: the working set SET 02, base sequence 5 (its T01, record 4)
+  TEST_ASSERT_EQUAL(B::View::Picker, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT8(9, gB.pickDestination());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.pickTrack());
+  TEST_ASSERT_EQUAL_UINT8(1, gB.pickSlotIndex());
+  gB.hold();
+  TEST_ASSERT_EQUAL(B::View::Stages, gB.view());
+  TEST_ASSERT_EQUAL_UINT16(2, gB.openSetNumber());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.row(gB.selected()).record);
+  gB.close();
+  gB.setWorking(9, 0);  // a working set without stages: the presets only
+  gB.openPickerFromSlot(3, false);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT8(B::kStartPreset, gB.pickPreset());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_opening_selects_save_over_a_load_section_of_sets_newest_first);
@@ -687,6 +894,11 @@ int main(int, char**) {
   RUN_TEST(test_the_popup_history_follows_the_base_line);
   RUN_TEST(test_the_line_and_its_side_branch);
   RUN_TEST(test_a_straight_history_has_one_lane);
+  RUN_TEST(test_the_picker_opens_from_a_sets_get_a_loop);
+  RUN_TEST(test_the_picker_cursor_moves_and_wants_a_preview_per_position);
+  RUN_TEST(test_the_picker_auditions_then_uses_a_loop);
+  RUN_TEST(test_a_preset_uses_an_empty_loop_asking_over_a_filled_slot);
+  RUN_TEST(test_a_slots_long_press_opens_the_picker_on_the_base_stage);
   RUN_TEST(test_a_boot_starts_in_the_working_set_the_card_names);
   RUN_TEST(test_an_empty_working_set_survives_a_boot);
   RUN_TEST(test_a_card_naming_no_working_set_falls_back_to_the_newest);

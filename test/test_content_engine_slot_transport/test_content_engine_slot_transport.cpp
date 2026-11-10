@@ -513,6 +513,34 @@ void test_an_audition_on_the_last_beat_of_a_window_switches_at_the_boundary() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+/// DEC-272: an empty loop of a given length on top of any slot — a filled one too — is one undo step; its playing
+/// track goes quiet from the next boundary; undo brings the loop back; refused while the slot is written.
+void test_an_empty_loop_over_a_filled_slot_is_one_undo_step() {
+  recordTake();
+  run(kS + 2 * kLoop + 1);
+  const ManifestId was = gH.current(0);
+  const uint8_t depth = gH.undoDepth(0);
+  Emit buf[kT];
+  uint8_t n;
+  TEST_ASSERT_EQUAL(R::Ok, gX.emptyLoop(0, 2 * 768, gClock, buf, kT, n));
+  gOut.insert(gOut.end(), buf, buf + n);
+  TEST_ASSERT_EQUAL_UINT8(depth + 1, gH.undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, gManifests.manifest(gH.current(0)).loopLengthTicks);
+  TEST_ASSERT_TRUE(gX.contentOf(0) != kNoManifest);  // an empty loop is content: it plays, is edited, saved
+  const size_t at = gOut.size();
+  run(kS + 4 * kLoop + 1);
+  size_t ons = 0;
+  for (size_t i = at; i < gOut.size(); ++i) ons += gOut[i].cls == 1 && gOut[i].tick >= 3 * kLoop ? 1 : 0;
+  TEST_ASSERT_EQUAL(0u, ons);  // nothing plays from it
+  TEST_ASSERT_EQUAL(R::Ok, gX.undo(0, gClock, buf, kT, n));
+  TEST_ASSERT_EQUAL(was, gH.current(0));
+  TEST_ASSERT_EQUAL(R::NoChange, gX.emptyLoop(0, 0, gClock, buf, kT, n));
+  TEST_ASSERT_EQUAL(R::Ok, gX.startOverdub(0, gClock));
+  TEST_ASSERT_EQUAL(R::Busy, gX.emptyLoop(0, 768, gClock, buf, kT, n));
+  stop();
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 void test_an_undo_on_a_boundary_is_heard_from_that_boundary() {
   recordTake();
   run(kS + kLoop + 10);
@@ -646,6 +674,7 @@ int main(int, char**) {
   RUN_TEST(test_an_audition_off_its_slot_is_silent_and_a_stop_restarts_nothing);
   RUN_TEST(test_an_audition_and_its_cancel_switch_on_the_next_beat);
   RUN_TEST(test_an_audition_on_the_last_beat_of_a_window_switches_at_the_boundary);
+  RUN_TEST(test_an_empty_loop_over_a_filled_slot_is_one_undo_step);
   RUN_TEST(test_an_undo_on_a_boundary_is_heard_from_that_boundary);
   RUN_TEST(test_one_writer_and_named_refusals);
   RUN_TEST(test_a_full_run_list_ends_the_take_at_a_wrap);

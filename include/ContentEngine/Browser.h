@@ -30,6 +30,14 @@
 //   only → Building, or a provisional Take when every change was a recording begun while another track played;
 //   launches, switches, stops, mutes and solos only → Exploration. Arrangement and Final are never inferred: a base of
 //   either keeps its stage. Mixed evidence keeps the base's stage.
+// * Get a loop (DEC-272; plan §6.1): a set's view has a `GET A LOOP` row; TRACK lists the set's stages (`FROM STAGE`),
+//   TRACK on one opens the picker — the stage's slots as a grid (tracks as rows, slots as columns, from its mosaic) with
+//   a column of empty-loop presets (1–16 bars) left of slot 1 — for a destination fixed on entry (the selected slot, or
+//   the slot whose long press opened it: `openPickerFromSlot`, on the working set's base stage). Moves: NOTELEN up,
+//   PLAY/STOP down, REC left, EDIT right (`pickUp` …). TRACK on a loop asks to audition it, once heard (or previewed
+//   silently) to USE it; on a preset to USE an empty loop — over a filled destination after a confirmation. A move ends
+//   an audition; HOLD TRACK leaves it (back to the stages). The preview the panel shows is the owner's: it reads the
+//   loop under the cursor (`previewWanted`, a generation per cursor position) and answers with its generation.
 // No allocation; the record array is the caller's memory (PSRAM on the device).
 
 #pragma once
@@ -44,23 +52,35 @@ namespace ContentEngine {
 template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
-  enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed };
-  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash };
+  enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed, Stages, Picker };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash, GetLoop };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set, Item: the set
     uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none); Item: the trash record
   };
-  enum class Action : uint8_t { None, Save, Load, Trash, Restore, Empty };
-  /// What the confirmation asks: a set or stage to the trash, or the trash emptied.
-  enum class Confirm : uint8_t { ToTrash, Empty };
+  /// DEC-272, the picker: Audition (record, from, into), Use (the same: placed as one undo step), UseEmpty (bars, into),
+  /// CancelAudition, LeavePicker (any audition ended, the preview dropped).
+  enum class Action : uint8_t {
+    None, Save, Load, Trash, Restore, Empty, Audition, Use, UseEmpty, CancelAudition, LeavePicker
+  };
+  /// What the confirmation asks: a set or stage to the trash, the trash emptied, or (DEC-272) an empty loop over a
+  /// filled destination.
+  enum class Confirm : uint8_t { ToTrash, Empty, EmptyLoop };
   struct Request {
     Action action = Action::None;
     uint16_t record = 0;  // Load; Trash: the stage (kNone: the whole set); Restore: the trash record
     uint16_t set = 0;     // Save: the set it goes into; Trash, Restore: the set
     library::Stage stage = library::Stage::Sketch;
     uint8_t stageNumber = 0;
+    uint8_t from = 0, into = 0, bars = 0;  // DEC-272: the source slot, the destination, an empty loop's bars
   };
+  /// DEC-272: the preview of the loop under the cursor, as the owner reads it; the audition, as the owner runs it.
+  enum class Preview : uint8_t { None, Reading, Ready, Failed, TooBig };
+  enum class Audition : uint8_t { None, Pending, Sounding, Silent };
+  static constexpr uint8_t kPresets = 5;
+  static constexpr uint8_t kPresetBars[kPresets] = {1, 2, 4, 8, 16};
+  static constexpr uint8_t kStartPreset = 2;  // 4 bars (plan §6.1)
   static constexpr uint16_t kNone = 0xFFFF;
   static constexpr uint8_t kStages = static_cast<uint8_t>(library::Stage::kCount);
 
@@ -272,6 +292,11 @@ class Browser {
           view_ = list_;
           return;
         }
+        if (confirm_ == Confirm::EmptyLoop) {
+          view_ = View::Picker;
+          useEmpty();
+          return;
+        }
         request_ = Request{};
         request_.action = confirm_ == Confirm::Empty ? Action::Empty : Action::Trash;
         request_.set = confirmSet_;
@@ -282,15 +307,22 @@ class Browser {
         view_ = list_;
         request_ = pending_;
         return;
+      case View::Picker:
+        pickPress();
+        return;
       case View::Top:
       case View::Set:
       case View::Bin:
+      case View::Stages:
         break;
       default:
         return;
     }
     const Row r = row(selected_);
     switch (r.kind) {
+      case RowKind::GetLoop:
+        openStages();
+        return;
       case RowKind::Close:
         view_ = View::Closed;
         return;
@@ -304,6 +336,13 @@ class Browser {
         openSet(r.set);
         return;
       case RowKind::Back: {
+        if (view_ == View::Stages) {  // back to the set
+          view_ = View::Set;
+          selected_ = 1;
+          first_ = 0;
+          scroll();
+          return;
+        }
         const bool fromBin = view_ == View::Bin;
         view_ = View::Top;
         selected_ = fromBin ? 1 : setRowOf(openSet_);
@@ -326,6 +365,10 @@ class Browser {
         pending_ = request_;
         return;
       case RowKind::Milestone:
+        if (view_ == View::Stages) {  // SELECT STAGE: its loops
+          openPicker(r.record, false);
+          return;
+        }
         request_ = Request{};
         request_.action = Action::Load;
         request_.record = r.record;
@@ -341,6 +384,19 @@ class Browser {
       case View::Popup:
       case View::Confirm:
         view_ = list_;
+        return;
+      case View::Picker:  // BACK: the audition ended, the preview dropped; the stages
+        request_ = Request{};
+        request_.action = Action::LeavePicker;
+        audition_ = Audition::None;
+        preview_ = Preview::None;
+        openStages(pickRecord_);
+        return;
+      case View::Stages:
+        view_ = View::Set;
+        selected_ = 1;
+        first_ = 0;
+        scroll();
         return;
       case View::Failed:
         view_ = View::Closed;
@@ -422,6 +478,7 @@ class Browser {
   uint16_t rowCount() const {
     const View v = shownList();
     if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
+    if (v == View::Stages) return static_cast<uint16_t>(kStagesHead + members_);
     if (v == View::Bin) return static_cast<uint16_t>(kBinHead + items_);
     return static_cast<uint16_t>(kTopHead + otherSets() + 1);  // the sets, then TRASH
   }
@@ -435,8 +492,14 @@ class Browser {
     }
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
-      if (i == 1) return Row{RowKind::Divider, openSet_, kNone};
+      if (i == 1) return Row{RowKind::GetLoop, openSet_, kNone};
+      if (i == 2) return Row{RowKind::Divider, openSet_, kNone};
       return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - kSetHead))};
+    }
+    if (shownList() == View::Stages) {
+      if (i == 0) return Row{RowKind::Back, openSet_, kNone};
+      if (i == 1) return Row{RowKind::Divider, openSet_, kNone};
+      return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - kStagesHead))};
     }
     if (i == 0) return Row{RowKind::Close, workingSet_, kNone};
     if (i == 1) return Row{RowKind::Save, workingSet_, kNone};
@@ -450,8 +513,12 @@ class Browser {
   /// The first row shown (the list scrolls with the selection).
   uint16_t first() const { return first_; }
   static constexpr uint8_t kVisible = 5;
-  /// A set's rows before its milestones: `< SETS` and the `LOAD STAGE` divider (owner 2026-11-09).
-  static constexpr uint16_t kSetHead = 2;
+  /// A set's rows before its milestones: `< SETS`, `GET A LOOP` (DEC-272) and the `LOAD STAGE` divider.
+  static constexpr uint16_t kSetHead = 3;
+  /// The stages to get a loop from (DEC-272): `< BACK` and the `FROM STAGE` divider, then the set's milestones.
+  static constexpr uint16_t kStagesHead = 2;
+  /// The first milestone row of the list shown.
+  uint16_t milestoneHead() const { return shownList() == View::Stages ? kStagesHead : kSetHead; }
   /// The top level's rows before the other sets: `< CLOSE`, `SAVE SET`, the `LOAD SET` divider, the working set.
   static constexpr uint16_t kTopHead = 4;
   /// The trash's rows before its items: `< SETS`, `EMPTY TRASH`, the `RESTORE` divider.
@@ -472,13 +539,87 @@ class Browser {
 
   /// Slice 5: in the open set, whether row `i` (kSetHead: its newest milestone) lies on the newest milestone's line; whether
   /// any milestone branched off it; the row where the side joins the line (0: none).
-  bool onLine(uint16_t i) const { return i >= kSetHead && i < kSetHead + members_ && line_[i - kSetHead]; }
+  bool onLine(uint16_t i) const {
+    const uint16_t h = milestoneHead();
+    return i >= h && i < h + members_ && line_[i - h];
+  }
   bool hasSide() const {
     for (uint16_t k = 0; k < members_; ++k)
       if (!line_[k]) return true;
     return false;
   }
-  uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + kSetHead); }
+  uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + milestoneHead()); }
+
+  // ---- Get a loop's picker (DEC-272) ------------------------------------------------------------------------------
+  /// The destination entry 1 uses (the selected slot) and whether it holds a loop; the owner keeps it current while
+  /// the browser is closed, as the working set.
+  void setPickDestination(uint8_t slot, bool filled) {
+    if (view_ != View::Picker && view_ != View::Confirm) {
+      pickDest_ = slot;
+      pickDestFilled_ = filled;
+    }
+  }
+  /// Entry 2 (a slot's long press): the picker over the working set's base stage (else its newest; none: presets
+  /// only) for `slot`.
+  void openPickerFromSlot(uint8_t slot, bool filled) {
+    pickDest_ = slot;
+    pickDestFilled_ = filled;
+    request_ = Request{};
+    openSet_ = workingSet_;
+    uint16_t src = find(base_);
+    if (src == kNone || !shown(src) || records_[src].set != workingSet_) src = latestOf(workingSet_);
+    openPicker(src, true);
+  }
+  /// The cursor's moves: NOTELEN up, PLAY/STOP down, REC left, EDIT right. Each ends an audition and starts a preview
+  /// generation.
+  void pickUp() { pickMove(0, -1); }
+  void pickDown() { pickMove(0, 1); }
+  void pickLeft() { pickMove(-1, 0); }
+  void pickRight() { pickMove(1, 0); }
+  bool picking() const { return view_ == View::Picker || (view_ == View::Confirm && list_ == View::Picker); }
+  uint16_t pickRecord() const { return pickRecord_; }
+  uint8_t pickDestination() const { return pickDest_; }
+  bool pickDestinationFilled() const { return pickDestFilled_; }
+  /// The cursor: a preset (`pickPreset` 0..4, else kNoPreset) or the grid's track and slot.
+  static constexpr uint8_t kNoPreset = 0xFF;
+  uint8_t pickPreset() const { return pickPreset_; }
+  uint8_t pickTrack() const { return pickTrack_; }
+  uint8_t pickSlotIndex() const { return pickSlot_; }
+  /// The source slot under the cursor (track × 8 + slot).
+  uint8_t pickSource() const { return static_cast<uint8_t>(pickTrack_ * 8 + pickSlot_); }
+  /// The stage's slot `slot` has a loop (its mosaic level, 0: empty).
+  uint8_t pickLevel(uint8_t slot) const {
+    if (pickRecord_ == kNone || slot >= 64) return 0;
+    return static_cast<uint8_t>((records_[pickRecord_].mosaic[slot / 4] >> (2 * (slot % 4))) & 3u);
+  }
+  /// The loop the owner should preview: the stage and slot under the cursor and its generation; false on a preset, an
+  /// empty slot, or no picker.
+  bool previewWanted(uint32_t& generation, uint16_t& record, uint8_t& slot) const {
+    if (!picking() || pickPreset_ != kNoPreset || pickLevel(pickSource()) == 0) return false;
+    generation = generation_;
+    record = pickRecord_;
+    slot = pickSource();
+    return true;
+  }
+  uint32_t pickGeneration() const { return generation_; }
+  /// The owner's preview of generation `generation` (an older one is ignored); its bars when Ready.
+  void setPreview(uint32_t generation, Preview p, uint16_t bars = 0) {
+    if (generation != generation_) return;
+    preview_ = p;
+    previewBars_ = bars;
+  }
+  Preview preview() const { return preview_; }
+  uint16_t previewBars() const { return previewBars_; }
+  /// The owner's audition: Sounding, or Silent (`why`: the owner's reason, shown) once it is ready; None when it ended.
+  void setAudition(Audition a, uint8_t why = 0) {
+    if (audition_ == Audition::None && a != Audition::None) return;  // ended meanwhile (a move): not this one
+    audition_ = a;
+    silentWhy_ = why;
+  }
+  Audition audition() const { return audition_; }
+  uint8_t silentWhy() const { return silentWhy_; }
+  /// The confirmation's empty loop (DEC-272): its bars.
+  uint8_t confirmBars() const { return confirmBars_; }
 
   // ---- The save popup ----------------------------------------------------------------------------------------------
   uint16_t popupSet() const { return workingSet_; }
@@ -503,7 +644,9 @@ class Browser {
   View shownList() const {
     return view_ == View::Popup || view_ == View::Confirm || view_ == View::Failed ? list_ : view_;
   }
-  bool listing() const { return view_ == View::Top || view_ == View::Set || view_ == View::Bin; }
+  bool listing() const {
+    return view_ == View::Top || view_ == View::Set || view_ == View::Bin || view_ == View::Stages;
+  }
   /// A milestone neither in the trash nor removed.
   bool shown(uint16_t i) const {
     return records_[i].kind == library::kMilestone && trashedBy_[i] == kNone;
@@ -611,6 +754,99 @@ class Browser {
     stageSel_ = static_cast<uint8_t>(static_cast<uint8_t>(suggested_) + 1);
     view_ = View::Popup;
   }
+  /// DEC-272: the open set's stages to get a loop from, `select` (a milestone) selected, else its newest.
+  void openStages(uint16_t select = kNone) {
+    fillMembers(openSet_);
+    markLine();
+    view_ = View::Stages;
+    selected_ = members_ != 0 ? kStagesHead : 0;
+    for (uint16_t k = 0; k < members_; ++k)
+      if (member_[k] == select) selected_ = static_cast<uint16_t>(kStagesHead + k);
+    first_ = 0;
+    scroll();
+  }
+  /// DEC-272: the picker over milestone `record` (kNone: presets only) for the destination; the cursor on the 4-bar
+  /// preset for an empty destination, else on the destination's own position.
+  void openPicker(uint16_t record, bool fromSlot) {
+    pickRecord_ = record;
+    pickFromSlot_ = fromSlot;
+    if (pickDestFilled_) {
+      pickPreset_ = kNoPreset;
+      pickTrack_ = static_cast<uint8_t>(pickDest_ / 8);
+      pickSlot_ = static_cast<uint8_t>(pickDest_ % 8);
+    } else {
+      pickPreset_ = kStartPreset;
+      pickTrack_ = 0;
+      pickSlot_ = 0;
+    }
+    audition_ = Audition::None;
+    preview_ = Preview::None;
+    ++generation_;
+    view_ = View::Picker;
+  }
+  void pickMove(int8_t dx, int8_t dy) {
+    if (view_ != View::Picker) return;
+    if (pickPreset_ != kNoPreset) {
+      if (dy < 0 && pickPreset_ > 0) --pickPreset_;
+      else if (dy > 0 && pickPreset_ + 1 < kPresets) ++pickPreset_;
+      else if (dx > 0) {  // into the grid at the nearest track
+        pickTrack_ = static_cast<uint8_t>((pickPreset_ * 8 * 2 + kPresets) / (2 * kPresets));  // round(8p / 5)
+        if (pickTrack_ > 7) pickTrack_ = 7;
+        pickSlot_ = 0;
+        pickPreset_ = kNoPreset;
+      } else {
+        return;
+      }
+    } else if (dx < 0 && pickSlot_ == 0) {  // to the nearest preset
+      pickPreset_ = static_cast<uint8_t>((pickTrack_ * kPresets * 2 + 8) / 16);  // round(5t / 8)
+      if (pickPreset_ >= kPresets) pickPreset_ = kPresets - 1;
+    } else if (dx < 0) {
+      --pickSlot_;
+    } else if (dx > 0 && pickSlot_ < 7) {
+      ++pickSlot_;
+    } else if (dy < 0 && pickTrack_ > 0) {
+      --pickTrack_;
+    } else if (dy > 0 && pickTrack_ < 7) {
+      ++pickTrack_;
+    } else {
+      return;
+    }
+    ++generation_;  // a new position: a preview of its own; browsing never changes the sound
+    preview_ = Preview::None;
+    if (audition_ != Audition::None) {
+      audition_ = Audition::None;
+      request_ = Request{};
+      request_.action = Action::CancelAudition;
+    }
+  }
+  /// TRACK in the picker: a preset is used (asked again over a filled destination); a loop is auditioned, then used.
+  void pickPress() {
+    if (pickPreset_ != kNoPreset) {
+      if (pickDestFilled_) {
+        openConfirm(Confirm::EmptyLoop, 0, kNone);
+        confirmBars_ = kPresetBars[pickPreset_];
+        return;
+      }
+      useEmpty();
+      return;
+    }
+    if (pickLevel(pickSource()) == 0) return;  // an empty slot of the stage: nothing to get
+    if (audition_ == Audition::Pending) return;  // not heard yet
+    request_ = Request{};
+    request_.action = audition_ == Audition::None ? Action::Audition : Action::Use;
+    request_.record = pickRecord_;
+    request_.from = pickSource();
+    request_.into = pickDest_;
+    pending_ = request_;
+    if (audition_ == Audition::None) audition_ = Audition::Pending;
+  }
+  void useEmpty() {
+    request_ = Request{};
+    request_.action = Action::UseEmpty;
+    request_.into = pickDest_;
+    request_.bars = kPresetBars[pickPreset_ == kNoPreset ? kStartPreset : pickPreset_];
+    pending_ = request_;
+  }
   void scroll() {
     if (selected_ < first_) first_ = selected_;
     if (selected_ >= first_ + kVisible) first_ = static_cast<uint16_t>(selected_ - kVisible + 1);
@@ -638,6 +874,15 @@ class Browser {
   uint8_t stageSel_ = 0;
   library::Stage suggested_ = library::Stage::Sketch;
   Request request_{}, pending_{};
+  // DEC-272: the picker — its stage (a milestone), destination, cursor (a preset, or a track and slot), the preview
+  // generation and state, the audition.
+  uint16_t pickRecord_ = kNone;
+  uint8_t pickDest_ = 0, pickPreset_ = kNoPreset, pickTrack_ = 0, pickSlot_ = 0, confirmBars_ = 0, silentWhy_ = 0;
+  bool pickDestFilled_ = false, pickFromSlot_ = false;
+  uint32_t generation_ = 0;
+  Preview preview_ = Preview::None;
+  uint16_t previewBars_ = 0;
+  Audition audition_ = Audition::None;
   char failWhat_[kText] = {}, failWhy_[kText] = {};
 };
 

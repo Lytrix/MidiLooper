@@ -336,6 +336,24 @@ class SlotTransport {
   bool auditionSounding() const { return audSlot_ != kNoSlot && audSounding_; }
   uint8_t auditionSlot() const { return audSlot_; }
 
+  /// Get a loop's preset (DEC-272): an empty loop of `loop` ticks on top of the slot's history — a filled slot too —
+  /// one undo step; its playing tracks follow it (silent from their next boundary). Busy while the slot is written or
+  /// auditioned.
+  Result emptyLoop(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (loop == 0) return Result::NoChange;
+    const RunId r = runs_->allocate(slot, RunKind::kRecord);
+    if (r == kNoRun) return Result::DeniedRun;
+    runs_->seal(r);
+    const ManifestId m = manifests_->create(slot, ++revision_, loop, &r, 1, *runs_);
+    runs_->release(r);  // the manifest holds it
+    if (m == kNoManifest) return Result::DeniedManifest;
+    history_->commit(slot, m);
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+
   /// An empty loop (owner 2026-11-08: a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
   /// and loop `loop` ticks, on top of the slot's history (undoable). A slot holds content while its state lists a run,
   /// so the loop plays, is edited and saved like a recorded one. Only on an empty slot.

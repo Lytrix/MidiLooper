@@ -520,6 +520,67 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   gS.setBrowser(nullptr);
 }
 
+/// DEC-272: a slot's long press opens the picker for that slot; there NOTELEN, PLAY/STOP, REC and EDIT are the moves
+/// (up, down, left, right) — none reaches the transport, a take or a track — and HOLD TRACK goes back to the stages.
+void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
+  gBrowser.clear();
+  library::Record r{};
+  r.sequence = 1;
+  r.set = 1;
+  gBrowser.add(r);
+  gBrowser.setWorking(1, 1);
+  gS.setBrowser(&gBrowser);
+  tap(S::kSlotBase, 700);  // track 1's slot 1, empty
+  ms(400);
+  TEST_ASSERT_TRUE(gS.browsing());
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Picker, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT8(0, gBrowser.pickDestination());
+  TEST_ASSERT_EQUAL_UINT8(ProductionBrowser::kStartPreset, gBrowser.pickPreset());
+  TEST_ASSERT_TRUE(X().contentOf(0) == kNoManifest);  // no empty loop made by the long press any more
+  tap(S::kRecordNote);  // left: the presets' edge
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(ProductionBrowser::kStartPreset, gBrowser.pickPreset());
+  TEST_ASSERT_EQUAL(ProductionControl::kNone, C().queuedRecordSlot(0));  // not a take
+  tap(38);  // right: into the grid, the nearest track (4)
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(ProductionBrowser::kNoPreset, gBrowser.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(3, gBrowser.pickTrack());
+  tap(S::kLengthNote);  // up
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(2, gBrowser.pickTrack());
+  tap(S::kPlayStopNote);  // down, not a play
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(3, gBrowser.pickTrack());
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_FALSE(X().playing(0));
+  tap(S::kTrackSwitchNote, 700);  // back: the working set's stages
+  ms(400);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Stages, gBrowser.view());
+  ProductionBrowser::Request q;
+  TEST_ASSERT_TRUE(gBrowser.takeRequest(q));
+  TEST_ASSERT_EQUAL(ProductionBrowser::Action::LeavePicker, q.action);
+  // Over a filled destination a preset asks first; there REC selects YES and EDIT CANCEL, as in every confirmation —
+  // not the picker's moves.
+  gBrowser.openPickerFromSlot(9, true);
+  for (int i = 0; i < 2; ++i) {
+    tap(S::kRecordNote);  // left: slot 1, then the presets
+    ms(600);
+  }
+  TEST_ASSERT_TRUE(gBrowser.pickPreset() != ProductionBrowser::kNoPreset);
+  tap(S::kTrackSwitchNote);
+  ms(800);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Confirm, gBrowser.view());
+  tap(S::kRecordNote);  // YES
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(0, gBrowser.confirmSelected());
+  tap(38);  // CANCEL
+  ms(600);
+  TEST_ASSERT_EQUAL_UINT8(1, gBrowser.confirmSelected());
+  TEST_ASSERT_TRUE(gBrowser.pickPreset() != ProductionBrowser::kNoPreset);  // the cursor stayed
+  gBrowser.close();
+  gS.setBrowser(nullptr);
+}
+
 void test_no_heap() {
   gTrap = true;
   const unsigned long before = gHeapAllocations;
@@ -545,6 +606,7 @@ int main(int, char**) {
   RUN_TEST(test_leds_follow_and_only_changes_are_sent);
   RUN_TEST(test_the_evidence_counts_takes_with_others_and_gestures_not_the_transport);
   RUN_TEST(test_the_browser_takes_record_track_and_edit_while_open);
+  RUN_TEST(test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

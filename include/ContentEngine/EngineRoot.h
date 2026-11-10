@@ -408,6 +408,25 @@ class EngineRoot {
     return r;
   }
   ProductionTransport::Result auditionCancel(uint32_t clock) { return r_->transport.auditionCancel(clock); }
+  /// DEC-272 (the picker): `m`, a preview state the owner holds (one reference, now the audition's), auditioned on slot
+  /// `into`; refused: released.
+  ProductionTransport::Result auditionStartWith(uint8_t into, ManifestId m, uint32_t clock) {
+    const auto r = r_->transport.auditionStart(static_cast<uint8_t>(into / 8), into, m, clock);
+    if (r != ProductionTransport::Result::Ok) r_->manifests.release(m, r_->runs);
+    return r;
+  }
+  /// DEC-272: an empty loop of `ticks` on slot `slot` — a filled one too — one undo step.
+  ProductionTransport::Result emptyLoop(uint8_t slot, uint32_t ticks, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    ProductionEmit buf[kGestureEmits];
+    uint8_t n;
+    const auto r = r_->transport.emptyLoop(slot, ticks, clock, buf, kGestureEmits, n);
+    r_->output.route(buf, n, nowUs, usPerTick);
+    return r;
+  }
+  /// A state the owner holds, let go.
+  void releaseState(ManifestId m) {
+    if (m != kNoManifest) r_->manifests.release(m, r_->runs);
+  }
   /// KEEP: the content copy a get read (`getLoop`, not a preview) on top of the auditioned slot's history, one undo
   /// step; its playing tracks follow. Refused or nothing read: released, the audition goes on.
   ProductionTransport::Result auditionKeepGot(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {

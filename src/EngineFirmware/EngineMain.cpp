@@ -595,7 +595,8 @@ uint8_t gGetInto = 0;
 uint8_t gGetFrom = 0;
 // What a get is for: a placed copy; a preview read reported and dropped (diagnostics); an audition (DEC-271); the copy
 // that KEEPs it.
-enum class GetFor : uint8_t { Place, Preview, Audition, Keep };
+// DEC-272, the picker: the loop under its cursor read as a preview (PickPreview), the copy its USE places (PickUse).
+enum class GetFor : uint8_t { Place, Preview, Audition, Keep, PickPreview, PickUse };
 GetFor gGetFor = GetFor::Place;
 uint16_t gGetIndex = 0;
 void slotName(uint8_t s, char* out, size_t n) { snprintf(out, n, "%u-%u", s / 8 + 1, s % 8 + 1); }
@@ -645,12 +646,195 @@ void startGet(char* arg, uint32_t nowUs, GetFor purpose = GetFor::Place) {
                 b, static_cast<unsigned>(purpose), static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
                 static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
 }
+// ---- Get a loop's picker (DEC-272) -------------------------------------------------------------------------------------
+// The preview: the picker generation seen and since when (a read waits for the cursor to rest), the one being read, the
+// state read for it (held until auditioned or dropped); an audition asked for before its preview was ready.
+constexpr uint32_t kPreviewRestMs = 150;
+bool gPickSquares = false;  // the picker's empty slots as dim squares (`!ENGINE pick-squares 1`; owner: compare)
+uint32_t gPickGenSeen = 0, gPickGenSinceMs = 0, gPickGenReading = 0, gPickHeldGen = 0, gPickAuditionGen = 0;
+uint32_t gPickReadGen = 0;  // the generation whose preview was read (shown, maybe auditioned): not read again
+ManifestId gPickHeld = kNoManifest;
+bool gPickWasOpen = false, gPickAuditionWanted = false, gPickReading = false;
+uint8_t gPickInto = 0;
+void pickDropHeld() {
+  gEngine.releaseState(gPickHeld);
+  gPickHeld = kNoManifest;
+  gPickHeldGen = 0;
+}
+/// The picker left (any way): the audition ended, the preview gone.
+void pickEnd() {
+  gEngine.auditionCancel(gLastTick);
+  gEngine.hidePreview();
+  pickDropHeld();
+  gPickAuditionWanted = false;
+  gPickGenSeen = 0;
+  gPickReadGen = 0;
+}
+/// Why an audition cannot be heard (BrowserInfo's code): 0 heard, 1 stopped, 2 the slot not playing, 3 muted, 4 + t
+/// track t soloed.
+uint8_t pickSilentWhy(uint8_t into) {
+  const uint8_t t = static_cast<uint8_t>(into / 8);
+  auto& c = gEngine.control();
+  if (!gClock.running()) return 1;
+  if (!gEngine.transport().playing(t) || gEngine.transport().playingSlot(t) != into) return 2;
+  if (c.muted(t)) return 3;
+  for (uint8_t o = 0; o < kTrackCount; ++o)
+    if (o != t && c.soloed(o) && !c.soloed(t)) return static_cast<uint8_t>(4 + o);
+  return 0;
+}
+/// The audition of the held preview, once both are there.
+void pickStartAudition() {
+  if (!gPickAuditionWanted || gPickHeld == kNoManifest || gPickHeldGen != gPickAuditionGen) return;
+  gPickAuditionWanted = false;
+  const ManifestId m = gPickHeld;
+  gPickHeld = kNoManifest;  // the audition's now
+  gPickHeldGen = 0;
+  if (gEngine.auditionStartWith(gPickInto, m, gLastTick) != ProductionTransport::Result::Ok) {
+    gBrowser.failed("AUDITION FAILED", "TRACK BUSY");
+    return;
+  }
+  const uint8_t why = pickSilentWhy(gPickInto);
+  gBrowser.setAudition(why == 0 ? ProductionBrowser::Audition::Sounding : ProductionBrowser::Audition::Silent, why);
+  Serial.printf("#ENGINE,pick,audition,into=%u,sounding=%u,why=%u\n", gPickInto, why == 0 ? 1 : 0, why);
+}
+/// Each pass: the destination kept current; entry refused while a take is open; the loop under the cursor read once
+/// the cursor rests (a result for another generation is dropped); everything let go when the picker closes.
+void servicePicker(uint32_t nowMs) {
+  if (!gBrowserReady) return;
+  if (!gBrowser.isOpen()) {
+    const uint8_t t = gEngine.control().selectedTrack(), slot = gSurface.selectedSlot(t);
+    gBrowser.setPickDestination(slot, gEngine.transport().contentOf(slot) != kNoManifest);
+  }
+  const bool picking = gBrowser.picking();
+  if (picking && !gPickWasOpen && gEngine.transport().writingSlot() != ProductionTransport::kNoSlot)
+    gBrowser.failed("GET A LOOP", "STOP THE TAKE FIRST");
+  if (!picking && gPickWasOpen) pickEnd();
+  gPickWasOpen = picking;
+  if (!picking) return;
+  const uint32_t gen = gBrowser.pickGeneration();
+  if (gen != gPickGenSeen) {  // a new position: the last preview's state and roll go
+    gPickGenSeen = gen;
+    gPickGenSinceMs = nowMs;
+    pickDropHeld();
+    gEngine.hidePreview();
+  }
+  uint32_t want;
+  uint16_t rec;
+  uint8_t from;
+  if (!gBrowser.previewWanted(want, rec, from) || gPickReading || gPickReadGen == want || gPickGenReading == want) return;
+  if (nowMs - gPickGenSinceMs < kPreviewRestMs || gEngine.libraryBusy()) return;
+  const uint8_t into = gBrowser.pickDestination();
+  if (gEngine.getLoop(rec, from, into, true) != ProductionSetLoad::Result::Ok) {
+    gBrowser.setPreview(want, ProductionBrowser::Preview::Failed);
+    return;
+  }
+  gGetFor = GetFor::PickPreview;
+  gGetFrom = from;
+  gGetInto = into;
+  gLibraryStartUs = micros();
+  gPickGenReading = want;
+  gPickReading = true;
+  gLoadWas = ProductionSetLoad::Status::Running;
+  gBrowser.setPreview(want, ProductionBrowser::Preview::Reading);
+}
+/// The picker's requests (`serviceBrowser`): audition, use, an empty loop, the audition ended, the picker left.
+void pickRequest(const ProductionBrowser::Request& q, uint32_t nowUs) {
+  char into[6], line[32];
+  slotName(q.into, into, sizeof into);
+  switch (q.action) {
+    case ProductionBrowser::Action::Audition:
+      gPickAuditionWanted = true;
+      gPickAuditionGen = gBrowser.pickGeneration();
+      gPickInto = q.into;
+      pickStartAudition();
+      return;
+    case ProductionBrowser::Action::Use: {
+      const char* why = gEngine.loadRefusal(true);
+      if (why == nullptr && !gEngine.auditioning()) why = "NO AUDITION";
+      if (why == nullptr && gEngine.getLoop(q.record, q.from, q.into, false) != ProductionSetLoad::Result::Ok) why = "BUSY";
+      if (why != nullptr) {
+        gBrowser.failed("USE FAILED", why);
+        return;
+      }
+      gGetFor = GetFor::PickUse;
+      gGetFrom = q.from;
+      gGetInto = q.into;
+      gLibraryStartUs = nowUs;
+      gLoadWas = ProductionSetLoad::Status::Running;
+      return;
+    }
+    case ProductionBrowser::Action::UseEmpty: {
+      gEngine.auditionCancel(gLastTick);
+      const auto r = gEngine.emptyLoop(q.into, static_cast<uint32_t>(q.bars) * kTicksPerBar, gLastTick, nowUs,
+                                       gClock.usPerTick());
+      if (r != ProductionTransport::Result::Ok) {
+        gBrowser.failed("USE FAILED", "SLOT BUSY");
+        return;
+      }
+      Serial.printf("#ENGINE,pick,empty,into=%s,bars=%u\n", into, q.bars);
+      snprintf(line, sizeof line, "EMPTY LOOP IN %s", into);
+      gBrowser.succeeded();
+      gDisplay.toast(line, millis());
+      return;
+    }
+    case ProductionBrowser::Action::CancelAudition:
+      gEngine.auditionCancel(gLastTick);
+      gPickAuditionWanted = false;
+      return;
+    case ProductionBrowser::Action::LeavePicker:
+      pickEnd();
+      return;
+    default:
+      return;
+  }
+}
 /// A get's end (DEC-270): placed on its slot, or nothing changed.
 void endGet(ProductionSetLoad::Status st, unsigned long ms) {
   const library::Record& r = gEngine.setLoad().record();
   char from[6], into[6], line[48];
   slotName(gGetFrom, from, sizeof from);
   slotName(gGetInto, into, sizeof into);
+  if (gGetFor == GetFor::PickPreview) {  // DEC-272: kept only for the position it was read for
+    gPickReading = false;
+    const uint32_t gen = gPickGenReading;
+    gPickGenReading = 0;
+    const ManifestId m = st == ProductionSetLoad::Status::Done ? gEngine.setLoad().takeGot() : kNoManifest;
+    if (!gBrowser.picking() || gen != gBrowser.pickGeneration()) {
+      gEngine.releaseState(m);
+      return;
+    }
+    if (m == kNoManifest) {
+      using Why = decltype(gEngine.setLoad().getWhy());
+      gBrowser.setPreview(gen, gEngine.setLoad().getWhy() == Why::Capacity ? ProductionBrowser::Preview::TooBig
+                                                                          : ProductionBrowser::Preview::Failed);
+      return;
+    }
+    gPickHeld = m;
+    gPickHeldGen = gen;
+    gPickReadGen = gen;
+    gEngine.showPreview(m);
+    const uint32_t loop = gEngine.manifests().manifest(m).loopLengthTicks;
+    gBrowser.setPreview(gen, ProductionBrowser::Preview::Ready,
+                        static_cast<uint16_t>((loop + kTicksPerBar - 1) / kTicksPerBar));
+    Serial.printf("#ENGINE,pick,preview,from=%s,ms=%lu,bars=%lu\n", from, ms,
+                  static_cast<unsigned long>((loop + kTicksPerBar - 1) / kTicksPerBar));
+    pickStartAudition();
+    return;
+  }
+  if (gGetFor == GetFor::PickUse) {
+    const ProductionTransport::Result k = st == ProductionSetLoad::Status::Done
+                                              ? gEngine.auditionKeepGot(gLastTick, micros(), gClock.usPerTick())
+                                              : ProductionTransport::Result::NoChange;
+    if (k != ProductionTransport::Result::Ok) {
+      gBrowser.failed("USE FAILED", st == ProductionSetLoad::Status::Done ? "SLOT BUSY" : "READ FAILED");
+      return;
+    }
+    Serial.printf("#ENGINE,pick,used,from=%s,into=%s,ms=%lu\n", from, into, ms);
+    snprintf(line, sizeof line, "COPIED TO %s", into);
+    gBrowser.succeeded();
+    gDisplay.toast(line, millis());
+    return;
+  }
   if (st == ProductionSetLoad::Status::Done && gGetFor == GetFor::Audition) {
     const ProductionTransport::Result a = gEngine.auditionGot(gGetInto, gLastTick);
     Serial.printf("#ENGINE,audition,%s,id=SET %02u %c%02u,from=%s,into=%s,sounding=%u,ms=%lu,preview_free=%lu\n",
@@ -814,6 +998,7 @@ void serviceBrowser(uint32_t nowUs) {
   EngineFirmware::BrowserInfo info;
   info.tz = gTzOffset;
   info.now = wallTime();
+  info.pickSquares = gPickSquares;
   if (gEngine.persistence().unsaved()) {
     snprintf(info.saved, sizeof info.saved, "UNSAVED");
   } else {
@@ -852,6 +1037,13 @@ void serviceBrowser(uint32_t nowUs) {
       gBrowserOp = BrowserOp::Mark;
       if ((why = beginMark(library::kEmptyTrash, 0, ProductionBrowser::kNone, nowUs)) != nullptr)
         gBrowser.failed("EMPTY FAILED", why);
+      break;
+    case ProductionBrowser::Action::Audition:
+    case ProductionBrowser::Action::Use:
+    case ProductionBrowser::Action::UseEmpty:
+    case ProductionBrowser::Action::CancelAudition:
+    case ProductionBrowser::Action::LeavePicker:
+      pickRequest(q, nowUs);
       break;
     default:
       break;
@@ -1128,6 +1320,9 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "preview-hide") == 0) {
     gEngine.hidePreview();
     Serial.println("#ENGINE,preview,hidden");
+  } else if (std::strcmp(verb, "pick-squares") == 0) {  // pick-squares 1 / 0: the picker's empty slots (DEC-272)
+    gPickSquares = a != 0;
+    Serial.printf("#ENGINE,pick,squares=%u\n", gPickSquares ? 1 : 0);
   } else if (std::strcmp(verb, "audition-cancel") == 0) {
     Serial.printf("#ENGINE,audition,%s\n",
                   gEngine.auditionCancel(gLastTick) == ProductionTransport::Result::Ok ? "cancelled" : "none");
@@ -1700,6 +1895,7 @@ void loop() {
   serviceLibrary();
   serviceLoad();
   serviceWorking(micros());
+  servicePicker(millis());
   serviceBrowser(micros());
   crumb(kLeds);
   uint8_t bank;

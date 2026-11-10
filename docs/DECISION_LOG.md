@@ -15626,3 +15626,44 @@ verified on the device only (no host test of `TrackControl` for it).
   passed; RAM2 + 32 B (159,904). Device `252bca64…`, boot `crash=0`, 120 BPM (a beat 0.5 s), USB MIDI captured: after
   `audition` the old loop (a note every 0.25–0.9 s) played no further note; after `audition-cancel` the slot's loop was
   back within 0.37 s and 0.60 s (two rounds).
+
+## DEC-272 — The get-a-loop picker on the DROID (slice 6b step d)
+
+**Date:** 2026-11-10. **Owner:** "ok implement" after the mockups (browser plan §6.1, layout A, `docs/Plans/images/
+get_loop_picker_mockups.png`; plan not authority — the owner's choices recorded there are). Branch
+`feature/engine-get-a-loop`; builds on DEC-270 (and its amendments 1–3) and DEC-271.
+
+**Decision:**
+- **Entries.** (1) A set's view has a `GET A LOOP` row (`[TRK] OPEN`; its panel `GET A LOOP INTO 1-4` with the working
+  set's mosaic and the destination boxed); it lists the set's stages (`GET A LOOP  SET 2`, `FROM STAGE`, `[TRK] SELECT
+  STAGE  HOLD [TRK] BACK`); a stage opens the picker for the selected slot. (2) A slot's long press opens the picker for
+  that slot over the working set's base stage (else its newest; none: the presets only) — it replaces the long press's
+  empty loop and length popup while the browser exists. The destination is fixed on entry.
+- **The picker** (`Browser` views Stages and Picker): the stage's slots from its mosaic as 4 × 4 squares (6 px across,
+  5 down; an empty slot a dot, or a dim square with `!ENGINE pick-squares 1` to compare), the empty-loop presets 1, 2,
+  4, 8, 16 bars left of slot 1, `SLOT 1-3` / `EMPTY 4` against the divider, `INTO 1-4` and the panel. Moves: NOTELEN
+  up, PLAY/STOP down, REC left, EDIT right; LEFT from a slot 1 to the nearest preset, RIGHT back to the nearest track.
+  The cursor starts on the 4-bar preset for an empty destination, else on the destination's own position.
+- **Preview.** The owner reads the loop under the cursor once it rests 150 ms (`previewWanted`: a generation per entry
+  and per move; a result for another generation is released), shows it through the preview roll (DEC-270 amendment 3)
+  as the whole loop, `READING...`, `READ FAILED`, `TOO BIG TO PREVIEW`, or `NO LOOP HERE` on an empty slot.
+- **Audition and USE.** TRACK on a loop auditions it (DEC-271, on the beat; `AUDITION`, or `PREVIEW ONLY` with
+  `STOPPED` / `NOT PLAYING` / `MUTED` / `SOLO ON n`); then TRACK reads `[TRK] USE` (owner: USE, not KEEP) and copies it
+  as one undo step (`COPIED TO 1-4`, the browser closes). A move ends the audition; HOLD goes back to the stages (any
+  audition ended, the preview gone).
+- **Presets.** TRACK uses an empty loop of that many bars at once (`EMPTY LOOP IN 1-4`); over a filled destination it
+  asks first (`REPLACE 1-4 WITH AN EMPTY 1-BAR LOOP?`, centred, CANCEL selected; REC YES, EDIT CANCEL).
+  `SlotTransport::emptyLoop` places it on any slot as one undo step.
+- Entry is refused while a take is open (`STOP THE TAKE FIRST`).
+
+**Note:** the plan's start preset is 4 bars, while `Surface::kNewLoopBars` (the old long press) is 1 bar.
+
+**Evidence:** native: browser +5 (entry 1, moves and generations, audition then use, presets with the confirmation,
+entry 2), surface +1 (the long press, the four moves, the confirmation's buttons), transport +1 (an empty loop over a
+filled slot); three mutations killed; full native 4,499 passed. Device (image `abc7df2a…`, boot `crash=0`, the board's
+buttons over USB MIDI and its output captured): a long press of 1-1 opened the picker on it, the 1-bar preview read,
+PLAY/STOP down to 2-1 (3 bars), TRACK auditioned it on the beat (track 1 played 60), TRACK USE copied it (`COPIED TO
+1-1`), undo back; a move ended an audition; entry 1 through `GET A LOOP`, the stages and `SELECT STAGE`; the presets,
+the confirmation (first build: REC moved the cursor under it — fixed), YES put an empty 1-bar loop in 1-4, undo back.
+Two of my capture scripts mispressed: one loaded SET 2 T03 (already the working set's stage), one opened and cancelled
+a trash confirmation; nothing else was written.

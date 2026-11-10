@@ -85,6 +85,7 @@ struct BrowserInfo {
   char returnTo[32] = {};
   int16_t tz = 0;
   uint32_t now = 0;  // the wall time (0: not set): the timeline's right end
+  bool pickSquares = false;  // DEC-272: the picker's empty slots as dim squares, else dots (owner: compare on the device)
 };
 
 class EngineDisplay {
@@ -238,6 +239,12 @@ class EngineDisplay {
   void text(const char* s, int16_t x, int16_t y, uint8_t brightness) { oled_.gfx.draw_text(fb(), s, x, y, brightness); }
   void px(int16_t x, int16_t y, uint8_t v) {
     if (x >= 0 && x < DISPLAY_WIDTH && y >= 0 && y < DISPLAY_HEIGHT) oled_.gfx.draw_pixel(fb(), x, y, v);
+  }
+  /// A pixel's level (the 4-bit frame buffer: two a byte, an even x in the high nibble).
+  uint8_t pixel(int16_t x, int16_t y) {
+    if (x < 0 || x >= DISPLAY_WIDTH || y < 0 || y >= DISPLAY_HEIGHT) return 0;
+    const uint8_t byte = fb()[y * (DISPLAY_WIDTH / 2) + x / 2];
+    return static_cast<uint8_t>((x & 1) == 0 ? byte >> 4 : byte & 0x0F);
   }
   /// 5 × 7 text right-aligned so its last column is `xr`.
   void rtext(const char* s, int16_t xr, uint8_t v) {
@@ -441,9 +448,14 @@ class EngineDisplay {
       drawSavePopup(b);
       return;
     }
+    if (b.picking() || (b.view() == Browser::View::Failed && b.listView() == Browser::View::Picker)) {
+      drawPicker(b, e);
+      return;
+    }
     const bool confirming = b.view() == Browser::View::Confirm;
-    char title[16];
+    char title[24];
     if (b.shownView() == Browser::View::Set) snprintf(title, sizeof title, "SET %u", b.openSetNumber());
+    else if (b.shownView() == Browser::View::Stages) snprintf(title, sizeof title, "GET A LOOP  SET %u", b.openSetNumber());
     else if (b.shownView() == Browser::View::Bin) snprintf(title, sizeof title, "TRASH");
     else snprintf(title, sizeof title, "SETS");
     window(kWX0, kWY0, kWX1, kWY1, title);
@@ -466,7 +478,8 @@ class EngineDisplay {
       char line[64];
       snprintf(line, sizeof line, "%s%s", kMoves, h);
       hint(line);
-      drawTrashCorner(b.shownView() == Browser::View::Bin);
+      if (b.shownView() != Browser::View::Stages)  // the stages to get a loop from: a double press does nothing there
+        drawTrashCorner(b.shownView() == Browser::View::Bin);
     }
     if (confirming) drawConfirm(b);
   }
@@ -475,6 +488,18 @@ class EngineDisplay {
   /// one inverted.
   void drawConfirm(const Browser& b) {
     constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
+    if (b.confirmKind() == Browser::Confirm::EmptyLoop) {  // DEC-272: an empty loop over a filled slot, centred
+      window(x0, y0, x1, y1, "EMPTY LOOP");
+      char a[32], c[32];
+      const uint8_t d = b.pickDestination();
+      snprintf(a, sizeof a, "REPLACE %u-%u WITH AN", d / 8 + 1, d % 8 + 1);
+      snprintf(c, sizeof c, "EMPTY %u-BAR LOOP?", b.confirmBars());
+      clabel(a, (x0 + x1) / 2, static_cast<int16_t>(y0 + 13), 15);
+      clabel(c, (x0 + x1) / 2, static_cast<int16_t>(y0 + 21), 15);
+      clabel("UNDO BRINGS IT BACK", (x0 + x1) / 2, static_cast<int16_t>(y0 + 30), 7);
+      drawButtons(b, x0, x1, kButtonY);
+      return;
+    }
     const bool empty = b.confirmKind() == Browser::Confirm::Empty;
     window(x0, y0, x1, y1, empty ? "EMPTY TRASH" : "TRASH");
     char q[32], line[32], stamp[24];
@@ -505,15 +530,180 @@ class EngineDisplay {
       snprintf(line, sizeof line, b.confirmRecord() != Browser::kNone ? "SAVED %s" : "LATEST %s", stamp);
       label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
     }
+    drawButtons(b, x0, x1, kButtonY);
+  }
+  /// YES and CANCEL, the selected one inverted, and the confirmation's line.
+  void drawButtons(const Browser& b, int16_t x0, int16_t x1, int16_t buttonY) {
     const char* const kButtons[2] = {"YES", "CANCEL"};
     for (uint8_t k = 0; k < 2; ++k) {
       const int16_t bx = static_cast<int16_t>(k == 0 ? x0 + 24 : x1 - 50), bw = 30;
       const bool on = b.confirmSelected() == k;
-      if (on) oled_.gfx.draw_rect_filled(fb(), bx, kButtonY - 2, static_cast<int16_t>(bx + bw), kButtonY + 6, 13);
+      if (on) oled_.gfx.draw_rect_filled(fb(), bx, static_cast<int16_t>(buttonY - 2), static_cast<int16_t>(bx + bw),
+                                         static_cast<int16_t>(buttonY + 6), 13);
       const int16_t tw = static_cast<int16_t>(strlen(kButtons[k]) * 4 - 1);
-      label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), kButtonY, on ? 0 : 10);
+      label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), buttonY, on ? 0 : 10);
     }
     hint("[REC]{ [EDT]}  [TRK] CONFIRM  HOLD [TRK] CANCEL");
+  }
+  /// A label centred on `xc`.
+  void clabel(const char* s, int16_t xc, int16_t top, uint8_t v) {
+    label(s, static_cast<int16_t>(xc - (static_cast<int16_t>(strlen(s)) * 4 - 1) / 2), top, v);
+  }
+
+  // ---- Get a loop's picker (DEC-272; layout A of the plan's mockups) --------------------------------------------------
+  static constexpr int16_t kPresetX = 33, kPresetW = 13, kPresetH = 7, kPresetPitch = 8, kGridX = 52, kGridY = 13;
+  static constexpr int16_t kCell = 4, kPitchX = 6, kPitchY = 5;
+  static constexpr int16_t kPanelX0 = 141, kPanelX1 = 225, kPanelY0 = 21, kPanelY1 = 44;
+  void drawPicker(const Browser& b, ContentEngine::EngineRoot& e) {
+    char title[32], a[32], c[24];
+    const uint16_t rec = b.pickRecord();
+    if (rec != Browser::kNone) {
+      char id[8];
+      idText(b.record(rec), id, sizeof id);
+      snprintf(title, sizeof title, "LOOPS  SET %u  %s", b.record(rec).set, id);
+    } else {
+      snprintf(title, sizeof title, "EMPTY LOOPS");
+    }
+    window(kWX0, kWY0, kWX1, kWY1, title);
+    for (int16_t y = kWY0 + 10; y < kWY1; ++y) px(kDiv, y, kRuleLevel);
+    const uint8_t preset = b.pickPreset();
+    for (uint8_t i = 0; i < Browser::kPresets; ++i) {  // the empty-loop presets: dotted, unlike a loop
+      const int16_t x = kPresetX, y = static_cast<int16_t>(kGridY + i * kPresetPitch);
+      const bool on = preset == i;
+      if (on) {
+        oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + kPresetW - 1), static_cast<int16_t>(y + kPresetH - 1), 13);
+      } else {
+        for (int16_t xx = x; xx < x + kPresetW; xx = static_cast<int16_t>(xx + 2)) {
+          px(xx, y, 6);
+          px(xx, static_cast<int16_t>(y + kPresetH - 1), 6);
+        }
+        for (int16_t yy = y; yy < y + kPresetH; yy = static_cast<int16_t>(yy + 2)) {
+          px(x, yy, 6);
+          px(static_cast<int16_t>(x + kPresetW - 1), yy, 6);
+        }
+      }
+      snprintf(a, sizeof a, "%u", Browser::kPresetBars[i]);
+      clabel(a, static_cast<int16_t>(x + kPresetW / 2), static_cast<int16_t>(y + 1), on ? 0 : 9);
+    }
+    static const uint8_t kLevel[4] = {0, 7, 11, 15};
+    for (uint8_t t = 0; t < 8; ++t)
+      for (uint8_t k = 0; k < 8; ++k) {  // the stage's slots: squares as the mosaic, an empty one a dot (or a dim square)
+        const int16_t x = static_cast<int16_t>(kGridX + k * kPitchX), y = static_cast<int16_t>(kGridY + t * kPitchY);
+        const uint8_t l = b.pickLevel(static_cast<uint8_t>(t * 8 + k));
+        if (l != 0)
+          oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + kCell - 1), static_cast<int16_t>(y + kCell - 1), kLevel[l]);
+        else if (browserInfo_.pickSquares)
+          oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + kCell - 1), static_cast<int16_t>(y + kCell - 1), 2);
+        else
+          px(static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), 3);
+      }
+    if (preset == Browser::kNoPreset) {  // the cursor: a hollow bright box
+      const int16_t x = static_cast<int16_t>(kGridX + b.pickSlotIndex() * kPitchX), y = static_cast<int16_t>(kGridY + b.pickTrack() * kPitchY);
+      oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + kCell - 1), static_cast<int16_t>(y + kCell - 1), 0);
+      hline(static_cast<int16_t>(x - 1), static_cast<int16_t>(x + kCell), static_cast<int16_t>(y - 1), 15);
+      hline(static_cast<int16_t>(x - 1), static_cast<int16_t>(x + kCell), static_cast<int16_t>(y + kCell), 15);
+      for (int16_t yy = static_cast<int16_t>(y - 1); yy <= y + kCell; ++yy) {
+        px(static_cast<int16_t>(x - 1), yy, 15);
+        px(static_cast<int16_t>(x + kCell), yy, 15);
+      }
+      snprintf(a, sizeof a, "SLOT %u-%u", b.pickTrack() + 1, b.pickSlotIndex() + 1);
+    } else {
+      snprintf(a, sizeof a, "EMPTY %u", Browser::kPresetBars[preset]);
+    }
+    rlabel(a, 133, kGridY, 13);
+    const uint8_t d = b.pickDestination();
+    snprintf(a, sizeof a, "INTO %u-%u", d / 8 + 1, d % 8 + 1);
+    label(a, kPanelX0, kGridY, 11);
+    // The panel: an empty loop, the loop's roll, or what the read is doing; the audition beneath.
+    const auto au = b.audition();
+    bool use = au == Browser::Audition::Sounding || au == Browser::Audition::Silent;
+    if (preset != Browser::kNoPreset) {
+      panelBox();
+      clabel("EMPTY LOOP", (kPanelX0 + kPanelX1) / 2, 26, 15);
+      snprintf(a, sizeof a, "%u BAR%s", Browser::kPresetBars[preset], Browser::kPresetBars[preset] == 1 ? "" : "S");
+      clabel(a, (kPanelX0 + kPanelX1) / 2, 35, 9);
+      label("AN EMPTY LOOP", kPanelX0, 49, 11);
+      use = true;
+    } else if (b.pickLevel(b.pickSource()) == 0) {
+      panelBox();
+      clabel("NO LOOP HERE", (kPanelX0 + kPanelX1) / 2, 30, 6);
+    } else if (b.preview() == Browser::Preview::Ready) {
+      drawPreviewRoll(e, b.previewBars(), au == Browser::Audition::Silent);
+      snprintf(c, sizeof c, "%u BAR%s", b.previewBars(), b.previewBars() == 1 ? "" : "S");
+      if (au == Browser::Audition::Sounding) {
+        label("AUDITION", kPanelX0, 49, 15);
+        rlabel(c, kPanelX1, 49, 9);
+      } else if (au == Browser::Audition::Silent) {
+        label("PREVIEW ONLY", kPanelX0, 49, 11);
+        rlabel(silentText(b.silentWhy(), a, sizeof a), kPanelX1, 49, 6);
+      } else {
+        label(c, kPanelX0, 49, 11);
+      }
+    } else {
+      panelBox();
+      const auto pv = b.preview();
+      clabel(pv == Browser::Preview::Failed   ? "READ FAILED"
+             : pv == Browser::Preview::TooBig ? "TOO BIG TO PREVIEW"
+                                              : "READING...",
+             (kPanelX0 + kPanelX1) / 2, 30, 7);
+      label("? BARS", kPanelX0, 49, 6);
+    }
+    char h[64];
+    if (b.view() == Browser::View::Failed) {
+      fillRect(kPanelX0 - 1, kPanelY0 - 1, kPanelX1 + 1, 55, 0);
+      label(b.failWhat(), kPanelX0, 22, 15);
+      label(b.failWhy(), kPanelX0, 30, 9);
+      label("NOTHING CHANGED", kPanelX0, 38, 9);
+      hint("[TRK] TRY AGAIN   HOLD [TRK] CLOSE");
+      return;
+    }
+    snprintf(h, sizeof h, "[LEN]{ [PLY]} [REC]< [EDT]>  [TRK] %s  HOLD [TRK] BACK", use ? "USE" : "AUDITION");
+    hint(h);
+    if (b.view() == Browser::View::Confirm) drawConfirm(b);
+  }
+  void panelBox() {
+    hline(kPanelX0 - 1, kPanelX1 + 1, kPanelY0 - 1, 4);
+    hline(kPanelX0 - 1, kPanelX1 + 1, kPanelY1 + 1, 4);
+    for (int16_t y = kPanelY0 - 1; y <= kPanelY1 + 1; ++y) {
+      px(kPanelX0 - 1, y, 4);
+      px(kPanelX1 + 1, y, 4);
+    }
+  }
+  void fillRect(int16_t x0, int16_t y0, int16_t x1, int16_t y1, uint8_t v) { oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, v); }
+  /// Why an audition is silent (the owner's code): 1 stopped, 2 the slot not playing, 3 muted, 4 + t: track t soloed.
+  static const char* silentText(uint8_t why, char* buf, size_t n) {
+    if (why >= 4) {
+      snprintf(buf, n, "SOLO ON %u", why - 3);
+      return buf;
+    }
+    return why == 1 ? "STOPPED" : why == 2 ? "NOT PLAYING" : why == 3 ? "MUTED" : "";
+  }
+  /// The loop under the cursor, whole (owner 2026-11-10: every bar for now), from the preview slot's tiles.
+  void drawPreviewRoll(ContentEngine::EngineRoot& e, uint16_t bars, bool dim) {
+    panelBox();
+    if (bars == 0) return;
+    const uint32_t loop = static_cast<uint32_t>(bars) * kBar;
+    const uint8_t slot = ContentEngine::EngineRoot::kPreviewSlot;
+    uint8_t lo = 60, hi = 61;
+    if (!ContentEngine::pitchExtent(e.tiles(), slot, 0, static_cast<uint8_t>(bars - 1), lo, hi)) {
+      lo = 60;
+      hi = 61;
+    }
+    if (hi == lo) hi = static_cast<uint8_t>(lo + 1);
+    const int32_t w = kPanelX1 - kPanelX0;
+    for (uint16_t bar = 1; bar < bars; ++bar) {
+      if (bars > 16 && bar % 4 != 0) continue;
+      const int16_t gx = static_cast<int16_t>(kPanelX0 + static_cast<int32_t>(bar) * w / bars);
+      oled_.gfx.draw_vline(fb(), gx, kPanelY0, kPanelY1, 2);
+    }
+    ContentEngine::RollView v{slot, loop, kBar, 0, loop, lo, hi, kPanelX0, kPanelX1, kPanelY0, kPanelY1};
+    e.drawRollBand(v, fb(), DISPLAY_WIDTH, kPanelY0, kPanelY1);
+    if (dim)  // a silent preview: the notes drawn dimmer
+      for (int16_t y = kPanelY0; y <= kPanelY1; ++y)
+        for (int16_t x = kPanelX0; x <= kPanelX1; ++x) {
+          const uint8_t v0 = pixel(x, y);
+          if (v0 > 4) px(x, y, static_cast<uint8_t>(v0 / 2));
+        }
   }
   /// The spine: a line down the dated rows (sets, stages), broken between months.
   void drawSpine(const Browser& b) {
@@ -548,9 +738,10 @@ class EngineDisplay {
     const bool on = i == b.selected();
     if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
       const Browser::View list = b.shownView();
-      const char* what = list == Browser::View::Bin   ? "RESTORE SET/STAGE"
-                         : list == Browser::View::Set ? "LOAD STAGE"
-                                                      : "LOAD SET";
+      const char* what = list == Browser::View::Bin      ? "RESTORE SET/STAGE"
+                         : list == Browser::View::Set    ? "LOAD STAGE"
+                         : list == Browser::View::Stages ? "FROM STAGE"
+                                                         : "LOAD SET";
       label(what, kYearX, y, 7);  // a heading, dimmer than any row
       hline(static_cast<int16_t>(kYearX + strlen(what) * 4 + 3), kDiv - 4, static_cast<int16_t>(y + 2), 6);
       return;
@@ -568,7 +759,10 @@ class EngineDisplay {
         return;
       }
       case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
-      case RowKind::Back: label("< SETS", kYearX, y, on ? 15 : 11); return;
+      case RowKind::Back:
+        label(b.shownView() == Browser::View::Stages ? "< BACK" : "< SETS", kYearX, y, on ? 15 : 11);
+        return;
+      case RowKind::GetLoop: label("GET A LOOP", kYearX, y, on ? 15 : 11); return;
       default: break;
     }
     const uint16_t rec = recordOf(r);
@@ -667,10 +861,34 @@ class EngineDisplay {
         return;
       }
       case RowKind::Back:
+        if (b.shownView() == Browser::View::Stages) {
+          snprintf(a, sizeof a, "SET %u", b.openSetNumber());
+          label(a, kDetailX, kMosaicY, 15, 2);
+          label("BACK TO THE SET", kDetailX, 30, 9);
+          snprintf(h, n, "[TRK] BACK");
+          return;
+        }
         label("SETS", kDetailX, kMosaicY, 15, 2);
         label("BACK TO ALL SETS", kDetailX, 30, 9);
         snprintf(h, n, "[TRK] SETS");
         return;
+      case RowKind::GetLoop: {  // DEC-272: into the selected slot, boxed in the working set's mosaic
+        label("GET", kDetailX, kMosaicY, 15, 3);
+        label("A LOOP", kDetailX, 32, 11);
+        const uint8_t d = b.pickDestination();
+        snprintf(a, sizeof a, "INTO %u-%u", d / 8 + 1, d % 8 + 1);
+        label(a, kDetailX, 40, 13);
+        drawLiveMosaic();
+        const int16_t mx = static_cast<int16_t>(kMosaicX + (d % 8) * 4), my = static_cast<int16_t>(kMosaicY + (d / 8) * 4);
+        hline(static_cast<int16_t>(mx - 1), static_cast<int16_t>(mx + 3), static_cast<int16_t>(my - 1), 15);
+        hline(static_cast<int16_t>(mx - 1), static_cast<int16_t>(mx + 3), static_cast<int16_t>(my + 3), 15);
+        for (int16_t yy = static_cast<int16_t>(my - 1); yy <= my + 3; ++yy) {
+          px(static_cast<int16_t>(mx - 1), yy, 15);
+          px(static_cast<int16_t>(mx + 3), yy, 15);
+        }
+        snprintf(h, n, "[TRK] OPEN");
+        return;
+      }
       case RowKind::Divider:
         h[0] = 0;
         return;
@@ -733,7 +951,8 @@ class EngineDisplay {
           snprintf(a, sizeof a, "FROM %s", id);
         }
         drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
-        snprintf(h, n, "[TRK] LOAD  HOLD [TRK] DELETE");
+        if (b.shownView() == Browser::View::Stages) snprintf(h, n, "[TRK] SELECT STAGE  HOLD [TRK] BACK");
+        else snprintf(h, n, "[TRK] LOAD  HOLD [TRK] DELETE");
         return;
       }
     }

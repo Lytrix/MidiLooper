@@ -30,8 +30,10 @@
 //     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
 //     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
 //     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
-//     clear (owner 2026-11-08; overdub stays on record's short press); triple = redo; long = on an empty slot an empty
-//     loop of `kNewLoopBars` bars (owner 2026-11-08: for step entry in NOTE_EDIT; selected, not played);
+//     clear (owner 2026-11-08; overdub stays on record's short press); triple = redo; long = get a loop for it (DEC-272:
+//     the picker over the working set's base stage, its empty-loop presets included; without a browser, as before: on
+//     an empty slot an empty loop of `kNewLoopBars` bars, then the length popup). In the picker NOTELEN, PLAY/STOP,
+//     REC and EDIT move the cursor (up, down, left, right); in its confirmation REC and EDIT select YES / CANCEL;
 //   - track switch 37: short = the next track; double = undo; triple = redo; long = the sets browser (slice 3,
 //     owner: "opening / cancelling needs to be a long hold"; an open NOTE_EDIT or LOOP_EDIT is left first, its changes
 //     kept; without a library: the mute toggle as before — mute stays on the track buttons' double press). While the
@@ -454,6 +456,21 @@ class Surface {
       else if (p == Press::Double) browser_->openTrash();  // DEC-268: the trash, and back
       return;
     }
+    if (browser_->picking()) {  // DEC-272, the picker: NOTELEN up, PLAY/STOP down, REC left, EDIT right
+      if (p == Press::Long) return;
+      if (browser_->view() != ProductionBrowser::View::Picker) {  // its confirmation: REC YES, EDIT CANCEL
+        if (b == kRecord) browser_->up();
+        else if (b == kEditMode) browser_->down();
+        return;
+      }
+      for (uint8_t i = 0; i < times; ++i) {
+        if (b == kLength) browser_->pickUp();
+        else if (b == kPlayStop) browser_->pickDown();
+        else if (b == kRecord) browser_->pickLeft();
+        else if (b == kEditMode) browser_->pickRight();
+      }
+      return;
+    }
     for (uint8_t i = 0; i < times; ++i) {
       if (b == kRecord && p != Press::Long) browser_->up();
       else if (b == kEditMode && p != Press::Long) browser_->down();
@@ -462,7 +479,8 @@ class Surface {
   void dispatch(uint8_t b, Press p) {
     const uint8_t t = selected();
     const uint8_t slot = selectedSlot(t);
-    if (browsing() && (b == kRecord || b == kTrackSwitch || b == kEditMode)) {
+    if (browsing() && (b == kRecord || b == kTrackSwitch || b == kEditMode ||
+                       (browser_->picking() && (b == kLength || b == kPlayStop)))) {
       browse(b, p);
       return;
     }
@@ -528,6 +546,10 @@ class Surface {
       } else if (p == Press::Triple) {
         slot_[t] = s;
         control().redo(target, tick_, us_, us());
+      } else if (browser_ != nullptr) {  // long (DEC-272): get a loop for it — the picker, an open edit left first
+        slot_[t] = s;
+        leaveEdit();
+        browser_->openPickerFromSlot(target, !empty(target));
       } else {  // long: the length popup — on an empty slot after its empty loop (owner 2026-11-08)
         slot_[t] = s;
         if (empty(target)) control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);

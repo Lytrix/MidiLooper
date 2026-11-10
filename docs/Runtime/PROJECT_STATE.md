@@ -42,7 +42,11 @@ cancelled, kept and undone as designed. Then (owner: "Need beat line", DEC-271 a
 on the next beat with a late join; device `252bca64…`: the old loop stopped before its next note, cancel back within
 0.6 s. **Step c (DEC-270 amendment 3 — the preview roll):** tile slot 64 for a loop that is no working-set slot,
 swept by the same sweep, its request pinned until swept, cancelled cleanly; native 4,492 passed; device `9e080954…`:
-swept, switched without stale bars, hidden. Next: step d, the picker screen (mockups first).
+swept, switched without stale bars, hidden. **Step d (DEC-272 — the picker):** mockups agreed (layout A, presets 1–16
+bars, USE); built: `GET A LOOP` in a set's view and a slot's long press, the grid, the preview, audition and USE, empty
+loops (asked over a filled slot). Native 4,499 passed; device `abc7df2a…`: both entries, preview, audition (heard),
+USE, a preset with its confirmation, undo — all as designed. Slice 6b complete; owner to judge the grid size and dots
+vs squares (`!ENGINE pick-squares 1`) on the panel.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
