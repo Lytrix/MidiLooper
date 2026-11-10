@@ -533,6 +533,26 @@ void test_copy_mode_counts_down_and_a_double_press_clears_the_source() {
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // and its release starts nothing
 }
 
+// Owner 2026-11-10: with the transport stopped a filled slot's press only selects it — the clock stays stopped — and
+// the next start plays it.
+void test_a_slot_press_on_a_stopped_transport_only_selects() {
+  recordOneBar(0, 60);
+  tap(S::kTransportNote);  // stop
+  ms(500);
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_FALSE(X().playing(0));
+  tap(S::kSlotBase + 0);
+  ms(500);
+  TEST_ASSERT_FALSE(gClk.running());  // not started
+  TEST_ASSERT_FALSE(X().playing(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gS.selectedSlot(0));
+  tap(S::kTransportNote);  // the start plays it
+  ms(500);
+  TEST_ASSERT_TRUE(gClk.running());
+  TEST_ASSERT_TRUE(X().playing(0));
+  TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -806,6 +826,31 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   gS.setBrowser(nullptr);
 }
 
+/// Owner 2026-11-10: in copy mode the source slot held again is LOAD LOOP too (the picker for it); another slot's long
+/// hold only ends copy mode.
+void test_holding_the_copy_source_again_opens_the_picker() {
+  gBrowser.clear();
+  library::Record r{};
+  r.sequence = 1;
+  r.set = 1;
+  gBrowser.add(r);
+  gBrowser.setWorking(1, 1);
+  gS.setBrowser(&gBrowser);
+  gS.input(0x9F, S::kSlotBase + 2, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 2, 0, gUs / 1000);
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  tap(S::kSlotBase + 2, 700);  // held again
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_TRUE(gS.browsing());
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Picker, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT8(2, gBrowser.pickDestination());
+  gBrowser.close();
+  gS.setBrowser(nullptr);
+}
+
 /// DEC-272: copy mode's LOAD LOOP (a slot's long press, then TRACK) opens the picker for that slot; there NOTELEN,
 /// PLAY/STOP, REC and EDIT are the moves (up, down, left, right) — none reaches the transport, a take or a track — and a
 /// long press exits to playing.
@@ -891,6 +936,7 @@ int main(int, char**) {
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
   RUN_TEST(test_copy_mode_copies_slots_across_tracks);
   RUN_TEST(test_copy_mode_counts_down_and_a_double_press_clears_the_source);
+  RUN_TEST(test_a_slot_press_on_a_stopped_transport_only_selects);
   RUN_TEST(test_the_transport_button_stops_and_starts_locally_under_an_external_clock);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
@@ -902,6 +948,7 @@ int main(int, char**) {
   RUN_TEST(test_the_evidence_counts_takes_with_others_and_gestures_not_the_transport);
   RUN_TEST(test_the_browser_takes_record_track_and_edit_while_open);
   RUN_TEST(test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it);
+  RUN_TEST(test_holding_the_copy_source_again_opens_the_picker);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

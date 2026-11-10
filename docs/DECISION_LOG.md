@@ -15979,3 +15979,13 @@ and every copy undone (1-3 and 1-5 empty again).
   no-paste-select mutations fail them; full native 4,515 passed. Device (image `1d6f845a…`): 1-1 → 1-3 pasted (slot 3 selected, UNDO 4); a long
   hold of 1-6 in copy mode closed it, 1-6 unchanged, no window after; 1-3's double press cleared it; record's double
   brought the copy back, again the empty slot.
+- **Amendment 6 (owner 2026-11-10: "if you select a slot from stopped it should not start the looper"; "pressing hold
+  again in the copy window should open the get loop next to the option of hold track"; a short press of the same slot
+  exits, as it does):** with the transport stopped a filled slot's short press only selects it — the clock stays
+  stopped, the next start plays it (`Surface::slotToggle`; arming an empty slot, its second press starting the take,
+  and the double press's launch are unchanged). In copy mode the source slot held again (600 ms, on its own track) is
+  LOAD LOOP, as TRACK switch's short press: the get-a-loop picker for it (`loadLoop`); the hint reads
+  `HOLD/[TRK] LOAD LOOP  2× CLEAR`. Native `test_a_slot_press_on_a_stopped_transport_only_selects`,
+  `test_holding_the_copy_source_again_opens_the_picker` — their mutations fail them; full native 4,517 passed. Device (image `f863c59b…`): from
+  stopped, 1-2 pressed → SLOT 2 selected, `running=0`, nothing playing; 1-1 held → the copy window with the new hint,
+  held again → the picker for 1-1; a long REC → playing screen.

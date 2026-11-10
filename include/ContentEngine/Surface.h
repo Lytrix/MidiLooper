@@ -29,7 +29,8 @@
 //     records (empty) or plays (filled) at the loop end; an empty slot arms Record — at the playing slot's loop start,
 //     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
 //     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
-//     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
+//     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped — with the
+//     transport stopped it is only selected, the next start plays it (owner 2026-11-10)); double =
 //     launch (owner 2026-11-10, slice B): a filled slot plays at the next launch step (the global launch quantisation,
 //     `TrackControl::setLaunchGrid`: 1/16 default, 1/8, 1/4, bar) — a queued one sooner than its loop end; an empty
 //     slot, or one on a track taking, as the short press; the playing slot keeps playing, a queued switch dropped (clear is
@@ -74,7 +75,7 @@
 //   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
 //   step) — one undo step, it flashes, and the window closes; a long press of any button (another slot / bar / step
 //   included) closes it at once. The track
-//   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
+//   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press, or the source slot held again, is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
@@ -656,12 +657,7 @@ class Surface {
     const uint8_t t = selected();
     const uint8_t slot = selectedSlot(t);
     if (copy_ == Copy::Slot && b == kTrackSwitch && p == Press::Short) {  // LOAD LOOP: the picker for the source slot
-      const uint8_t src = copySlot_;
-      endCopy();
-      if (browser_ != nullptr) {
-        leaveEdit();
-        browser_->openPickerFromSlot(src, !empty(src));
-      }
+      loadLoop();
       return;
     }
     if (browsing() && (p == Press::Long || b == kRecord || b == kTrackSwitch || b == kEditMode ||
@@ -1123,6 +1119,7 @@ class Surface {
         control().queueSwitch(t, slot, Engine::Control::Quantize::LoopEnd, tick_);
       return;
     }
+    if (!clock_->running()) return;  // owner 2026-11-10: from stopped a press selects; the next start plays it
     play(t, slot, Engine::Control::Quantize::NextGrid);
   }
 
@@ -1271,6 +1268,13 @@ class Surface {
     }
     for (uint8_t b = 0; b < kButtons; ++b) {  // a long press of anything else ends it, doing nothing else
       if (copyHolding_ && b == sourceButton()) continue;
+      if (copy_ == Copy::Slot && b == sourceButton() && copySlot_ == selected() * kSlotsPerTrack + copyButton_ &&
+          press_.heldMs(b, ms) >= kCopyHoldMs) {  // the source held again: LOAD LOOP (owner 2026-11-10)
+        press_.consume(b);
+        exitButton_ = b;
+        loadLoop();
+        return;
+      }
       if (press_.heldMs(b, ms) >= kCopyHoldMs) {
         press_.consume(b);
         exitButton_ = b;  // the hold that ended it starts none until released
@@ -1304,6 +1308,15 @@ class Surface {
     return copy_ == Copy::Slot ? static_cast<uint8_t>(kSlot0 + copyButton_)
            : copy_ == Copy::Note ? static_cast<uint8_t>(kStep0 + copyButton_)
                                  : 0xFF;
+  }
+  /// LOAD LOOP (copy mode on a slot: TRACK switch's short press, or the source held again): the get-a-loop picker for
+  /// the source slot; copy mode ends.
+  void loadLoop() {
+    const uint8_t src = copySlot_;
+    endCopy();
+    if (browser_ == nullptr) return;
+    leaveEdit();
+    browser_->openPickerFromSlot(src, !empty(src));
   }
   /// A slot (slot copy) or a step (note copy) button: a paste target.
   bool copyTarget(uint8_t b) const {
