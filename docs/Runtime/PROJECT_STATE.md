@@ -1,3 +1,9 @@
+**2026-11-10 — DEC-288: the groove builds in the background (groove design slice 3).** A grain-stepped job: rows
+reserved first (waiting / too big), one extraction window a grain, heap-sorted shaping, 512 rows written a grain;
+published only on the state it started from (stale builds dropped) and switched in on a bar line a window ahead. Full
+native 4,541 passed; device `4e68126f…`: 134 grains within 28 ms, switch at tick 1,536. RAM1 8 KB headroom (browser
+screens draw from flash).
+
 **2026-11-10 — DEC-287: the groove pass (groove design slice 2).** A grooved state keeps its passes as a source prefix
 (not played: composed empty in place) and plays a groove pass G built from their effective content, moved by a
 template (built-ins incl. MPC / SP-1200 swing) and an amount; prefix rule keeps pass order; amount 0 removes G; one

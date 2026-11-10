@@ -2228,6 +2228,7 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
   s.tmpl = ContentEngine::groove::kStraight;
   s.amount = 100;
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  run(gUs + 4 * 768 * kTick);  // built in the background, heard from a bar line
   const auto& m = gE.manifests().manifest(gE.transport().contentOf(0));
   uint8_t grooves = 0, takes = 0;
   for (uint8_t i = 0; i < m.runCount; ++i) {
@@ -2243,8 +2244,9 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
   // Amount 0: the groove pass removed, the recorded timing back.
   s.amount = 0;
+  gS.leaveVisit();  // a new visit: its own undo step
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
-  run(gUs + 2 * 768 * kTick);
+  run(gUs + 4 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), 130);
   TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
   // Undo: the grooved state again, then the original.
@@ -2254,6 +2256,56 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
   gE.control().undo(0, gLast, gUs, gClk.usPerTick());
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), 130);
+}
+
+// DEC-288 (groove design slice 3): the groove is built in grains in the background — the old state plays until it is
+// published — and the tracks switch on a bar line: across the switch every bar holds the old place or the new one.
+void test_a_groove_is_built_in_grains_and_switches_on_a_bar_line() {
+  recordBar({{130, 60}});
+  const uint32_t before = gE.manifests().manifest(gE.transport().contentOf(0)).identity;
+  ContentEngine::groove::Settings s;
+  s.tmpl = ContentEngine::groove::kStraight;
+  s.amount = 100;
+  ms(300);  // mid-bar
+  const uint32_t from = gHeardCount;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  TEST_ASSERT_TRUE(gE.grooveState() != ProductionGroove::State::Idle);
+  TEST_ASSERT_EQUAL_UINT32(before, gE.manifests().manifest(gE.transport().contentOf(0)).identity);  // not yet
+  run(gUs + 6 * 768 * kTick);
+  TEST_ASSERT_TRUE(gE.grooveGrains() > 3);  // more than one grain
+  TEST_ASSERT_EQUAL(ProductionGroove::State::Idle, gE.grooveState());
+  TEST_ASSERT_TRUE(gE.manifests().manifest(gE.transport().contentOf(0)).identity != before);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.groovePublishedAt() % 768);  // the tracks follow from a bar line
+  // One note a bar: 130 until the switch, 144 after — never both in one bar, never back.
+  bool switched = false;
+  uint32_t lastBar = 0xFFFFFFFFu;
+  for (uint32_t i = from; i < gHeardCount; ++i) {
+    if (gHeard[i % 4096].pitch != 60) continue;
+    const uint32_t local = gHeard[i % 4096].tick - gE.transport().origin(0);
+    const uint32_t bar = local / 768, at = local % 768;
+    TEST_ASSERT_TRUE(bar != lastBar);
+    lastBar = bar;
+    if (at == 144) switched = true;
+    else TEST_ASSERT_FALSE(switched);
+    TEST_ASSERT_TRUE(at == 130 || at == 144);
+  }
+  TEST_ASSERT_TRUE(switched);
+}
+
+// DEC-288 (design review C8): a build publishes only on the state it started from — a change to the slot meanwhile
+// (here a length change) makes it stale: dropped, the newer state kept.
+void test_a_stale_groove_build_is_dropped() {
+  recordBar({{130, 60}, {600, 62}});
+  ContentEngine::groove::Settings s;
+  s.tmpl = ContentEngine::groove::kStraight;
+  s.amount = 100;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().resize(0, 384, gLast, gUs, gClk.usPerTick()));
+  const uint32_t resized = gE.manifests().manifest(gE.transport().contentOf(0)).identity;
+  run(gUs + 6 * 768 * kTick);
+  TEST_ASSERT_EQUAL(ProductionGroove::State::Idle, gE.grooveState());
+  TEST_ASSERT_EQUAL_UINT32(resized, gE.manifests().manifest(gE.transport().contentOf(0)).identity);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
 }
 
 // DEC-287 (design review C2): the groove row is a fourth marker row — the window (start 96, frame 768 of a shortened
@@ -2276,6 +2328,7 @@ void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
   s.tmpl = ContentEngine::groove::kMpc16_58;
   s.amount = 50;
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  run(gUs + 4 * 768 * kTick);
   const auto after = gE.control().window(0);
   TEST_ASSERT_EQUAL_UINT32(before.start, after.start);
   TEST_ASSERT_EQUAL_UINT32(before.frame, after.frame);
@@ -2319,6 +2372,8 @@ int main(int, char**) {
   RUN_TEST(test_groove_timing_goes_to_the_nearest_swung_target);
   RUN_TEST(test_a_groove_moves_the_notes_and_keeps_the_original);
   RUN_TEST(test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove);
+  RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_a_bar_line);
+  RUN_TEST(test_a_stale_groove_build_is_dropped);
   RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);

@@ -174,9 +174,10 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7197840u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+constexpr size_t kPsramBudget = 7198672u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
                                            // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
-                                           // compose cursor's lent-list pointer (DEC-286)
+                                           // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
+                                           // run lists and source list
 constexpr size_t kRam2Budget = 160072u;  // measured (DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -580,11 +581,32 @@ class EngineRoot {
   const ProductionHub& hub() const { return r_->hub; }
   ProductionOutput& output() { return r_->output; }
   ProductionControl& control() { return r_->control; }
-  /// Groove (DEC-287): the slot's groove pass rebuilt per `q` (amount 0: removed), one undo step (`replace` as resize).
-  ProductionTransport::Result groove(uint8_t slot, const GrooveRequest& q, uint32_t clock, uint32_t nowUs,
-                                     uint32_t usPerTick, uint32_t replace = 0) {
-    return r_->control.groove(p_->groove, slot, q, clock, nowUs, usPerTick, replace);
+  /// Groove (DEC-287, DEC-288): starts the slot's groove build per `q` (amount 0: its removal), in the background.
+  ProductionTransport::Result grooveStart(uint8_t slot, const GrooveRequest& q) {
+    return r_->control.grooveStart(p_->groove, slot, q);
   }
+  /// One groove grain; a ready build published so the tracks playing the slot follow from the next bar line at least a
+  /// window ahead (stopped: at once). Ok: published this call (one undo step; `replace` as resize).
+  ProductionTransport::Result grooveService(uint32_t tick, bool running, uint32_t nowUs, uint32_t usPerTick,
+                                            uint32_t replace = 0) {
+    if (p_->groove.state() == ProductionGroove::State::Waiting || p_->groove.state() == ProductionGroove::State::Building)
+      p_->groove.step();
+    if (p_->groove.state() != ProductionGroove::State::Ready) return ProductionTransport::Result::NoChange;
+    uint32_t at = tick;
+    if (running) {
+      at = (tick / kTicksPerBar + 1) * kTicksPerBar;
+      if (at - tick < kWindowTicks) at += kTicksPerBar;  // the tracks get a window to prepare
+    }
+    const auto r = r_->control.grooveFinish(p_->groove, at, nowUs, usPerTick, replace);
+    if (r == ProductionTransport::Result::Ok) groovePublishedAt_ = at;
+    return r;
+  }
+  /// The tick the last published groove's tracks follow from (diagnostics: a bar line while running).
+  uint32_t groovePublishedAt() const { return groovePublishedAt_; }
+  /// The groove job's state and its last build's grains (diagnostics, the window's `…` / TOO BIG).
+  ProductionGroove::State grooveState() const { return p_->groove.state(); }
+  uint32_t grooveGrains() const { return p_->groove.grains(); }
+  void grooveCancel() { p_->groove.cancel(); }
   ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
   NoteIdSource& noteIds() { return r_->ids; }  // a created note's fresh id (ids are never reused)
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }
@@ -831,6 +853,7 @@ class EngineRoot {
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
   bool gatherLive_ = false, rebuildLive_ = false, persistLive_ = false;
+  uint32_t groovePublishedAt_ = 0;  // DEC-288
   // DEC-260: the set switch point; the tracks a live load stopped (bit t) and the slots they played.
   ProductionControl::SwitchAt switchAt_ = ProductionControl::SwitchAt::NextBar;
   uint8_t switched_ = 0;

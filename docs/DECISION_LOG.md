@@ -16355,3 +16355,34 @@ resize_keeps_the_groove` (start 96 / frame / ranges read with the fourth row; th
 `test_the_prefix_rule_keeps_pass_order`. Full native 4,538 passed (196 suites). Device image `4b14fd26…`: on 1-3
 `groove 2 50` (MPC 16 58 %, 50 %) in 1,808 µs — 4 sources + G (196 rows) + fit with the marker; after a reboot
 (`crash=0`, `BOOT,load,ok`) the same. Not yet heard by the owner.
+
+## DEC-288 — The groove pass is built in the background and switched in on a bar line
+
+**Date:** 2026-11-10. **Owner:** "Yes, start slice 3" (groove design § 9 slice 3; § 5: reservation first, waiting vs.
+cannot-fit, cancellation, generation-qualified publish, a musical switch-over). Amends DEC-287 (which built
+synchronously).
+
+**Decision:**
+- `GrooveBuilder` is a job: `start` (the newest setting drops any build in progress), then `step` a grain at a time from
+  `Surface::service` — `Waiting` (allocate G and reserve its upper bound, the prefix's rows capped at 8,192: refused for
+  want of free pages → retry next grain; a run's size exceeded → `TooBig`), then `Building` (the index and composer
+  start; one extraction window a grain; the held-note close; the shaping; 512 rows written a grain), then `Ready`.
+  `Failed` (index, more than 128 open) and `TooBig` release everything (run, reservation, the composer's pin). Amount 0
+  is `Ready` at once (the groove removed).
+- `SlotTransport::grooveFinish` publishes only while the slot's current state is the one the build started from — an
+  undo, load, edit, take or length change meanwhile makes it stale: dropped (C8). `EngineRoot::grooveService` publishes
+  a ready build so the tracks follow from the next bar line at least a playback window (1,536 ticks) ahead — or the bar
+  after; stopped: at once — and records that tick (`groovePublishedAt`). The settings of one GROOVE visit are one undo
+  step (`Surface::leaveVisit` ends it).
+- Shaping sorts by heap sort (up to 4,096 records, 8,192 rows), never quadratic. Serial: `groove` starts, `groove-status`
+  reports state, grains and the switch tick. PSRAM + 832 B (the job's run lists). RAM1: the sets browser's remaining
+  screens draw from flash (`DISPLAY_COLD`, 10 functions) — code 417,868, 8,116 B before the next 32 KiB bank.
+
+**Evidence:** native: `test_a_groove_is_built_in_grains_and_switches_on_a_bar_line` (applied mid-bar: the old state
+plays on, more than 3 grains, the switch tick a bar line, every bar after holds the old place or the new, never back);
+`test_a_stale_groove_build_is_dropped` (a length change during the build: the build dropped, the resized state kept,
+no groove marker); `test_a_too_big_groove_build_releases_everything` (40 notes into a 64-row builder: `TooBig`, the run
+reclaimed, reservations consistent); the DEC-287 tests now wait for the publish. Mutations: switching at the current
+tick fails the bar-line test; publishing without the identity check fails the stale test. Full native 4,541 passed.
+Device image `4e68126f…`: transport running, `groove 10 75` (SP 16 63 %, 75 %) on 1-3 — 134 grains, done within 28 ms,
+the tracks switched at tick 1,536 (a bar line); frame draw worst 381 µs.

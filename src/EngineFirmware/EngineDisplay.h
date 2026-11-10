@@ -130,7 +130,7 @@ class EngineDisplay {
   /// black pixel): `OSTINATIX` in the 5 × 7 font four times its size,
   /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
   /// performance frame then opens on the saved selection, DEC-273).
-  void drawTitle() {
+  DISPLAY_COLD void drawTitle() {
     uint8_t* f = fb();
     oled_.gfx.fill_buffer(f, 0);
     static const char kTitle[] = "OSTINATIX";
@@ -519,7 +519,7 @@ class EngineDisplay {
   ContentEngine::wallclock::Local when(const Record& m) const {
     return ContentEngine::wallclock::local(m.wallTime, browserInfo_.tz);
   }
-  void drawBrowser(const Browser& b, ContentEngine::EngineRoot& e) {
+  DISPLAY_COLD void drawBrowser(const Browser& b, ContentEngine::EngineRoot& e) {
     engine_ = &e;
     if (b.view() == Browser::View::Popup) {
       drawSavePopup(b);
@@ -562,7 +562,7 @@ class EngineDisplay {
   /// DEC-268: the target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
   /// its stage) and when it was saved — or `EMPTY THE TRASH?`, for good — over the list; YES and CANCEL, the selected
   /// one inverted.
-  void drawConfirm(const Browser& b) {
+  DISPLAY_COLD void drawConfirm(const Browser& b) {
     constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
     if (b.confirmKind() == Browser::Confirm::EmptyLoop) {  // DEC-272: an empty loop over a filled slot, centred
       window(x0, y0, x1, y1, "EMPTY LOOP");
@@ -609,7 +609,7 @@ class EngineDisplay {
     drawButtons(b, x0, x1, kButtonY);
   }
   /// YES and CANCEL, the selected one inverted, and the confirmation's line.
-  void drawButtons(const Browser& b, int16_t x0, int16_t x1, int16_t buttonY) {
+  DISPLAY_COLD void drawButtons(const Browser& b, int16_t x0, int16_t x1, int16_t buttonY) {
     const char* const kButtons[2] = {"YES", "CANCEL"};
     for (uint8_t k = 0; k < 2; ++k) {
       const int16_t bx = static_cast<int16_t>(k == 0 ? x0 + 24 : x1 - 50), bw = 30;
@@ -783,7 +783,7 @@ class EngineDisplay {
         }
   }
   /// The spine: a line down the dated rows (sets, stages), broken between months.
-  void drawSpine(const Browser& b) {
+  DISPLAY_COLD void drawSpine(const Browser& b) {
     const uint16_t n = b.rowCount(), last = static_cast<uint16_t>(b.first() + Browser::kVisible);
     int16_t top = -1;
     ContentEngine::wallclock::Local prev{};
@@ -809,7 +809,7 @@ class EngineDisplay {
       for (int16_t yy = top; yy <= bottom; ++yy) px(kSpineX, yy, 6);
     }
   }
-  void drawRow(const Browser& b, uint16_t i) {
+  DISPLAY_COLD void drawRow(const Browser& b, uint16_t i) {
     const Row r = b.row(i);
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
@@ -904,7 +904,7 @@ class EngineDisplay {
     if (note[0] != 0) rlabel(note, kNoteXR, y, on ? 15 : kDimText);
   }
   /// A milestone: its id three times the size, the stage and a second line under it; the mosaic beside.
-  void drawMilestone(const Record& m, const char* line2, const char* line3) {
+  DISPLAY_COLD void drawMilestone(const Record& m, const char* line2, const char* line3) {
     char id[8];
     idText(m, id, sizeof id);
     label(id, kDetailX, kMosaicY, 15, 3);

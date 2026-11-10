@@ -16,8 +16,10 @@
 // so a groove always starts from the original timing and pass order (precedence) is never reordered; edit passes after
 // that stay after the new G. Amount 0: no G, the prefix and the passes after it played as they are.
 //
-// Synchronous here (slice 2): bounded by `kRows` rows and the extraction composer's 128 open notes, named when larger.
-// The background build — reservation, waiting, cancelling, generation-qualified publish — is slice 3.
+// A background job (DEC-288): `start`, then `step` a grain at a time — rows reserved first (waiting while pages are
+// held, `TooBig` when it cannot fit), the index and the composer's start, one extraction window a grain, the shaping,
+// `kWriteRows` rows a grain — then `Ready`; `SlotTransport::grooveFinish` publishes it only on the state it started
+// from. Bounded by `kRows` rows and the extraction composer's 128 open notes, named when larger.
 
 #pragma once
 
@@ -61,6 +63,10 @@ class GrooveBuilder {
     rows_ = rows;
     c_->init(pool, runs, &index);
     c_->extractAll(lent_, kLent);  // every effective note: 128 tracked, 128 selected (DEC-286)
+    state_ = State::Idle;  // memory is not constructed: `init` sets the job's fields
+    begun_ = false;
+    run_ = kNoRun;
+    generation_ = grains_ = 0;
   }
 
   /// The run lists of a rebuild of the state listing `list[0..n)` (no fit run among them): `prefix` (its count
@@ -85,43 +91,154 @@ class GrooveBuilder {
     for (int16_t i = lastTake < 0 ? g + 1 : lastTake + 1; i < n; ++i) after[afterCount++] = list[i];
   }
 
-  /// G for `prefix[0..n)` (the base state's `identity`), as a sealed run of `slot` with the writer's reference (`out`).
-  CE_COLD GrooveResult build(uint8_t slot, uint32_t identity, const RunId* prefix, uint8_t n, const GrooveRequest& q,
-                     RunId& out) {
-    out = kNoRun;
-    if (n == 0 || q.frame == 0) return GrooveResult::TooLarge;
-    count_ = 0;
-    open_ = 0;
-    // The prefix's effective content over the stored loop (its own view identity, DEC-286).
-    SourceRun src[64];
-    for (uint8_t i = 0; i < n; ++i) src[i] = {prefix[i], runs_->run(prefix[i]).rowCount};
-    const uint32_t view = prefixViewIdentity(identity);
-    IndexLease lease;
-    const IndexResult ir = index_->acquire(view, src, n, lease);
-    if (ir != IndexResult::Ready && ir != IndexResult::NotNeeded) return GrooveResult::Index;
-    const bool begun = c_->begin(src, n, q.frame, view);
-    index_->release(lease);
-    if (!begun) return GrooveResult::Index;
-    GrooveResult r = GrooveResult::Ok;
-    bool first = true;
-    for (uint8_t cycle = 0; cycle < 2 && r == GrooveResult::Ok; ++cycle) {  // the second only closes held notes
-      if (cycle == 1 && open_ == 0) break;
-      if (cycle == 1 && !c_->nextCycle()) break;
-      while (r == GrooveResult::Ok && c_->composeNext(*w_, kWindowTicks)) {
-        r = collect(cycle == 0 ? 0 : q.frame, cycle == 0);
-        if (cycle == 1 && open_ == 0) break;
-      }
-      first = false;
+  /// The job's state (DEC-288, slice 3): `Idle` nothing asked; `Waiting` for rows (the reservation was refused for want
+  /// of free pages — held by things that end); `Building` in grains; `Ready` G sealed (or none: the groove removed),
+  /// to be published; `TooBig` it cannot fit (more than `kRows` rows, a run's size); `Failed` (index, open notes).
+  enum class State : uint8_t { Idle, Waiting, Building, Ready, TooBig, Failed };
+
+  /// Starts a build for `slot` from the state of `identity` whose content runs partition into `prefix` / `after`; any
+  /// build in progress is dropped (the newest setting wins). Amount 0: no G — `Ready` at once (the groove removed).
+  CE_COLD State start(uint8_t slot, uint32_t identity, const RunId* prefix, uint8_t pc, const RunId* after, uint8_t ac,
+                      const GrooveRequest& q) {
+    cancel();
+    slot_ = slot;
+    base_ = identity;
+    q_ = q;
+    pc_ = pc;
+    ac_ = ac;
+    for (uint8_t i = 0; i < pc; ++i) prefix_[i] = prefix[i];
+    for (uint8_t i = 0; i < ac; ++i) after_[i] = after[i];
+    ++generation_;
+    if (q.settings.amount == 0) return state_ = State::Ready;
+    if (pc == 0 || q.frame == 0) return state_ = State::Failed;
+    uint32_t rows = 0;
+    for (uint8_t i = 0; i < pc; ++i) rows += runs_->run(prefix[i]).rowCount;
+    reserve_ = rows < kRows ? rows : kRows;  // G's rows at most: the prefix's (every effective row comes from one)
+    state_ = State::Waiting;
+    return state_;
+  }
+  /// Drops the build: its run, its reservation and the composer's index pin released.
+  CE_COLD void cancel() {
+    if (begun_) c_->end();
+    begun_ = false;
+    if (run_ != kNoRun) {
+      res_->forgive(run_);
+      runs_->seal(run_);
+      runs_->release(run_);
     }
-    (void)first;
-    const uint32_t overflow = c_->stats().openOverflow;
-    c_->end();
-    if (r != GrooveResult::Ok) return r;
-    if (overflow != 0) return GrooveResult::TooManyOpen;
-    for (uint32_t i = 0; i < count_; ++i)  // still open after two cycles: held, ends a tick before its next start
-      if (rec_(i).isNote() && rec_(i).end == kOpen) rec_(i).end = rec_(i).start + q.frame - 1;
-    moveAndResolve(q);
-    return write(slot, q.frame, out);
+    run_ = kNoRun;
+    state_ = State::Idle;
+  }
+  /// One grain: a reservation attempt, the index and the composer's start, one window of the extraction, the shaping,
+  /// or up to `kWriteRows` rows written. Returns the state after it.
+  CE_COLD State step() {
+    switch (state_) {
+      case State::Waiting: {
+        run_ = runs_->allocate(slot_, RunKind::kGroove);
+        if (run_ == kNoRun) return state_;  // no run descriptor free yet: still waiting
+        const Admission a = res_->reserve(run_, reserve_);
+        if (a != Admission::Ok) {
+          runs_->seal(run_);
+          runs_->release(run_);
+          run_ = kNoRun;
+          if (a == Admission::DeniedRunFull) state_ = State::TooBig;
+          return state_;
+        }
+        phase_ = Phase::Prepare;
+        return state_ = State::Building;
+      }
+      case State::Building:
+        return build();
+      default:
+        return state_;
+    }
+  }
+  /// After a publish: the writer's reference to G goes (the manifest holds it); the job is idle.
+  void published() {
+    if (run_ != kNoRun) runs_->release(run_);
+    run_ = kNoRun;
+    state_ = State::Idle;
+  }
+  State state() const { return state_; }
+  uint8_t slot() const { return slot_; }
+  uint32_t base() const { return base_; }
+  uint32_t generation() const { return generation_; }
+  const GrooveRequest& request() const { return q_; }
+  RunId groovePass() const { return run_; }
+  uint8_t prefixCount() const { return pc_; }
+  uint8_t afterCount() const { return ac_; }
+  RunId prefixRun(uint8_t i) const { return prefix_[i]; }
+  RunId afterRun(uint8_t i) const { return after_[i]; }
+  /// Diagnostics: grains taken by the last build.
+  uint32_t grains() const { return grains_; }
+
+  static constexpr uint32_t kWriteRows = 512;  // rows written a grain
+
+ private:
+  enum class Phase : uint8_t { Prepare, Extract, Close, Shape, Write };
+  CE_COLD State build() {
+    ++grains_;
+    switch (phase_) {
+      case Phase::Prepare: {  // the prefix's effective content over the stored loop, under its own view identity
+        grains_ = 1;
+        count_ = 0;
+        open_ = 0;
+        written_ = 0;
+        for (uint8_t i = 0; i < pc_; ++i) src_[i] = {prefix_[i], runs_->run(prefix_[i]).rowCount};
+        const uint32_t view = prefixViewIdentity(base_);
+        IndexLease lease;
+        const IndexResult ir = index_->acquire(view, src_, pc_, lease);
+        if (ir != IndexResult::Ready && ir != IndexResult::NotNeeded) return fail(State::Failed);
+        begun_ = c_->begin(src_, pc_, q_.frame, view);
+        index_->release(lease);
+        if (!begun_) return fail(State::Failed);
+        phase_ = Phase::Extract;
+        return state_;
+      }
+      case Phase::Extract: {  // one window of the first cycle
+        if (!c_->composeNext(*w_, kWindowTicks)) {
+          phase_ = open_ != 0 && c_->nextCycle() ? Phase::Close : Phase::Shape;
+          return state_;
+        }
+        if (collect(0, true) != GrooveResult::Ok) return fail(State::TooBig);
+        return state_;
+      }
+      case Phase::Close: {  // the second cycle only closes notes held over the loop end
+        if (open_ == 0 || !c_->composeNext(*w_, kWindowTicks)) {
+          phase_ = Phase::Shape;
+          return state_;
+        }
+        collect(q_.frame, false);
+        return state_;
+      }
+      case Phase::Shape: {
+        const uint32_t overflow = c_->stats().openOverflow;
+        c_->end();
+        begun_ = false;
+        if (overflow != 0) return fail(State::Failed);
+        for (uint32_t i = 0; i < count_; ++i)  // still open after two cycles: held, ends a tick before its next start
+          if (rec_(i).isNote() && rec_(i).end == kOpen) rec_(i).end = rec_(i).start + q_.frame - 1;
+        moveAndResolve(q_);
+        if (!rows(q_.frame)) return fail(State::TooBig);
+        phase_ = Phase::Write;
+        return state_;
+      }
+      case Phase::Write: {
+        const uint32_t end = written_ + kWriteRows < rowCount_ ? written_ + kWriteRows : rowCount_;
+        for (; written_ < end; ++written_) res_->writeOwed(run_, out_[written_]);
+        if (written_ < rowCount_) return state_;
+        res_->forgive(run_);  // the rows reserved beyond G's
+        runs_->seal(run_);
+        return state_ = State::Ready;
+      }
+    }
+    return state_;
+  }
+  State fail(State s) {
+    const uint32_t g = grains_;
+    cancel();
+    grains_ = g;
+    return state_ = s;
   }
 
  private:
@@ -195,16 +312,8 @@ class GrooveBuilder {
       x.start = groove::wrap(static_cast<int64_t>(x.start) + d, frame);
       x.end = x.start + len;
     }
-    // Same pitch (and channel): sort by (pitch, start, order) — insertion over a nearly sorted list.
-    for (uint32_t i = 1; i < count_; ++i) {
-      const Rec x = rec_(i);
-      uint32_t j = i;
-      while (j > 0 && less(x, rec_(j - 1))) {
-        rec_(j) = rec_(j - 1);
-        --j;
-      }
-      rec_(j) = x;
-    }
+    // Same pitch (and channel): sorted by (pitch, start, order).
+    heapSort(&rec_(0), count_, less);
     uint32_t w = 0;
     for (uint32_t i = 0; i < count_; ++i) {
       Rec x = rec_(i);
@@ -233,17 +342,15 @@ class GrooveBuilder {
     return a.order < b.order;
   }
 
-  /// G's rows: a NoteOn and a NoteOff a note (the NoteOff past the loop end when the note wraps), each event, in tick
-  /// order with NoteOffs first at a tick (DEC-244). Written from the end of the buffer down so the records (at its
-  /// start) are read before they are overwritten.
-  CE_COLD GrooveResult write(uint8_t slot, uint32_t frame, RunId& out) {
-    uint32_t rows = 0;
-    for (uint32_t i = 0; i < count_; ++i) rows += rec_(i).event ? 1 : 2;
-    if (rows > kRows) return GrooveResult::TooLarge;
-    // Rows into the buffer's top part: records occupy [0, 2 × count_) rows' space; the rows go to [kRows − rows, kRows).
-    if (2 * count_ > kRows - rows) return GrooveResult::TooLarge;
-    PassEvent* r = rows_ + (kRows - rows);
+  /// G's rows: a NoteOn and a NoteOff a note (the NoteOff past the loop end when the note wraps), each event, sorted
+  /// in tick order with NoteOffs first at a tick (DEC-244), into the buffer's top (`out_`, `rowCount_`): the records
+  /// (at its start) are read before anything overwrites them. False: more rows than reserved or the buffer holds.
+  CE_COLD bool rows(uint32_t frame) {
     uint32_t n = 0;
+    for (uint32_t i = 0; i < count_; ++i) n += rec_(i).event ? 1 : 2;
+    if (n > reserve_ || n > kRows || 2 * count_ > kRows - n) return false;
+    out_ = rows_ + (kRows - n);
+    uint32_t k = 0;
     for (uint32_t i = 0; i < count_; ++i) {
       const Rec& x = rec_(i);
       PassEvent on{};
@@ -252,7 +359,7 @@ class GrooveBuilder {
       on.status = x.status;
       on.data1 = x.data1;
       on.data2 = x.data2;
-      r[n++] = on;
+      out_[k++] = on;
       if (x.event) continue;
       PassEvent off{};
       off.tick = x.end;
@@ -260,21 +367,12 @@ class GrooveBuilder {
       off.status = static_cast<uint8_t>(0x80 | (x.status & 0x0F));
       off.data1 = x.data1;
       off.origin = x.end - x.start >= frame ? kOriginHeldLoop : 0;
-      r[n++] = off;
+      out_[k++] = off;
     }
-    heapSort(r, n);
-    for (uint32_t i = 0; i < n; ++i) r[i].seq = i;
-    const RunId run = runs_->allocate(slot, RunKind::kGroove);
-    if (run == kNoRun) return GrooveResult::DeniedRun;
-    if (res_->reserve(run, n) != Admission::Ok) {
-      runs_->seal(run);
-      runs_->release(run);
-      return GrooveResult::DeniedCapacity;
-    }
-    for (uint32_t i = 0; i < n; ++i) res_->writeOwed(run, r[i]);
-    runs_->seal(run);
-    out = run;
-    return GrooveResult::Ok;
+    heapSort(out_, k, before);
+    for (uint32_t i = 0; i < k; ++i) out_[i].seq = i;
+    rowCount_ = k;
+    return true;
   }
   /// Row order: tick, then NoteOffs before everything else at a tick (DEC-244), then events, then NoteOns; then noteId.
   static uint8_t cls(const PassEvent& e) {
@@ -286,26 +384,29 @@ class GrooveBuilder {
     if (cls(a) != cls(b)) return cls(a) < cls(b);
     return a.noteId < b.noteId;
   }
-  CE_COLD static void sift(PassEvent* a, uint32_t i, uint32_t n) {
+  template <typename X, typename Less>
+  static void sift(X* a, uint32_t i, uint32_t n, Less lt) {
     for (;;) {
       uint32_t m = i;
       const uint32_t l = 2 * i + 1, r = l + 1;
-      if (l < n && before(a[m], a[l])) m = l;
-      if (r < n && before(a[m], a[r])) m = r;
+      if (l < n && lt(a[m], a[l])) m = l;
+      if (r < n && lt(a[m], a[r])) m = r;
       if (m == i) return;
-      const PassEvent t = a[i];
+      const X t = a[i];
       a[i] = a[m];
       a[m] = t;
       i = m;
     }
   }
-  CE_COLD static void heapSort(PassEvent* a, uint32_t n) {
-    for (uint32_t i = n / 2; i-- > 0;) sift(a, i, n);
+  /// In place, O(n log n), no allocation (the shaping sorts up to 4,096 records, the writing up to 8,192 rows).
+  template <typename X, typename Less>
+  static void heapSort(X* a, uint32_t n, Less lt) {
+    for (uint32_t i = n / 2; i-- > 0;) sift(a, i, n, lt);
     for (uint32_t end = n; end > 1; --end) {
-      const PassEvent t = a[0];
+      const X t = a[0];
       a[0] = a[end - 1];
       a[end - 1] = t;
-      sift(a, 0, end - 1);
+      sift(a, 0, end - 1, lt);
     }
   }
 
@@ -317,6 +418,17 @@ class GrooveBuilder {
   SpanWindow<WindowCap>* w_ = nullptr;
   PassEvent* rows_ = nullptr;
   uint32_t count_ = 0, open_ = 0;
+  // The job (DEC-288).
+  State state_ = State::Idle;
+  Phase phase_ = Phase::Prepare;
+  bool begun_ = false;
+  uint8_t slot_ = 0, pc_ = 0, ac_ = 0;
+  uint32_t base_ = 0, generation_ = 0, reserve_ = 0, written_ = 0, rowCount_ = 0, grains_ = 0;
+  RunId run_ = kNoRun;
+  GrooveRequest q_;
+  RunId prefix_[64], after_[64];
+  SourceRun src_[64];
+  PassEvent* out_ = nullptr;
   static constexpr uint8_t kLent = 128;     // the writer's open-note bound
   typename Extraction::Open lent_[kLent];   // the open list lent to the extraction composer
 };

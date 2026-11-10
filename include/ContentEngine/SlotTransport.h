@@ -115,7 +115,6 @@ class SlotTransport {
     manifests_ = &manifests;
     history_ = &history;
     writer_ = &writer;
-    lastGroove_ = GrooveResult::Ok;
     for (uint8_t i = 0; i < Tracks; ++i) {
       tracks_[i] = tracks[i];
       slot_[i] = kNoSlot;
@@ -457,19 +456,14 @@ class SlotTransport {
     w.bLength = marks->bLength;
     w.groove = marks->groove;
   }
-  /// Groove (DEC-287): a state of the slot's runs regrouped per the prefix rule — the source prefix kept, a new groove
-  /// pass `G` built by `gb` from it (none at amount 0), the passes after it — with a fit run rebuilt for them carrying
-  /// the setting and the window's marks. One undo step; `replace` as `resize`. Refused (nothing changed) when the groove
-  /// pass cannot be built (`lastGroove()` names why) or the run list is full.
+  /// Groove (DEC-287, DEC-288): starts `gb`'s background build of the slot's groove pass per the prefix rule (amount 0:
+  /// its removal). NoChange: no groove to remove; Busy: the slot is written or auditioned; Refused: too big at once.
   template <typename Builder>
-  CE_COLD Result groove(Builder& gb, uint8_t slot, const GrooveRequest& q, uint32_t clock, Emit* out, uint8_t max,
-                uint8_t& emitted, uint32_t replace = 0) {
-    emitted = 0;
+  CE_COLD Result grooveStart(Builder& gb, uint8_t slot, const GrooveRequest& q) {
     if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
-    const uint32_t loop = b.loopLengthTicks;
     RunId content[Manifests::kMaxRuns], prefix[Manifests::kMaxRuns], after[Manifests::kMaxRuns];
     uint8_t n = 0, pc = 0, ac = 0;
     bool hadGroove = false;
@@ -481,20 +475,36 @@ class SlotTransport {
     }
     if (q.settings.amount == 0 && !hadGroove) return Result::NoChange;
     gb.partition(content, n, prefix, pc, after, ac);
+    if (pc + 1 + ac + 1 > Manifests::kMaxRuns) return Result::Refused;
+    const auto st = gb.start(slot, b.identity, prefix, pc, after, ac, q);
+    return st == Builder::State::TooBig || st == Builder::State::Failed ? Result::Refused : Result::Ok;
+  }
+  /// Publishes `gb`'s ready build (DEC-288): only while the slot's current state is the one it started from — an undo,
+  /// load, edit or take since makes it stale: dropped (Refused). The new state lists the prefix, G (none when the
+  /// groove was removed), the passes after it and a fit run rebuilt with the window's marks and the groove marker; one
+  /// undo step (`replace` as `resize`); tracks playing the slot follow from `clock` (a bar line ahead: a musical
+  /// step). NoChange: nothing ready.
+  template <typename Builder>
+  CE_COLD Result grooveFinish(Builder& gb, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
+                              uint32_t replace = 0) {
+    emitted = 0;
+    if (gb.state() != Builder::State::Ready) return Result::NoChange;
+    const uint8_t slot = gb.slot();
+    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;  // later
+    const ManifestId base = contentOf(slot);
+    if (base == kNoManifest || manifests_->manifest(base).identity != gb.base()) {
+      gb.cancel();  // stale: the slot changed while it was built
+      return Result::Refused;
+    }
+    const auto& b = manifests_->manifest(base);
+    const uint32_t loop = b.loopLengthTicks;
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
-    w.groove = q.settings.pack();
+    w.groove = gb.request().settings.pack();
     RunId list[Manifests::kMaxRuns];
     uint8_t ln = 0;
-    for (uint8_t i = 0; i < pc; ++i) list[ln++] = prefix[i];
-    RunId g = kNoRun;
-    if (q.settings.amount != 0) {
-      if (pc + 1 + ac + 1 > Manifests::kMaxRuns) return Result::Refused;
-      lastGroove_ = gb.build(slot, b.identity, prefix, pc, q, g);
-      if (lastGroove_ != GrooveResult::Ok)
-        return lastGroove_ == GrooveResult::DeniedRun ? Result::DeniedRun : Result::Refused;
-      list[ln++] = g;
-    }
-    for (uint8_t i = 0; i < ac; ++i) list[ln++] = after[i];
+    for (uint8_t i = 0; i < gb.prefixCount(); ++i) list[ln++] = gb.prefixRun(i);
+    if (gb.groovePass() != kNoRun) list[ln++] = gb.groovePass();
+    for (uint8_t i = 0; i < gb.afterCount(); ++i) list[ln++] = gb.afterRun(i);
     RunId fit = kNoRun;
     const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, ln, loop, fit, w);
     Result result = Result::Ok;
@@ -507,14 +517,16 @@ class SlotTransport {
       m = manifests_->create(slot, ++revision_, loop, list, ln, *runs_);
       if (m == kNoManifest) result = Result::DeniedManifest;
     }
-    if (g != kNoRun) runs_->release(g);  // the manifest holds them, or nothing does
     if (fit != kNoRun) runs_->release(fit);
-    if (result != Result::Ok) return result;
+    if (result != Result::Ok) {
+      gb.cancel();
+      return result;
+    }
+    gb.published();  // the manifest holds G now
     adopt(slot, base, m, replace);
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
   }
-  GrooveResult lastGroove() const { return lastGroove_; }
 
   /// The slot's play window in its stored notes (DEC-283; start 0 and the frame 0 without content).
   LoopWindow window(uint8_t slot) const {
@@ -970,7 +982,6 @@ class SlotTransport {
 
   Pool* pool_ = nullptr;
   FitBuilder<Pool, Runs, typename WriterT::Reservations> fit_;  // a resize's scratch (DEC-257)
-  GrooveResult lastGroove_ = GrooveResult::Ok;                   // the last groove build's outcome (DEC-287)
   Runs* runs_ = nullptr;
   Manifests* manifests_ = nullptr;
   HistoryT* history_ = nullptr;

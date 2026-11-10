@@ -466,8 +466,9 @@ class Surface {
   /// DEC-283: absolute): `scale` the stored loop's ticks (`frameOf`), `start` the current loop's start in it, `known`
   /// how far its notes reach from its start in whole bars (the loop past it is drawn as past the known length). False:
   /// no content.
-  /// Groove (DEC-287): the slot's groove pass rebuilt per `s` (amount 0: removed) over its stored loop, scope A / B
-  /// its remembered ranges; one undo step of its own. The engine's result.
+  /// Groove (DEC-287, DEC-288): starts the slot's groove build per `s` (amount 0: its removal) over its stored loop, scope
+  /// A / B its remembered ranges. Built in the background (`service`), heard from a bar line once ready; the settings of
+  /// one visit are one undo step. The engine's result (Ok: started).
   typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return Engine::Transport::Result::Empty;
@@ -484,10 +485,14 @@ class Surface {
       q.scopeStart = w.bStart;
       q.scopeLength = w.bLength;
     }
+    if (grooveSlot_ != slot) visitState_ = 0;  // a new visit: its first publish is a step
+    grooveSlot_ = slot;
+    return e_->grooveStart(slot, q);
+  }
+  /// Ends the groove visit (the GROOVE window closed): the next setting is an undo step of its own.
+  void leaveVisit() {
     visitState_ = 0;
-    const auto r = e_->groove(slot, q, tick_, us_, us(), 0);
-    if (r == Engine::Transport::Result::Ok) visited(slot);
-    return r;
+    grooveSlot_ = 0xFF;
   }
   /// Is the slot's loop its whole stored loop (DEC-284 amendment 3; true without content)?
   bool isFull(uint8_t slot) {
@@ -520,6 +525,8 @@ class Surface {
       edit_.velocityBegin(ms, true);
     }
     serviceCopy(ms);
+    if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_) == Engine::Transport::Result::Ok)
+      visited(grooveSlot_);  // DEC-288: a groove published; this visit's next one replaces it
     for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
       if (press_.heldMs(kStep0 + k, ms) >= kLockMs) {  // the parameter lock (an empty step: nothing, no gesture)
         lockStep_ = k;
@@ -1985,6 +1992,7 @@ class Surface {
   bool popup_ = false, popupHeld_ = false;  // the length popup; its button is down
   uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
   uint8_t popupChoice_ = 0xFF;  // the popup's selected choice (DEC-284 amendment 1)
+  uint8_t grooveSlot_ = 0xFF;   // the slot the groove job was last asked for (DEC-288)
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0;
   bool startPending_ = false;

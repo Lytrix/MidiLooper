@@ -157,10 +157,35 @@ void test_the_prefix_rule_keeps_pass_order() {
   TEST_ASSERT_EQUAL_UINT8(0, ac);
 }
 
+// DEC-288: a build too big for its row buffer stops as `TooBig` with everything released — its run, its reservation,
+// the composer's pin — and the state it was asked for unchanged (nothing published).
+void test_a_too_big_groove_build_releases_everything() {
+  gRes.init(gPool, gRuns, 0);
+  gBuilder.init(gPool, gRuns, gRes, gStore, gExtract, gWin, gRows);
+  const RunId r = gRuns.allocate(0, RunKind::kRecord);
+  for (uint32_t i = 0; i < 40; ++i) gRuns.append(r, row(10 + 20 * i, 1 + i, 0x90, 60, 100), gPool);
+  for (uint32_t i = 0; i < 40; ++i) gRuns.append(r, row(2000 + 20 * i, 1 + i, 0x80, 60, 0), gPool);
+  gRuns.seal(r);
+  const uint16_t freeRuns = gRuns.freeCount();
+  GrooveRequest q;
+  q.settings.tmpl = groove::kStraight;
+  q.settings.amount = 100;
+  q.frame = kLoop;
+  using B = decltype(gBuilder);
+  TEST_ASSERT_TRUE(gBuilder.start(0, 5, &r, 1, nullptr, 0, q) == B::State::Waiting);
+  B::State st = B::State::Waiting;
+  for (int i = 0; i < 100 && (st == B::State::Waiting || st == B::State::Building); ++i) st = gBuilder.step();
+  TEST_ASSERT_TRUE(st == B::State::TooBig);  // 40 notes: more than the 64-row buffer's 32 records
+  gRuns.reclaim(gPool, 1000);  // released runs come back through the reclaim queue
+  TEST_ASSERT_EQUAL_UINT16(freeRuns, gRuns.freeCount());
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_every_note_of_a_busy_loop_is_extracted);
   RUN_TEST(test_extraction_keeps_the_effective_rules);
   RUN_TEST(test_the_prefix_rule_keeps_pass_order);
+  RUN_TEST(test_a_too_big_groove_build_releases_everything);
   return UNITY_END();
 }
