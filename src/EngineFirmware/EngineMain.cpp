@@ -2119,17 +2119,13 @@ void loop() {
     ev.grooveField = gSurface.grooveField();
     ev.grooveTemplate = g.tmpl;
     ev.grooveAmount = g.amount;
-    ev.grooveScope = g.scope;
-    ev.grooveAuto = g.autoGroove;
+    ev.grooveAuto = gSurface.grooveAuto();  // DEC-295: AUTO Q, the window's
     ev.grooveState = static_cast<uint8_t>(gEngine.grooveState());
     ev.grooveProgress = gSurface.grooveProgress();  // DEC-292
     ev.grooveATemplate = gSurface.grooveA().tmpl;  // DEC-294
     ev.grooveAAmount = gSurface.grooveA().amount;
     ev.grooveHeard = static_cast<uint8_t>(gSurface.grooveHeard());
     ev.grooveCycling = gSurface.cycling();
-    ev.grooveCycleBars = gSurface.cycleBars();
-    ev.grooveCycleOff = gSurface.cycleWithOff();
-    ev.grooveCell = gSurface.cycleCell();
   }
   if (ed.active()) {
     ev.active = true;

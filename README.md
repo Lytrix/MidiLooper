@@ -118,27 +118,26 @@ The start, the length and both ranges are saved with the slot and come back afte
 
 ### Groove
 
-Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Open the GROOVE window on a loop with content: hold **PLAY/STOP** on the DROID (the supplied patch sends that long press as note 43 — load the updated `midilooper_v1.ini`), or hold **NOTELEN** and press **PLAY/STOP** (works with any patch). The same gesture closes it.
+Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Open the GROOVE window on a loop with content: hold **PLAY/STOP** on the DROID (the supplied patch sends that long press as note 43 — load the updated `midilooper_v1.ini`), or hold **NOTELEN** and press **PLAY/STOP** (works with any patch).
 
-| Field | Set with | Values |
-|-------|----------|--------|
-| **Template** | F2, or the encoder | STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH |
-| **Amount** | F1, or the encoder (5 % a detent) | 0–100 %: how far each note moves toward its swung place (50 % by default; 0 % removes the groove) |
-| **Bars** | F3, or the encoder | ALL, or only the notes inside range A or B (the slot's) |
-| **Cycle** | the encoder | 1, 2, 4 or 8 bars a turn, with or without OFF (2 bars by default) |
-| **Auto groove overdubs** | F4, or the encoder | a checkbox, the slot's: an overdub on this loop is grooved too once it ends |
+The window holds two grooves side by side, **A** and **B**: A is the loop's groove when you open it (straight 1/16 at 50 % if it has none), B starts as a copy for you to change. Above them `OFF  A  B` shows what you hear. The groove always applies to the whole loop.
 
-A short press of that button (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on the next beat — under a second at 120 BPM. A bar along the window's bottom fills while a change is on its way (settling, building, then waiting for the beat). The window shows `WAIT` or `TOO BIG` beside AUTO when the loop cannot be grooved yet or at all. It stays open while you try grooves: close it with the gesture that opened it or a long press of any button. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
+| Row | A | B |
+|-----|---|---|
+| **Groove** | F1 | F2 |
+| **Amount** (0–100 %: how far each note moves toward its swung place) | F3 | F4 |
 
-**Compare.** The window keeps two grooves: **A**, the one the loop had when you opened it, and **B**, the one you are editing (its template and amount shown bright, A's dim beside them). The top row shows `OFF · A · B` with the one you hear highlighted:
+Grooves: STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH.
 
-| NOTELEN in the GROOVE window | |
-|------|------|
-| Short | Switch between A and B |
-| Double | OFF: the loop without groove |
-| Long | Start or stop the cycle: A, B (and OFF with `+OFF`) take turns, each for the CYCLE's bars, every turn starting on its bar line. The top row becomes a timeline — a cell a bar, played dim, now bright, to come framed. Change B while it cycles and B's turn plays the change. |
+| Key in the GROOVE window | |
+|-----|---|
+| **REC** / **EDIT** | Select the value above / below; the encoder turns it (its push selects the next) |
+| **PLAY/STOP** | Step through OFF → A → B. While cycling: keep the one playing |
+| **PLAY/STOP** twice | Cycle: A and B take turns of two bars, each from its bar line (again: stop) |
+| **NOTELEN** (`[ADD]`) | AUTO Q, the checkbox in the title bar: an overdub on this loop is grooved too once it ends |
+| **Hold PLAY/STOP** | Apply: what is playing stays, and the window closes (a long press of any button does the same) |
 
-Closing the window keeps what is playing.
+A change is heard once you stop moving it: built in the background while the loop keeps playing, from the next beat — under a second at 120 BPM. Changing A or B makes that one heard (while cycling, its next turn plays it). A bar along the window's bottom fills while a change is on its way; `WAIT` or `TOO BIG` shows when the loop cannot be grooved yet or at all. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
 
 ### Loop-length popup
 

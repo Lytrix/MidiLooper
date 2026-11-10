@@ -1,3 +1,8 @@
+**2026-11-11 — DEC-295: the GROOVE window as a static A / B table.** Spaced as the load / save window: `OFF A B` over
+GROOVE and AMOUNT columns, both editable (F1 / F2 grooves, F3 / F4 amounts, REC / EDIT + encoder); PLAY/STOP steps
+OFF → A → B, double cycles A / B two bars each (global), hold applies; NOTELEN toggles AUTO Q in the title bar; keys
+along the bottom; BARS removed (whole loop). Full native 4,546 passed; device `a39c3b56…` (`crash=0`) frames on T7 S1.
+
 **2026-11-10 — DEC-294: the GROOVE window compares A, B and OFF on a timeline.** Layout A in the small font, the title
 centred: OFF · A · B on top (A the groove at opening, B edited), NOTELEN short A ↔ B, double OFF, long a cycle of
 1 / 2 / 4 / 8-bar turns (2 by default, OFF optional) shown as a timeline, each turn heard from its bar line; BARS

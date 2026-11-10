@@ -16538,3 +16538,36 @@ keeps it; one undo step); `test_auto_grooves_an_overdub` (AUTO the slot's). Full
 timeline `A A B B` lit bar by bar, long → stopped, open; the visit one undo step (5 → 6). Image `e90eb99a…` (the `%`
 glyph): the window with `60%`.
 
+## DEC-295 — The GROOVE window: a static A / B table, PLAY/STOP compares, NOTELEN is AUTO Q
+
+**Date:** 2026-11-11. **Owner:** keys shown along the bottom as in the other windows; AUTO as a title-bar checkbox (Atari
+GEM style, mockup 1 of `groove_window_hints_mockups.png`), named AUTO Q (Cubase); "remove the BARS ALL A B" (the whole
+loop); the cycle 2 bars, a global setting, A / B only ("you can always manually go back to off"); "[Ply] Switch 2x[Ply]
+2 Bar Audition A/B Hold[Ply]"; "better spaced similar to the load/save window … remove the A A B B, a window should be
+static so only switch the highlight"; both grooves the same brightness, "via the Rec/Edt and encoder or via the 4
+faders 1/2 for groove A/B 3/4 for amount A/B"; "Hold[Ply]Apply instead of Exit"; AUTO Q on NOTELEN. Mockup:
+`docs/Plans/images/groove_window_v4.png`.
+
+**Decision** (replaces DEC-294's NOTELEN compare, timeline, CYCLE field and BARS row):
+- **A and B, both edited:** opening takes the slot's groove as A (straight 50 % without one; a file template's table
+  kept), B a copy; OFF heard when the slot had none. A change makes its column heard (cycling: its next turn).
+- **Keys:** PLAY/STOP (transport or play / stop) short steps OFF → A → B, while cycling keeps the one playing; double
+  starts / stops the cycle (A then B, `cycleBars` — 2, a global setting with no control yet — from the next bar line);
+  a long press of any button applies (what plays stays) and closes. REC / EDIT select up / down, the encoder's push
+  down, its turn the value. NOTELEN toggles AUTO Q (the slot's, kept with what plays).
+- **Faders:** F1 (pitch bend ch 16) A's groove, F2 (CC 101) B's, F3 (CC 100) A's amount, F4 (pitch bend ch 15) B's.
+- **The window** (`EngineDisplay::drawGroove`): the load / save window's frame (x 27–228), the title centred,
+  `[ADD] ☐ AUTO Q` at the title bar's right, `OFF  A  B` over two columns with dim rules, GROOVE / AMOUNT, the selected
+  value inverted, the heard header inverted, `WAIT` / `TOO BIG` / `FAILED` on the header row, the progress bar along
+  the bottom; the hint row `[REC]↑ [EDT]↓  [PLY] OFF/A/B  2*[PLY] CYCLE` (cycling: `[PLY] KEEP  2*[PLY] STOP CYCLE`) and
+  `HOLD [PLY] APPLY`.
+- The scope is always the whole loop (`groove::kFull`); a selection is for later.
+
+**Evidence:** native `test_the_groove_window_sets_a_groove` (no groove: OFF heard, A / B straight 50 %; F4 → B 100 %
+heard 144; EDIT / REC move the selection, not the mute mode, REC records nothing; the encoder changes A's amount; a
+long press applies the settling change; two visits, two steps); `test_the_groove_window_compares_a_b_and_off` (PLAY/
+STOP B → OFF 130 → A 137 without stopping the clock; NOTELEN AUTO Q; double → A / B two whole bars each; short keeps;
+applied with AUTO Q; one undo step). Full native 4,546 passed. Device image `a39c3b56…` (`crash=0`): T7 S1 —
+open (A heard, A's groove selected), EDIT → A's amount, PLAY/STOP → B with the bar, double → cycling hints, the
+highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
+

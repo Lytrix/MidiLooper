@@ -2405,36 +2405,46 @@ void test_the_groove_window_sets_a_groove() {
   tap(S::kPlayStopNote, 700);  // long: open
   ms(50);
   TEST_ASSERT_TRUE(gS.grooveOpen());
-  TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kStraight, gS.grooveSettings().tmpl);
+  // DEC-295: no groove yet — A and B straight at 50 %, OFF heard, A's groove selected.
+  TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kStraight, gS.grooveA().tmpl);
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveA().amount);
   TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
-  tap(S::kPlayStopNote);  // short: the next field
-  ms(400);
-  TEST_ASSERT_EQUAL_UINT8(1, gS.grooveField());
-  TEST_ASSERT_TRUE(gE.transport().playing(0));  // PLAY/STOP did not stop the track while the window is open
-  pitchBend(15, 8191);  // F1 at the top: 100 %
+  pitchBend(14, 8191);  // F4 at the top: B's amount 100 %
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gS.grooveField());  // B's amount selected
   const uint8_t settling = gS.grooveProgress();
   TEST_ASSERT_TRUE(settling <= 25);  // DEC-292: the bar starts at once
-  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat
+  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat — the changed one heard
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
   TEST_ASSERT_TRUE(gS.grooveOpen());  // DEC-292: open until closed, however long idle
   TEST_ASSERT_EQUAL_UINT8(0xFF, gS.grooveProgress());  // heard: no bar
-  tap(S::kPlayStopNote, 700);  // a long press closes it
+  tap(S::kPlayStopNote, 700);  // a long press applies and closes
   ms(50);
   TEST_ASSERT_FALSE(gS.grooveOpen());
   tap(S::kTransportNote, 700);  // opened again — by the DROID's PLAY/STOP (the transport button, DEC-289 am. 1)
   ms(50);
-  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
-  tap(S::kTransportNote);  // the amount field (the transport button's press in the window, not a stop)
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveA().amount);  // A: the slot's groove now
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  tap(S::kEditModeNote);  // EDIT: down — A's amount
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(1, gS.grooveField());
+  TEST_ASSERT_FALSE(gS.trackMuteMode());  // EDIT in the window is not the mute mode
+  tap(S::kRecordNote);  // REC: up, and back down
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, gE.transport().mode());  // REC recorded nothing
+  tap(S::kEditModeNote);
   ms(400);
   TEST_ASSERT_TRUE(gClk.running());
   gS.encoderTurn(-2, gUs / 1000);  // 10 down …
   gS.encoderTurn(-2, gUs / 1000);  // … and 10 more, before it settles: one change
-  TEST_ASSERT_EQUAL_UINT8(80, gS.grooveSettings().amount);
-  tap(S::kPlayStopNote, 700);  // a long press closes it; the settling change is kept
+  TEST_ASSERT_EQUAL_UINT8(80, gS.grooveA().amount);
+  tap(S::kPlayStopNote, 700);  // a long press applies; the settling change is kept, and heard
   ms(50);
   TEST_ASSERT_FALSE(gS.grooveOpen());
   run(gUs + 4 * 768 * kTick);
@@ -2487,9 +2497,9 @@ void test_auto_grooves_an_overdub() {
   TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
 }
 
-// DEC-294 (owner 2026-11-10: "audition no groove, previous groove, new groove"; the timeline): in the window NOTELEN
-// switches A (the groove when it opened) and B (the one edited), its double plays OFF, its long press runs the cycle —
-// A, B (and OFF) two bars each, each turn heard from its bar line; closing keeps what plays, one undo step.
+// DEC-294 / DEC-295 (owner: "audition no groove, previous groove, new groove"): A (the groove when the window opened)
+// and B (a copy), both edited; PLAY/STOP steps OFF → A → B, its double cycles A / B two bars each from bar lines, a
+// short press keeps the one playing; NOTELEN is AUTO Q; applying keeps what plays, one undo step.
 void test_the_groove_window_compares_a_b_and_off() {
   recordBar({{130, 60}});
   ContentEngine::groove::Settings a;
@@ -2499,56 +2509,53 @@ void test_the_groove_window_compares_a_b_and_off() {
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), 137);
   const uint8_t undo0 = gE.history().undoDepth(0);
-  tap(S::kPlayStopNote, 700);  // open: B starts as A
+  tap(S::kPlayStopNote, 700);  // open: A heard, B a copy
   ms(50);
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
-  pitchBend(15, 8191);  // B: 100 % → 144
+  pitchBend(14, 8191);  // F4: B's amount 100 % → 144, heard
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
-  tap(S::kLengthNote);  // short: A
-  run(gUs + 2 * 768 * kTick);
-  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
-  EXPECT_ALL(positions(true, 60, 768), 137);
-  TEST_ASSERT_TRUE(gS.grooveOpen());  // NOTELEN does not close it
-  dbl(S::kLengthNote);  // double: OFF
+  tap(S::kPlayStopNote);  // PLAY/STOP: B → OFF
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   EXPECT_ALL(positions(true, 60, 768), 130);
-  // The cycle: A, B two bars each from the next bar line, each turn on its bar line.
-  tap(S::kLengthNote, 700);
-  ms(50);
+  tap(S::kPlayStopNote);  // OFF → A
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  EXPECT_ALL(positions(true, 60, 768), 137);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_TRUE(gClk.running());  // PLAY/STOP in the window: no stop
+  // NOTELEN: AUTO Q (the slot's), kept with what plays.
+  TEST_ASSERT_FALSE(gS.grooveAuto());
+  tap(S::kLengthNote);
+  ms(400);
+  TEST_ASSERT_TRUE(gS.grooveAuto());
+  // Double: the cycle — A, B two bars each from the next bar line, each turn on its bar line.
+  dbl(S::kPlayStopNote);
+  ms(450);
   TEST_ASSERT_TRUE(gS.cycling());
   const uint32_t from = gHeardCount;
   run(gUs + 9 * 768 * kTick);
-  uint32_t seen = 0;
-  for (uint32_t i = from; i < gHeardCount; ++i) {
-    if (gHeard[i % 4096].pitch != 60) continue;
-    const uint32_t at = (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768;
-    TEST_ASSERT_TRUE(at == 137 || at == 144 || at == 130);
-    ++seen;
-  }
-  TEST_ASSERT_TRUE(seen >= 8);
-  // Turns change only on the bar lines: two bars of A (137), two of B (144), repeating — never OFF without +OFF.
   uint32_t lastAt = 0, sameRun = 0, runs = 0;
   for (uint32_t i = from; i < gHeardCount; ++i) {
     if (gHeard[i % 4096].pitch != 60) continue;
     const uint32_t at = (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768;
-    if (at == 130) continue;  // the bar before the cycle's first
     TEST_ASSERT_TRUE(at == 137 || at == 144);
-    if (at == lastAt) ++sameRun;
-    else {
-      if (lastAt != 0 && runs > 0) TEST_ASSERT_EQUAL_UINT32(2, sameRun);  // a whole turn, then the other
+    if (at == lastAt) {
+      ++sameRun;
+    } else {
+      if (runs > 1) TEST_ASSERT_EQUAL_UINT32(2, sameRun);  // a whole turn, then the other
       lastAt = at;
       sameRun = 1;
       ++runs;
     }
   }
   TEST_ASSERT_TRUE(runs >= 3);
-  // Long again: stops where it is; closing keeps it — the visit one undo step.
-  tap(S::kLengthNote, 700);
-  ms(50);
+  // Short while cycling: keep the one playing; a long press applies it — the visit one undo step.
+  tap(S::kPlayStopNote);
+  ms(450);
   TEST_ASSERT_FALSE(gS.cycling());
   const S::Heard kept = gS.grooveHeard();
   tap(S::kPlayStopNote, 700);
@@ -2556,6 +2563,7 @@ void test_the_groove_window_compares_a_b_and_off() {
   TEST_ASSERT_FALSE(gS.grooveOpen());
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), kept == S::Heard::A ? 137u : 144u);
+  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
 }
 
