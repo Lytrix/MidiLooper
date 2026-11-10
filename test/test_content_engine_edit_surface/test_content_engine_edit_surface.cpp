@@ -2064,9 +2064,9 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   ms(100);
 }
 
-// DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"): NOTELEN's double press in LOOP_EDIT
-// restores the loop before the last LOOP_EDIT change — length and start — as a new undo step, keeping the edits made
-// since; pressed again it goes back.
+// DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"), DEC-284 ("trying several ranges
+// must never lose the way home"): NOTELEN's double press in LOOP_EDIT toggles between HOME (the loop as recorded) and
+// the variation (the last range of the buttons), as a new undo step keeping the edits made since.
 void test_loop_edit_notelen_double_restores_the_previous_loop() {
   recordBar({{96, 60}, {600, 62}});
   enterLoopEditOnContent();
@@ -2121,6 +2121,33 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(0, heardAt(70) % 384);
+  // Several ranges tried: the way home stays — HOME is still the recorded bar, the variation the last range.
+  gS.input(0x9F, 4, 127, gUs / 1000);  // steps 5..6 of the stored loop: 192, 96 long
+  ms(50);
+  gS.input(0x9F, 5, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 5, 0, gUs / 1000);
+  gS.input(0x8F, 4, 0, gUs / 1000);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
+  TEST_ASSERT_FALSE(gS.atHome(0));
+  tap(S::kLengthNote);
+  ms(80);
+  tap(S::kLengthNote);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // HOME, not the range before
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  TEST_ASSERT_TRUE(gS.atHome(0));
+  tap(S::kLengthNote);
+  ms(80);
+  tap(S::kLengthNote);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));  // the variation: steps 5..6
+  TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
+  // F2 sets HOME: the toggle then goes there.
+  tap(S::kEditModeNote, 700);
+  ms(100);
 }
 
 int main(int, char**) {

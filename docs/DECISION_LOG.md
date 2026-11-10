@@ -16181,3 +16181,27 @@ notes, the playhead 127; the loop's 16ths with notes stay 64. Also: the surface'
 `test_bars_with_notes_outside_the_loop_light_dim` (a 4-bar take, the loop bars 2..3: bars 1 and 4 at 32, the loop's
 bars at 48 or more, in LOOP_EDIT and after); device (image `454f5d8a…`, `crash=0`, `BOOT,load,ok`): `!ENGINE leds` on
 1-3 → bars `32/96/96/0/32`, steps 32 before the start and 64 in the loop.
+
+## DEC-284 — A loop has a HOME and one variation; NOTELEN's double toggles between them
+
+**Date:** 2026-11-10. **Owner:** a proposal pasted into the session (HOME range, a remembered variation toggled against
+it — "trying several ranges must never lose the way home"); asked, chose: NOTELEN's double press in LOOP_EDIT is the
+toggle; HOME is the loop as recorded (or as set by F1, F2 or the length popup), saved with the slot. Amends DEC-281
+(NOTELEN's double swapped with the loop before the last change, RAM only).
+
+**Decision:**
+- Each state carries HOME (a start in the stored loop and a length) and the variation (the same), as fit-run rows after
+  DEC-283's window row (`kFitHomeStatus` 0xF9, `kFitVariationStatus` 0xFA; `seq` the start, `noteId` the length; `tick`
+  0xFFFFFFFF). Absent: HOME is the current loop, no variation — so a take, and states saved before, have HOME where
+  they are. They are saved, loaded, undone and copied with the state; `SlotTransport::resize` / `rotate` take them as
+  `marks` (else keep the base's).
+- `Surface::setWindow` names what the change makes: the step / bar ranges and their double press set the variation
+  (HOME untouched); F1, F2 and the length popup set HOME (the variation kept); the toggle sets neither.
+- NOTELEN's double in LOOP_EDIT (`toggleHome`): at HOME → the variation (none: nothing); anywhere else → HOME. Its own
+  undo step; edits made since are kept (they live in the stored notes). DEC-281's RAM memory (`loopMemory_`) is gone.
+
+**Evidence:** native: the restore test now also tries a second range (steps 5..6) and toggles — HOME (768 from 0),
+not the range before — then back to the variation; a variation-overwrites-HOME mutation fails it. Device (image
+`4139bc6d…`, on 1-3: a 1-bar loop at bar 4 as found): bars 1–5, then bars 2–3; the toggle → bar 4 (HOME), again →
+bars 2–3 (the variation); after a reboot, from bars 2–3 the toggle → bar 4, again → bars 2–3 (both kept). Full native
+4,528 passed, 8 skipped.

@@ -63,10 +63,10 @@
 //     16th alone, DEC-280 amendment 1): its left end the new start
 //     (a rotation), its length the bars / 16ths covered (odd lengths too) — places in the stored loop (DEC-283: the
 //     start is saved with the state; bars of its 8-bar page playing, 16ths of its bar playing); the visit's one undo
-//     step, as F1 / F2. NOTELEN's double press in LOOP_EDIT (DEC-281) restores the
-//     slot's loop length and start from before its last LOOP_EDIT change, as a new undo step keeping the edits made
-//     since (`loopMemory_`, RAM only); pressed again it goes back. Bars, and the last bar's 16ths, that hold notes past
-//     the loop's end (kept by a shortening) light dim.
+//     step, as F1 / F2. The loop has a HOME (DEC-284: as recorded, or set by F1 / F2 / the length popup) and a
+//     variation (the last range of these buttons), both saved with the state; NOTELEN's double press in LOOP_EDIT
+//     toggles between them as a new undo step, the edits made since kept. Stored bars and 16ths outside the loop that
+//     hold notes light dim.
 // * The encoder (slice E; the Teensy's GPIO quadrature encoder and its push, legacy pins 29 / 30 / 31, read by the
 //   firmware: `encoderTurn` in detents, `encoderButton`), NOTE_EDIT only: push = the next option — pitch (first),
 //   move, length, velocity; turn = the selected note's option by the turn, accelerated as legacy
@@ -464,6 +464,12 @@ class Surface {
   /// DEC-283: absolute): `scale` the stored loop's ticks (`frameOf`), `start` the current loop's start in it, `known`
   /// how far its notes reach from its start in whole bars (the loop past it is drawn as past the known length). False:
   /// no content.
+  /// Is the slot's loop its HOME (DEC-284; true without content)?
+  bool atHome(uint8_t slot) {
+    if (slot >= Config::kSlotCount || transport().contentOf(slot) == kNoManifest) return true;
+    const LoopWindow w = homeOf(slot);
+    return w.start == w.homeStart && loopTicks(slot) == w.homeLength;
+  }
   bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known) {
     if (slot >= Config::kSlotCount) return false;
     const ManifestId c = transport().contentOf(slot);
@@ -763,8 +769,8 @@ class Surface {
         return;  // double: the set browser (a later slice)
       case kLength:
         if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
-          if (p == Press::Double) {  // the loop before the last change (DEC-281)
-            restoreLoop(shownSlot(t));
+          if (p == Press::Double) {  // HOME ↔ the variation (DEC-284)
+            toggleHome(shownSlot(t));
             return;
           }
           if (p == Press::Short || p == Press::Long)
@@ -915,7 +921,7 @@ class Surface {
     const uint8_t slot = shownSlot(selected());
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
-    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks);
+    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Home);
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
@@ -1003,81 +1009,83 @@ class Surface {
     const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
     const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
     if (start >= frame_) return;
-    setWindow(slot, start, length, true, true);  // buttons past the stored loop's end lengthen it
+    setWindow(slot, start, length, Mark::Variation, true);  // buttons past the stored loop's end lengthen it
   }
   void resizeTo(uint8_t slot, uint32_t loop) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
     beyondEnd(c);
-    setWindow(slot, frameStart_, loop);
+    setWindow(slot, frameStart_, loop, Mark::Home);
   }
+  /// What a LOOP_EDIT change makes of the loop (DEC-284): HOME (F1, F2, the length popup), the variation (the step /
+  /// bar buttons), or neither (NOTELEN's double, toggling between them).
+  enum class Mark : uint8_t { Home, Variation, Toggle };
   /// The shown loop becomes `length` ticks from `start` in the stored loop (DEC-283), in this visit's undo step: the
   /// content back to the whole stored loop, rotated there to the start (lossless: rotated at the frame's length), then
   /// cut to the length; a loop reaching past the stored loop's end wraps to its start. A loop longer than the stored loop
   /// — or, `grow`, one reaching past its end — makes it longer (rotated back to its start first, so the stored notes
-  /// keep their places). `remember`: the loop before is the way back (DEC-281).
-  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, bool remember = true, bool grow = false) {
+  /// keep their places). `mark`: what the new loop becomes (DEC-284); HOME and the variation are kept with every state.
+  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest || length == 0) return false;
     beyondEnd(c);
     uint32_t frame = frame_, at = frameStart_;
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
     if (start >= frame) return false;
-    if (start == at && length == loop) return false;
-    if (remember && (visitState_ == 0 || memSlot_ != slot)) {  // the visit's first change notes the loop as it was
-      memSlot_ = slot;
-      memLoop_ = loop;
-      memStart_ = at;
+    LoopWindow marks = homeOf(slot);
+    if (mark == Mark::Home) {
+      marks.homeStart = start;
+      marks.homeLength = length;
+    } else if (mark == Mark::Variation) {
+      marks.varStart = start;
+      marks.varLength = length;
     }
+    if (start == at && length == loop) return false;
     const auto ok = [&](typename X::Result r) {
       if (r != X::Result::Ok) return false;
       visited(slot);
       return true;
     };
-    if (loop != frame && !ok(control().resize(slot, frame, tick_, us_, us(), visitState_))) return false;
+    if (loop != frame && !ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
     if (length > frame || (grow && start + length > frame)) {  // longer: back to its start, then the frame grows
-      if (at != 0 && !ok(control().rotate(slot, frame - at, tick_, us_, us(), visitState_))) return false;
+      if (at != 0 && !ok(control().rotate(slot, frame - at, tick_, us_, us(), visitState_, &marks))) return false;
       at = 0;
       frame = start + length;
-      if (!ok(control().resize(slot, frame, tick_, us_, us(), visitState_))) return false;
+      if (!ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
     }
     const uint32_t shift = (start + frame - at) % frame;
-    if (shift != 0 && !ok(control().rotate(slot, shift, tick_, us_, us(), visitState_))) return false;
-    if (length != frame && !ok(control().resize(slot, length, tick_, us_, us(), visitState_))) return false;
-    if (remember && memSlot_ == slot) {
-      LoopMemory m;
-      m.loop = memLoop_;
-      m.start = memStart_;
-      loopMemory_[slot] = m;
-    }
+    if (shift != 0 && !ok(control().rotate(slot, shift, tick_, us_, us(), visitState_, &marks))) return false;
+    if (length != frame && !ok(control().resize(slot, length, tick_, us_, us(), visitState_, &marks))) return false;
     loopPark_ = true;  // the faders to the new start and length
     return true;
   }
-  // ---- The loop before the last change (DEC-281, owner 2026-11-10: "how can you revert to the earlier set loop
-  // length?") ----------------------------------------------------------------------------------------------------------
-  /// The way back for a slot (DEC-283: absolute): the loop's length and its start in the stored loop.
-  struct LoopMemory {
-    uint32_t loop = 0;  // 0: nothing remembered
-    uint32_t start = 0;
-  };
+  // ---- HOME and the variation (DEC-284, owner 2026-11-10: "trying several ranges must never lose the way home") -------
+  /// The slot's marks with HOME made explicit: the state's HOME, else the current loop.
+  LoopWindow homeOf(uint8_t slot) {
+    LoopWindow w = transport().window(slot);
+    if (w.homeLength == 0) {
+      w.homeStart = w.start;
+      w.homeLength = loopTicks(slot);
+    }
+    return w;
+  }
   uint32_t loopTicks(uint8_t slot) {
     const ManifestId c = transport().contentOf(slot);
     return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
   }
-  /// NOTELEN's double press in LOOP_EDIT: the slot's loop as it was before its last change, a new undo step (edits made
-  /// since kept); the way back is remembered in its place.
-  void restoreLoop(uint8_t slot) {
-    const LoopMemory m = loopMemory_[slot];
+  /// NOTELEN's double press in LOOP_EDIT: HOME ↔ the variation — from HOME to the variation (none: nothing), from
+  /// anywhere else to HOME; its own undo step, the edits made since kept.
+  void toggleHome(uint8_t slot) {
     const ManifestId c = transport().contentOf(slot);
-    if (m.loop == 0 || c == kNoManifest) return;
-    beyondEnd(c);
-    LoopMemory back;
-    back.loop = loopTicks(slot);
-    back.start = frameStart_;
+    if (c == kNoManifest) return;
+    const LoopWindow w = homeOf(slot);
+    const bool home = w.start == w.homeStart && loopTicks(slot) == w.homeLength;
+    if (home && w.varLength == 0) return;
     visitState_ = 0;  // its own step
-    if (!setWindow(slot, m.start, m.loop, false)) return;
-    loopMemory_[slot] = back;
-    memSlot_ = 0xFF;  // the next change notes the loop afresh
+    if (home)
+      setWindow(slot, w.varStart, w.varLength, Mark::Toggle);
+    else
+      setWindow(slot, w.homeStart, w.homeLength, Mark::Toggle);
     pendingStart_ = 0;
     startPending_ = false;
   }
@@ -1410,13 +1418,10 @@ class Surface {
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
   uint16_t rangeSteps_ = 0, rangeBars_ = 0;   // LOOP_EDIT: the step / bar buttons held (DEC-280)
-  LoopMemory loopMemory_[Config::kSlotCount];  // DEC-281: each slot's way back to its loop before the last change
-  uint8_t memSlot_ = 0xFF;                     // ... the slot this visit's changes are noted for
   uint32_t beyondIdentity_ = 0;                // the state `beyondEnd` last scanned
   uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
   uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
   uint32_t storedEnd_ = 0;                     // ... the end of its stored notes (ticks; DEC-282 amendment 1)
-  uint32_t memLoop_ = 0, memStart_ = 0;        // ... its loop then, and its start in the stored loop
   uint32_t frame_ = 0, frameStart_ = 0;        // ... the stored loop's length and the loop's start in it (DEC-283)
   uint32_t absEnd_ = 0;                        // ... how far its notes reach from the stored loop's start (whole bars)
   uint64_t absBars_ = 0;                       // ... the stored loop's bars holding a NoteOn

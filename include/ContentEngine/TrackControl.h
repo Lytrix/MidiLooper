@@ -193,18 +193,20 @@ class TrackControl {
   /// The slot's play window in its stored notes (DEC-283).
   LoopWindow window(uint8_t slot) const { return x_->window(slot); }
   /// Loop start (owner 2026-11-08): the slot's content rotated `shift` ticks earlier.
-  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
+  Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0,
+                const LoopWindow* marks = nullptr) {
     Emit buf[Tracks * T];
     uint8_t n;
-    const Result r = x_->rotate(slot, shift, clock, buf, Tracks * T, n, replace);
+    const Result r = x_->rotate(slot, shift, clock, buf, Tracks * T, n, replace, marks);
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
   /// Loop length (DEC-257): a play window over the slot's content.
-  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
+  Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0,
+                const LoopWindow* marks = nullptr) {
     Emit buf[Tracks * T];
     uint8_t n;
-    const Result r = x_->resize(slot, loop, clock, buf, Tracks * T, n, replace);
+    const Result r = x_->resize(slot, loop, clock, buf, Tracks * T, n, replace, marks);
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }

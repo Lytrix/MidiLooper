@@ -411,8 +411,9 @@ class SlotTransport {
   /// kept and not played. One undo step; tracks playing the slot follow from the next boundary.
   /// `replace` (owner 2026-11-08: one undo step a LOOP_EDIT visit): when the slot's current state has this identity, the
   /// new state replaces it in place instead of adding a step (0: always a step).
+  /// `marks` (DEC-284): HOME and the variation to keep with the new state (nullptr: the base's).
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
-                uint32_t replace = 0) {
+                uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
     if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -426,6 +427,7 @@ class SlotTransport {
     // DEC-283: the start kept, the frame at least the new loop.
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
     if (w.frame < loop) w.frame = loop;
+    mark(w, marks);
     RunId fit = kNoRun;
     const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
     if (f == FitResult::DeniedRun) return Result::DeniedRun;
@@ -445,6 +447,13 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  static void mark(LoopWindow& w, const LoopWindow* marks) {
+    if (marks == nullptr) return;
+    w.homeStart = marks->homeStart;
+    w.homeLength = marks->homeLength;
+    w.varStart = marks->varStart;
+    w.varLength = marks->varLength;
+  }
   /// The slot's play window in its stored notes (DEC-283; start 0 and the frame 0 without content).
   LoopWindow window(uint8_t slot) const {
     const ManifestId c = contentOf(slot);
@@ -458,7 +467,7 @@ class SlotTransport {
   /// them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot follow
   /// from the next boundary.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
-                uint32_t replace = 0) {
+                uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
     if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -482,6 +491,7 @@ class SlotTransport {
     // DEC-283: the start moves `shift` on in the frame (exact when the loop is the frame, as LOOP_EDIT rotates).
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     w.start = (w.start + shift) % w.frame;
+    mark(w, marks);
     RunId fit = kNoRun;
     if (result == Result::Ok) {
       const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
