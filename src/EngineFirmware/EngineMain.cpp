@@ -1995,12 +1995,13 @@ void loop() {
   ev.copySlot = gSurface.copySourceSlot();
   ev.copyBar = gSurface.copySourceBar();
   ev.copyPaste = static_cast<uint8_t>(gSurface.pasteMode());
-  {  // DEC-282: the shown loop as a part of its earlier one, for the progress bar
+  {  // DEC-282: the progress bar's frame — the stored loop, the current one bracketed in it
     const uint8_t t = gEngine.control().selectedTrack();
-    uint32_t original = 0, start = 0;
-    if (gSurface.loopSection(gSurface.shown(t), original, start)) {
-      ev.sectionOriginal = original;
-      ev.sectionStart = start;
+    uint32_t scale = 0, start = 0, known = 0;
+    if (gSurface.loopFrame(gSurface.shown(t), scale, start, known)) {
+      ev.barScale = scale;
+      ev.barStart = start;
+      ev.barKnown = known;
     }
   }
   ev.copyLeft = static_cast<uint16_t>(gSurface.copyMsLeft(millis()) * 1000 / Surface<EngineRoot>::kCopyIdleMs);

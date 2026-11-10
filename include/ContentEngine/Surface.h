@@ -460,6 +460,29 @@ class Surface {
   /// The shown slot's loop as a part of the loop it had before its last LOOP_EDIT change (DEC-281's memory; the progress
   /// bar's section, owner 2026-11-10): that `original` length and the current loop's `start` in it. False: no memory,
   /// or the current loop is not shorter.
+  /// The progress bar's frame (DEC-282 amendment 1, owner 2026-11-10: "all notes in the stored loop must be known"):
+  /// `scale` the ticks the bar spans — the loop before the last LOOP_EDIT change when the current one is a part of it,
+  /// else the stored notes' end in whole bars, at least the loop — `start` the current loop's start in it, `known` how
+  /// far the stored notes reach (the loop past it is drawn as past the known length). False: no content.
+  bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known) {
+    if (slot >= Config::kSlotCount) return false;
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest) return false;
+    beyondEnd(c);
+    const uint32_t loop = loopTicks(slot);
+    const uint32_t stored = (storedEnd_ + kBar - 1) / kBar * kBar;
+    uint32_t original = 0, from = 0;
+    if (loopSection(slot, original, from)) {
+      scale = original > stored ? original : stored;
+      start = from;
+      known = scale;  // the earlier loop's notes: the whole of it
+      return true;
+    }
+    scale = stored > loop ? stored : loop;
+    start = 0;
+    known = stored;
+    return true;
+  }
   bool loopSection(uint8_t slot, uint32_t& original, uint32_t& start) {
     if (slot >= Config::kSlotCount) return false;
     const LoopMemory& m = loopMemory_[slot];
@@ -1371,6 +1394,7 @@ class Surface {
   uint32_t beyondIdentity_ = 0;                // the state `beyondEnd` last scanned
   uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
   uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
+  uint32_t storedEnd_ = 0;                     // ... the end of its stored notes (ticks; DEC-282 amendment 1)
   uint32_t memLoop_ = 0, memRotation_ = 0;     // ... its loop then, and the rotation made at that length since
   uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint32_t barDownMs_[8] = {};                // ... since
@@ -1692,16 +1716,20 @@ class Surface {
     beyondIdentity_ = d.identity;
     beyondBars_ = 0;
     beyondSteps_ = 0;
+    storedEnd_ = 0;
     bool fit = false;
     for (uint8_t i = 0; i < d.runCount; ++i) fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
-    if (!fit) return;
     const uint32_t loop = d.loopLengthTicks, endBar = loop / kBar;
     for (uint8_t i = 0; i < d.runCount; ++i) {
       const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit || run.kind == RunKind::kEdit) continue;
+      if (run.kind == RunKind::kFit) continue;
       for (uint32_t r = 0; r < run.rowCount; ++r) {
         const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
-        if ((e.status & 0xF0) != 0x90 || e.data2 == 0 || e.tick < loop) continue;
+        const uint8_t type = e.status & 0xF0;
+        if (type == 0x80 || (type == 0x90 && e.data2 != 0))  // DEC-282 amendment 1: the stored notes' end
+          if (e.tick + 1 > storedEnd_) storedEnd_ = e.tick + 1;
+        if (!fit || run.kind == RunKind::kEdit) continue;
+        if (type != 0x90 || e.data2 == 0 || e.tick < loop) continue;
         const uint32_t b = e.tick / kBar;
         if (b < 64) beyondBars_ |= 1ull << b;
         if (b == endBar) beyondSteps_ = static_cast<uint16_t>(beyondSteps_ | (1u << ((e.tick % kBar) / kSixteenth)));

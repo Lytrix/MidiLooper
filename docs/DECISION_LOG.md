@@ -16106,3 +16106,16 @@ row) is the fallback if B reads too busy on the panel.
 the restore); full 4,524 passed. Device (image `de958635…`, on 1-2 copied onto 1-3, cleared after): bars 2..3 of the
 3-bar loop in LOOP_EDIT, then playing — the bar split in three, brackets from a third to the end, the fill inside;
 restored → the plain bar.
+
+**Amendment 1 (2026-11-10, the stored loop always):** owner: the bar "updates only after a few seconds" and "doesn't
+show the outside removed bars … all notes in the stored loop must be known so you can see up front what range you can
+set your loop … the base length of a loop should always be visible even when stopped. brackets should show if it moves
+past the known length or falls within … gaps to show bars/4 bars/8 bars/16 bars/32 bars". The bar is now drawn whenever
+the shown slot has content, stopped or playing, right of the save dots (which shared its row and hid it after each
+change — the delay). Its frame is `Surface::loopFrame`: the earlier loop while DEC-281's memory holds a part of it
+(brackets at that part), else the stored notes' reach in whole bars or the loop if longer (brackets at 0 and the loop
+end); the stored notes' reach comes from the content runs (every state, `beyondEnd`'s scan). The loop past the stored
+notes is dotted; the bracketed part not played yet is dim, the rest dimmer; gaps every 1, 4, 8, 16 or 32 bars, the
+finest with 3 pixels between. Evidence: native — the restore test checks the frame (768 from 96, then 768 from 0, an
+empty slot none), full suite below; device (image `a2e7e679…`): 1-2 stopped, 3-bar loop in its 8 stored bars, brackets
+and gaps shown at once; playing, the fill inside the brackets. Full native 4,524 passed, 8 skipped.
