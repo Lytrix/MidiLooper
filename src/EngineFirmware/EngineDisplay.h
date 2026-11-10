@@ -125,10 +125,14 @@ class EngineDisplay {
     const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * kAdvance * kScale - kScale);
     int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
     const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
-    // 12 lines (rows 6–50), symmetric about the title: grey 6 at the edges to 11 in the middle (owner: 1–4 not visible;
-    // a repeating 4–9 left the lower half too dark).
-    for (int16_t y = 6, i = 0; y <= 50; y = static_cast<int16_t>(y + 4), ++i)
-      hline(0, DISPLAY_WIDTH - 1, y, static_cast<uint8_t>(6 + (i < 11 - i ? i : 11 - i)));
+    // 12 lines (rows 10–54), symmetric about the title's centre (row 32): grey 11 for the two either side of it, down
+    // to 6 at the edges (owner: 1–4 not visible; a repeating 4–9 left the lower half too dark; centred on row 28 the
+    // gradient sat a line high).
+    const int16_t centre = static_cast<int16_t>(top + 7 * kScale / 2);
+    for (int16_t y = 10; y <= 54; y = static_cast<int16_t>(y + 4)) {
+      const int16_t d = static_cast<int16_t>(y > centre ? y - centre : centre - y);
+      hline(0, DISPLAY_WIDTH - 1, y, static_cast<uint8_t>(11 - d / 4));
+    }
     const GFXfont& font = Font5x7FixedMono;
     const int16_t xStart = x;
     for (uint8_t pass = 0; pass < 2; ++pass, x = xStart)  // a black edge around each letter, then the letters

@@ -15719,3 +15719,6 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
 - **Amendment 6 (owner 2026-11-10: the lines too dark on the lower half):** the 12 lines symmetric about the title,
   grey 6 at the edges rising to 11 in the middle (the repeating 4–9 put the darkest steps in the lower half). Device
   `db88488a…`, boot `crash=0`.
+- **Amendment 7 (owner 2026-11-10: "the gradient still seems to be offset … one or two lines too high"; accepted "yes
+  keep this"):** the lines move down 4 rows to 10–54 and the gradient centres on the title's middle (row 32): grey 11
+  for rows 30 and 34, down to 6 for rows 10 and 54. Device `ec053352…`, boot `crash=0`, `BOOT,load,ok`.
