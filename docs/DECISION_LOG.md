@@ -15707,3 +15707,7 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
   mockup 2, raster bars: grey bands rolling across rows 6–46, `OSTINATIX` in the 3 × 5 font five times its size cut
   out of them in black with a bright outline, `MIDI LOOPER` under it, `(C) 2026 LYTRIX` and `V0.7` along the bottom.
   Device `da8bf8bd…`, boot `crash=0`: as the mockup, up until the boot load ended (1.16 s); to be reviewed by the owner.
+- **Amendment 3 (owner 2026-11-10: "the display did not like this, it was flickering heavily"):** back to the plain
+  title (amendment 1). The raster bars light most of the screen at mid to high grey across full-width rows — far more
+  current than the plain title (likely the supply, as the dimming bar of 2026-11-09). The rebuilt image is
+  byte-identical to amendment 1's (`d9431e54…`), boot `crash=0`.

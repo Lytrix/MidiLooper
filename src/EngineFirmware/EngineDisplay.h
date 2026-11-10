@@ -112,41 +112,39 @@ class EngineDisplay {
   }
   /// The firmware's version on the title (owner 2026-11-10: legacy showed v0.6; the engine is v0.7).
   static constexpr const char* kVersion = "v0.7";
-  /// The title (owner 2026-11-10: mockup 2, raster bars — an 8-bit intro): grey bands rolling across the screen, the
-  /// title in the 3 × 5 font five times its size cut out of them in black with a bright outline, `MIDI LOOPER` under
-  /// it, the maker and the version along the bottom. From the display's start until the boot load has ended (the first
+  /// The title (owner 2026-11-10, as legacy `drawBootScreen`; the raster-bar title flickered on the panel — too much
+  /// of it lit): `OSTINATIX` in the 5 × 7 font four times its size,
+  /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
   /// performance frame then opens on the saved selection, DEC-273).
   void drawTitle() {
     uint8_t* f = fb();
     oled_.gfx.fill_buffer(f, 0);
-    static const uint8_t kBand[] = {1, 2, 4, 6, 9, 12, 9, 6, 4, 2, 1};
-    for (int16_t y = 6; y <= 46; ++y) hline(0, DISPLAY_WIDTH - 1, y, kBand[(y / 2) % sizeof kBand]);
     static const char kTitle[] = "OSTINATIX";
-    constexpr int16_t k = 5;
-    const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * 4 * k - k);
-    const int16_t x0 = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2), top = 14;
-    for (uint8_t pass = 0; pass < 2; ++pass) {  // the outline (each block grown by a pixel), then the black letters
-      int16_t x = x0;
-      for (const char* c = kTitle; *c != 0; ++c, x = static_cast<int16_t>(x + 4 * k)) {
-        const uint16_t b = micro(*c);
-        for (uint8_t i = 0; i < 15; ++i) {
-          if (!(b & (1u << (14 - i)))) continue;
-          const int16_t bx = static_cast<int16_t>(x + (i % 3) * k), by = static_cast<int16_t>(top + (i / 3) * k);
-          if (pass == 0)
-            oled_.gfx.draw_rect_filled(f, static_cast<int16_t>(bx - 1), static_cast<int16_t>(by - 1),
-                                       static_cast<int16_t>(bx + k), static_cast<int16_t>(by + k), 15);
-          else
-            oled_.gfx.draw_rect_filled(f, bx, by, static_cast<int16_t>(bx + k - 1), static_cast<int16_t>(by + k - 1), 0);
+    constexpr int16_t kScale = 4, kAdvance = 6;
+    const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * kAdvance * kScale - kScale);
+    int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
+    const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
+    const GFXfont& font = Font5x7FixedMono;
+    for (const char* c = kTitle; *c != 0; ++c, x = static_cast<int16_t>(x + kAdvance * kScale)) {
+      const uint8_t code = static_cast<uint8_t>(*c);
+      if (code < font.first || code > font.last) continue;
+      const GFXglyph& g = font.glyph[code - font.first];
+      uint16_t bit = 0;
+      uint8_t bits = 0;
+      for (uint8_t yy = 0; yy < g.height; ++yy)
+        for (uint8_t xx = 0; xx < g.width; ++xx, ++bit) {
+          if ((bit & 7) == 0) bits = font.bitmap[g.bitmapOffset + (bit >> 3)];
+          if (bits & 0x80) {
+            const int16_t px0 = static_cast<int16_t>(x + (g.xOffset + xx) * kScale);
+            const int16_t py0 = static_cast<int16_t>(top + (7 + g.yOffset + yy) * kScale);
+            oled_.gfx.draw_rect_filled(f, px0, py0, static_cast<int16_t>(px0 + kScale - 1),
+                                       static_cast<int16_t>(py0 + kScale - 1), 15);
+          }
+          bits = static_cast<uint8_t>(bits << 1);
         }
-      }
     }
-    clabel("MIDI LOOPER", DISPLAY_WIDTH / 2, 52, 11);
-    label("(C) 2026 LYTRIX", 2, 58, 5);
-    char v[8];
-    snprintf(v, sizeof v, "%s", kVersion);
-    for (char* c = v; *c != 0; ++c)
-      if (*c >= 'a' && *c <= 'z') *c = static_cast<char>(*c - 'a' + 'A');  // the 3 x 5 font has capitals only
-    rlabel(v, DISPLAY_WIDTH - 3, 58, 7);
+    text(kVersion, static_cast<int16_t>(DISPLAY_WIDTH - static_cast<int16_t>(strlen(kVersion)) * 6 - 2),
+         DISPLAY_HEIGHT, 8);
     sendBlocking();
   }
   /// Panel check (`!ENGINE oled-test`, and once at boot): `blocking` sends a full bright frame over plain SPI, else a
