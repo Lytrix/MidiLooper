@@ -73,7 +73,8 @@ Native 4,513 passed; device `f50f2dcb…`. Then (owner) **copy mode** replaced t
 slot / bar / step starts it (LED pulse, a small COPY window with `[TRK] LOAD LOOP`), short presses paste (three
 flashes) and the window closes (amendment 3), it closes by itself after 5 s (a track switch restarts the countdown) and a
 double press of the source clears it — a slot, a bar's or a step's notes, undoable with record's double after — and a
-long hold of another slot / bar / step makes it the source (amendment 7), the source held again is LOAD LOOP, and a slot pressed with the
+long hold of another slot / bar / step makes it the source (amendment 7), a bar / step target's press replaces and its
+double press merges, REC / EDIT choosing first, pasted notes under the overlap rule (amendment 8), the source held again is LOAD LOOP, and a slot pressed with the
 transport stopped only selects it (amendment 6), track buttons reach other tracks first; and **a long press exits every window**
 (browser, picker, popup), the trash moving to 2× TRACK (a `MOVE SET TO TRASH` row, stages directly) with 3× TRACK to
 undo (DEC-279 amendments 1–2). Native 4,514 passed; device `9cc54f15…`.

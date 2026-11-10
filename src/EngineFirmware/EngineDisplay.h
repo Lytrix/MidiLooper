@@ -74,6 +74,7 @@ struct EditView {
   uint8_t copy = 0;       // copy mode (DEC-279 amendment 1): 0 none, 1 a slot, 2 a bar, 3 a note
   uint8_t copySlot = 0, copyBar = 0, copyPitch = 0;  // its source: the engine slot, the bar (0–7), the note's pitch
   uint16_t copyLeft = 0;  // the countdown left, of 1000 (the window's bottom line shrinks with it)
+  uint8_t copyPaste = 0;  // a bar / note paste (DEC-279 amendment 8): 0 by the press, 1 replace, 2 merge
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
@@ -1216,15 +1217,22 @@ class EngineDisplay {
       snprintf(title, sizeof title, "COPY LOOP %u-%u", edit_.copySlot / 8 + 1, edit_.copySlot % 8 + 1);
     } else if (edit_.copy == 2) {
       snprintf(title, sizeof title, "COPY BAR %u", edit_.copyBar + 1);
-      paste = "PRESS A BAR TO PASTE";
+      paste = edit_.copyPaste == 1 ? "PRESS A BAR: REPLACE" : edit_.copyPaste == 2 ? "PRESS A BAR: MERGE"
+                                                                                  : "BAR: PRESS REPLACE 2* MERGE";
     } else {
       ContentEngine::status::noteName(edit_.copyPitch, name);
       snprintf(title, sizeof title, "COPY NOTE %s", name);
-      paste = "PRESS A STEP TO PASTE";
+      paste = edit_.copyPaste == 1 ? "PRESS A STEP: REPLACE" : edit_.copyPaste == 2 ? "PRESS A STEP: MERGE"
+                                                                                    : "STEP: PRESS REPLACE 2* MERGE";
     }
     label(title, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(title)) * 4) / 2), y0 + 4, 15);
     label(paste, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(paste)) * 4) / 2), y0 + 13, 11);
-    if (edit_.copy == 1) {  // a slot: the picker, or cleared (owner 2026-11-10: a double press of the source)
+    if (edit_.copy != 1) {  // a bar / a note: REC / EDIT choose the paste first (DEC-279 amendment 8)
+      const char* way = "[REC] REPLACE  [EDT] MERGE";
+      int16_t w = 0;
+      for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
+      hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
+    } else {  // a slot: the picker, or cleared (owner 2026-11-10: a double press of the source)
       const char* way = "HOLD/[TRK] LOAD LOOP  2* CLEAR";
       int16_t w = 0;
       for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);

@@ -47,7 +47,10 @@
 //   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
 // * Copy / paste (DEC-279; `Surface`'s copy mode picks the source and the targets; one undo step each): a note copied
 //   to a 16th at the same offset in it, beside what is there (`copyNote`); a bar copied over a bar of the 8-bar page
-//   holding the bracket (its notes replaced; `copyBar`, at most `kMaxPaste` notes deleted and added).
+//   holding the bracket (`copyBar`, at most `kMaxPaste` notes deleted and added). Replace (DEC-279 amendment 8): the
+//   target bar's / 16th's own notes go first; merge: they stay. Either way each pasted note then takes the overlap rule
+//   as the causing note in turn (`settleAdded`: same-pitch notes starting inside it hidden, one sounding into it ended
+//   at its start), all in the paste's one step.
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
 //   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
@@ -544,24 +547,22 @@ class EditSurface {
     n = session().current(static_cast<uint16_t>(index));
     return !n.deleted;
   }
-  /// Copy / paste: note `source` onto step `k` at its offset in the 16th, a new note beside those there. False: no such
-  /// note, outside the window, or refused.
-  bool copyNote(int16_t source, uint8_t k, uint32_t ms) {
+  /// Copy / paste: note `source` onto step `k` at its offset in the 16th — `merge`: beside the notes there; else they
+  /// go first (replace). False: no such note, outside the window, too many, or refused.
+  bool copyNote(int16_t source, uint8_t k, uint32_t ms, bool merge = false) {
     EditNote n;
     uint32_t tick;
     if (!noteAt(source, n) || !stepTick(k, tick)) return false;
     EditNote c = n;
     c.tick = tick + n.tick % kSixteenth;
     if (c.tick >= loop_ || c.tick >= first_ + ticks_) return false;
+    const uint16_t del = merge ? 0 : collectDeletes(tick, kSixteenth, source);
+    if (del == kMaxPaste) return false;
     c.noteId = e_->noteIds().peek();
     e_->noteIds().advance();
     c.deleted = 0;
-    open_ = false;
-    session().settle();
-    uint16_t at = 0;
-    if (session().create(c, focus(), at) != EditResult::Ok) return false;
-    drive(kMotorSelect, ms);  // F1's stack for the selection may have grown
-    return true;
+    paste_[del] = EditChange{0, c};
+    return paste(del, 1, ms);
   }
   /// Copy mode's clear (DEC-279 amendment 5): every note starting in [`from`, `from + ticks`) deleted, one edit step.
   /// False: none there, too many, or refused.
@@ -590,21 +591,16 @@ class EditSurface {
   /// Copy / paste: the bar starting at `src` over bar `to` of the 8-bar page holding the bracket (its notes deleted,
   /// the source's added at the same offsets). False: the same bar, outside the window or the loop, too many notes, or
   /// refused.
-  bool copyBar(uint32_t src, uint8_t to, uint32_t ms) {
+  bool copyBar(uint32_t src, uint8_t to, uint32_t ms, bool merge = false) {
     if (!editing() || to >= 8) return false;
     const uint32_t dst = barStart(to);
     if (src == dst) return false;
     const auto inside = [&](uint32_t t) { return t < loop_ && t >= first_ && t < first_ + ticks_; };
     if (!inside(src) || !inside(dst)) return false;
-    uint16_t del = 0, add = 0;
+    const uint16_t del = merge ? 0 : collectDeletes(dst, kBar, -1);  // replace: the target bar's notes go
+    if (del == kMaxPaste) return false;
+    uint16_t add = 0;
     const uint16_t size = session().size();
-    for (uint16_t i = 0; i < size; ++i) {  // the target bar's notes go
-      const EditNote& e = session().current(i);
-      if (e.deleted || e.tick < dst || e.tick >= dst + kBar) continue;
-      if (del == kMaxPaste) return false;
-      paste_[del] = EditChange{i, e};
-      paste_[del++].value.deleted = 1;
-    }
     for (uint16_t i = 0; i < size; ++i) {  // the source bar's come
       const EditNote& e = session().current(i);
       if (e.deleted || e.tick < src || e.tick >= src + kBar) continue;
@@ -618,14 +614,7 @@ class EditSurface {
       paste_[del + add++] = EditChange{0, c};
     }
     if (del + add == 0) return false;
-    open_ = false;
-    session().settle();
-    uint16_t first = 0;
-    if (session().applyAdding(paste_, del, add, focus(), first) != EditResult::Ok) return false;
-    EditNote n;
-    if (sel_ >= 0 && !selected(n)) pick(-1);  // the selection was in the target bar
-    drive(kMotorAll, ms);
-    return true;
+    return paste(del, add, ms);
   }
   /// The encoder's push while step `k` is held (slice E): a 16th C4 there, stacked beside the notes it holds.
   void stepAdd(uint8_t k, uint32_t ms) {
@@ -691,6 +680,37 @@ class EditSurface {
       return false;
     }
     state_ = State::Gathering;
+    return true;
+  }
+  /// Replace: the live notes starting in [`from`, `from + ticks`) as deletions in `paste_` (not `keep`); their count, or
+  /// `kMaxPaste` when they do not fit.
+  uint16_t collectDeletes(uint32_t from, uint32_t ticks, int16_t keep) {
+    uint16_t del = 0;
+    const uint16_t size = session().size();
+    for (uint16_t i = 0; i < size; ++i) {
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < from || e.tick >= from + ticks || static_cast<int16_t>(i) == keep) continue;
+      if (del + 1 >= kMaxPaste) return kMaxPaste;
+      paste_[del] = EditChange{i, e};
+      paste_[del++].value.deleted = 1;
+    }
+    return del;
+  }
+  /// `paste_`: `del` deletions, then `add` new notes, as one step; each new note then takes the overlap rule as the
+  /// causing note in turn, settled into that step (`settleAdded`).
+  bool paste(uint16_t del, uint16_t add, uint32_t ms) {
+    open_ = false;
+    session().settle();
+    uint16_t first = 0;
+    if (session().applyAdding(paste_, del, add, focus(), first) != EditResult::Ok) return false;
+    for (uint16_t i = 0; i < add; ++i) {  // the overlap rule, each pasted note causing in turn
+      session().cause(static_cast<int16_t>(first + i));
+      session().settle();
+    }
+    EditNote n;
+    if (sel_ >= 0 && !selected(n)) sel_ = -1;  // the selection was replaced or hidden
+    session().cause(sel_);
+    drive(kMotorAll, ms);
     return true;
   }
   /// The notes starting in `tick`'s 16th inside the window, in F1's stack order (start, then pitch).

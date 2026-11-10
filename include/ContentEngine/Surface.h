@@ -74,7 +74,10 @@
 //   also closes `kCopyIdleMs` after the source's release with nothing pasted (owner: a countdown, restarted by a track
 //   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
 //   step) — one undo step, it flashes, and the window closes. A long hold of another slot / bar / step (one with a note)
-//   makes it the source (owner 2026-11-10); a long press of any other button closes copy mode at once. The track
+//   makes it the source (owner 2026-11-10); a long press of any other button closes copy mode at once. A bar or a step
+//   target (DEC-279 amendment 8): its short press replaces the notes there, its double press merges with them (decided
+//   once the double window passes); REC / EDIT's short press chooses replace / merge first, and the target's press then
+//   pastes at once. The track
 //   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press, or the source slot held again, is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
@@ -341,10 +344,7 @@ class Surface {
         barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~bit);
         exitBars_ = static_cast<uint8_t>(exitBars_ & ~bit);
         if (copyReleased(Copy::Bar, bar, ms)) return;  // the source's own release
-        if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs && edit_.copyBar(copyBar_, bar, ms)) {
-          flash(static_cast<uint8_t>(40 + bar), selected(), ms);
-          endCopy();  // done: the window closes
-        }
+        if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs) targetPress(bar, ms);
       }
       return;
     }
@@ -433,6 +433,9 @@ class Surface {
     return left > 0 ? static_cast<uint32_t>(left) : 0;
   }
   Copy copyMode() const { return copy_; }
+  /// A bar / step paste (DEC-279 amendment 8): chosen by the target's press (Ask), or by REC (Replace) / EDIT (Merge).
+  enum class PasteMode : uint8_t { Ask, Replace, Merge };
+  PasteMode pasteMode() const { return pasteMode_; }
   uint8_t copySourceSlot() const { return copySlot_; }  // Slot: the engine slot
   uint8_t copySourceBar() const { return copyButton_; }  // Bar: 0–7 of its page
   int16_t copySourceNote() const { return copyNote_; }  // Note: its index in the session
@@ -658,6 +661,11 @@ class Surface {
     const uint8_t slot = selectedSlot(t);
     if (copy_ == Copy::Slot && b == kTrackSwitch && p == Press::Short) {  // LOAD LOOP: the picker for the source slot
       loadLoop();
+      return;
+    }
+    if ((copy_ == Copy::Bar || copy_ == Copy::Note) && (b == kRecord || b == kEditMode) && p == Press::Short) {
+      pasteMode_ = b == kRecord ? PasteMode::Replace : PasteMode::Merge;  // the next target pastes at once
+      copyUntil_ = nowMs_ + kCopyIdleMs;
       return;
     }
     if (browsing() && (p == Press::Long || b == kRecord || b == kTrackSwitch || b == kEditMode ||
@@ -1212,6 +1220,9 @@ class Surface {
   uint8_t copyTrack_ = 0;      // the track selected last (a switch restarts the countdown)
   uint32_t copyUntil_ = 0;     // the countdown's end (from the source's release)
   uint8_t sourceTaps_ = 0;     // the source pressed again: 1, waiting for a second (a double clears it)
+  uint8_t targetTaps_ = 0, targetButton_ = 0;  // a bar / step target pressed once: waiting for a second (merge)
+  uint32_t targetMs_ = 0;
+  PasteMode pasteMode_ = PasteMode::Ask;
   uint8_t exitButton_ = 0xFF;  // the button whose hold ended copy mode (none starts it until released)
   uint8_t exitBars_ = 0;       // ... a bar's
   uint32_t sourceTapMs_ = 0;
@@ -1244,6 +1255,11 @@ class Surface {
         beginCopy(Copy::Note, lockStep_, ms);
         copyNote_ = edit_.selection();
       }
+      return;
+    }
+    if (targetTaps_ == 1 && ms - targetMs_ > kCopyDoubleMs) {  // a target pressed once: replace
+      targetTaps_ = 0;
+      pasteTo(targetButton_, false, ms);
       return;
     }
     if (sourceTaps_ == 1 && ms - sourceTapMs_ > kCopyDoubleMs) {  // the source pressed once: cancelled
@@ -1324,11 +1340,14 @@ class Surface {
     copyTrack_ = selected();
     copyUntil_ = ms + kCopyIdleMs;
     sourceTaps_ = 0;
+    targetTaps_ = 0;
+    pasteMode_ = PasteMode::Ask;
   }
   void endCopy() {
     copy_ = Copy::None;
     copyHolding_ = false;
     sourceTaps_ = 0;
+    targetTaps_ = 0;
   }
   /// The source's press-detector button (slots and steps; 0xFF for a bar).
   uint8_t sourceButton() const {
@@ -1367,6 +1386,31 @@ class Surface {
     }
     return true;
   }
+  /// A bar / step target pressed (DEC-279 amendment 8): pasted at once in the mode REC / EDIT chose; else a second press
+  /// within the double window merges, none replaces (`serviceCopy`).
+  void targetPress(uint8_t button, uint32_t ms) {
+    if (pasteMode_ != PasteMode::Ask) {
+      pasteTo(button, pasteMode_ == PasteMode::Merge, ms);
+      return;
+    }
+    if (targetTaps_ == 1 && button == targetButton_ && ms - targetMs_ <= kCopyDoubleMs) {
+      targetTaps_ = 0;
+      pasteTo(button, true, ms);
+      return;
+    }
+    if (targetTaps_ == 1) return;  // another target before the first one's window ended: that one is pending
+    targetTaps_ = 1;
+    targetButton_ = button;
+    targetMs_ = ms;
+  }
+  /// The paste onto bar / step `button`: replacing what is there, or merged with it. Refused: copy mode stays.
+  void pasteTo(uint8_t button, bool merge, uint32_t ms) {
+    const bool bar = copy_ == Copy::Bar;
+    const bool ok = bar ? edit_.copyBar(copyBar_, button, ms, merge) : edit_.copyNote(copyNote_, button, ms, merge);
+    if (!ok) return;
+    flash(static_cast<uint8_t>(bar ? 40 + button : button), selected(), ms);
+    endCopy();  // done: the window closes
+  }
   /// A double press of the source (owner 2026-11-10): the slot cleared, or the bar's / the source note's 16th's notes.
   void clearSource(uint32_t ms) {
     if (copy_ == Copy::Slot) {
@@ -1395,11 +1439,7 @@ class Surface {
         endCopy();  // done: the window closes (owner 2026-11-10)
       }
     } else if (copy_ == Copy::Note) {
-      const uint8_t k = static_cast<uint8_t>(b - kStep0);
-      if (edit_.copyNote(copyNote_, k, ms)) {
-        flash(k, selected(), ms);
-        endCopy();
-      }
+      targetPress(static_cast<uint8_t>(b - kStep0), ms);
     }
   }
   void flash(uint8_t led, uint8_t track, uint32_t ms) {

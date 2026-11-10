@@ -1717,6 +1717,11 @@ static void shortPress(uint8_t note) {
   gS.input(0x8F, note, 0, gUs / 1000);
   ms(20);
 }
+/// A target's single press: the paste replaces once the double window passes (DEC-279 amendment 8).
+static void pastePress(uint8_t note) {
+  shortPress(note);
+  ms(350);
+}
 static void hold(uint8_t note, uint32_t forMs) {
   gS.input(0x9F, note, 127, gUs / 1000);
   ms(forMs);
@@ -1735,10 +1740,10 @@ void test_copy_mode_copies_notes_and_bars() {
   hold(2, 700);
   TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the lock's release: the selection back
-  shortPress(10);
+  pastePress(10);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // done
   hold(2, 700);  // again, onto step 12
-  shortPress(12);
+  pastePress(12);
   TEST_ASSERT_TRUE(noteAt(480) >= 0 && noteAt(576) >= 0);
   TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
   TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(noteAt(576))).length);
@@ -1765,7 +1770,7 @@ void test_copy_mode_copies_notes_and_bars() {
   TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
   hold(17, 700);
   TEST_ASSERT_EQUAL(S::Copy::Bar, gS.copyMode());
-  shortPress(18);
+  pastePress(18);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(768, 1536));
   TEST_ASSERT_TRUE(noteAt(768 + 96) >= 0 && noteAt(768 + 100) >= 0 && noteAt(768 + 384) >= 0);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // done
@@ -1774,7 +1779,7 @@ void test_copy_mode_copies_notes_and_bars() {
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   // Bar 2 over bar 1: replaced, not added to.
   hold(18, 700);
-  shortPress(17);
+  pastePress(17);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
   dbl(S::kRecordNote);  // bar 1's own notes back
   ms(450);
@@ -1818,9 +1823,70 @@ void test_copy_mode_copies_notes_and_bars() {
   TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
   hold(8, 700);
   TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
-  shortPress(10);
+  pastePress(10);
   TEST_ASSERT_TRUE(noteAt(480) >= 0);
   TEST_ASSERT_EQUAL_UINT8(67, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
+}
+
+// DEC-279 amendment 8 (owner 2026-11-10): onto a target with notes, a single press replaces them, a double press merges;
+// REC / EDIT choose replace / merge first and the target's press pastes at once. Either way each pasted note takes the
+// overlap rule in turn: a same-pitch note starting inside it is hidden.
+static uint32_t liveAt(uint32_t tick, uint8_t pitch) {
+  uint32_t n = 0;
+  for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
+    const EditNote& e = gE.noteEdit().current(i);
+    if (!e.deleted && e.tick == tick && e.pitch == pitch) ++n;
+  }
+  return n;
+}
+void test_copy_mode_replaces_or_merges_with_the_overlap_rule() {
+  recordBar({{96, 64}, {384, 67}, {576, 64}});
+  enterEdit();
+  settle();
+  // Replace: step 2 (64 @ 96) onto step 8 (67 @ 384), a single press: 67 gone, 64 there.
+  hold(2, 700);
+  pastePress(8);
+  TEST_ASSERT_EQUAL_UINT32(0, liveAt(384, 67));
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 64));
+  dbl(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 67));
+  TEST_ASSERT_EQUAL_UINT32(0, liveAt(384, 64));
+  // Merge: a double press — 67 stays beside the pasted 64.
+  hold(2, 700);
+  shortPress(8);
+  ms(80);
+  shortPress(8);
+  ms(50);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 67));
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 64));
+  dbl(S::kRecordNote);
+  ms(450);
+  // Merge onto the same pitch (EDIT first, then the target at once): the 64 already on step 12 starts inside the pasted
+  // 64 — the overlap rule hides it, one pasted note left there.
+  hold(2, 700);
+  tap(S::kEditModeNote);
+  ms(450);
+  TEST_ASSERT_EQUAL(S::PasteMode::Merge, gS.pasteMode());
+  shortPress(12);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // at once
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(576, 64));
+  TEST_ASSERT_EQUAL_UINT32(1, notesIn(576, 624));
+  dbl(S::kRecordNote);  // one step: the original 64 back alone
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(576, 64));
+  TEST_ASSERT_EQUAL_UINT32(1, notesIn(576, 624));
+  // REC first: replace at once.
+  hold(2, 700);
+  tap(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL(S::PasteMode::Replace, gS.pasteMode());
+  TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, gE.transport().mode());  // no take, no overdub
+  shortPress(8);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT32(0, liveAt(384, 67));
+  TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 64));
 }
 
 int main(int, char**) {
@@ -1849,6 +1915,7 @@ int main(int, char**) {
   RUN_TEST(test_the_encoder_cycles_its_options_and_nudges_the_note);
   RUN_TEST(test_the_encoder_with_a_step_held);
   RUN_TEST(test_copy_mode_copies_notes_and_bars);
+  RUN_TEST(test_copy_mode_replaces_or_merges_with_the_overlap_rule);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

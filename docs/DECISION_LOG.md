@@ -16000,3 +16000,19 @@ and every copy undone (1-3 and 1-5 empty again).
   clear (bar 2's double press) emptied bar 2 and kept bar 3. 1-2's visit undone (its own state again); 1-3 cleared
   back to empty — its undo history had kept a test copy across the reboot (the undo-before-save race, proposed
   separately), so it no longer reached the empty state.
+- **Amendment 8 (owner 2026-11-10: "for the paste command there should be an option to choose replace or merge notes
+  if there are notes already on that bar/step. if notes are overlapping, the overlap logic should be processing this";
+  then "short = replace, 2x is merge, add the rec/edit as added option to immediately execute one or the other"):** a
+  bar or step target's short press replaces its notes (decided once the 300 ms double window passes), its double press
+  merges with them; REC's / EDIT's short press in a bar's or note's copy mode chooses replace / merge first (the window
+  says so, nothing records, the edit mode stays) and the target's press then pastes at once. Either way every pasted
+  note then takes the NOTE_EDIT overlap rule as the causing note in turn (`EditSurface::paste`: `cause` + `settle` per
+  pasted note — a same-pitch note starting inside it hidden, one sounding into it ended at its start), all settled
+  into the paste's one undo step. Slot pastes still replace the slot. The window reads `BAR: PRESS REPLACE 2× MERGE`
+  (or `PRESS A STEP: REPLACE` / `MERGE` once chosen) over `[REC] REPLACE  [EDT] MERGE`. Native
+  `test_copy_mode_replaces_or_merges_with_the_overlap_rule` (a single press replaces 67 with 64, undone; a double
+  merges beside it; EDIT then a press onto a same-pitch note leaves one 64 — the overlap rule — and one undo restores
+  it; REC then a press replaces at once, no take) — no-overlap-pass, merge-ignored and REC-ignored mutations fail it;
+  full 4,518 passed. Device (image `84e0a6b3…`, on 1-2 copied onto 1-3, put back): step 2's 95 onto step 8 by a press
+  → only 95 there; step 3's 94 onto step 10 by a double → 23, 87 and 94; REC, then step 4's 93 onto step 12 → only 93;
+  the window with the new lines. 1-3 cleared after (it had again kept a test copy across the earlier reboot).

@@ -72,7 +72,9 @@ Hold a slot for 0.6 s — or, in NOTE_EDIT, a bar button, or a step you hold wit
 
 | While the COPY window is open | Action |
 |---|---|
-| Short press of another slot / bar / step | Paste there (a slot's loop; a bar over that bar, its notes replaced; a note beside what is on that step). One undo step, the target flashes three times, the window closes |
+| Short press of another slot / bar / step | Paste there: a slot's loop replaces that slot; a bar or a note **replaces** what is on that bar / 16th. One undo step, the target flashes three times, the window closes |
+| Double press of another bar / step | Paste and **merge** with the notes already there |
+| Record / Edit short (bar / note copy) | Choose replace / merge first; the target's press then pastes at once |
 | Track buttons (slots) | Choose another track first, to paste onto its slots |
 | Double press of the source | Clear it: the slot, or the bar's / the 16th's notes. One undo step, the window closes |
 | Short press of the source | Cancel |
@@ -81,7 +83,7 @@ Hold a slot for 0.6 s — or, in NOTE_EDIT, a bar button, or a step you hold wit
 | Long press of any other button | Close at once |
 | Nothing for 5 s | Closes by itself (a track switch restarts the countdown; the window's bottom edge shows the time left) |
 
-A paste or a slot clear selects that slot, so a double Record afterwards undoes it.
+Pasted notes follow the overlap rule of NOTE_EDIT: a note of the same pitch that starts inside a pasted note is hidden, and one that sounds into it is shortened to its start. A paste or a slot clear selects that slot, so a double Record afterwards undoes it.
 
 ### Undo is per slot
 
