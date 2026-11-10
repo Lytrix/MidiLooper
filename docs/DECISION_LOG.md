@@ -15880,5 +15880,5 @@ selection, the pushes did not cycle) — no-acceleration, push-cycles-while-held
 Full native 4,511 passed and one timing assertion in a legacy suite (`test_riao2_p_derive_cost_profile`, wall-clock
 microseconds under a parallel build) that passed alone on rerun. Device (image `774d18a0…`; the GUI upload left the board in HalfKay, programmed again with the
 Homebrew loader per the upload guide; boot `crash=0`, `BOOT,load,ok`): NOTE_EDIT open 6 s with the encoder untouched —
-the selected note unchanged (no stray detents or pushes from the pins), the line under NOTE drawn. The turn and push
-on the physical encoder are the owner's check.
+the selected note unchanged (no stray detents or pushes from the pins), the line under NOTE drawn. On the physical
+encoder the owner confirmed the turn and push: "Works" (2026-11-10).

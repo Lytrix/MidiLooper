@@ -65,7 +65,7 @@ one undo step, the previous selection back on release); step LEDs show that bar.
 `b40a5be6…`; then a lock keeps a fine move on release (amendment 1, `11fb2422…`). **Slice E (DEC-278):** the
 GPIO encoder in NOTE_EDIT — push steps pitch / move / length / velocity (a line under the option), the turn edits the
 selected note with legacy acceleration; with a step held the turn locks its note, a push adds a stacked 16th C4, a
-double push deletes. Device `774d18a0…` (idle pins clean; the physical turn / push is the owner's check). The
+double push deletes. Device `774d18a0…` (idle pins clean; owner on the physical encoder: "Works"). The
 performance and step surface batch (slices A–E) is complete.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
