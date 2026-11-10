@@ -58,7 +58,10 @@
 //     8-bar page playing, modulo the loop (as legacy). A stopped or taking track ignores them. In NOTE_EDIT (slice D)
 //     the step buttons are the 16ths of the bracket's bar (`EditSurface`): short = select / cycle (an empty step: a
 //     16th C4), double = delete, held `kLockMs` = the parameter lock until the release (no gesture then); their LEDs
-//     show that bar's notes and the bracket's step.
+//     show that bar's notes and the bracket's step. In LOOP_EDIT (DEC-280, owner 2026-11-10) a bar or a step held and
+//     another of its kind pressed, either way round, makes the range between them the loop: its left end the new start
+//     (a rotation), its length the bars / 16ths covered (odd lengths too) — bars of the 8-bar page playing, 16ths of the
+//     bar playing; the visit's one undo step, as F1 / F2.
 // * The encoder (slice E; the Teensy's GPIO quadrature encoder and its push, legacy pins 29 / 30 / 31, read by the
 //   firmware: `encoderTurn` in detents, `encoderButton`), NOTE_EDIT only: push = the next option — pitch (first),
 //   move, length, velocity; turn = the selected note's option by the turn, accelerated as legacy
@@ -337,6 +340,10 @@ class Surface {
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     uint8_t b;
+    if (loopEdit_ && d1 < kStepNotes && d1 != kBarStepBase - 1) {  // LOOP_EDIT: a held one and another set the loop
+      rangeInput(d1, type == 0x90 && d2 != 0);
+      return;
+    }
     if (d1 >= kBarStepBase && d1 < kStepNotes && edit_.editing()) {  // NOTE_EDIT's bar buttons: copy mode only
       const uint8_t bar = static_cast<uint8_t>(d1 - kBarStepBase);
       const uint8_t bit = static_cast<uint8_t>(1u << bar);
@@ -811,6 +818,7 @@ class Surface {
   }
   void enterLoopEdit() {
     loopEdit_ = true;
+    rangeSteps_ = rangeBars_ = 0;  // no range from before
     visitState_ = 0;   // a new visit: its first change is a step
     loopPark_ = true;  // every fader to its value, at the next motor pass
     pendingLoop_ = 0;
@@ -914,6 +922,44 @@ class Surface {
     pendingLoop_ = 0;
     if (!loopEdit_ && !popup_) return;
     resizeTo(popup_ ? popupSlot_ : shownSlot(selected()), loop);
+  }
+  /// LOOP_EDIT's step / bar buttons (DEC-280): the first held is the range's anchor; another pressed while it is held
+  /// sets the range (`loopRange`).
+  void rangeInput(uint8_t note, bool down) {
+    const bool bars = note >= kBarStepBase;
+    const uint8_t k = static_cast<uint8_t>(bars ? note - kBarStepBase : note);
+    uint16_t& held = bars ? rangeBars_ : rangeSteps_;
+    uint8_t& anchor = bars ? barAnchor_ : stepAnchor_;
+    const uint16_t bit = static_cast<uint16_t>(1u << k);
+    if (!down) {
+      held = static_cast<uint16_t>(held & ~bit);
+      return;
+    }
+    if (held != 0 && anchor != k) loopRange(bars, anchor, k);
+    else anchor = k;
+    held = static_cast<uint16_t>(held | bit);
+  }
+  /// The range between buttons `a` and `b` (either way) as the shown loop (owner 2026-11-10): the left one's position
+  /// its new start, the buttons covered its length. Refused when the start lies at or past the loop's end.
+  void loopRange(bool bars, uint8_t a, uint8_t b) {
+    const uint8_t t = selected(), slot = shownSlot(t);
+    auto& x = transport();
+    const ManifestId c = x.contentOf(slot);
+    if (c == kNoManifest) return;
+    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
+    constexpr uint32_t kBar = EditSurface<Engine>::kBar, kStep = EditSurface<Engine>::kSixteenth;
+    const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
+    const uint32_t unit = bars ? kBar : kStep, base = bars ? pos / (8 * kBar) * (8 * kBar) : pos / kBar * kBar;
+    const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
+    const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
+    if (start >= loop) return;
+    if (start != 0) {
+      if (control().rotate(slot, start, tick_, us_, us(), visitState_) != X::Result::Ok) return;
+      appliedStart_ = (appliedStart_ + start) % loop;  // F1 counts from the content LOOP_EDIT found
+      visited(slot);
+    }
+    if (length != loop) resizeTo(slot, length);
+    loopPark_ = true;  // the faders to the new start and length
   }
   void resizeTo(uint8_t slot, uint32_t loop) {
     if (control().resize(slot, loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
@@ -1225,6 +1271,8 @@ class Surface {
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
+  uint16_t rangeSteps_ = 0, rangeBars_ = 0;   // LOOP_EDIT: the step / bar buttons held (DEC-280)
+  uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint32_t barDownMs_[8] = {};                // ... since
   Copy copy_ = Copy::None;
   uint8_t copySlot_ = 0;       // Slot: the source's engine slot

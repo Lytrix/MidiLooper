@@ -16042,3 +16042,24 @@ and every copy undone (1-3 and 1-5 empty again).
   for slot 3) — the old short-press LOAD LOOP fails it; the picker test now holds TRACK switch; full 4,521 passed. Device (image
   `c15bec4d…`): 1-1 held, TRACK switch pressed → track 2 with `COPY LOOP 1-1` and the new hint; held → the picker for
   1-1. Also seen in the recording: two TRACK switch taps 110 ms apart outside an edit are its double press, an undo.
+
+## DEC-280 — In LOOP_EDIT a held step / bar and another set the loop's start and length
+
+**Date:** 2026-11-10. **Owner:** "to set a loop length also needs to be possible by keep holding the first bar and
+then short press another bar (left to right or right to left should both be allowed) this should also be able to
+work in 16ths where the left step will be the new start point of the loop and odd length loops can be set"; chosen:
+LOOP_EDIT (the bars and 16ths are free there; in NOTE_EDIT a held bar is copy mode, in performance a press restarts
+playback). Legacy: `BarStepButtonHandler::executeLoopEditAction`'s HOLD_TWO, which set a temporary jam range.
+
+**Decision:** in LOOP_EDIT a step (0–15) or bar (17–24) held, and another of its kind pressed while it is held — either
+way round — makes the range between them the shown slot's loop (`Surface::loopRange`): its left end the new start (a
+rotation, `TrackControl::rotate`), the buttons covered its length (`resize`; 16ths give odd lengths: 3 × 48 ticks …).
+Bars count in the 8-bar page playing, 16ths in the bar playing (as the performance restarts, DEC-275). It is part of
+the LOOP_EDIT visit's one undo step (the visit's state replaced in place); F1 / F2's motors are re-parked to the new
+start and length. A single press sets nothing; a start at or past the loop's end is refused.
+
+**Evidence:** native `test_loop_edit_a_held_range_sets_start_and_length` (step 10 held, step 3 pressed → 8 × 48 ticks,
+the note at 96 at position 0; steps 1..3 → 3 × 48; the visit one undo step back to 768; bars 1..3 → 3 bars; a single
+press nothing) — no-rotation and off-by-one mutations fail it; full 4,522 passed. Device (image `c1b47feb…`, on 1-1
+copied onto 1-3): LOOP_EDIT, step 10 held + step 3 → 384 ticks (rotated); bar 1 held + bar 4 → 3,072; leaving, two
+undos → 1-3 empty again.

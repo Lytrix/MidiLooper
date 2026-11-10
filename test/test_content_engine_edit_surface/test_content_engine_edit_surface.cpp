@@ -1956,6 +1956,52 @@ void test_a_paste_past_the_loop_end_lengthens_the_loop() {
   TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(3 * 768))).pitch);
 }
 
+// DEC-280 (owner 2026-11-10): in LOOP_EDIT a step / bar held and another pressed, either way round, sets the loop —
+// the left one the new start (a rotation), the buttons covered its length (odd lengths in 16ths); one undo step a visit.
+void test_loop_edit_a_held_range_sets_start_and_length() {
+  recordBar({{96, 60}, {600, 62}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  enterLoopEditOnContent();
+  // 16ths: step 10 held, step 3 pressed (right to left) → steps 3..10: start 96, 8 × 48 long.
+  gS.input(0x9F, 9, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x9F, 2, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  gS.input(0x8F, 9, 0, gUs / 1000);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(8 * 48, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, heardAt(60) % (8 * 48));  // the note at 96 starts the loop now
+  // An odd length: steps 1..3 (left to right) of the new loop → 3 × 48, starting where step 1 is.
+  gS.input(0x9F, 0, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x9F, 2, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  gS.input(0x8F, 0, 0, gUs / 1000);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(3 * 48, loopOf(0));
+  tap(S::kEditModeNote, 700);  // leave: the visit is one undo step
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  // Bars: bar 1 held, bar 3 pressed → 3 bars from the start.
+  enterLoopEditOnContent();
+  gS.input(0x9F, 17, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x9F, 19, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 19, 0, gUs / 1000);
+  gS.input(0x8F, 17, 0, gUs / 1000);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
+  // A single press sets nothing.
+  tap(18);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
@@ -1985,6 +2031,7 @@ int main(int, char**) {
   RUN_TEST(test_copy_mode_replaces_or_merges_with_the_overlap_rule);
   RUN_TEST(test_copy_mode_pastes_into_another_bar_and_another_track);
   RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
+  RUN_TEST(test_loop_edit_a_held_range_sets_start_and_length);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
