@@ -1325,6 +1325,16 @@ void command(char* line, uint32_t nowUs) {
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeLaunchGrid(1);
     else if (arg != nullptr && launchDivisionValid(static_cast<uint32_t>(a)) && a != 1) storeLaunchGrid(static_cast<uint8_t>(a));
     Serial.printf("#ENGINE,launch-q,%s\n", launchGridName());
+  } else if (std::strcmp(verb, "leds") == 0) {  // leds: the bar and step LEDs wanted, the shown slot's frame (DEC-283)
+    uint8_t want[128] = {};
+    gSurface.ledsWanted(gLastTick, millis(), want);
+    const uint8_t t = gEngine.control().selectedTrack(), slot = gSurface.shown(t);
+    uint32_t scale = 0, start = 0, known = 0;
+    gSurface.loopFrame(slot, scale, start, known);
+    Serial.printf("#ENGINE,leds,slot=%u,frame=%lu,start=%lu,bars=", slot, static_cast<unsigned long>(scale),
+                  static_cast<unsigned long>(start));
+    for (uint8_t i = 0; i < 8; ++i) Serial.printf("%u%s", want[40 + i], i < 7 ? "/" : ",steps=");
+    for (uint8_t i = 0; i < 16; ++i) Serial.printf("%u%s", want[i], i < 15 ? "/" : "\n");
   } else if (std::strcmp(verb, "track") == 0) {  // track T: its playing and queued slots (diagnostics, slice B)
     const uint8_t t = static_cast<uint8_t>(a);
     if (t >= kTrackCount) return;

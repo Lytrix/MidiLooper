@@ -307,6 +307,7 @@ class Surface {
     pendingLoop_ = 0;
     startMs_ = pendingStart_ = 0;
     startPending_ = false;
+    beyondIdentity_ = stepsIdentity_ = 0;  // the scans' caches: identities restart with the engine
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
   static bool controlPlane(uint8_t status) { return (status & 0xF0) < 0xF0 && (status & 0x0F) >= 12; }
@@ -575,6 +576,11 @@ class Surface {
     return true;
   }
 
+  /// The LEDs wanted now, every note (diagnostics: `!ENGINE leds`).
+  void ledsWanted(uint32_t lastTick, uint32_t ms, uint8_t* want) {
+    desired(lastTick, ms, want);
+    copyLeds(ms, want);
+  }
   /// The LED changes (channel 15 notes), at most `max`: `send(note, velocity)`, velocity 0 = off.
   template <typename Send>
   uint8_t leds(uint32_t lastTick, uint32_t ms, Send send, uint8_t max) {
@@ -1731,7 +1737,9 @@ class Surface {
   /// The bars (and the 16ths of the bar holding the loop's end) with a NoteOn stored at or past the loop's end, for a
   /// resized state (one with a fit run): its content rows scanned once a state (DEC-281). A take's notes played past
   /// its bar line count too.
-  static constexpr uint8_t kBeyondLed = 20;  // DEC-283 amendment 1: 8 did not show on the DROID
+  // DEC-283 amendment 2 (owner 2026-11-10: the dimmed note bars did not show): stored notes outside the loop at the
+  // level an empty bar had (visible on the DROID; 8 and 20 were not), the loop's bars above it.
+  static constexpr uint8_t kBeyondLed = 32, kLoopEmptyLed = 48, kLoopNotesLed = 96;
   void beyondEnd(ManifestId m) {
     const auto& d = e_->manifests().manifest(m);
     if (d.identity == beyondIdentity_) return;
@@ -1816,7 +1824,7 @@ class Surface {
       }
       const bool notes = b < 64 && ((absBars_ >> b) & 1u);
       const bool inside = in(a) || in(a + kBar - 1 < frame ? a + kBar - 1 : frame - 1);
-      want[40 + i] = moving && b == bar ? 127 : inside ? (notes ? 64 : 32) : notes ? kBeyondLed : 0;
+      want[40 + i] = moving && b == bar ? 127 : inside ? (notes ? kLoopNotesLed : kLoopEmptyLed) : notes ? kBeyondLed : 0;
     }
     const uint16_t steps = absSteps(m, bar);
     for (uint8_t k = 0; k < 16; ++k) {

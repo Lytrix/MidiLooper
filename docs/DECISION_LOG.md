@@ -16171,3 +16171,13 @@ to 2 bars, notes in place) — a relative-range mutation fails it; `test_buttons
 `test_loop_edit_f1_rotates_the_loop_start` and the restore test unchanged. Device (images `52dce019…`, `d592ddbf…`, on
 1-2 copied onto 1-3): LOOP_EDIT bars 2–4 → START 2.1, bars 1–3 → 1.1, bar 2 double → one bar; across a reboot
 (`crash=0`, `BOOT,load,ok`) START 2.1 kept and bars 1–3 selectable; performance LEDs: stored bar 1 dim (20).
+
+**Amendment 2 (2026-11-10, the dim level):** owner: "it is missing a dimmed led button of bars which contain notes …
+it does highlight the selected bar and empty bars". The firmware computed them (new diagnostic `!ENGINE leds`: on 1-3,
+a 1-bar loop from 1,200 in a 7-bar stored loop, bars `20/64/64/0/20`), but 20 — like 8 before — does not show on the
+DROID while 32 does. Levels now: stored notes outside the loop 32 (bars and 16ths), the loop's bars 48 empty / 96 with
+notes, the playhead 127; the loop's 16ths with notes stay 64. Also: the surface's reset clears the scans' caches
+(identities restart with the engine; a stale scan gave a wrong start in a native run). Evidence: native
+`test_bars_with_notes_outside_the_loop_light_dim` (a 4-bar take, the loop bars 2..3: bars 1 and 4 at 32, the loop's
+bars at 48 or more, in LOOP_EDIT and after); device (image `454f5d8a…`, `crash=0`, `BOOT,load,ok`): `!ENGINE leds` on
+1-3 → bars `32/96/96/0/32`, steps 32 before the start and 64 in the loop.

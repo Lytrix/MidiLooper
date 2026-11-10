@@ -329,6 +329,50 @@ static void restartsAt(uint8_t note, uint32_t position, uint32_t loop) {
   TEST_ASSERT_TRUE(at - pressed <= 48);
   TEST_ASSERT_EQUAL_UINT32(position, (at - X().origin(0)) % loop);
 }
+// DEC-283 amendment 2 (owner 2026-11-10: "it is missing a dimmed led button of bars which contain notes"): a 4-bar take
+// with a note in every bar, the loop set to bars 2..3 in LOOP_EDIT: bars 1 and 4 light dim, in LOOP_EDIT and after.
+void test_bars_with_notes_outside_the_loop_light_dim() {
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(gUs + kBarUs);
+  tap(S::kSlotBase + 0);
+  ms(400);
+  untilRecording(3 * kBarUs);
+  const uint32_t start = gUs;
+  run(start + 4 * kBarUs - 300 * kTick, {{start + 50 * kTick, start + 200 * kTick, 60},
+                                         {start + kBarUs + 50 * kTick, start + kBarUs + 200 * kTick, 61},
+                                         {start + 2 * kBarUs + 50 * kTick, start + 2 * kBarUs + 200 * kTick, 62},
+                                         {start + 3 * kBarUs + 50 * kTick, start + 3 * kBarUs + 200 * kTick, 63}});
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(start + 4 * kBarUs + 50 * kTick);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, X().loopLength(X().contentOf(0)));
+  tap(S::kEditModeNote);  // NOTE_EDIT
+  ms(400);
+  tap(S::kEditModeNote);  // LOOP_EDIT
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  gS.input(0x9F, 18, 127, gUs / 1000);  // bar 2 held, bar 3 pressed
+  ms(50);
+  gS.input(0x9F, 19, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 19, 0, gUs / 1000);
+  gS.input(0x8F, 18, 0, gUs / 1000);
+  ms(300);
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, X().loopLength(X().contentOf(0)));
+  TEST_ASSERT_EQUAL_UINT32(768, C().window(0).start);
+  run(gUs + kBarUs / 2);
+  TEST_ASSERT_EQUAL_UINT8(32, gLed[40]);  // bar 1: notes, outside the loop
+  TEST_ASSERT_EQUAL_UINT8(32, gLed[43]);  // bar 4
+  TEST_ASSERT_EQUAL_UINT8(0, gLed[44]);   // bar 5: past the stored loop
+  tap(S::kEditModeNote, 700);  // leave: performance shows the same
+  ms(400);
+  run(gUs + kBarUs / 2);
+  TEST_ASSERT_EQUAL_UINT8(32, gLed[40]);
+  TEST_ASSERT_EQUAL_UINT8(32, gLed[43]);
+  TEST_ASSERT_TRUE(gLed[41] >= 48);  // the loop's bars above them
+}
+
 // DEC-283 amendment 1 (owner 2026-11-10: the button LEDs absolute): a loop shortened to bars 2..3 of a 4-bar stored loop
 // lights its bars where they are stored — bar 1 and 4 outside it (dim with notes) — and a bar button names a stored bar.
 void test_buttons_are_absolute_in_performance() {
@@ -586,7 +630,7 @@ void test_notes_past_a_shortened_end_light_dim() {
   recordOneBar(0, 60);  // a note at 50
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 48, gLast, gUs, gClk.usPerTick()));
   ms(400);
-  TEST_ASSERT_EQUAL_UINT8(20, gLed[1]);  // 50 lies in step 2, past the 48-tick end (DEC-283 amendment 1: 20)
+  TEST_ASSERT_EQUAL_UINT8(32, gLed[1]);  // 50 lies in step 2, past the 48-tick end (DEC-283 amendment 2: 32)
   TEST_ASSERT_EQUAL_UINT8(0, gLed[5]);  // nothing there
 }
 
@@ -1000,6 +1044,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
   RUN_TEST(test_buttons_are_absolute_in_performance);
+  RUN_TEST(test_bars_with_notes_outside_the_loop_light_dim);
   RUN_TEST(test_copy_mode_copies_slots_across_tracks);
   RUN_TEST(test_copy_mode_counts_down_and_a_double_press_clears_the_source);
   RUN_TEST(test_a_slot_press_on_a_stopped_transport_only_selects);
