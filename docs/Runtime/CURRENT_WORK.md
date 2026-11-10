@@ -63,8 +63,9 @@ buttons are the 8-bar page playing, the 16ths the bar playing (legacy `queueBarP
 setting). (D) NOTE_EDIT step buttons: a press selects every note on the step (F1's selection), a second cycles through
 them as F1 does; an empty step adds a 16th C4 (MIDI 60); double deletes the selected note; hold is a parameter lock — a
 temporary selection the faders (F2 move, F3 fine, F4 pitch) and the encoder (pitch) act on, one edit undo step on
-release, the previous selection back. (E) the Teensy GPIO quadrature encoder (legacy pins and push button), pitch in the
-lock. Non-goals: LOOP_EDIT jam, 41–48 extended transport, a DROID control for the launch setting. (c) the preview render path; (d) the picker screen.
+release, the previous selection back. (E) the Teensy GPIO quadrature encoder (legacy pins and push button); owner 2026-11-10: "the encoder
+should cycle through the edit options" — proposed: its push button steps the edit option (pitch, move, length,
+velocity), its turn changes that option's value, pitch first; to confirm before slice E. Non-goals: LOOP_EDIT jam, 41–48 extended transport, a DROID control for the launch setting. (c) the preview render path; (d) the picker screen.
 
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
