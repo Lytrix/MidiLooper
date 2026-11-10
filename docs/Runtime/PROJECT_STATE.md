@@ -1,3 +1,10 @@
+**2026-11-10 — DEC-285: a shortened loop survives a reboot (groove design slice 0).** A fit run's lookups name content
+runs by their position in the state's run list instead of by RunId (reassigned on load): `FitBuilder::build` in state
+order, `Composer` matching by source index; set file version 4, a version-3 file's lookups dropped on load (its loops
+play notes past a shortened end until their length is set again). Copy and get a loop keep the order. Native: the
+save/load round trip red then green, copy and get-a-loop checks, a RunId-composer mutation fails; full 4,531 passed.
+Device `2c41ee6d…`: 1-3's lookups at positions 0–3 before and after a reboot. PSRAM unchanged (flags in padding).
+
 **2026-11-09 — The trash (DEC-268).** Owner: deletion as an Atari-style trash. HOLD TRACK on a set or stage asks
 `MOVE SET 03 TO TRASH?` / `MOVE SET 02 T03 TO TRASH?` (what and when, CANCEL selected); a double TRACK opens the trash
 (bottom left: a can and `TRASH n`) — `< SETS`, `EMPTY TRASH` (asks again, for good), `RESTORE` and the items; TRACK

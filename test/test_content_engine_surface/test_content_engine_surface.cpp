@@ -634,6 +634,34 @@ void test_notes_past_a_shortened_end_light_dim() {
   TEST_ASSERT_EQUAL_UINT8(0, gLed[5]);  // nothing there
 }
 
+// DEC-285: a slot copy of a shortened loop keeps its runs in order, so the fit run's lookups — content runs named by
+// their position — still name the same runs in the copy (RunIds differ).
+void test_a_copied_shortened_loop_keeps_its_lookups() {
+  recordOneBar(0, 60);  // a note at 50
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 48, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().copySlot(0, 3, gLast, gUs, gClk.usPerTick()));
+  const auto& a = gE.manifests().manifest(X().contentOf(0));
+  const auto& b = gE.manifests().manifest(X().contentOf(3));
+  TEST_ASSERT_EQUAL_UINT8(a.runCount, b.runCount);
+  bool sawLookup = false;
+  for (uint8_t i = 0; i < a.runCount; ++i) {
+    TEST_ASSERT_TRUE(a.runs[i] != b.runs[i]);
+    TEST_ASSERT_EQUAL_UINT8(gE.runs().run(a.runs[i]).kind, gE.runs().run(b.runs[i]).kind);
+    if (gE.runs().run(a.runs[i]).kind != RunKind::kFit) continue;
+    TEST_ASSERT_EQUAL_UINT32(gE.runs().run(a.runs[i]).rowCount, gE.runs().run(b.runs[i]).rowCount);
+    for (uint32_t r = 0; r < gE.runs().run(a.runs[i]).rowCount; ++r) {
+      const PassEvent& x = gE.runs().rowAt(a.runs[i], r, gE.pool());
+      const PassEvent& y = gE.runs().rowAt(b.runs[i], r, gE.pool());
+      TEST_ASSERT_TRUE(x.tick == y.tick && x.status == y.status && x.noteId == y.noteId);
+      if (x.status >= kFitFilterStatus && x.status <= kFitHeldStatus) {
+        sawLookup = true;
+        TEST_ASSERT_TRUE(x.tick < a.runCount);  // a position in the state's run list
+      }
+    }
+  }
+  TEST_ASSERT_TRUE(sawLookup);
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -1062,6 +1090,7 @@ int main(int, char**) {
   RUN_TEST(test_holding_the_copy_source_again_opens_the_picker);
   RUN_TEST(test_copy_mode_track_switch_short_is_the_next_track);
   RUN_TEST(test_notes_past_a_shortened_end_light_dim);
+  RUN_TEST(test_a_copied_shortened_loop_keeps_its_lookups);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

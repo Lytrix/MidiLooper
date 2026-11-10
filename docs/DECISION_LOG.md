@@ -16250,3 +16250,35 @@ third (the two newest kept, the single press switching them), the popup (B selec
 presses in performance; a never-push-the-older-range mutation fails it; the popup tests start at FULL. Device (image
 `806c6926…`, `crash=0`, `BOOT,load,ok`, on 1-3 with one range, bars 2–3): single → bars 2–3, double → the full 7
 bars, single → bars 2–3.
+
+## DEC-285 — A fit run's lookups name content runs by position; set file version 4
+
+**Date:** 2026-11-10. **Owner:** "Yes, start slice 0" (groove design, `docs/Plans/groove_quantize_design.md` § 9:
+slice 0). Found by the groove design's red team and confirmed by an independent review's host probe: DEC-257's fit
+lookups (filter, cross, held) stored the content run's **RunId** in `tick`; a load (`LoadJob`, the library's
+`SetLoad`) gives every run a new RunId and copies the rows unchanged, so after a reboot a shortened loop's lookups named
+nothing — or another run — and a note past the shortened end was heard again. Formal trigger: persistent state-model
+change (the meaning of a stored field; set file version 4). Amends DEC-257.
+
+**Decision:**
+- A lookup's `tick` is the content run's **position in the state's run list**. `FitBuilder::build` scans `content` in
+  the state's order (no RunId sort) and the fit run is listed after it, so positions are the state's own; `Composer`
+  matches lookups by its source index (its sources are the manifest's runs in order, `CheckpointTable`). A state's run
+  order survives save / load, slot copy (`FitBuilder::copy`) and get a loop (`SetLoad` lists the current state's runs in
+  order), so nothing is remapped anywhere.
+- Set file **version 4**. A version-3 file's lookups (statuses 0xF5–0xF7 in a fit run) are **dropped on load** — by
+  `LoadJob` and `SetLoad` (`legacyFitRow`, their reservation forgiven) — so none can name a wrong run as a position;
+  its marker rows (window, ranges) are kept. Such a loop plays its notes past a shortened end, as it did before, until
+  its length or range is set again (then its fit run is rebuilt by position). The loaders' version flag sits in existing
+  padding: the engine's PSRAM size is unchanged (7,036,056 B, the budget line).
+- Rejected: remapping RunIds on save and load (every copy and reader path would need the map, and version-3 files' save-
+  time RunIds cannot be recovered); rebuilding version-3 lookups at load (a second fit builder's scratch or a shared one
+  inside the loaders, for dev-data files — the owner treats saved sets as dev data).
+
+**Evidence:** native `test_a_shortened_loop_round_trips` (a 2-bar take shortened to 1 bar, saved and loaded with other
+RunIds: one note before and after; before the fix two) — red first, then green; a RunId-matching composer mutation fails
+it; the same file as version 3 loads with no lookup rows; `test_a_copied_shortened_loop_keeps_its_lookups` (a slot copy
+keeps the run order and identical lookups, positions < run count); `test_a_got_shortened_loop_keeps_its_run_order`
+(get a loop: the take then the fit run, its lookup at position 0). Full native 4,531 passed, 8 skipped. Device image
+`2c41ee6d…` (`crash=0`, `BOOT,load,ok`): on 1-3 bars 2–3 set in LOOP_EDIT — the fit run's lookups at positions 0–3
+(its four content runs); after a reboot the same positions, the loop 1,536 ticks.

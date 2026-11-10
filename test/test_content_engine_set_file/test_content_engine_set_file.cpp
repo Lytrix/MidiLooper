@@ -20,6 +20,7 @@
 #include "ContentEngine/EngineCore.h"
 #include "ContentEngine/History.h"
 #include "ContentEngine/SetFile.h"
+#include "ContentEngine/FitRun.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;
@@ -232,10 +233,10 @@ void test_version_one_loads_and_a_later_one_is_refused() {
   MemoryFile f;
   saveSlot(f);
   TEST_ASSERT_EQUAL_UINT16(kSetFileVersion, static_cast<uint16_t>(f.bytes[4] | (f.bytes[5] << 8)));
-  TEST_ASSERT_EQUAL_UINT16(3, kSetFileVersion);
+  TEST_ASSERT_EQUAL_UINT16(4, kSetFileVersion);
   TEST_ASSERT_TRUE(withVersion(f, kSetFileVersion).bytes == f.bytes);  // the trailer recomputed as the save wrote it
   initEngine();
-  MemoryFile later = withVersion(f, 4), one = withVersion(f, 1);
+  MemoryFile later = withVersion(f, 5), one = withVersion(f, 1);
   TEST_ASSERT_EQUAL(Load::Status::BadFormat, loadSlot(later));
   TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(one));
 }
@@ -347,6 +348,59 @@ void test_large_take_round_trips_in_bounded_grains() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+// DEC-285 (slice 0 of the groove design; found by its review): a shortened loop's fit run names the content runs it
+// filters. Saved and loaded, the runs get other RunIds — the lookups must still name the same runs, or a note past
+// the shortened end is heard again.
+static FitBuilder<Pool, Runs, Res> gFit;
+static std::vector<Ev> composedAt(ManifestId m, uint32_t loop) {
+  const auto& man = gManifests.manifest(m);
+  SourceRun src[8];
+  for (uint8_t i = 0; i < man.runCount; ++i) src[i] = {man.runs[i], gRuns.run(man.runs[i]).rowCount};
+  TEST_ASSERT_TRUE(gC.begin(src, man.runCount, loop, man.identity));
+  std::vector<Ev> out;
+  while (gC.composeNext(gWin, loop))
+    for (uint16_t k = 0; k < gWin.count; ++k)
+      out.push_back({gWin.entries[k].tick, gWin.entries[k].noteId, gWin.entries[k].status, gWin.entries[k].data1,
+                     gWin.entries[k].length});
+  gC.end();
+  return out;
+}
+void test_a_shortened_loop_round_trips() {
+  // A 2-bar take shortened to 1 bar: the note at 1,000 lies past the end and must stay silent.
+  const RunId pad = run(RunKind::kRecord, {});  // takes RunId 0, so the take's RunId differs after the load
+  const RunId a = run(RunKind::kRecord, {row(100, 1, 0x90, 60, 100), row(300, 1, 0x80, 60, 0), row(1000, 2, 0x90, 62, 90),
+                                         row(1200, 2, 0x80, 62, 0)});
+  RunId fit = kNoRun;
+  TEST_ASSERT_EQUAL(FitResult::Ok, gFit.build(gPool, gRuns, gRes, 0, &a, 1, 768, fit));
+  const RunId list[2] = {a, fit};
+  gH.commit(0, gManifests.create(0, 1, 768, list, 2, gRuns));
+  for (RunId r : {a, fit, pad}) gRuns.release(r);
+  while (gIds.peek() <= 2) gIds.advance();
+  const auto want = composedAt(gH.current(0), 768);
+  TEST_ASSERT_EQUAL_UINT32(1, want.size());  // the note at 100 only
+  MemoryFile f;
+  saveSlot(f);
+  initEngine();
+  TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(f));
+  TEST_ASSERT_TRUE(gManifests.manifest(gH.current(0)).runs[0] != a);  // other RunIds now
+  const auto got = composedAt(gH.current(0), 768);
+  TEST_ASSERT_EQUAL_UINT32(want.size(), got.size());
+  for (size_t k = 0; k < got.size(); ++k) TEST_ASSERT_TRUE(want[k] == got[k]);
+  // The same file as version 3 (lookups keyed by RunId then): they are not loaded — none can name a wrong run.
+  initEngine();
+  MemoryFile three = withVersion(f, 3);
+  TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(three));
+  const auto& m = gManifests.manifest(gH.current(0));
+  const RunId loadedFit = m.runs[1];
+  TEST_ASSERT_EQUAL_UINT8(RunKind::kFit, gRuns.run(loadedFit).kind);
+  for (uint32_t i = 0; i < gRuns.run(loadedFit).rowCount; ++i) {
+    const uint8_t st = gRuns.rowAt(loadedFit, i, gPool).status;
+    TEST_ASSERT_FALSE(st >= kFitFilterStatus && st <= kFitHeldStatus);
+  }
+  TEST_ASSERT_TRUE(gRes.check());
+  TEST_ASSERT_TRUE(checkConservation(gPool, gRuns, gManifests));
+}
+
 void test_no_heap() {
   buildHistory();
   MemoryFile f;
@@ -367,6 +421,7 @@ int main(int, char**) {
   RUN_TEST(test_an_empty_loop_round_trips);
   RUN_TEST(test_failures_are_named_and_release_everything);
   RUN_TEST(test_large_take_round_trips_in_bounded_grains);
+  RUN_TEST(test_a_shortened_loop_round_trips);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

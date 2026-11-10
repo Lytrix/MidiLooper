@@ -539,12 +539,12 @@ class Composer {
   /// The fit run (DEC-257) holds the row (run `r`, `status`, `noteId`). O(log fit rows).
   bool fitHas(uint8_t r, uint8_t status, uint32_t noteId) const {
     if (fitRun_ == kNoRun) return false;
-    const uint32_t i = fitLowerBound(src_[r].run, status, noteId);
+    const uint32_t i = fitLowerBound(r, status, noteId);  // DEC-285: the lookups name a run by its position
     if (i == fitRows_) return false;
     const PassEvent& e = runs_->rowAt(fitRun_, i, *pool_);
-    return e.tick == src_[r].run && e.status == status && e.noteId == noteId;
+    return e.tick == r && e.status == status && e.noteId == noteId;
   }
-  uint32_t fitLowerBound(uint32_t run, uint8_t status, uint32_t noteId) const {
+  uint32_t fitLowerBound(uint32_t run, uint8_t status, uint32_t noteId) const {  // `run`: a position
     uint32_t lo = 0, hi = fitRows_;
     while (lo < hi) {
       const uint32_t mid = lo + (hi - lo) / 2;
@@ -559,9 +559,9 @@ class Composer {
   /// The wrap reach of filtered run `r`: its crossing notes' NoteOffs (`seq`), capped at the loop.
   uint32_t crossReach(uint8_t r) const {
     uint32_t reach = 0;
-    for (uint32_t i = fitLowerBound(src_[r].run, kFitCrossStatus, 0); i < fitRows_; ++i) {
+    for (uint32_t i = fitLowerBound(r, kFitCrossStatus, 0); i < fitRows_; ++i) {
       const PassEvent& e = runs_->rowAt(fitRun_, i, *pool_);
-      if (e.tick != src_[r].run || e.status != kFitCrossStatus) break;
+      if (e.tick != r || e.status != kFitCrossStatus) break;
       const uint32_t x = e.seq >= 2 * loop_ ? loop_ : e.seq - loop_ + 1;
       if (x > reach) reach = x;
     }

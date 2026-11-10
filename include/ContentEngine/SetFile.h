@@ -38,9 +38,17 @@ constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
 // loads as it is; older engine firmware refuses version 2 by name rather than sending the bit.
 // Version 3 (DEC-257): a state may list a fit run (kind `kFit`), lookups that are not content; older firmware would
 // compose it as notes.
-constexpr uint16_t kSetFileVersion = 3;
+// Version 4 (DEC-285): a fit run's lookups name a content run by its position in the state's run list, no longer by
+// RunId (RunIds are reassigned on load). A version-3 file's lookups name RunIds of the session that saved it: they are
+// dropped on load (`legacyFitRow`), its marker rows kept — such a loop plays its notes past a shortened end, as it did,
+// until its length is set again.
+constexpr uint16_t kSetFileVersion = 4;
 constexpr uint16_t kSetFileOldestVersion = 1;
 constexpr uint32_t kSetFileRowBytes = 16;
+/// A version-3 fit lookup (filter, cross, held: RunId-keyed, DEC-285): not loaded.
+inline bool legacyFitRow(bool legacy, uint8_t kind, uint8_t status) {
+  return legacy && kind == RunKind::kFit && status >= kFitFilterStatus && status <= kFitHeldStatus;
+}
 
 inline uint32_t crc32Update(uint32_t crc, const uint8_t* data, uint32_t n) {
   crc = ~crc;
@@ -290,6 +298,7 @@ class LoadJob {
         if (!read(h, sizeof h)) return fail(Status::IoError);
         if (get32(h) != kSetFileMagic || get16(h + 4) < kSetFileOldestVersion || get16(h + 4) > kSetFileVersion)
           return fail(Status::BadFormat);
+        legacyFit_ = get16(h + 4) < 4;
         emptyBelow_ = (h[7] & 1) != 0;
         loop_ = get32(h + 8);
         runCount_ = get16(h + 12);
@@ -334,6 +343,7 @@ class LoadJob {
             e.data1 = b[13];
             e.data2 = b[14];
             e.origin = b[15];
+            if (legacyFitRow(legacyFit_, runs_->run(run_[r_]).kind, e.status)) continue;  // forgiven at the seal
             res_->writeOwed(run_[r_], e);
           }
           row_ += n;
@@ -343,7 +353,10 @@ class LoadJob {
         return status_;
       }
       case Phase::States: {
-        for (uint16_t k = 0; k < runCount_; ++k) runs_->seal(run_[k]);  // every row is in: the runs are immutable
+        for (uint16_t k = 0; k < runCount_; ++k) {  // every row is in: the runs are immutable
+          res_->forgive(run_[k]);  // version-3 fit lookups not loaded (DEC-285)
+          runs_->seal(run_[k]);
+        }
         for (uint8_t i = 0; i < states_; ++i) {
           uint8_t h[9];
           if (!read(h, sizeof h)) return fail(Status::IoError);
@@ -445,6 +458,7 @@ class LoadJob {
   uint32_t loop_ = 0, crc_ = 0, noteIdHigh_ = 0, row_ = 0;
   uint16_t runCount_ = 0, r_ = 0;
   Phase phase_ = Phase::Header;
+  bool legacyFit_ = false;  // a version-3 file (DEC-285); in the byte before `run_`'s alignment
   RunId run_[Runs::kRunCount];
   uint32_t rows_[Runs::kRunCount];
   ManifestId made_list_[kMaxStates];

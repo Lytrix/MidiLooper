@@ -224,6 +224,7 @@ class StateReader {
         if (bytes_ < sizeof f + 4 || !read(f, sizeof f, true)) return fail(Why::BadFile);
         if (get32(f) != kSetFileMagic || get16(f + 4) < kSetFileOldestVersion || get16(f + 4) > kSetFileVersion)
           return fail(Why::BadFile);
+        legacyFit_ = get16(f + 4) < 4;
         runCount_ = get16(f + 12);
         states_ = f[14];
         current_ = static_cast<int8_t>(f[15]);
@@ -330,12 +331,16 @@ class StateReader {
           e.data1 = b[13];
           e.data2 = b[14];
           e.origin = b[15];
-          if (!res_->writeOwed(run_[k_], e)) return fail(Why::BadFile);
           ++row_;
           --budget;
+          if (legacyFitRow(legacyFit_, runs_->run(run_[k_]).kind, e.status)) continue;  // DEC-285: forgiven at the seal
+          if (!res_->writeOwed(run_[k_], e)) return fail(Why::BadFile);
         }
         if (k_ < count_) return status_;
-        for (uint8_t k = 0; k < count_; ++k) runs_->seal(run_[k]);
+        for (uint8_t k = 0; k < count_; ++k) {
+          res_->forgive(run_[k]);  // version-3 fit lookups not loaded (DEC-285)
+          runs_->seal(run_[k]);
+        }
         const ManifestId m = manifests_->create(into_, revision_, loop_, run_, count_, *runs_);
         if (m == kNoManifest) return fail(Why::Capacity);
         for (uint8_t k = 0; k < count_; ++k) runs_->release(run_[k]);  // the state holds them now
@@ -418,6 +423,7 @@ class StateReader {
   Why why_ = Why::None;
   Phase phase_ = Phase::Blob;
   Status status_ = Status::Idle;
+  bool legacyFit_ = false;  // a version-3 slot file (DEC-285); in the class's tail padding
 };
 
 template <typename Card, typename Pool, typename Runs, typename Manifests, typename HistoryT, uint8_t Slots>

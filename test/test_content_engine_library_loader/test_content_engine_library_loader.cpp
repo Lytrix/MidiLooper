@@ -419,6 +419,31 @@ void test_getting_a_loop_reads_one_slot_for_another_and_touches_nothing() {
   TEST_ASSERT_TRUE(gRes.check());
 }
 
+/// DEC-285: a got loop keeps its state's run order, so a shortened loop's fit lookups (content runs by position) still
+/// name the same runs — the take before the fit run, its lookup at position 0.
+void test_a_got_shortened_loop_keeps_its_run_order() {
+  buildSet();
+  const RunId take = run(3, RunKind::kRecord, {row(10, 5, 0x90, 60, 100), row(200, 5, 0x80, 60, 0),
+                                               row(900, 6, 0x90, 62, 100), row(1000, 6, 0x80, 62, 0)});
+  const RunId fit = run(3, RunKind::kFit, {row(0, 0, kFitFilterStatus, 0, 0)});
+  commit(3, {take, fit}, 4, 768);
+  for (RunId r : {take, fit}) gRuns.release(r);
+  saveMilestone();
+  TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 3, 1));
+  TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
+  const ManifestId m = gL.takeGot();
+  TEST_ASSERT_TRUE(m != kNoManifest);
+  const auto& x = gManifests.manifest(m);
+  TEST_ASSERT_EQUAL_UINT8(2, x.runCount);
+  TEST_ASSERT_EQUAL_UINT8(RunKind::kRecord, gRuns.run(x.runs[0]).kind);
+  TEST_ASSERT_EQUAL_UINT8(RunKind::kFit, gRuns.run(x.runs[1]).kind);
+  TEST_ASSERT_EQUAL_UINT32(1, gRuns.run(x.runs[1]).rowCount);
+  TEST_ASSERT_EQUAL_UINT32(0, gRuns.rowAt(x.runs[1], 0, gPool).tick);  // position 0: the take
+  TEST_ASSERT_EQUAL_UINT8(kFitFilterStatus, gRuns.rowAt(x.runs[1], 0, gPool).status);
+  gManifests.release(m, gRuns);
+  TEST_ASSERT_TRUE(gRes.check());
+}
+
 /// DEC-270: a stage's empty slot, or a read that fails, gets nothing and changes nothing; refused by name otherwise.
 void test_a_get_that_finds_nothing_or_fails_changes_nothing() {
   buildSet();
@@ -578,6 +603,7 @@ int main(int, char**) {
   RUN_TEST(test_a_live_load_waits_for_the_switch_point_before_it_clears);
   RUN_TEST(test_staging_loads_the_selected_slot_beside_the_set);
   RUN_TEST(test_getting_a_loop_reads_one_slot_for_another_and_touches_nothing);
+  RUN_TEST(test_a_got_shortened_loop_keeps_its_run_order);
   RUN_TEST(test_a_get_that_finds_nothing_or_fails_changes_nothing);
   RUN_TEST(test_a_get_reads_only_the_current_states_runs);
   RUN_TEST(test_a_get_checks_the_whole_slot_file);
