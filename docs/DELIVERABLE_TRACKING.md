@@ -1,3 +1,23 @@
+**2026-11-10 — Fixed-memory engine: performance and step surface (DEC-273–278; owner-confirmed on the device).**
+On `feature/engine-sets-browser` (not merged). The screen opens on the saved selection and a queued slot's roll shows
+at once with its playhead parked; a global launch quantisation (`!ENGINE launch-q 16|8|4|bar`, EEPROM) and a slot's
+double press launching at the next step; performance step / bar buttons restarting the playing slot at that 16th or
+bar at the next launch step (a positioned launch joined late inside its window); under an external clock the
+transport button is a local stop / start; NOTE_EDIT step buttons (select / cycle, a 16th C4 on an empty step, double
+delete, hold as a parameter lock) and the GPIO encoder (pitch / move / length / velocity, legacy acceleration, a held
+step's push adds or deletes). The boot title `OSTINATIX v0.7` with a light raster. Native full 4,511 passed (one
+legacy timing assertion passed on rerun); last image `774d18a0…`, boot clean. Not yet: the encoder's long push (a CC
+menu), the 41–48 extended transport, LOOP_EDIT jam. [DEC-273](DECISION_LOG.md) … [DEC-278](DECISION_LOG.md).
+
+**2026-11-10 — Fixed-memory engine: sets browser with get a loop (DEC-258–272; owner-confirmed on the device).**
+On `feature/engine-sets-browser`. Milestones in one preallocated library file with the real-time clock; load and
+return (live, staged gapless switching at the global switch point); the browser on the DROID (HOLD TRACK) with the
+save suggestion, timeline and fork lanes, a trash (restore / empty), the working set kept across a reboot; get a loop —
+one slot of a saved stage onto the working set as one undo step, through the picker (audition on the beat, USE, empty
+loop presets 1–16 bars) with its own preview partition. Not yet: compaction (reclaiming emptied space), add-as-layer.
+[DEC-258](DECISION_LOG.md) … [DEC-272](DECISION_LOG.md); plan
+[engine sets browser](Plans/engine_sets_browser_proposal.md).
+
 **2026-11-08 — Fixed-memory engine documentation refreshed (docs only).**
 The [README](../README.md) and [engine guide](Guides/FIXED_MEMORY_ENGINE.md) now cover the current runtime,
 controls, display, storage and limits. Legacy references are scoped explicitly. Sets-browser screenshots remain
