@@ -330,7 +330,7 @@ void serviceEncoder(uint32_t ms) {
 }
 
 // ---- Serial commands (until the surface is wired, E9.8b) ---------------------------------------------------------------
-char gLine[64];
+char gLine[160];  // a `file-data` line: 64 bytes in hex (owner 2026-11-10: grooves to the card)
 uint8_t gLineLength = 0;
 
 // ---- Wall-clock time -------------------------------------------------------------------------------------------------
@@ -1197,6 +1197,71 @@ void serviceLibrary() {
   reportLibrary(ok ? "saved" : "failed");
 }
 
+// ---- Files to the card's groove folder (owner 2026-11-10: "create the folder and move these to the SD card via
+// python") ----------------------------------------------------------------------------------------------------------
+// `file-open <path>` (under /GROOVES/ only, no "..": the folder and its parents made), `file-data <hex>` (appended; each
+// acknowledged with the bytes so far, the host's pacing), `file-close <crc32 hex>` (closed; the CRC of what was written
+// compared), `file-list <dir>` (its entries, name and size). Nothing outside /GROOVES/ is written; nothing is deleted
+// or renamed (a file of the same name is replaced). Diagnostics-grade: the host waits for each acknowledgement.
+FsFile gPutFile;
+uint32_t gPutBytes = 0, gPutCrc = 0;
+bool groovePath(const char* p) {
+  return p != nullptr && std::strncmp(p, "/GROOVES/", 9) == 0 && std::strstr(p, "..") == nullptr && std::strlen(p) < 120;
+}
+void fileCommand(const char* verb, char* arg) {
+  gCard.quiesce();
+  if (std::strcmp(verb, "file-open") == 0) {
+    if (gPutFile) gPutFile.close();
+    gPutBytes = gPutCrc = 0;
+    bool ok = gCard.ready() && groovePath(arg);
+    if (ok) {  // the parents, one level at a time
+      char dir[128];
+      std::strncpy(dir, arg, sizeof dir - 1);
+      dir[sizeof dir - 1] = 0;
+      for (char* slash = std::strchr(dir + 1, '/'); slash != nullptr; slash = std::strchr(slash + 1, '/')) {
+        *slash = 0;
+        if (!SD.exists(dir)) SD.mkdir(dir);
+        *slash = '/';
+      }
+      gPutFile = SD.sdfs.open(arg, O_WRONLY | O_CREAT | O_TRUNC);
+      ok = static_cast<bool>(gPutFile);
+    }
+    Serial.printf("#ENGINE,file,open,%s\n", ok ? "ok" : "fail");
+  } else if (std::strcmp(verb, "file-data") == 0) {
+    uint8_t buf[64];
+    uint32_t n = 0;
+    for (const char* h = arg; h != nullptr && h[0] && h[1] && n < sizeof buf; h += 2) {
+      char pair[3] = {h[0], h[1], 0};
+      buf[n++] = static_cast<uint8_t>(std::strtoul(pair, nullptr, 16));
+    }
+    const bool ok = gPutFile && gPutFile.write(buf, n) == n;
+    if (ok) {
+      gPutCrc = ContentEngine::crc32Update(gPutCrc, buf, n);
+      gPutBytes += n;
+    }
+    Serial.printf("#ENGINE,file,data,%s,%lu\n", ok ? "ok" : "fail", static_cast<unsigned long>(gPutBytes));
+  } else if (std::strcmp(verb, "file-close") == 0) {
+    const uint32_t want = arg != nullptr ? static_cast<uint32_t>(std::strtoul(arg, nullptr, 16)) : 0;
+    const bool open = static_cast<bool>(gPutFile);
+    if (open) gPutFile.close();
+    Serial.printf("#ENGINE,file,close,%s,bytes=%lu,crc=%08lX\n", open && want == gPutCrc ? "ok" : "fail",
+                  static_cast<unsigned long>(gPutBytes), static_cast<unsigned long>(gPutCrc));
+  } else if (std::strcmp(verb, "file-list") == 0) {
+    File dir = SD.open(arg != nullptr ? arg : "/GROOVES");
+    uint32_t count = 0;
+    if (dir && dir.isDirectory()) {
+      for (File e = dir.openNextFile(); e; e = dir.openNextFile()) {
+        Serial.printf("#ENGINE,file,entry,%s,%s,%lu\n", e.isDirectory() ? "dir" : "file", e.name(),
+                      static_cast<unsigned long>(e.size()));
+        ++count;
+        e.close();
+      }
+      dir.close();
+    }
+    Serial.printf("#ENGINE,file,list,%lu\n", static_cast<unsigned long>(count));
+  }
+}
+
 void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
@@ -1222,6 +1287,10 @@ void command(char* line, uint32_t nowUs) {
   const char* second = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
   const int b = second != nullptr ? std::atoi(second + 1) : 0;
   auto& c = gEngine.control();
+  if (std::strncmp(verb, "file-", 5) == 0) {
+    fileCommand(verb, arg);
+    return;
+  }
   if (std::strcmp(verb, "start") == 0) {
     gClock.start(nowUs);
     c.transportStart(gClock.nextTick(), nowUs, us);
