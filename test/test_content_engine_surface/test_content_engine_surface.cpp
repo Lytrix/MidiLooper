@@ -455,7 +455,10 @@ void test_copy_mode_copies_slots_across_tracks() {
   shortPress(S::kSlotBase + 2);  // onto track 2's slot 2 (engine slot 10)
   TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(10));
   TEST_ASSERT_FALSE(X().playing(1));
-  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(10, gLast, gUs, gClk.usPerTick()));  // one step
+  tap(S::kRecordNote);  // record's double undoes the paste: the target was selected (one step)
+  ms(100);
+  tap(S::kRecordNote);
+  ms(500);
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(10));
   // A long press of anything ends it, its own gesture dropped (no solo).
   gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // track 2's slot 1 (empty) as the source
@@ -490,7 +493,16 @@ void test_copy_mode_counts_down_and_a_double_press_clears_the_source() {
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
   tap(S::kTrackBase + 0);
   ms(400);
-  // A double press of the source: cleared, closed.
+  // A paste onto slot 3 first (it selects slot 3), then a double press of the source slot 1: cleared, closed, and
+  // record's double undoes the clear — not the paste.
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(100);
+  shortPress(S::kSlotBase + 2);
+  ms(400);
+  const ManifestId pasted = X().contentOf(2);
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, pasted);
   gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
   ms(650);
   gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
@@ -501,8 +513,24 @@ void test_copy_mode_counts_down_and_a_double_press_clears_the_source() {
   ms(50);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(0));
-  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(0, gLast, gUs, gClk.usPerTick()));  // one step
+  tap(S::kRecordNote);  // record's double, after the window: the clear undone (owner: undoable after exiting)
+  ms(100);
+  tap(S::kRecordNote);
+  ms(500);
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+  TEST_ASSERT_EQUAL_UINT16(pasted, X().contentOf(2));
+  // A long hold of another slot ends it at once, nothing copied (DEC-279 amendment 5).
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(100);
+  gS.input(0x9F, S::kSlotBase + 4, 127, gUs / 1000);
+  ms(650);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  gS.input(0x8F, S::kSlotBase + 4, 0, gUs / 1000);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(4));
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // and its release starts nothing
 }
 
 void test_an_armed_slot_punches_in_on_its_second_press() {

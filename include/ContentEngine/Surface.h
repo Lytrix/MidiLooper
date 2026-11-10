@@ -71,7 +71,9 @@
 //   pastes there (`TrackControl::copySlot`, `EditSurface::copyBar` / `copyNote`; one undo step each; its LED flashes
 //   three times) and copy mode ends (owner 2026-11-10: the window closes after the copy; a refused paste keeps it). It
 //   also closes `kCopyIdleMs` after the source's release with nothing pasted (owner: a countdown, restarted by a track
-//   switch). A double press of the source slot clears it (one undo step; it flashes) and closes the window. The track
+//   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
+//   step) — one undo step, it flashes, and the window closes; a long press of any button (another slot / bar / step
+//   included) closes it at once. The track
 //   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
@@ -336,6 +338,7 @@ class Surface {
         barDownMs_[bar] = ms;
       } else if (barsHeld_ & bit) {
         barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~bit);
+        exitBars_ = static_cast<uint8_t>(exitBars_ & ~bit);
         if (copyReleased(Copy::Bar, bar, ms)) return;  // the source's own release
         if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs && edit_.copyBar(copyBar_, bar, ms)) {
           flash(static_cast<uint8_t>(40 + bar), selected(), ms);
@@ -1212,6 +1215,8 @@ class Surface {
   uint8_t copyTrack_ = 0;      // the track selected last (a switch restarts the countdown)
   uint32_t copyUntil_ = 0;     // the countdown's end (from the source's release)
   uint8_t sourceTaps_ = 0;     // the source pressed again: 1, waiting for a second (a double clears it)
+  uint8_t exitButton_ = 0xFF;  // the button whose hold ended copy mode (none starts it until released)
+  uint8_t exitBars_ = 0;       // ... a bar's
   uint32_t sourceTapMs_ = 0;
   uint8_t flashLed_ = 0xFF, flashTrack_ = 0;  // a paste's LED (channel 15 note) flashing three times, on that track
   uint32_t flashMs_ = 0;
@@ -1221,9 +1226,10 @@ class Surface {
   /// Starts copy mode from a held source, ends it on a long press of any other button, a source lock that changed its
   /// note, or NOTE_EDIT left.
   void serviceCopy(uint32_t ms) {
+    if (exitButton_ != 0xFF && !press_.pressed(exitButton_)) exitButton_ = 0xFF;  // released: it may start one again
     if (copy_ == Copy::None) {
       for (uint8_t s = 0; s < kSlotsPerTrack && !browsing() && !popup_; ++s)
-        if (press_.heldMs(static_cast<uint8_t>(kSlot0 + s), ms) >= kCopyHoldMs) {
+        if (kSlot0 + s != exitButton_ && press_.heldMs(static_cast<uint8_t>(kSlot0 + s), ms) >= kCopyHoldMs) {
           press_.consume(static_cast<uint8_t>(kSlot0 + s));  // no long press of its own
           beginCopy(Copy::Slot, s, ms);
           copySlot_ = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
@@ -1231,12 +1237,12 @@ class Surface {
         }
       if (!edit_.editing()) return;
       for (uint8_t bar = 0; bar < 8; ++bar)
-        if (((barsHeld_ >> bar) & 1u) && ms - barDownMs_[bar] >= kCopyHoldMs) {
+        if (((barsHeld_ >> bar) & 1u) && !((exitBars_ >> bar) & 1u) && ms - barDownMs_[bar] >= kCopyHoldMs) {
           beginCopy(Copy::Bar, bar, ms);
           copyBar_ = edit_.barStart(bar);
           return;
         }
-      if (lockStep_ != 0xFF && edit_.locked() && !edit_.lockUsed() &&
+      if (lockStep_ != 0xFF && edit_.locked() && !edit_.lockUsed() && kStep0 + lockStep_ != exitButton_ &&
           press_.heldMs(static_cast<uint8_t>(kStep0 + lockStep_), ms) >= kCopyHoldMs) {
         beginCopy(Copy::Note, lockStep_, ms);
         copyNote_ = edit_.selection();
@@ -1267,6 +1273,7 @@ class Surface {
       if (copyHolding_ && b == sourceButton()) continue;
       if (press_.heldMs(b, ms) >= kCopyHoldMs) {
         press_.consume(b);
+        exitButton_ = b;  // the hold that ended it starts none until released
         endCopy();
         return;
       }
@@ -1274,6 +1281,7 @@ class Surface {
     for (uint8_t bar = 0; bar < 8 && edit_.editing(); ++bar)
       if (((barsHeld_ >> bar) & 1u) && !(copyHolding_ && copy_ == Copy::Bar && bar == copyButton_) &&
           ms - barDownMs_[bar] >= kCopyHoldMs) {
+        exitBars_ = static_cast<uint8_t>(exitBars_ | (1u << bar));
         endCopy();
         return;
       }
@@ -1310,11 +1318,8 @@ class Surface {
     if (copyHolding_) {  // the hold that started it: the countdown runs from here
       copyHolding_ = false;
       copyUntil_ = ms + kCopyIdleMs;
-    } else if (c != Copy::Slot) {
-      endCopy();
-    } else if (sourceTaps_ == 1 && ms - sourceTapMs_ <= kCopyDoubleMs) {  // a double press: the slot cleared
-      if (control().clear(copySlot_, tick_, us_, us()) == X::Result::Ok)
-        flash(static_cast<uint8_t>(kSlotBase + button), selected(), ms);
+    } else if (sourceTaps_ == 1 && ms - sourceTapMs_ <= kCopyDoubleMs) {  // a double press: the source cleared
+      clearSource(ms);
       endCopy();
     } else {  // once: cancelled when no second press follows (`serviceCopy`)
       sourceTaps_ = 1;
@@ -1322,12 +1327,31 @@ class Surface {
     }
     return true;
   }
+  /// A double press of the source (owner 2026-11-10): the slot cleared, or the bar's / the source note's 16th's notes.
+  void clearSource(uint32_t ms) {
+    if (copy_ == Copy::Slot) {
+      if (control().clear(copySlot_, tick_, us_, us()) == X::Result::Ok) {
+        flash(static_cast<uint8_t>(kSlotBase + copyButton_), selected(), ms);
+        slot_[copySlot_ / kSlotsPerTrack] = copyButton_;  // selected: record's double undoes the clear (owner)
+      }
+    } else if (copy_ == Copy::Bar) {
+      if (edit_.clearRange(copyBar_, EditSurface<Engine>::kBar, ms))
+        flash(static_cast<uint8_t>(40 + copyButton_), selected(), ms);
+    } else if (copy_ == Copy::Note) {
+      EditNote n;
+      if (edit_.noteAt(copyNote_, n)) {
+        const uint32_t step = n.tick / EditSurface<Engine>::kSixteenth * EditSurface<Engine>::kSixteenth;
+        if (edit_.clearRange(step, EditSurface<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
+      }
+    }
+  }
   void paste(uint8_t b, uint32_t ms) {
     if (copy_ == Copy::Slot) {
       const uint8_t s = static_cast<uint8_t>(b - kSlot0);
       if (control().copySlot(copySlot_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us()) ==
           X::Result::Ok) {
         flash(static_cast<uint8_t>(kSlotBase + s), selected(), ms);
+        slot_[selected()] = s;  // selected: record's double undoes the paste
         endCopy();  // done: the window closes (owner 2026-11-10)
       }
     } else if (copy_ == Copy::Note) {

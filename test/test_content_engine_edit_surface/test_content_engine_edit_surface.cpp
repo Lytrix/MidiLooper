@@ -1743,7 +1743,8 @@ void test_copy_mode_copies_notes_and_bars() {
   TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
   TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(noteAt(576))).length);
   hold(2, 700);
-  shortPress(2);  // the source again: ends, nothing copied
+  shortPress(2);  // the source again: ends once the double window passes, nothing copied
+  ms(350);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   dbl(S::kRecordNote);
   ms(450);
@@ -1781,6 +1782,33 @@ void test_copy_mode_copies_notes_and_bars() {
   ms(450);
   TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
+  // A double press of the source clears it (DEC-279 amendment 5): step 2's notes (64 @ 96, 72 @ 100), then bar 1's.
+  hold(2, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  shortPress(2);
+  ms(80);
+  shortPress(2);
+  ms(50);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT32(0, notesIn(96, 144));
+  TEST_ASSERT_EQUAL_UINT32(1, notesIn(0, 768));  // 67 @ 384 stays
+  hold(17, 700);
+  shortPress(17);
+  ms(80);
+  shortPress(17);
+  ms(50);
+  TEST_ASSERT_EQUAL_UINT32(0, notesIn(0, 768));
+  dbl(S::kRecordNote);  // one step each
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT32(1, notesIn(0, 768));
+  dbl(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
+  // A long hold of a target bar ends it at once, nothing copied.
+  hold(17, 700);
+  hold(18, 700);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
 }
 
 int main(int, char**) {

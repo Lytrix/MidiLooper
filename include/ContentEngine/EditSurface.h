@@ -556,6 +556,28 @@ class EditSurface {
     drive(kMotorSelect, ms);  // F1's stack for the selection may have grown
     return true;
   }
+  /// Copy mode's clear (DEC-279 amendment 5): every note starting in [`from`, `from + ticks`) deleted, one edit step.
+  /// False: none there, too many, or refused.
+  bool clearRange(uint32_t from, uint32_t ticks, uint32_t ms) {
+    if (!editing()) return false;
+    uint16_t n = 0;
+    const uint16_t size = session().size();
+    for (uint16_t i = 0; i < size; ++i) {
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < from || e.tick >= from + ticks) continue;
+      if (n == kMaxPaste) return false;
+      paste_[n] = EditChange{i, e};
+      paste_[n++].value.deleted = 1;
+    }
+    if (n == 0) return false;
+    open_ = false;
+    session().settle();
+    if (session().apply(paste_, n, focus()) != EditResult::Ok) return false;
+    EditNote s;
+    if (sel_ >= 0 && !selected(s)) pick(-1);
+    drive(kMotorAll, ms);
+    return true;
+  }
   /// Bar `bar`'s start of the 8-bar page holding the bracket (a bar button's; a copy's source).
   uint32_t barStart(uint8_t bar) const { return bracket_ / (8 * kBar) * (8 * kBar) + bar * kBar; }
   /// Copy / paste: the bar starting at `src` over bar `to` of the 8-bar page holding the bracket (its notes deleted,

@@ -15965,3 +15965,17 @@ and every copy undone (1-3 and 1-5 empty again).
   after 5 s; 1-1 → 1-3 copied, a double press of 1-3 in its copy mode cleared it, both undone. Seen meanwhile: an undo
   made ~0.5 s after the copy it undid did not survive a reboot (1-3 came back as the copy, its empty state one undo
   below); an undo made long after did — a save-versus-undo ordering question for the store, not copy mode.
+- **Amendment 5 (owner 2026-11-10: "fast exit with the long hold, but not only on TRK … on any slot/bar/16th"; "the
+  2x press to clear should be on the same button. in case of bar and 16th it should clear that bar/step of notes";
+  "any clear action should be undoable after exiting the copy/clear window"):** a long hold (600 ms) of any button —
+  any slot, bar or step included — ends copy mode at once, nothing pasted, and that held button starts no new copy mode
+  until released (it did: the same hold started one again). A double press of the source clears it in every mode: the
+  slot; the bar's notes (`EditSurface::clearRange` over the bar); the 16th's notes (the source note's step) — one undo
+  step each, the button flashes, the window closes. A clear or a paste selects its slot, so record's double press
+  undoes it after the window closes (it undid the selected slot, which copy mode never set); the bar / step clears are
+  NOTE_EDIT steps, undone by record's double there. Native: the copy-mode tests (a long hold of another slot or bar
+  ends it with nothing copied; the source step's and bar's double press clear them, one step each; record's double
+  undoes a slot clear, not the paste before it, and undoes a paste) — no-exit-guard, no-clear-select and
+  no-paste-select mutations fail them; full native 4,515 passed. Device (image `1d6f845a…`): 1-1 → 1-3 pasted (slot 3 selected, UNDO 4); a long
+  hold of 1-6 in copy mode closed it, 1-6 unchanged, no window after; 1-3's double press cleared it; record's double
+  brought the copy back, again the empty slot.

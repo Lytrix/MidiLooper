@@ -72,7 +72,8 @@ holding), bars in NOTE_EDIT (replaced, one edit step) and single notes (the held
 Native 4,513 passed; device `f50f2dcb…`. Then (owner) **copy mode** replaced the hold-and-press: a long press of a
 slot / bar / step starts it (LED pulse, a small COPY window with `[TRK] LOAD LOOP`), short presses paste (three
 flashes) and the window closes (amendment 3), it closes by itself after 5 s (a track switch restarts the countdown) and a
-double press of the source slot clears it (amendment 4), track buttons reach other tracks first; and **a long press exits every window**
+double press of the source clears it — a slot, a bar's or a step's notes, undoable with record's double after — and a
+long hold of any slot / bar / step exits (amendments 4–5), track buttons reach other tracks first; and **a long press exits every window**
 (browser, picker, popup), the trash moving to 2× TRACK (a `MOVE SET TO TRASH` row, stages directly) with 3× TRACK to
 undo (DEC-279 amendments 1–2). Native 4,514 passed; device `9cc54f15…`.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
