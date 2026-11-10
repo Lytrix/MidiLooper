@@ -905,6 +905,84 @@ void test_notelen_short_on_an_empty_step_creates() {
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
 }
 
+// Slice D (owner 2026-11-10): NOTE_EDIT's step buttons are the 16ths of the bracket's bar — a press selects the step's
+// first note and the next press the next (F1's stack order, wrapping); an empty step gets a 16th C4 (MIDI 60); a
+// double deletes the step's selected note, undoably.
+static int32_t noteAt(uint32_t tick) {
+  for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
+    const EditNote& e = gE.noteEdit().current(i);
+    if (!e.deleted && e.tick == tick) return i;
+  }
+  return -1;
+}
+void test_step_buttons_select_cycle_create_and_delete() {
+  recordBar({{96, 64}, {100, 72}, {384, 67}});
+  enterEdit();
+  settle();
+  tap(2);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  tap(2);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(72, sel().pitch);
+  tap(2);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);  // wrapped
+  tap(8);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  const uint16_t size = gE.noteEdit().size();
+  tap(12);  // empty: a 16th C4
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
+  TEST_ASSERT_EQUAL_UINT32(576, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(48, sel().length);
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  dbl(8);  // the step's note (the selection is elsewhere): deleted
+  ms(350);
+  TEST_ASSERT_EQUAL_INT32(-1, noteAt(384));
+  TEST_ASSERT_TRUE(noteAt(576) >= 0);  // the other notes stay
+  TEST_ASSERT_TRUE(noteAt(96) >= 0);
+  dbl(S::kRecordNote);  // undo
+  ms(450);
+  TEST_ASSERT_TRUE(noteAt(384) >= 0);
+}
+
+// A step held is a parameter lock: its note is the selection the faders act on at once; the release closes the changes
+// as one undo step and brings the previous selection back, with no press of its own.
+void test_a_held_step_is_a_parameter_lock() {
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  tap(8);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  gS.input(0x9F, 2, 127, gUs / 1000);
+  ms(S::kLockMs + 20);
+  TEST_ASSERT_TRUE(gS.edit().locked());
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  settle();  // the motors written to the locked note
+  f4(70);
+  f4(71);
+  TEST_ASSERT_EQUAL_UINT8(71, gE.noteEdit().current(static_cast<uint16_t>(noteAt(96))).pitch);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_FALSE(gS.edit().locked());
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the previous selection, no press of the step
+  TEST_ASSERT_EQUAL_UINT32(384, gS.edit().bracket());
+  dbl(S::kRecordNote);  // one undo step: both F4 moves
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(96))).pitch);
+  // An empty step held locks nothing and adds nothing.
+  const uint16_t size = gE.noteEdit().size();
+  gS.input(0x9F, 12, 127, gUs / 1000);
+  ms(S::kLockMs + 100);
+  TEST_ASSERT_FALSE(gS.edit().locked());
+  gS.input(0x8F, 12, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT16(size, gE.noteEdit().size());
+}
+
 // A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor
 // arriving at the velocity is not a move; moved by hand, the hold edits the velocity and creates nothing.
 void test_notelen_long_press_creates() {
@@ -1528,6 +1606,8 @@ int main(int, char**) {
   RUN_TEST(test_f4_at_zero_mutes_the_note);
   RUN_TEST(test_note_edit_follows_the_track);
   RUN_TEST(test_notelen_short_on_an_empty_step_creates);
+  RUN_TEST(test_step_buttons_select_cycle_create_and_delete);
+  RUN_TEST(test_a_held_step_is_a_parameter_lock);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

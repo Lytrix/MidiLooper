@@ -15810,3 +15810,33 @@ captured.
   three toasts and `Surface::takeNotice` are gone; under a stopped external clock the press does nothing. Device
   `ec0d2d6b…` (the upload tool reported a failure after programming; boot `crash=0`, `BOOT,load,ok`, and the frame
   without a toast show the new image): local stop, back on the bar line, nothing under a stopped master.
+
+## DEC-277 — NOTE_EDIT step buttons: select / cycle, add, delete, and the hold as a parameter lock (surface slice D)
+
+**Date:** 2026-11-10. **Owner:** "note mode 16th buttons select / cycle, empty adds 16th C4, double delete, hold
+parameter lock … non-sticky, edit undo on release". Legacy: `BarStepButtonHandler::executeNoteEditAction` (16ths only;
+press selects, double deletes or creates). Scope: `CURRENT_WORK` performance and step surface, slice D.
+
+**Decision:**
+- **Which 16ths:** the step buttons are the 16ths of the bar holding the bracket (legacy: from the loop start), so they
+  follow F1; outside the window or the loop they do nothing. The bar buttons do nothing in NOTE_EDIT (as legacy).
+- **Short:** the step's first note in F1's stack order (start, then pitch) — the engine keeps one selection, so "every
+  note on the step" is the stack the presses walk: on the step holding the selection, the next one, wrapping — with
+  the geometry faders armed at once (as F1). An empty step gets a 16th C4 (MIDI 60, velocity 80) at the step, selected.
+- **Double:** deletes the step's selected note (its first when the selection is elsewhere), one undo step.
+- **Hold** (`Surface::kLockMs` 400 ms, past a tap): a parameter lock — the step's note (the selected one when it is
+  there) is the selection F2 / F3 / F4 act on at once, the motors written to it; the release closes its changes as one
+  undo step (the selected-note step rule), restores the previous selection and bracket, and makes no press. An empty
+  step held locks and adds nothing (slice E: the encoder's push adds there). The encoder acting on the lock is slice E.
+- **LEDs:** in NOTE_EDIT the 16th LEDs show the bracket's bar (its notes 64, the bracket's step 127), not the playhead's.
+- Performance step and bar buttons (DEC-275) unchanged: in NOTE_EDIT the step buttons go through the press detector
+  (`Surface::kStep0`), outside it they act on the press.
+
+**Evidence:** native: `test_step_buttons_select_cycle_create_and_delete` (64 → 72 → 64 on a stacked step, an empty step
+a 16th C4, a double deleting the step's note, undone) and `test_a_held_step_is_a_parameter_lock` (F4 on the locked
+note, the previous selection back with no press, one undo for both moves, an empty step held adds nothing) — the
+no-cycle, no-restore and unconsumed-release mutations fail them. Full 4,508 passed. Device (image `b40a5be6…`, boot
+`crash=0`, `BOOT,load,ok`; 1-2, 4 bars, every 16th of bars 1 and 3 filled): step 1's two notes alternate (12 / 96);
+each step selects its note; step 4 of bar 3 emptied by doubles, then a press added a C4 16th (`pitch=60,len=48`);
+holding step 1 locked its note (pitch 12), F4 set 52, the release restored the C4 selection; the visit undone on the
+slot afterwards (step 4 back to its pitch-93 note).

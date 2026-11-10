@@ -34,6 +34,13 @@
 //   start; with no note selected (an empty 16th) it creates one there instead (owner 2026-11-08: nothing to lengthen);
 //   double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
 //   within 24 ticks of it.
+// * Step buttons 0–15 (surface slice D; legacy `BarStepButtonHandler::executeNoteEditAction`, owner 2026-11-10): the
+//   16ths of the bar holding the bracket. A press selects the step's first note in F1's stack order (start, then
+//   pitch) — a press on the step holding the selection the next one, wrapping (the cycle) — and arms the geometry
+//   faders; an empty step gets a 16th C4 (MIDI 60). A double deletes the step's selected note (its first, when the
+//   selection is elsewhere). A hold is a parameter lock (`lockBegin` / `lockEnd`): the step's note is selected while it
+//   is held, the faders act on it at once, and the release closes its changes as one undo step and brings the
+//   previous selection back. The bar buttons do nothing here (as legacy).
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
 //   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
@@ -81,6 +88,7 @@ class EditSurface {
     length_ = false;
     velocity_ = false;
     open_ = false;
+    lock_ = false;
     for (Motor& m : motors_) m = Motor{};
     f1Seen_ = false;
     why_ = Why::Acted;
@@ -174,6 +182,7 @@ class EditSurface {
     length_ = false;
     velocity_ = false;
     open_ = false;
+    lock_ = false;
   }
 
   /// Once per pass: a finished gather opens the session (or narrows the window when it holds too many notes).
@@ -407,8 +416,9 @@ class EditSurface {
     }
     create(ms);
   }
-  /// A note at the bracket (C3, velocity 80, a 32nd; the window's channel), unless one starts within `kSnapTicks`.
-  void create(uint32_t ms) {
+  /// A note at the bracket (C3, velocity 80, a 32nd — a step button's a 16th; the window's channel), unless one starts
+  /// within `kSnapTicks`.
+  void create(uint32_t ms, uint32_t length = kSixteenth / 2) {
     if (!editing()) return;
     open_ = false;
     const uint16_t size = session().size();
@@ -424,7 +434,7 @@ class EditSurface {
     const uint32_t id = e_->noteIds().peek();
     e_->noteIds().advance();
     uint16_t at = 0;
-    if (session().create(EditNote{id, bracket_ % loop_, kSixteenth / 2, 60, 80, channel, 0}, focus(), at) ==
+    if (session().create(EditNote{id, bracket_ % loop_, length, 60, 80, channel, 0}, focus(), at) ==
         EditResult::Ok) {
       pick(static_cast<int16_t>(at));
       armedMs_ = ms;  // a new selection: the geometry faders wait the grace period (legacy)
@@ -432,6 +442,77 @@ class EditSurface {
       drive(kMotorAll, ms);
     }
   }
+  // ---- Step buttons (slice D) ---------------------------------------------------------------------------------------
+  /// Step `k`'s tick: that 16th of the bar holding the bracket. False: outside the window or the loop.
+  bool stepTick(uint8_t k, uint32_t& tick) const {
+    if (!editing() || k >= 16) return false;
+    tick = bracket_ / kBar * kBar + k * kSixteenth;
+    return tick < loop_ && tick >= first_ && tick < first_ + ticks_;
+  }
+  /// A step's press: its first note, or the next after the selected one (the cycle); an empty step gets a 16th C4.
+  void stepPress(uint8_t k, uint32_t ms) {
+    uint32_t tick;
+    if (!stepTick(k, tick)) return;
+    int16_t stack[32];
+    const uint8_t n = stackAt(tick, stack);
+    if (n == 0) {
+      bracket_ = tick;
+      create(ms, kSixteenth);
+      return;
+    }
+    uint8_t idx = 0;
+    for (uint8_t i = 0; i < n; ++i)
+      if (stack[i] == sel_) idx = static_cast<uint8_t>((i + 1) % n);
+    choose(stack[idx], ms);
+  }
+  /// A step's double: its selected note (its first when the selection is elsewhere) is deleted.
+  void stepDelete(uint8_t k, uint32_t ms) {
+    uint32_t tick;
+    if (!stepTick(k, tick)) return;
+    int16_t stack[32];
+    const uint8_t n = stackAt(tick, stack);
+    if (n == 0) return;
+    bool on = false;
+    for (uint8_t i = 0; i < n; ++i) on |= stack[i] == sel_;
+    if (!on) choose(stack[0], ms);
+    deleteOrCreate(ms);
+  }
+  /// A step held (the parameter lock): its note — the selected one when it is there, else its first — is the
+  /// selection the faders act on until `lockEnd`. False: an empty step (nothing locked).
+  bool lockBegin(uint8_t k, uint32_t ms) {
+    uint32_t tick;
+    if (lock_ || !stepTick(k, tick)) return false;
+    int16_t stack[32];
+    const uint8_t n = stackAt(tick, stack);
+    if (n == 0) return false;
+    int16_t pickNote = stack[0];
+    for (uint8_t i = 0; i < n; ++i)
+      if (stack[i] == sel_) pickNote = sel_;
+    lock_ = true;
+    lockSel_ = sel_;
+    lockBracket_ = bracket_;
+    lockRef_ = refStep_;
+    lockLength_ = length_;
+    choose(pickNote, ms);
+    return true;
+  }
+  /// The step released: the lock's changes are one undo step (closed now), and the previous selection is back.
+  void lockEnd(uint32_t ms) {
+    if (!lock_) return;
+    lock_ = false;
+    open_ = false;
+    if (!editing()) return;
+    EditNote n;
+    const int16_t back = lockSel_ >= 0 && !session().current(static_cast<uint16_t>(lockSel_)).deleted ? lockSel_ : -1;
+    pick(back);
+    bracket_ = lockBracket_;
+    refStep_ = lockRef_;
+    length_ = lockLength_ && selected(n);
+    armed_ = true;
+    drive(kMotorAll, ms);
+  }
+  bool locked() const { return lock_; }
+
   /// The record button's double / triple while editing.
   bool undo(uint32_t ms) { return step(true, ms); }
   bool redo(uint32_t ms) { return step(false, ms); }
@@ -449,6 +530,30 @@ class EditSurface {
     }
     state_ = State::Gathering;
     return true;
+  }
+  /// The notes starting in `tick`'s 16th inside the window, in F1's stack order (start, then pitch).
+  uint8_t stackAt(uint32_t tick, int16_t* stack) {
+    uint8_t n = 0;
+    const uint16_t size = session().size();
+    const uint32_t step = tick / kSixteenth;
+    for (uint16_t i = 0; i < size && n < 32; ++i) {
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < first_ || e.tick >= first_ + ticks_ || e.tick / kSixteenth != step) continue;
+      uint8_t k = n++;
+      for (; k > 0 && before(e, session().current(static_cast<uint16_t>(stack[k - 1]))); --k) stack[k] = stack[k - 1];
+      stack[k] = static_cast<int16_t>(i);
+    }
+    return n;
+  }
+  /// A step button's selection: as F1's, the geometry faders armed at once.
+  void choose(int16_t note, uint32_t ms) {
+    pick(note);
+    bracket_ = session().current(static_cast<uint16_t>(sel_)).tick;
+    length_ = false;
+    refStep_ = bracket_ / kSixteenth;
+    armed_ = true;
+    open_ = false;
+    drive(kMotorAll, ms);
   }
   static bool before(const EditNote& a, const EditNote& b) {
     return a.tick != b.tick ? a.tick < b.tick : a.pitch < b.pitch;
@@ -723,6 +828,9 @@ class EditSurface {
   uint32_t lastFineMs_ = 0;
   bool hadFine_ = false;
   bool open_ = false;  // the selected note has its step: a change replaces it
+  bool lock_ = false, lockLength_ = false;  // a step held (slice D): the selection before it
+  int16_t lockSel_ = -1;
+  uint32_t lockBracket_ = 0, lockRef_ = 0;
   int16_t openNote_ = -1;
   uint8_t openDepth_ = 0;
 };

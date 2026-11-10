@@ -53,7 +53,10 @@
 //   - step buttons 0–15 and bar buttons 17–24 (slice C, legacy `BarStepButtonHandler`; performance only — not in an
 //     edit, the browser or a popup): on the press, the selected track's playing slot restarts at that position at the
 //     next launch step (`TrackControl::queueSeek`; a queued switch replaced) — a 16th of the bar playing, a bar of the
-//     8-bar page playing, modulo the loop (as legacy). A stopped or taking track ignores them.
+//     8-bar page playing, modulo the loop (as legacy). A stopped or taking track ignores them. In NOTE_EDIT (slice D)
+//     the step buttons are the 16ths of the bracket's bar (`EditSurface`): short = select / cycle (an empty step: a
+//     16th C4), double = delete, held `kLockMs` = the parameter lock until the release (no gesture then); their LEDs
+//     show that bar's notes and the bracket's step.
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
 //   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
@@ -225,8 +228,10 @@ class Surface {
     kEditMode,
     kSlot0,
     kTrack0 = kSlot0 + 8,
-    kButtons = kTrack0 + 8
+    kStep0 = kTrack0 + 8,  // NOTE_EDIT's step buttons (slice D; in performance they act on the press)
+    kButtons = kStep0 + 16
   };
+  static constexpr uint32_t kLockMs = 400;  // a step held this long in NOTE_EDIT: the parameter lock
   static constexpr uint8_t kTracks = 8, kSlotsPerTrack = 8;
 
   void init(Engine& e, EngineClock& clock) {
@@ -243,6 +248,8 @@ class Surface {
     edit_.init(e);
     for (uint8_t s = 0; s < kSlotsPerTrack; ++s) press_.configure(kSlot0 + s, T{300, 400, 600, 0, true});
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
+    for (uint8_t k = 0; k < 16; ++k) press_.configure(kStep0 + k, T{300, 400, 600, 0, false});
+    lockStep_ = 0xFF;
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
@@ -293,11 +300,16 @@ class Surface {
       return;
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
-    if (d1 < kStepNotes) {  // the step and bar buttons act on the press
-      if (type == 0x90 && d2 != 0) stepPress(d1);
-      return;
+    uint8_t b;
+    if (d1 < kStepNotes) {
+      if (d1 >= 16 || !(edit_.editing() || press_.pressed(kStep0 + d1))) {  // performance: they act on the press
+        if (type == 0x90 && d2 != 0) stepPress(d1);
+        return;
+      }
+      b = static_cast<uint8_t>(kStep0 + d1);  // NOTE_EDIT: gestures
+    } else {
+      b = buttonOf(d1);
     }
-    const uint8_t b = buttonOf(d1);
     if (b == 0xFF) return;
     if (popup_ && b == popupButton_) {  // the length popup takes the button that opened it: taps
       popupPress(type == 0x90 && d2 != 0, ms);
@@ -306,6 +318,11 @@ class Surface {
     if (type == 0x90 && d2 != 0) {
       press_.down(b, ms);
     } else {
+      if (b == kStep0 + lockStep_) {  // a held step: the lock ends, no gesture
+        press_.consume(b);
+        edit_.lockEnd(ms);
+        lockStep_ = 0xFF;
+      }
       press_.up(b, ms);
       // A long press — velocity mode, F4 not moved by hand — creates a note (owner 2026-11-08).
       if (b == kLength && edit_.velocityDone(ms)) edit_.create(ms);
@@ -321,6 +338,11 @@ class Surface {
       press_.consume(kLength);  // a long hold: velocity mode, F4's motor to the velocity
       edit_.velocityBegin(ms, true);
     }
+    for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
+      if (press_.heldMs(kStep0 + k, ms) >= kLockMs) {  // the parameter lock (an empty step: nothing, no gesture)
+        lockStep_ = k;
+        edit_.lockBegin(k, ms);
+      }
     uint8_t b;
     Press p;
     while (press_.next(ms, b, p)) dispatch(b, p);
@@ -579,6 +601,12 @@ class Surface {
         return;
       default:
         break;
+    }
+    if (b >= kStep0 && b < kStep0 + 16) {  // NOTE_EDIT's step buttons (slice D)
+      const uint8_t k = static_cast<uint8_t>(b - kStep0);
+      if (p == Press::Short) edit_.stepPress(k, nowMs_);
+      else if (p == Press::Double) edit_.stepDelete(k, nowMs_);
+      return;
     }
     if (b >= kSlot0 && b < kSlot0 + kSlotsPerTrack) {
       const uint8_t s = static_cast<uint8_t>(b - kSlot0);
@@ -1016,6 +1044,10 @@ class Surface {
     }
     if (loop == 0) return;
     const uint32_t bars = (loop + kBar - 1) / kBar;
+    if (edit_.editing() && edit_.slot() == slot) {  // NOTE_EDIT: the bracket's bar and step (the step buttons')
+      pos = edit_.bracket() % loop;
+      moving = true;
+    }
     const uint32_t bar = pos / kBar;
     for (uint8_t i = 0; i < 8 && i < bars; ++i) {
       const auto* d = e_->tiles().densityTile(slot, i);
@@ -1041,6 +1073,7 @@ class Surface {
   PressDetector<kButtons> press_;
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
+  uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
