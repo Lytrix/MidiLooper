@@ -302,6 +302,36 @@ void test_full_capacity_build_grain_count() {
 
 // The composer no longer carries a hide table: the production composer stays inside the 12 KiB-per-cursor budget
 // (18 cursors <= 221,184 B).
+// DEC-286 (groove design § 2): the edit-hide index is cached by identity, so two views of one state — played from its
+// groove pass, rebuilt from the passes before it — must not share one: a shared identity serves the first view's hides
+// to the second. The rebuild view's identity (`prefixViewIdentity`) has its own index.
+void test_a_rebuild_view_has_its_own_index() {
+  const RunId a = noteRun();
+  const RunId playEdit = editRun({1});     // the playback view deletes note 1
+  const RunId prefixEdit = editRun({2});   // the prefix's own edit deletes note 2
+  const SourceRun play[] = {{a, 2}, {playEdit, 1}};
+  const SourceRun prefix[] = {{a, 2}, {prefixEdit, 1}};
+  IndexLease lp, lr;
+  TEST_ASSERT_EQUAL(IndexResult::Ready, gStore.acquire(42, play, 2, lp));
+  TEST_ASSERT_TRUE(gStore.hidden(lp, 1, 0));
+  // The hazard: the prefix composed under the same identity is served the playback view's hides.
+  IndexLease shared;
+  TEST_ASSERT_EQUAL(IndexResult::Ready, gStore.acquire(42, prefix, 2, shared));
+  TEST_ASSERT_TRUE(gStore.hidden(shared, 1, 0));   // wrong: note 1 hidden in the prefix
+  TEST_ASSERT_FALSE(gStore.hidden(shared, 2, 0));  // wrong: note 2 back
+  gStore.release(shared);
+  // Its own identity: its own hides.
+  TEST_ASSERT_TRUE(prefixViewIdentity(42) != 42);
+  TEST_ASSERT_EQUAL(IndexResult::Ready, gStore.acquire(prefixViewIdentity(42), prefix, 2, lr));
+  TEST_ASSERT_TRUE(lr.slot != lp.slot);
+  TEST_ASSERT_TRUE(gStore.hidden(lr, 2, 0));
+  TEST_ASSERT_FALSE(gStore.hidden(lr, 1, 0));
+  TEST_ASSERT_TRUE(gStore.hidden(lp, 1, 0));  // the playback view's index untouched
+  TEST_ASSERT_FALSE(gStore.hidden(lp, 2, 0));
+  gStore.release(lp);
+  gStore.release(lr);
+}
+
 void test_production_composer_within_budget() {
   TEST_ASSERT_TRUE(sizeof(Composer<ProductionPool, ProductionRuns>) <= 12288u);
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations);
@@ -319,6 +349,7 @@ int main(int, char**) {
   RUN_TEST(test_incremental_build_equals_synchronous_random);
   RUN_TEST(test_building_identity_is_named_and_abandoned_build_frees_slot);
   RUN_TEST(test_full_capacity_build_grain_count);
+  RUN_TEST(test_a_rebuild_view_has_its_own_index);
   RUN_TEST(test_production_composer_within_budget);
   return UNITY_END();
 }

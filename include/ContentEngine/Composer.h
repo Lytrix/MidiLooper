@@ -68,8 +68,11 @@
 
 namespace ContentEngine {
 
+/// `MaxOpen` (DEC-286, groove design slice 1): effective instances tracked open at once. Playback keeps 48; the groove
+/// builder's extraction composer — every effective note, no output limit — takes `T` = `MaxOpen` = 128 (the writer's
+/// open-note bound), so no effective note is refused (`Stats::openOverflow` stays 0 up to 128 open).
 template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
-          typename IndexStore = EditIndexStore<Pool, Runs>>
+          typename IndexStore = EditIndexStore<Pool, Runs>, uint8_t MaxOpen = 48>
 class Composer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
@@ -83,7 +86,8 @@ class Composer {
     uint32_t openOverflow;  // effective instances refused untracked: more than kMaxOpen open at once
     uint32_t continuousLimited;  // continuous-controller rows beyond 32 on one tick, left out of the window
   };
-  static constexpr uint8_t kMaxOpen = 48;
+  static constexpr uint8_t kMaxOpen = MaxOpen;
+  static_assert(T <= MaxOpen, "every selected instance is tracked");
   const Stats& stats() const { return stats_; }
 
   /// `index` is the shared edit-hide index; required only for sources with edit runs.

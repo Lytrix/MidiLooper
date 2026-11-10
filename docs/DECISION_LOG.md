@@ -16282,3 +16282,30 @@ keeps the run order and identical lookups, positions < run count); `test_a_got_s
 (get a loop: the take then the fit run, its lookup at position 0). Full native 4,531 passed, 8 skipped. Device image
 `2c41ee6d…` (`crash=0`, `BOOT,load,ok`): on 1-3 bars 2–3 set in LOOP_EDIT — the fit run's lookups at positions 0–3
 (its four content runs); after a reboot the same positions, the loop 1,536 ticks.
+
+## DEC-286 — The composer's open-instance limit is a parameter; a rebuild view has its own identity
+
+**Date:** 2026-11-10. **Owner:** "Yes, start slice 1" (groove design `docs/Plans/groove_quantize_design.md` § 9 slice 1:
+extraction and views; contracts §§ 2–3 from the second design review). No owner-visible behaviour changes; the groove
+builder (slice 2) uses both.
+
+**Decision:**
+- `Composer`'s open-instance bound becomes a template parameter `MaxOpen` (default 48, playback and display unchanged;
+  `static_assert(T <= MaxOpen)`). The groove builder's **extraction composer** is `Composer<…, T = 128, …, MaxOpen =
+  128>` — the writer's open-note bound — so it selects every effective instance and refuses none up to 128 open at once
+  (more is `Stats::openOverflow`, which the builder will treat as a named failure). It applies every effective rule
+  (DEC-244 order, OVL occlusion and shortening, edit hides, Q-LEN-1, fit filtering) exactly as playback; a note crossing
+  a window end is closed by its TERMINAL entry in a later window, as today.
+- **View identity**: `prefixViewIdentity(identity)` = the identity with `kViewIdentityBit` (bit 31) set. Manifest
+  identities stay below it (`ManifestTable::create` refuses beyond — 2^31 states, never reached). A view composed from a
+  different run list than its manifest — the groove rebuild's source prefix — uses it, so the edit-hide index cache
+  (keyed by identity) never serves one view's hides to another. Each view's index is prepared from the runs that view
+  composes (the source list given to `begin` / `reserve`).
+- Rejected: a separate extraction pass outside the composer (duplicating the effective rules); keying the index cache by
+  (identity, run list) (a wider key in every cached slot for a case only the rebuild has).
+
+**Evidence:** native `test_content_engine_extraction` (new): 60 notes on distinct pitches sounding at once across two
+window ends — all 60 extracted with their exact starts and ends, `openOverflow` 0; the playback composer overflows on
+the same source; a later pass's shortening and an edit's hide applied in extraction. A fixed-48 mutation fails it.
+`test_a_rebuild_view_has_its_own_index` (edit-index): the same identity serves the first view's hides to the second
+(note 1 hidden, note 2 back); the view identity gets its own slot and hides, the first view's index untouched.

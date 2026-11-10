@@ -1,3 +1,10 @@
+**2026-11-10 — DEC-286: extraction composer and rebuild-view identity (groove design slice 1).** `Composer`'s open-
+instance bound is a template parameter (default 48); the groove builder's extraction composer takes 128 voices and 128
+open, so every effective note of a busy loop is extracted (60 simultaneous notes across two window ends, none lost —
+the playback composer overflows on the same source). `prefixViewIdentity` gives a rebuild view its own edit-hide index
+(a shared identity served one view's hides to the other). No behaviour change on the device (nothing uses them yet);
+firmware builds. Full native 4,534 passed (196 suites).
+
 **2026-11-10 — DEC-285: a shortened loop survives a reboot (groove design slice 0).** A fit run's lookups name content
 runs by their position in the state's run list instead of by RunId (reassigned on load): `FitBuilder::build` in state
 order, `Composer` matching by source index; set file version 4, a version-3 file's lookups dropped on load (its loops

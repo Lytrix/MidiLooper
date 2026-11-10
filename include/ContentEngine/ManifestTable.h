@@ -14,6 +14,13 @@
 
 namespace ContentEngine {
 
+/// A second view of one state (DEC-286, groove design § 2): a grooved state is played from its groove pass on and rebuilt
+/// from the passes before it. Each view is composed under its own identity, because the edit-hide index cache
+/// (`EditIndexStore`) is keyed by identity — one shared identity served one view's hides to the other (a deleted note
+/// came back in a probe). Manifest identities stay below `kViewIdentityBit`; the rebuild view sets it.
+constexpr uint32_t kViewIdentityBit = 0x80000000u;
+inline uint32_t prefixViewIdentity(uint32_t identity) { return identity | kViewIdentityBit; }
+
 template <uint16_t ManifestCount, uint8_t MaxRuns>
 class ManifestTable {
  public:
@@ -49,6 +56,7 @@ class ManifestTable {
   ManifestId create(uint8_t slot, uint32_t revision, uint32_t loopLengthTicks, const RunId* runs, uint8_t runCount,
                     Runs& runTable) {
     if (freeHead_ == kNoManifest || runCount > MaxRuns) return kNoManifest;
+    if (nextIdentity_ >= kViewIdentityBit) return kNoManifest;  // never reached in practice (2^31 states)
     const ManifestId id = freeHead_;
     freeHead_ = nextFree_[id];
     --freeCount_;
