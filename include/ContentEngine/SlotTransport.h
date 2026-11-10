@@ -411,7 +411,7 @@ class SlotTransport {
   /// kept and not played. One undo step; tracks playing the slot follow from the next boundary.
   /// `replace` (owner 2026-11-08: one undo step a LOOP_EDIT visit): when the slot's current state has this identity, the
   /// new state replaces it in place instead of adding a step (0: always a step).
-  /// `marks` (DEC-284): BASE and CUSTOM to keep with the new state (nullptr: the base's).
+  /// `marks` (DEC-284): the remembered ranges to keep with the new state (nullptr: the base's).
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
                 uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
@@ -449,10 +449,10 @@ class SlotTransport {
 
   static void mark(LoopWindow& w, const LoopWindow* marks) {
     if (marks == nullptr) return;
-    w.baseStart = marks->baseStart;
-    w.baseLength = marks->baseLength;
-    w.customStart = marks->customStart;
-    w.customLength = marks->customLength;
+    w.aStart = marks->aStart;
+    w.aLength = marks->aLength;
+    w.bStart = marks->bStart;
+    w.bLength = marks->bLength;
   }
   /// The slot's play window in its stored notes (DEC-283; start 0 and the frame 0 without content).
   LoopWindow window(uint8_t slot) const {

@@ -16234,3 +16234,19 @@ BASE (on 1-3 BASE had become 2,256 ticks: one 16th before bar 4). Now F1's park 
 empty slot still gets its empty loop); the double does nothing there. Evidence: native — the range test echoes both
 motors after their park (the loop, its start and BASE unchanged), a guard-removed mutation fails it; the BASE test
 toggles with single presses. Device image `7e829523…` (`crash=0`, `BOOT,load,ok`).
+
+**Amendment 3 (2026-11-10, two ranges and the full loop):** owner: "a more logical approach would be you can switch
+between 2 custom loop lengths and double press resets to a full range … that would work great as a jammable thing".
+- BASE and CUSTOM are gone: the loop remembers the last two ranges of the step / bar buttons (`kFitRangeAStatus` 0xF9,
+  `kFitRangeBStatus` 0xFA — the same rows; `aStart` / `bStart`): a new range becomes B, the range playing before it
+  (when it was A or B; else B before) becomes A. F1, F2 and the popup set no range.
+- NOTELEN, in performance and LOOP_EDIT: single press → the other range (from B to A, from A to B, from anything else
+  to B, or A when it is the only one); double press → the whole stored loop (start 0, the frame) — each its own undo
+  step, the ranges kept. In LOOP_EDIT an empty slot's press still makes its empty loop.
+- The popup's first row is FULL · A · B (a range dim while there is none), then 1–8, 16–128 bars from the stored
+  loop's start. A length longer than the stored loop grows it (DEC-283), so it then reads as FULL.
+Evidence: native — the toggle test: one range, a double → the full bar, a single → the range, a second range and a
+third (the two newest kept, the single press switching them), the popup (B selected; a length; back to B, A), the same
+presses in performance; a never-push-the-older-range mutation fails it; the popup tests start at FULL. Device (image
+`806c6926…`, `crash=0`, `BOOT,load,ok`, on 1-3 with one range, bars 2–3): single → bars 2–3, double → the full 7
+bars, single → bars 2–3.

@@ -40,9 +40,9 @@ enum class FitResult : uint8_t { Ok, None, DeniedRun, DeniedCapacity, TooLarge, 
 /// which is `frame` ticks long (at least the loop).
 struct LoopWindow {
   uint32_t start = 0, frame = 0;
-  // DEC-284: BASE (the loop as recorded or set by F1 / F2 / the length popup) and CUSTOM (the last range of the
-  // step / bar buttons), each a start in the stored loop and a length; length 0: BASE is the current loop / no CUSTOM.
-  uint32_t baseStart = 0, baseLength = 0, customStart = 0, customLength = 0;
+  // DEC-284 amendment 3: the two last ranges of the step / bar buttons (A the older, B the newer), each a start in the
+  // stored loop and a length; length 0: none.
+  uint32_t aStart = 0, aLength = 0, bStart = 0, bLength = 0;
 };
 /// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
 /// loop.
@@ -59,12 +59,12 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
       if (e.status == kFitWindowStatus) {
         w.start = e.seq;
         w.frame = e.noteId;
-      } else if (e.status == kFitBaseStatus) {
-        w.baseStart = e.seq;
-        w.baseLength = e.noteId;
-      } else if (e.status == kFitCustomStatus) {
-        w.customStart = e.seq;
-        w.customLength = e.noteId;
+      } else if (e.status == kFitRangeAStatus) {
+        w.aStart = e.seq;
+        w.aLength = e.noteId;
+      } else if (e.status == kFitRangeBStatus) {
+        w.bStart = e.seq;
+        w.bLength = e.noteId;
       }
     }
   }
@@ -162,9 +162,9 @@ class FitBuilder {
       if (r != FitResult::Ok) return r;
     }
     const bool windowed = window.start != 0 || (window.frame != 0 && window.frame != loop);
-    const bool base = window.baseLength != 0 && (window.baseLength != loop || window.baseStart != window.start);
-    const bool custom = window.customLength != 0;
-    const uint32_t marks = (windowed ? 1u : 0u) + (base ? 1u : 0u) + (custom ? 1u : 0u);
+    const bool rangeA = window.aLength != 0;
+    const bool rangeB = window.bLength != 0;
+    const uint32_t marks = (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u);
     if (count_ == 0 && marks == 0) return FitResult::None;
     const RunId run = runs.allocate(slot, RunKind::kFit);
     if (run == kNoRun) return FitResult::DeniedRun;
@@ -189,9 +189,9 @@ class FitBuilder {
       e.status = status;
       res.writeOwed(run, e);
     };
-    if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, BASE, CUSTOM
-    if (base) mark(kFitBaseStatus, window.baseStart, window.baseLength);
-    if (custom) mark(kFitCustomStatus, window.customStart, window.customLength);
+    if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, range A, range B
+    if (rangeA) mark(kFitRangeAStatus, window.aStart, window.aLength);
+    if (rangeB) mark(kFitRangeBStatus, window.bStart, window.bLength);
     runs.seal(run);
     fit = run;
     return FitResult::Ok;

@@ -83,7 +83,7 @@ struct EditView {
   uint8_t popupSlot = 0;
   uint32_t popupLoop = 0;  // the length it shows (ticks)
   uint8_t popupChoice = 0xFF;  // its selected choice (DEC-284 amendment 1: 0 BASE, 1 CUSTOM, 2–13 the lengths)
-  bool popupCustom = false;    // CUSTOM exists
+  uint8_t popupRanges = 0;     // the remembered ranges there are (bit 0 A, bit 1 B; DEC-284 amendment 3)
 };
 
 /// What the sets browser shows beside its model (sets browser slice 3): the working set's save state ("SAVED 14:32"),
@@ -1171,7 +1171,7 @@ class EngineDisplay {
   /// light (owner 2026-11-08: "the screen gets all dimmed"): the panel dims as a whole as its total load rises — a
   /// filled bright title bar and grey interior took the frame's summed levels from ~5,000 to ~25,000.
   /// DEC-284 amendment 1 (owner 2026-11-10: "show all possible lengths in the popup to cycle through"): every choice in
-  /// three rows — BASE · CUSTOM, 1–8, 16 · 32 · 64 · 128 — BARS in the title once, the selected one inverted, the
+  /// three rows — FULL · A · B (amendment 3), 1–8, 16 · 32 · 64 · 128 — BARS in the title once, the selected one inverted, the
   /// others dim (CUSTOM dimmer while there is none).
   void drawPopup() {
     constexpr int16_t x0 = 72, y0 = 1, x1 = 183, y1 = 45, sh = 3;
@@ -1193,8 +1193,8 @@ class EngineDisplay {
     const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
-    static const char* const kChoice[14] = {"BASE", "CUSTOM", "1", "2", "3", "4", "5", "6", "7", "8", "16", "32", "64", "128"};
-    static constexpr uint8_t kRow[4] = {0, 2, 10, 14};     // the rows' first choices
+    static const char* const kChoice[15] = {"FULL", "A", "B", "1", "2", "3", "4", "5", "6", "7", "8", "16", "32", "64", "128"};
+    static constexpr uint8_t kRow[4] = {0, 3, 11, 15};     // the rows' first choices
     static constexpr int16_t kGap[3] = {12, 8, 10};        // the space between a row's choices
     for (uint8_t r = 0; r < 3; ++r) {
       int16_t w = static_cast<int16_t>(-kGap[r]);
@@ -1208,7 +1208,7 @@ class EngineDisplay {
                                      static_cast<int16_t>(x + iw + 1), static_cast<int16_t>(y + 5), 13);
           label(kChoice[i], x, y, 0);
         } else {
-          label(kChoice[i], x, y, i == 1 && !edit_.popupCustom ? 2 : 6);
+          label(kChoice[i], x, y, (i == 1 || i == 2) && !((edit_.popupRanges >> (i - 1)) & 1) ? 2 : 6);
         }
         x = static_cast<int16_t>(x + iw + kGap[r]);
       }
