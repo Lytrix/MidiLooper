@@ -457,6 +457,18 @@ class Surface {
   uint8_t copySourceSlot() const { return copySlot_; }  // Slot: the engine slot
   uint8_t copySourceBar() const { return copyButton_; }  // Bar: 0–7 of its page
   int16_t copySourceNote() const { return copyNote_; }  // Note: its index in the session
+  /// The shown slot's loop as a part of the loop it had before its last LOOP_EDIT change (DEC-281's memory; the progress
+  /// bar's section, owner 2026-11-10): that `original` length and the current loop's `start` in it. False: no memory,
+  /// or the current loop is not shorter.
+  bool loopSection(uint8_t slot, uint32_t& original, uint32_t& start) {
+    if (slot >= Config::kSlotCount) return false;
+    const LoopMemory& m = loopMemory_[slot];
+    const uint32_t now = loopTicks(slot);
+    if (m.loop == 0 || m.rotateFirst || now == 0 || now >= m.loop) return false;
+    original = m.loop;
+    start = (m.loop - m.shift) % m.loop;
+    return true;
+  }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
   typename EditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 

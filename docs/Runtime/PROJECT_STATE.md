@@ -78,7 +78,8 @@ double press merges, REC / EDIT choosing first, pasted notes under the overlap r
 other bars, slots and tracks and a paste past the loop's end lengthening it (amendment 9), LOAD LOOP on TRACK held
 (its short press the next track in every copy mode, amendment 10); **DEC-280:** in LOOP_EDIT a held step / bar and
 another set the loop's start and length (odd lengths in 16ths); **DEC-281:** NOTELEN double there restores the loop
-from before the last change (edits kept), and notes past a shortened end light their bar / 16th dim; the source held again is LOAD LOOP, and a slot pressed with the
+from before the last change (edits kept), and notes past a shortened end light their bar / 16th dim; **DEC-282 (trial):** the progress bar shows a shortened
+loop as a bracketed part of the earlier loop (mockup B; A if too busy); the source held again is LOAD LOOP, and a slot pressed with the
 transport stopped only selects it (amendment 6), track buttons reach other tracks first; and **a long press exits every window**
 (browser, picker, popup), the trash moving to 2× TRACK (a `MOVE SET TO TRASH` row, stages directly) with 3× TRACK to
 undo (DEC-279 amendments 1–2). Native 4,514 passed; device `9cc54f15…`.

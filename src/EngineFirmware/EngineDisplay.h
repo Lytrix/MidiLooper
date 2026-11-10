@@ -75,6 +75,7 @@ struct EditView {
   uint8_t copySlot = 0, copyBar = 0, copyPitch = 0;  // its source: the engine slot, the bar (0–7), the note's pitch
   uint16_t copyLeft = 0;  // the countdown left, of 1000 (the window's bottom line shrinks with it)
   uint8_t copyPaste = 0;  // a bar / note paste (DEC-279 amendment 8): 0 by the press, 1 replace, 2 merge
+  uint32_t sectionOriginal = 0, sectionStart = 0;  // the shown loop as a part of its earlier one (0: none; DEC-282)
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
@@ -1197,6 +1198,37 @@ class EngineDisplay {
           static_cast<int16_t>(y1 - 7), 5);
   }
 
+  /// The progress bar over the earlier, longer loop (DEC-282, owner 2026-11-10: mockup B): the whole bar is that loop,
+  /// split into bars; brackets around the part looping now; the playhead fills it.
+  void drawSection(int16_t x0, int16_t x1, const SlotInfo& info) {
+    const uint32_t orig = edit_.sectionOriginal, start = edit_.sectionStart % orig;
+    const int32_t w = x1 - x0;
+    const auto at = [&](uint32_t t) { return static_cast<int16_t>(x0 + static_cast<int64_t>(t > orig ? orig : t) * w / orig); };
+    const int16_t y = kLabY + 2;
+    hline(x0, x1, y, 3);
+    const uint32_t bars = (orig + kBar - 1) / kBar;
+    const bool gaps = bars > 1 && static_cast<int32_t>(bars) * 3 <= w;  // the bar gaps, while they fit
+    const auto gap = [&](int16_t x) {
+      for (uint32_t k = 1; gaps && k < bars; ++k)
+        if (at(k * kBar) == x) return true;
+      return false;
+    };
+    const int16_t a = at(start), b = at(start + info.loop), fill = at(start + info.pos);
+    for (int16_t x = x0; x <= x1; ++x)
+      if (gap(x)) px(x, y, 0);
+      else if (x >= a && x <= fill && x <= b) px(x, y, 15);
+    for (int16_t x : {a, b}) {  // the brackets
+      px(x, static_cast<int16_t>(y - 2), 12);
+      px(x, static_cast<int16_t>(y - 1), 12);
+      px(x, static_cast<int16_t>(y + 1), 12);
+      px(x, static_cast<int16_t>(y + 2), 12);
+    }
+    px(static_cast<int16_t>(a + 1), static_cast<int16_t>(y - 2), 12);
+    px(static_cast<int16_t>(a + 1), static_cast<int16_t>(y + 2), 12);
+    px(static_cast<int16_t>(b - 1), static_cast<int16_t>(y - 2), 12);
+    px(static_cast<int16_t>(b - 1), static_cast<int16_t>(y + 2), 12);
+  }
+
   /// Copy mode (DEC-279 amendment 1, owner 2026-11-10: its own minimal state): a small window over the roll's top —
   /// what is copied, what pastes it, and the way out (a slot's LOAD LOOP: the get-a-loop picker for it).
   void drawCopy() {
@@ -1472,8 +1504,12 @@ class EngineDisplay {
       icon(ic, ix, kLabY, iv);
       if (!dots && info.moving && queued == 0) {  // the loop's progress, from the left up to the icon
         const int16_t end = static_cast<int16_t>(ix - 3);
-        hline(x0, end, kLabY + 2, 3);
-        hline(x0, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (end - x0) / info.loop), kLabY + 2, 13);
+        if (edit_.sectionOriginal > info.loop) {
+          drawSection(x0, end, info);
+        } else {
+          hline(x0, end, kLabY + 2, 3);
+          hline(x0, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (end - x0) / info.loop), kLabY + 2, 13);
+        }
       }
       if (queued != 0) {
         const st::Position left = st::countdown(queued, kBar, kQuarter);

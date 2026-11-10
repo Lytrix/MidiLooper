@@ -16088,3 +16088,21 @@ again → 384 with the note at the start) and `test_notes_past_a_shortened_end_l
 step 2's LED 8) — no-restore, no-rotation and no-scan mutations fail them; full 4,524 passed. Device (image
 `d12eba43…`, on 1-2 copied onto 1-3, cleared after): bars 1..2 → 1,536 ticks, bar 3's LED 8; steps 1..3 → 144, steps
 4–16 LED 8; NOTELEN double → 2,304 (the loop before the visit), again → 144; each restore its own undo step.
+
+## DEC-282 — The progress bar shows a shortened loop as a part of its earlier one (mockup B, on trial)
+
+**Date:** 2026-11-10. **Owner:** "use the progress bar also to show the original length and newly set length … which
+part of the original loop is looping"; three mockups (`docs/Plans/images/progress_bar_loop_range_mockups.png`);
+"implement B to see how it will feel, if it is too busy we will go for A".
+
+**Decision:** when the shown slot's loop is shorter than the loop before its last LOOP_EDIT change (DEC-281's memory,
+`Surface::loopSection`: that length and the current loop's start in it), the status band's progress bar is that
+earlier loop (`EngineDisplay::drawSection`): split into its bars by 1-pixel gaps (while 3 pixels a bar fit), brackets
+(5 pixels tall, with serifs) at the current loop's start and end, the playhead filling from the start bracket. Without
+the memory (after a reboot, a lengthened loop, after a restore) the bar is as before. Variant A (the section lit on one
+row) is the fallback if B reads too busy on the panel.
+
+**Evidence:** native: the restore test now checks the section (the 384-tick loop from 96 in the earlier 768; none after
+the restore); full 4,524 passed. Device (image `de958635…`, on 1-2 copied onto 1-3, cleared after): bars 2..3 of the
+3-bar loop in LOOP_EDIT, then playing — the bar split in three, brackets from a third to the end, the fill inside;
+restored → the plain bar.

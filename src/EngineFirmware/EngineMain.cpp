@@ -1995,6 +1995,14 @@ void loop() {
   ev.copySlot = gSurface.copySourceSlot();
   ev.copyBar = gSurface.copySourceBar();
   ev.copyPaste = static_cast<uint8_t>(gSurface.pasteMode());
+  {  // DEC-282: the shown loop as a part of its earlier one, for the progress bar
+    const uint8_t t = gEngine.control().selectedTrack();
+    uint32_t original = 0, start = 0;
+    if (gSurface.loopSection(gSurface.shown(t), original, start)) {
+      ev.sectionOriginal = original;
+      ev.sectionStart = start;
+    }
+  }
   ev.copyLeft = static_cast<uint16_t>(gSurface.copyMsLeft(millis()) * 1000 / Surface<EngineRoot>::kCopyIdleMs);
   ev.loop = gSurface.loopEdit();
   ev.loopTicks = gSurface.pendingLoopTicks();

@@ -2016,6 +2016,10 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   gS.input(0x8F, 2, 0, gUs / 1000);
   ms(200);
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
+  uint32_t original = 0, start = 0;  // DEC-282: the progress bar's section — the 768-tick loop, from 96
+  TEST_ASSERT_TRUE(gS.loopSection(0, original, start));
+  TEST_ASSERT_EQUAL_UINT32(768, original);
+  TEST_ASSERT_EQUAL_UINT32(96, start);
   tap(S::kEditModeNote, 700);  // leave
   ms(100);
   // An edit in the short loop: the note at its start (60) to 70.
@@ -2037,6 +2041,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(96, heardAt(70));
+  TEST_ASSERT_FALSE(gS.loopSection(0, original, start));  // the longer loop again: no section
   TEST_ASSERT_EQUAL_UINT32(600, heardAt(62));
   tap(S::kEditModeNote, 700);
   ms(100);
