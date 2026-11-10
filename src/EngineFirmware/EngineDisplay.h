@@ -1472,26 +1472,7 @@ class EngineDisplay {
       }
       if (edit_.ready && edit_.encoder == 1) hline(x0, xr, kLabY + 6, 15);  // the encoder moves the start (slice E)
     } else {
-      // Save dots, or RO before saving is approved.
-      if (!started_) {
-        dots_.start(p.stats().saves, p.stats().saveFailed);
-        started_ = true;
-      }
-      bool dots = true;  // the dots (or RO) take the row; else the loop's progress does
-      if (!p.approved()) {
-        label("RO", x0, kLabY, 4);
-      } else {
-        const st::SaveDots d = dots_.update(nowMs, p.writing(), p.unsaved(), p.stats().saves, p.stats().saveFailed);
-        dots = d != st::SaveDots::Off;
-        for (uint8_t i = 0; i < 4 && d != st::SaveDots::Off; ++i) {
-          const uint8_t v = d == st::SaveDots::Pending ? 2
-                            : d == st::SaveDots::Busy  ? (st::SaveIndicator::step(nowMs) == i ? 8 : 2)
-                            : d == st::SaveDots::Done  ? 15
-                                                       : 6;
-          px(static_cast<int16_t>(x0 + i * 3), kLabY + 2, v);
-        }
-      }
-      // The transport icon, right-aligned.
+      // The transport icon, left of the counter (DEC-282 amendment 2, owner 2026-11-10).
       Icon ic = Icon::Stop;
       uint8_t iv = 10;
       if (x.writingTrack() == sel) {
@@ -1508,14 +1489,14 @@ class EngineDisplay {
         ic = Icon::Play;
         iv = 6;
       }
-      const int16_t ix = static_cast<int16_t>(xr - iconWidth(ic) + 1);
-      icon(ic, ix, kLabY, iv);
-      if (edit_.barScale != 0 && info.loop != 0 && queued == 0) {  // the stored loop, always (DEC-282 amendment 1)
-        drawSection(static_cast<int16_t>(x0 + 12), static_cast<int16_t>(ix - 3), info);  // right of the save dots
-      } else if (!dots && info.moving && queued == 0) {  // the loop's progress, from the left up to the icon
-        const int16_t end = static_cast<int16_t>(ix - 3);
-        hline(x0, end, kLabY + 2, 3);
-        hline(x0, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (end - x0) / info.loop), kLabY + 2, 13);
+      icon(ic, x0, kValBase - 6, iv);
+      // The progress bar, the column's full width (amendment 2): the stored loop always (amendment 1), else the
+      // loop's progress while it moves.
+      if (edit_.barScale != 0 && info.loop != 0 && queued == 0) {
+        drawSection(x0, xr, info);
+      } else if (info.moving && queued == 0 && info.loop != 0) {
+        hline(x0, xr, kLabY + 2, 3);
+        hline(x0, static_cast<int16_t>(x0 + static_cast<int64_t>(info.pos) * (xr - x0) / info.loop), kLabY + 2, 13);
       }
       if (queued != 0) {
         const st::Position left = st::countdown(queued, kBar, kQuarter);
@@ -1530,7 +1511,7 @@ class EngineDisplay {
     x0 = static_cast<int16_t>(x0 + kTickW + kGap);
     // ---- BARS ----
     separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
-    label("BARS", x0, kLabY, 5);
+    rlabel("BARS", static_cast<int16_t>(x0 + kBarsW - 1), kLabY, 5);  // right-aligned over its number (amendment 2)
     if (info.loop != 0) {
       snprintf(buf, sizeof buf, "%lu", static_cast<unsigned long>((info.loop + kBar - 1) / kBar));
       rtext(buf, static_cast<int16_t>(x0 + kBarsW - 1), 9);
@@ -1636,6 +1617,24 @@ class EngineDisplay {
       icon(Icon::Clock, bx, kLabY, 5);
     }
     rtenths(st::tempoTenths(clock.usPerTick(), kQuarter), kX1, ext ? 12 : 9);  // the legacy thin dot before the tenth
+    // Save dots over the tempo while saving, or RO before saving is approved (DEC-282 amendment 2: the tempo's label
+    // row is the static one; the dots had hidden the progress bar).
+    if (!started_) {
+      dots_.start(p.stats().saves, p.stats().saveFailed);
+      started_ = true;
+    }
+    if (!p.approved()) {
+      rlabel("RO", kX1, kLabY, 4);
+    } else {
+      const st::SaveDots d = dots_.update(nowMs, p.writing(), p.unsaved(), p.stats().saves, p.stats().saveFailed);
+      for (uint8_t i = 0; i < 4 && d != st::SaveDots::Off; ++i) {
+        const uint8_t v = d == st::SaveDots::Pending ? 2
+                          : d == st::SaveDots::Busy  ? (st::SaveIndicator::step(nowMs) == i ? 8 : 2)
+                          : d == st::SaveDots::Done  ? 15
+                                                     : 6;
+        px(static_cast<int16_t>(kX1 - 9 + i * 3), kLabY + 2, v);
+      }
+    }
   }
 
   SSD1322 oled_;

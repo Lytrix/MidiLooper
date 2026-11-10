@@ -16119,3 +16119,11 @@ notes is dotted; the bracketed part not played yet is dim, the rest dimmer; gaps
 finest with 3 pixels between. Evidence: native — the restore test checks the frame (768 from 96, then 768 from 0, an
 empty slot none), full suite below; device (image `a2e7e679…`): 1-2 stopped, 3-bar loop in its 8 stored bars, brackets
 and gaps shown at once; playing, the fill inside the brackets. Full native 4,524 passed, 8 skipped.
+
+**Amendment 2 (2026-11-10, the status band rearranged):** owner: "progress bar full width, play stop record button next
+to the current tick on the left, save dots over the BPM when saving"; BARS and its number right-aligned. The current
+tick's column now holds the progress bar across its whole width on the label row, and the transport icon on the value
+row at its left, the counter right-aligned beside it. The save dots (and RO before saving is approved) sit on the
+tempo's label row, right-aligned over the BPM — a static value — so a save no longer touches the progress bar. Device
+(image `93242274…`): 1-2 stopped — a full-width 8-bar bar with gaps, the stop square left of the dim counter; playing —
+the play triangle beside `1.4.1.26`, the fill in the bar; the dots over the BPM are not yet seen on the panel.
