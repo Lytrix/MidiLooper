@@ -93,6 +93,7 @@ struct EditView {
   // 1 waiting, 2 building, 3 ready, 4 too big, 5 failed).
   bool groove = false;
   uint8_t grooveSlot = 0, grooveField = 0, grooveTemplate = 0, grooveAmount = 0, grooveScope = 0, grooveState = 0;
+  uint8_t grooveProgress = 0xFF;  // DEC-292: percent until a change is heard (0xFF: none)
   bool grooveAuto = false;
 };
 
@@ -1255,10 +1256,23 @@ class EngineDisplay {
     label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
     static const char* const kState[6] = {"", "WAIT", "...", "...", "TOO BIG", "FAILED"};
     const char* st = edit_.grooveState < 6 ? kState[edit_.grooveState] : "";
+    const int16_t sw = st[0] != 0 ? static_cast<int16_t>(strlen(st)) * 4 + 3 : 0, sx = static_cast<int16_t>(x1 - 6 - sw);
     if (st[0] != 0) {
-      const int16_t sw = static_cast<int16_t>(strlen(st)) * 4 + 3, sx = static_cast<int16_t>(x1 - 6 - sw);
       oled_.gfx.draw_rect_filled(fb(), sx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(sx + sw), y0 + 8, 0);
       label(st, static_cast<int16_t>(sx + 2), static_cast<int16_t>(y0 + 2), edit_.grooveState >= 4 ? 15 : 10);
+    }
+    // DEC-292 (owner: "no visual feedback in the window"): a change on its way — settling, building, then the beat it
+    // is heard on — fills a framed bar in the title bar between the title and the state; gone once heard.
+    if (edit_.grooveProgress <= 100) {
+      const int16_t bx0 = static_cast<int16_t>(tx + tw + 4), bx1 = static_cast<int16_t>((st[0] != 0 ? sx : x1) - 4);
+      const int16_t top = static_cast<int16_t>(y0 + 2), bottom = static_cast<int16_t>(y0 + 7);
+      oled_.gfx.draw_rect_filled(fb(), bx0, top, bx1, bottom, 0);
+      for (int16_t x = bx0; x <= bx1; ++x) px(x, top, 6), px(x, bottom, 6);
+      for (int16_t y = top; y <= bottom; ++y) px(bx0, y, 6), px(bx1, y, 6);
+      const int16_t fill = static_cast<int16_t>(bx0 + 1 + (bx1 - bx0 - 2) * edit_.grooveProgress / 100);
+      if (fill > bx0 + 1)
+        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(bx0 + 1), static_cast<int16_t>(top + 1), fill,
+                                   static_cast<int16_t>(bottom - 1), 13);
     }
     static const char* const kTemplate[] = {"STRAIGHT", "MPC16 54", "MPC16 58", "MPC16 62", "MPC16 66", "MPC16 71",
                                             "MPC8 58",  "MPC8 66",  "SP16 54",  "SP16 58",  "SP16 63",  "SP16 67",

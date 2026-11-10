@@ -34,6 +34,7 @@
 //   from the surface (`setSurfaceState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
 //   persistence grain — into the store's state sectors ("MLS2", sequence, the state packed in 27 bits, a check word;
 //   before the store: `surface.mls`, read once); read at boot (`restoredSurfaceState`), none valid meaning none.
+//   DEC-293 (owner 2026-11-10): the muted tracks too, a fifth word in the sector with its own check (none before).
 // `Card`: the files read only (exists, makeDir, openRead, read, closeRead) and the store (openStore, readSector,
 // writeSector) — see `CardIo`.
 // No allocation.
@@ -97,7 +98,7 @@ class Persistence {
  public:
   static constexpr const char* kFolder = "/MidiLooper/engine";
   static constexpr uint32_t kSettleUs = 2000000;  // 2 s without a change
-  static constexpr uint8_t kStateBytes = 9;        // the selected track, then each track's selected slot
+  static constexpr uint8_t kStateBytes = 10;  // the selected track, each track's selected slot, the muted tracks (DEC-293)
   static constexpr uint32_t kChunk = 16384;
   // A save grain produces at most one sector (the CRC runs across chunks, so the file is the same whatever the chunk).
   static constexpr uint32_t kSaveChunk = 512;
@@ -211,6 +212,7 @@ class Persistence {
       changedAt_[s] = 0;
     }
     state_ = stateSaved_ = 0;
+    mutes_ = mutesSaved_ = mutesRead_ = 0;
     stateRead_ = kNoState;
     stateDue_ = stateKnown_ = false;
     stateChangedUs_ = 0;
@@ -255,7 +257,7 @@ class Persistence {
       startSave(s);
       return;
     }
-    if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && state_ != stateSaved_)
+    if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && (state_ != stateSaved_ || mutes_ != mutesSaved_))
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
@@ -275,8 +277,9 @@ class Persistence {
   /// The surface's state now (`kStateBytes`); saved once settled and approved.
   void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
     const uint32_t packed = pack(s);
-    if (stateKnown_ && packed == state_) return;
+    if (stateKnown_ && packed == state_ && s[kStateBytes - 1] == mutes_) return;
     state_ = packed;
+    mutes_ = s[kStateBytes - 1];
     stateKnown_ = true;
     stateChangedUs_ = nowUs;
   }
@@ -284,7 +287,8 @@ class Persistence {
   bool restoredSurfaceState(uint8_t* out) const {
     if (stateRead_ == kNoState) return false;
     out[0] = stateRead_ & 7;  // the selected track; then track t's slot, t x 8 + its index
-    for (uint8_t t = 0; t < kStateBytes - 1; ++t) out[1 + t] = static_cast<uint8_t>(t * 8 + ((stateRead_ >> (3 + 3 * t)) & 7));
+    for (uint8_t t = 0; t < kTracks; ++t) out[1 + t] = static_cast<uint8_t>(t * 8 + ((stateRead_ >> (3 + 3 * t)) & 7));
+    out[kStateBytes - 1] = mutesRead_;  // bit t: track t muted (none in a state saved before DEC-293)
     return true;
   }
   /// One persistence grain: a save chunk, or a load grain, or the next boot file opened.
@@ -371,8 +375,18 @@ class Persistence {
   /// The state packed in 27 bits (persistence state is a fixed PSRAM line): the track, then each track's slot index.
   static uint32_t pack(const uint8_t* s) {
     uint32_t v = s[0] & 7u;
-    for (uint8_t t = 0; t < kStateBytes - 1; ++t) v |= static_cast<uint32_t>(s[1 + t] & 7u) << (3 + 3 * t);
+    for (uint8_t t = 0; t < kTracks; ++t) v |= static_cast<uint32_t>(s[1 + t] & 7u) << (3 + 3 * t);
     return v;
+  }
+  static constexpr uint8_t kTracks = 8;
+  /// The muted tracks' word after the state's four (DEC-293): "MU", the mask, its complement (a check of its own, so a
+  /// state sector of before — zeros there — reads as none muted and stays valid).
+  static uint32_t muteWord(uint8_t m) { return 0x4D550000u | static_cast<uint32_t>(m) << 8 | static_cast<uint8_t>(~m); }
+  static uint8_t mutesOf(const uint8_t* b) {
+    const uint32_t w = b[16] | static_cast<uint32_t>(b[17]) << 8 | static_cast<uint32_t>(b[18]) << 16 |
+                       static_cast<uint32_t>(b[19]) << 24;
+    const uint8_t m = static_cast<uint8_t>(w >> 8);
+    return w == muteWord(m) ? m : 0;
   }
   static uint32_t stateSum(uint32_t v) { return (v * 2654435761u) ^ 0xA5A5A5A5u; }
   // The store's state sectors 0 and 1, alternately (one sector write is the whole save): magic "MLS2", sequence,
@@ -386,11 +400,14 @@ class Persistence {
     for (uint32_t i = 0; i < kSector; ++i) b[i] = 0;
     const uint32_t seq = stateSeq_ + 1;
     putWords(b, kStateMagic2, seq, state_, stateSum(state_ ^ seq));
+    const uint32_t mw = muteWord(mutes_);
+    for (uint8_t i = 0; i < 4; ++i) b[16 + i] = static_cast<uint8_t>(mw >> (8 * i));
     if (!card_->writeSector(c, b)) return;
     stateSeq_ = seq;
     stateCopy_ = c;
     stateHave_ = true;
     stateSaved_ = state_;
+    mutesSaved_ = mutes_;
   }
   void readState() {
     if (store_) {
@@ -404,6 +421,7 @@ class Persistence {
         stateSeq_ = w[1];
         stateCopy_ = c;
         stateRead_ = stateSaved_ = w[2];
+        mutesRead_ = mutesSaved_ = mutesOf(importScratch_);
       }
       if (stateHave_) return;
     }
@@ -700,6 +718,7 @@ class Persistence {
   uint16_t ioFill_ = 0;                // bytes used of the sector buffer
   bool ioStore_ = false;               // the load reads the store (else a file)
   bool stateDue_ = false, stateKnown_ = false;
+  uint8_t mutes_ = 0, mutesSaved_ = 0, mutesRead_ = 0;  // DEC-293: bit t, track t muted (in the padding before)
   uint32_t state_ = 0, stateSaved_ = 0, stateRead_ = 0xFFFFFFFFu, stateChangedUs_ = 0;
   uint8_t saving_ = kNone, loading_ = kNone, bootNext_ = Slots;
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};

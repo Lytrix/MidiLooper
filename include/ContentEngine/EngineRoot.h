@@ -96,6 +96,7 @@ constexpr uint8_t kPortDin = 0, kPortUsbDevice = 1, kPortUsbHost = 2;
 using ProductionControl =
     TrackControl<ProductionTransport, ProductionOutput, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack>;
 constexpr uint32_t kTicksPerBar = 768;  // 4/4 at 192 PPQN (the runtime value comes from the time signature)
+constexpr uint32_t kTicksPerBeat = 192;  // a quarter at 192 PPQN (DEC-292: a groove is heard from the next one)
 constexpr uint32_t kLaunchGridTicks = 48;  // a 16th
 constexpr uint32_t kLateJoinTicks = 24;     // owner ruling 2026-11-05: a late join at most a 32nd ...
 constexpr uint32_t kLateJoinUs = 25000;     // ... and at most 25 ms after the boundary
@@ -586,18 +587,16 @@ class EngineRoot {
   ProductionTransport::Result grooveStart(uint8_t slot, const GrooveRequest& q) {
     return r_->control.grooveStart(p_->groove, slot, q);
   }
-  /// One groove grain; a ready build published so the tracks playing the slot follow from the next bar line at least a
-  /// window ahead (stopped: at once). Ok: published this call (one undo step; `replace` as resize).
+  /// One groove grain; a ready build published so the tracks playing the slot follow from the next beat (DEC-292; was a
+  /// bar line two bars ahead — seconds before a change was heard; stopped: at once). Ok: published this call (one undo
+  /// step; `replace` as resize).
   ProductionTransport::Result grooveService(uint32_t tick, bool running, uint32_t nowUs, uint32_t usPerTick,
                                             uint32_t replace = 0) {
     if (p_->groove.state() == ProductionGroove::State::Waiting || p_->groove.state() == ProductionGroove::State::Building)
       p_->groove.step();
     if (p_->groove.state() != ProductionGroove::State::Ready) return ProductionTransport::Result::NoChange;
     uint32_t at = tick;
-    if (running) {
-      at = (tick / kTicksPerBar + 1) * kTicksPerBar;
-      if (at - tick < kWindowTicks) at += kTicksPerBar;  // the tracks get a window to prepare
-    }
+    if (running) at = (tick / kTicksPerBeat + 1) * kTicksPerBeat;  // DEC-292: the next beat (as a resize, at once)
     const auto r = r_->control.grooveFinish(p_->groove, at, nowUs, usPerTick, replace);
     if (r == ProductionTransport::Result::Ok) groovePublishedAt_ = at;
     return r;
@@ -607,6 +606,8 @@ class EngineRoot {
   /// The groove job's state and its last build's grains (diagnostics, the window's `…` / TOO BIG).
   ProductionGroove::State grooveState() const { return p_->groove.state(); }
   uint32_t grooveGrains() const { return p_->groove.grains(); }
+  /// The running build's progress in percent (DEC-292, the window's bar).
+  uint8_t grooveProgress() const { return p_->groove.progress(); }
   void grooveCancel() { p_->groove.cancel(); }
   ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
   NoteIdSource& noteIds() { return r_->ids; }  // a created note's fresh id (ids are never reused)

@@ -2324,7 +2324,7 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
 
 // DEC-288 (groove design slice 3): the groove is built in grains in the background — the old state plays until it is
 // published — and the tracks switch on a bar line: across the switch every bar holds the old place or the new one.
-void test_a_groove_is_built_in_grains_and_switches_on_a_bar_line() {
+void test_a_groove_is_built_in_grains_and_switches_on_the_next_beat() {
   recordBar({{130, 60}});
   const uint32_t before = gE.manifests().manifest(gE.transport().contentOf(0)).identity;
   ContentEngine::groove::Settings s;
@@ -2335,11 +2335,34 @@ void test_a_groove_is_built_in_grains_and_switches_on_a_bar_line() {
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
   TEST_ASSERT_TRUE(gE.grooveState() != ProductionGroove::State::Idle);
   TEST_ASSERT_EQUAL_UINT32(before, gE.manifests().manifest(gE.transport().contentOf(0)).identity);  // not yet
+  const uint32_t asked = gLast;
+  // DEC-292: the progress runs up while it builds, then to the beat it is heard on, then is gone.
+  uint8_t last = 0;
+  bool built = false, toBeat = false;
+  for (int i = 0; i < 4000 && gE.manifests().manifest(gE.transport().contentOf(0)).identity == before; ++i) {
+    const uint8_t p = gS.grooveProgress();
+    if (p != 0xFF) {
+      TEST_ASSERT_TRUE(p >= last);
+      last = p;
+      built |= p >= 25 && p < 75;
+    }
+    run(gUs + 125);
+  }
+  for (int i = 0; i < 4000 && gS.grooveProgress() != 0xFF; ++i) {
+    const uint8_t p = gS.grooveProgress();
+    TEST_ASSERT_TRUE(p >= 75 && p <= 100 && p >= last);
+    last = p;
+    toBeat = true;
+    run(gUs + 125);
+  }
+  TEST_ASSERT_TRUE(built);
+  TEST_ASSERT_TRUE(toBeat);
   run(gUs + 6 * 768 * kTick);
   TEST_ASSERT_TRUE(gE.grooveGrains() > 3);  // more than one grain
   TEST_ASSERT_EQUAL(ProductionGroove::State::Idle, gE.grooveState());
   TEST_ASSERT_TRUE(gE.manifests().manifest(gE.transport().contentOf(0)).identity != before);
-  TEST_ASSERT_EQUAL_UINT32(0, gE.groovePublishedAt() % 768);  // the tracks follow from a bar line
+  TEST_ASSERT_EQUAL_UINT32(0, gE.groovePublishedAt() % 192);  // the tracks follow from a beat ...
+  TEST_ASSERT_TRUE(gE.groovePublishedAt() - asked <= 192 + 48);  // ... the next one (within a few grains)
   // One note a bar: 130 until the switch, 144 after — never both in one bar, never back.
   bool switched = false;
   uint32_t lastBar = 0xFFFFFFFFu;
@@ -2374,7 +2397,8 @@ void test_a_stale_groove_build_is_dropped() {
 
 // DEC-289 (owner 2026-11-10: "long press on play/stop"): the GROOVE window — opened on the shown slot with the slot's
 // groove or the default (straight, 50 %); PLAY/STOP's press the next field; F1 the amount; a change applied once it
-// rests, heard from a bar line; the encoder's turn the selected field; one undo step a visit; closed after idling.
+// rests, heard from the next beat (DEC-292); the encoder's turn the selected field; one undo step a visit; open until
+// closed (DEC-292), its progress bar under way while a change is on its way.
 void test_the_groove_window_sets_a_groove() {
   recordBar({{130, 60}});
   const uint8_t undo0 = gE.history().undoDepth(0);
@@ -2391,10 +2415,16 @@ void test_the_groove_window_sets_a_groove() {
   pitchBend(15, 8191);  // F1 at the top: 100 %
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
-  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a bar line
+  const uint8_t settling = gS.grooveProgress();
+  TEST_ASSERT_TRUE(settling <= 25);  // DEC-292: the bar starts at once
+  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat
   EXPECT_ALL(positions(true, 60, 768), 144);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
-  TEST_ASSERT_FALSE(gS.grooveOpen());  // idle for longer than kGrooveIdleMs once published: closed
+  TEST_ASSERT_TRUE(gS.grooveOpen());  // DEC-292: open until closed, however long idle
+  TEST_ASSERT_EQUAL_UINT8(0xFF, gS.grooveProgress());  // heard: no bar
+  tap(S::kPlayStopNote, 700);  // a long press closes it
+  ms(50);
+  TEST_ASSERT_FALSE(gS.grooveOpen());
   tap(S::kTransportNote, 700);  // opened again — by the DROID's PLAY/STOP (the transport button, DEC-289 am. 1)
   ms(50);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
@@ -2521,7 +2551,7 @@ int main(int, char**) {
   RUN_TEST(test_groove_timing_goes_to_the_nearest_swung_target);
   RUN_TEST(test_a_groove_moves_the_notes_and_keeps_the_original);
   RUN_TEST(test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove);
-  RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_a_bar_line);
+  RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_the_next_beat);
   RUN_TEST(test_a_stale_groove_build_is_dropped);
   RUN_TEST(test_the_groove_window_sets_a_groove);
   RUN_TEST(test_the_groove_window_opens_by_its_note_and_by_notelen_with_play);

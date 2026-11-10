@@ -1,3 +1,10 @@
+**2026-11-10 — DEC-292: GROOVE window open until closed, heard from the next beat, a progress bar; DEC-293: mutes
+saved.** The window no longer idles closed; a finished groove switches on the next beat instead of a bar two bars
+ahead (device: heard ~0.8 s after the fader move, was 4–6 s); a framed bar in the title fills while a change settles,
+builds and waits for its beat. The track mutes are saved with the selection (a fifth state-sector word, its own
+check) and restored at boot. Full native 4,545 passed; device `5014600b…` (track 8 muted across a reboot) and
+`b645d37d…` (`crash=0`; the window frames). The DROID patch now sets `longpresstime = 0.75` on PLAY/STOP (owner).
+
 **2026-11-10 — DEC-291: the EDIT button; DEC-276 am. 2: PLAY/STOP starts under a stopped external clock.** EDIT's
 short press switches the track buttons between select and mute (mute mode: a short press mutes / unmutes, the LEDs
 show the mute state), in every mode; a long press (0.6 s) enters NOTE_EDIT, then cycles NOTE_EDIT ↔ LOOP_EDIT; held

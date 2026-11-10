@@ -1426,12 +1426,12 @@ void command(char* line, uint32_t nowUs) {
     const ManifestId m = x.playing(t) ? x.contentOf(x.playingSlot(t)) : kNoManifest;
     const uint32_t loop = m == kNoManifest ? 0 : x.loopLength(m);
     Serial.printf("#ENGINE,track,%u,tick=%lu,playing=%d,slot=%u,loop=%lu,pos=%lu,queued=%u,queued_pos=%lu,to_queued=%lu,"
-                  "launch_q=%s\n",
+                  "launch_q=%s,muted=%u\n",
                   t, static_cast<unsigned long>(gLastTick), x.playing(t) ? 1 : 0, x.playingSlot(t),
                   static_cast<unsigned long>(loop),
                   static_cast<unsigned long>(loop == 0 ? 0 : (gLastTick - x.origin(t)) % loop), c.queuedSwitchSlot(t),
                   static_cast<unsigned long>(c.queuedPosition(t)),
-                  static_cast<unsigned long>(c.ticksToQueued(t, gLastTick)), launchGridName());
+                  static_cast<unsigned long>(c.ticksToQueued(t, gLastTick)), launchGridName(), c.muted(t) ? 1u : 0u);
   } else if (std::strcmp(verb, "dump-slot") == 0) {  // dump-slot S: the slot's current state, its runs and rows
     const ManifestId m = gEngine.history().current(static_cast<uint8_t>(a));
     if (m == kNoManifest) {
@@ -1676,6 +1676,8 @@ bool applySavedSelection() {
   gEngine.control().selectTrack(state[0]);
   for (uint8_t t = 0; t < kTrackCount; ++t)
     if (state[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
+  for (uint8_t t = 0; t < kTrackCount; ++t)  // DEC-293: the muted tracks
+    gEngine.control().setMute(t, (state[ProductionPersistence::kStateBytes - 1] >> t & 1u) != 0, micros());
   return true;
 }
 // After boot load: without a saved selection, each track's first slot with content (slots T x 8 .. T x 8 + 7); the
@@ -1689,6 +1691,10 @@ void saveSelection(uint32_t nowUs) {
   uint8_t state[ProductionPersistence::kStateBytes];
   state[0] = gEngine.control().selectedTrack();
   for (uint8_t t = 0; t < kTrackCount; ++t) state[1 + t] = gSurface.selectedSlot(t);
+  uint8_t mutes = 0;  // DEC-293
+  for (uint8_t t = 0; t < kTrackCount; ++t)
+    if (gEngine.control().muted(t)) mutes |= static_cast<uint8_t>(1u << t);
+  state[ProductionPersistence::kStateBytes - 1] = mutes;
   gEngine.setSurfaceState(state, nowUs);
 }
 
@@ -2116,6 +2122,7 @@ void loop() {
     ev.grooveScope = g.scope;
     ev.grooveAuto = g.autoGroove;
     ev.grooveState = static_cast<uint8_t>(gEngine.grooveState());
+    ev.grooveProgress = gSurface.grooveProgress();  // DEC-292
   }
   if (ed.active()) {
     ev.active = true;

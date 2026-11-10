@@ -16465,3 +16465,44 @@ long press, timed a bar later so the bracket lands where it did. Full native 4,5
 image `aff638dd…` (`crash=0`), the owner's presses traced (`!ENGINE trace 1`): shorts toggled the mode and track 2's
 mute; long presses of 0.77–1.49 s entered NOTE_EDIT and cycled to LOOP_EDIT and back; a 1.75 s hold left.
 
+## DEC-292 — The GROOVE window stays open, a change is heard from the next beat, and a bar shows its progress
+
+**Date:** 2026-11-10. **Owner:** "the groove window needs to stay open and manually closed. you are often browsing for
+different grooves to try them out"; "the time it takes before you can audition it does seem to take seconds. can this
+be more instant?"; "If it takes longer can there be a progress bar … now you don't get a visual feedback in the window".
+
+**Decision:**
+- **Open until closed:** the window no longer closes after `kGrooveIdleMs` (6 s, removed); note 43, NOTELEN + PLAY/STOP
+  or a long press of any button closes it (as before).
+- **The next beat:** a finished build is published so the tracks follow from the next beat (`kTicksPerBeat`, 192
+  ticks) instead of the next bar line at least `kWindowTicks` (two bars) ahead — the build itself took ~30 ms; the
+  wait was the lead (4–6 s at 120 BPM). A loop-length change already switches at once (`resize` at the current tick),
+  so the tracks need no window's lead. The change from the settle time (`kLengthSettleMs`, 300 ms) to heard is now
+  under a beat plus the build. Stopped: at once, as before.
+- **Progress:** `Surface::grooveProgress` — settling 0–25 %, building 25–75 % (`GrooveBuilder::progress`: grains over
+  an estimate from the extraction's windows and the rows to write), then to the switch beat 75–100 %; none (0xFF) once
+  heard. The window draws it as a framed bar in its title bar between the title and the state (`EngineDisplay::
+  drawGroove`).
+
+**Evidence:** native `test_a_groove_is_built_in_grains_and_switches_on_the_next_beat` (the progress rises through the
+build and to the beat, then is gone; published on a beat within one beat of the request; one note a bar, never both,
+never back); `test_the_groove_window_sets_a_groove` (the bar from the change, still open once heard, closed by a long
+press). Full native 4,545 passed. Device image `b645d37d…` (`crash=0`): T7 S1 MPC16 66 — F1 to 75 % → the bar in the
+title at 0.13 s, published 0.33 s after the move at tick 578, heard from tick 768 (the next beat); 8 s later still open,
+no bar; F1 back to 60 % → published on beat 3840.
+
+## DEC-293 — Track mutes survive a reboot
+
+**Date:** 2026-11-10. **Owner:** "Can you save the mute state of the tracks so it is restored on reboot".
+
+**Decision:** the mute mask joins the surface state (`ProductionPersistence::kStateBytes` 9 → 10: the selected track,
+each track's slot, the muted tracks) — saved like the selection (after approval, settled 2 s), restored at boot with it
+(`applySavedSelection` → `TrackControl::setMute`). On the card: a fifth word in the state sector, `"MU"`, the mask and
+its complement, its own check — so a state sector written before reads as none muted and stays valid, and a damaged
+mute word loses only the mutes. `!ENGINE track T` now reports `muted=`.
+
+**Evidence:** native `test_the_surface_state_is_saved_and_restored` (mutes round-trip in both sectors; a mute change
+alone is saved; a damaged mute word → none muted, the selection kept); `test_the_state_file_of_before_the_store_is_
+restored` (none muted). Full native 4,545 passed. Device image `5014600b…`: track 8 muted (double press), settled,
+reflashed (reboot) → `muted=1`; unmuted again afterwards.
+

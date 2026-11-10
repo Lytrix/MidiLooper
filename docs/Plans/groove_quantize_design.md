@@ -83,7 +83,8 @@ For a note at stored position `t` (absolute in the stored loop), template `T` (�
   long press, by a new setting (restart), or by any undo / load / edit / record on the slot.
 - **Generation-qualified publish**: a build carries (slot, base state identity, settings generation); it publishes only
   if the slot's current state is still that identity and its generation is the newest; otherwise its run is released.
-- **Switch-over** at the next bar line (or the launch quantisation, DEC-274) — heard as a musical step.
+- **Switch-over** at the next beat (DEC-292; first built as the next bar line two bars ahead, which took seconds) — heard as a
+  musical step.
 - **Prefix rule for rebuilds**: the prefix is always a contiguous run of the oldest passes. A rebuild (a setting change,
   or AUTO after an overdub) takes as its prefix **the old prefix plus the passes after G up to the last overdub — never
   G itself** (G is derived; AUTO always rebuilds from original timing). Edit passes after that overdub stay after the
@@ -133,8 +134,9 @@ For a note at stored position `t` (absolute in the stored loop), template `T` (�
 
 - **Long press PLAY/STOP** opens the GROOVE window: `TEMPLATE` (built-ins, the preloaded ten, `MORE…` by machine),
   `AMOUNT`, `SCOPE` (FULL / A / B), `AUTO`. F1 amount, F2 template, F3 scope, F4 AUTO; the minimal setup: encoder push =
-  next field, turn = value. A long press closes (and cancels a waiting build); it hides after a few seconds idle. The
-  window shows `…` while a build runs, `TOO BIG` when it cannot fit.
+  next field, turn = value. A long press closes (and cancels a waiting build); it stays open until closed (DEC-292),
+  a progress bar in its title while a change is on its way. The window shows `…` while a build runs, `TOO BIG` when it
+  cannot fit.
 
 ## 9. Slices
 

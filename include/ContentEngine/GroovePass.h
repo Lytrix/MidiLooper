@@ -173,6 +173,18 @@ class GrooveBuilder {
   RunId afterRun(uint8_t i) const { return after_[i]; }
   /// Diagnostics: grains taken by the last build.
   uint32_t grains() const { return grains_; }
+  /// The build's progress in percent (DEC-292, an estimate from its grains: the extraction's windows, the shaping, then
+  /// the rows written — the reservation's bound until the rows are known). 0 while waiting, 100 once ready.
+  uint8_t progress() const {
+    if (state_ == State::Ready) return 100;
+    if (state_ != State::Building) return 0;
+    const uint32_t windows = (q_.frame + kWindowTicks - 1) / kWindowTicks + 2;  // + prepare, shape
+    const uint32_t rows = phase_ == Phase::Write ? rowCount_ : reserve_;
+    const uint32_t total = windows + (rows + kWriteRows - 1) / kWriteRows;
+    const uint32_t done = phase_ == Phase::Write ? windows + written_ / kWriteRows : grains_;
+    const uint32_t p = total == 0 ? 0 : done * 100 / total;
+    return static_cast<uint8_t>(p > 99 ? 99 : p);
+  }
 
   static constexpr uint32_t kWriteRows = 512;  // rows written a grain
 

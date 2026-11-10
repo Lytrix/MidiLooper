@@ -622,7 +622,7 @@ void test_the_surface_state_is_saved_and_restored() {
   run(gA, gClock + kSettleTicks + 20);
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);  // saved once
   // A new selection is saved only once it has settled (2 s), into the other sector.
-  const uint8_t next[ProductionPersistence::kStateBytes] = {3, 1, 9, 18, 24, 32, 41, 50, 63};
+  const uint8_t next[ProductionPersistence::kStateBytes] = {3, 1, 9, 18, 24, 32, 41, 50, 63, 0x05};  // tracks 1, 3 muted
   gA.setSurfaceState(next, us(gClock));
   run(gA, gClock + kSettleTicks / 2);
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
@@ -654,12 +654,28 @@ void test_the_surface_state_is_saved_and_restored() {
   TEST_ASSERT_EQUAL_UINT8_ARRAY(state, back, ProductionPersistence::kStateBytes);
   // A third selection goes back to sector 0 and is the one restored (the later sequence, whichever sector).
   gCard.sector(1)[9] ^= 0x01;  // repaired
-  const uint8_t third[ProductionPersistence::kStateBytes] = {5, 2, 9, 18, 24, 32, 41, 50, 63};
+  const uint8_t third[ProductionPersistence::kStateBytes] = {5, 2, 9, 18, 24, 32, 41, 50, 63, 0x80};
   gA.setSurfaceState(third, us(gClock));
   run(gA, gClock + kSettleTicks + 20);
   bootB();
   TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(third, back, ProductionPersistence::kStateBytes);
+  // DEC-293: a mute change alone is saved (settled), and a damaged mute word reads as none muted, the rest kept.
+  uint8_t muted[ProductionPersistence::kStateBytes];
+  for (uint8_t i = 0; i < ProductionPersistence::kStateBytes; ++i) muted[i] = third[i];
+  muted[ProductionPersistence::kStateBytes - 1] = 0x81;
+  gA.setSurfaceState(muted, us(gClock));
+  run(gA, gClock + kSettleTicks + 20);
+  bootB();
+  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(muted, back, ProductionPersistence::kStateBytes);
+  const uint8_t latest = gCard.sector(0)[17] == 0x81 ? 0 : 1;  // the sector holding the mask
+  gCard.sector(latest)[17] ^= 0x01;
+  bootB();
+  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_EQUAL_UINT8(0, back[ProductionPersistence::kStateBytes - 1]);
+  TEST_ASSERT_EQUAL_UINT8(5, back[0]);
+  gCard.sector(latest)[17] ^= 0x01;
   // Both damaged: nothing restored.
   gCard.sector(0)[9] ^= 0x01;
   gCard.sector(1)[9] ^= 0x01;
@@ -681,6 +697,7 @@ void test_the_state_file_of_before_the_store_is_restored() {
   TEST_ASSERT_EQUAL_UINT8(3, back[0]);
   TEST_ASSERT_EQUAL_UINT8(1, back[1]);
   TEST_ASSERT_EQUAL_UINT8(10, back[2]);
+  TEST_ASSERT_EQUAL_UINT8(0, back[ProductionPersistence::kStateBytes - 1]);  // no mutes before DEC-293
   gB.setSurfaceState(back, us(gClock));
   run(gB, gClock + kSettleTicks + 20);
   TEST_ASSERT_NOT_NULL(gCard.sector(0));  // in the store
