@@ -16032,3 +16032,13 @@ and every copy undone (1-3 and 1-5 empty again).
   copied onto 1-3): bar 1 onto bar 3 → 1-3 at 2,304 ticks, NOTE_EDIT `0+2304`; a note onto bar 4 step 1 → 3,072; the
   copy window kept after a switch to track 2 (closed with a long press, track 2 unchanged); undone step by step, then
   1-3 cleared. Its undo stopped at the copy: the shared 99-state pool had dropped the states below it.
+- **Amendment 10 (owner 2026-11-10: "it opens get loop when I press the track button after being in the copy bar
+  window"):** recorded on the device (`!ENGINE trace`): the bar copy ended when NOTE_EDIT left (TRACK switch onto a
+  track with nothing to edit); a slot then held ~1 s started a slot copy, and TRACK switch's short press there was
+  LOAD LOOP — while in a bar's or note's copy it was the next track. Now TRACK switch's short press is the next track
+  in every copy mode (the slot copy kept, as with the track buttons); LOAD LOOP is TRACK switch **held**, or the source
+  slot held again (the window reads `HOLD [TRK] LOAD LOOP  2× CLEAR`). Native
+  `test_copy_mode_track_switch_short_is_the_next_track` (the short press → track 2, copy mode kept; held → the picker
+  for slot 3) — the old short-press LOAD LOOP fails it; the picker test now holds TRACK switch; full 4,521 passed. Device (image
+  `c15bec4d…`): 1-1 held, TRACK switch pressed → track 2 with `COPY LOOP 1-1` and the new hint; held → the picker for
+  1-1. Also seen in the recording: two TRACK switch taps 110 ms apart outside an edit are its double press, an undo.

@@ -831,6 +831,34 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   gS.setBrowser(nullptr);
 }
 
+/// Owner 2026-11-10: in a slot's copy mode TRACK switch's short press is the next track (copy mode kept), as
+/// everywhere — LOAD LOOP is its hold.
+void test_copy_mode_track_switch_short_is_the_next_track() {
+  gBrowser.clear();
+  library::Record r{};
+  r.sequence = 1;
+  r.set = 1;
+  gBrowser.add(r);
+  gBrowser.setWorking(1, 1);
+  gS.setBrowser(&gBrowser);
+  gS.input(0x9F, S::kSlotBase + 2, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 2, 0, gUs / 1000);
+  ms(100);
+  tap(S::kTrackSwitchNote);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT8(1, C().selectedTrack());
+  TEST_ASSERT_FALSE(gS.browsing());
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  tap(S::kTrackSwitchNote, 700);  // held: LOAD LOOP
+  ms(100);
+  TEST_ASSERT_TRUE(gS.browsing());
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Picker, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT8(2, gBrowser.pickDestination());
+  gBrowser.close();
+  gS.setBrowser(nullptr);
+}
+
 /// Owner 2026-11-10: in copy mode the source slot held again is LOAD LOOP too (the picker for it); another slot's long
 /// hold only ends copy mode.
 void test_holding_the_copy_source_again_opens_the_picker() {
@@ -871,7 +899,7 @@ void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   tap(S::kSlotBase, 700);  // track 1's slot 1, empty: copy mode (DEC-279 amendment 1)
   ms(100);
   TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
-  tap(S::kTrackSwitchNote);  // LOAD LOOP: the picker for the source slot
+  tap(S::kTrackSwitchNote, 700);  // TRACK switch held: LOAD LOOP, the picker for the source slot
   ms(400);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   TEST_ASSERT_TRUE(gS.browsing());
@@ -954,6 +982,7 @@ int main(int, char**) {
   RUN_TEST(test_the_browser_takes_record_track_and_edit_while_open);
   RUN_TEST(test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it);
   RUN_TEST(test_holding_the_copy_source_again_opens_the_picker);
+  RUN_TEST(test_copy_mode_track_switch_short_is_the_next_track);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

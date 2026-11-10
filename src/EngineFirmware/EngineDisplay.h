@@ -1233,7 +1233,7 @@ class EngineDisplay {
       for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
       hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
     } else {  // a slot: the picker, or cleared (owner 2026-11-10: a double press of the source)
-      const char* way = "HOLD/[TRK] LOAD LOOP  2* CLEAR";
+      const char* way = "HOLD [TRK] LOAD LOOP  2* CLEAR";
       int16_t w = 0;
       for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
       hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));

@@ -81,7 +81,7 @@ Hold a slot for 0.6 s — or, in NOTE_EDIT, a bar button, or a step you hold wit
 | Double press of the source | Clear it: the slot, or the bar's / the 16th's notes. One undo step, the window closes |
 | Short press of the source | Cancel |
 | Long hold of another slot / bar / step | Make that the source instead |
-| Next track short, or the source slot held again | LOAD LOOP: the get-a-loop picker for that slot |
+| Next track held, or the source slot held again | LOAD LOOP: the get-a-loop picker for that slot (Next track's short press still selects the next track) |
 | Long press of any other button | Close at once |
 | Nothing for 5 s | Closes by itself (a track switch restarts the countdown; the window's bottom edge shows the time left) |
 

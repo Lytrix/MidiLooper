@@ -81,7 +81,7 @@
 //   choose the bar the steps paste in, and a track or slot switch re-opens NOTE_EDIT there, copy mode kept; a target
 //   past the loop's end lengthens the loop to the end of its bar first (one undo step), then the paste follows once
 //   NOTE_EDIT has re-gathered. The track
-//   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press, or the source slot held again, is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
+//   buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch held, or the source slot held again, is LOAD LOOP (its short press stays the next track) — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
@@ -667,10 +667,6 @@ class Surface {
   void dispatch(uint8_t b, Press p) {
     const uint8_t t = selected();
     const uint8_t slot = selectedSlot(t);
-    if (copy_ == Copy::Slot && b == kTrackSwitch && p == Press::Short) {  // LOAD LOOP: the picker for the source slot
-      loadLoop();
-      return;
-    }
     if ((copy_ == Copy::Bar || copy_ == Copy::Note) && b >= kSlot0 && b < kSlot0 + kSlotsPerTrack && p == Press::Short) {
       const uint8_t target = static_cast<uint8_t>(t * kSlotsPerTrack + (b - kSlot0));  // NOTE_EDIT on that slot
       if (!empty(target) && target != edit_.slot()) {
@@ -1315,8 +1311,9 @@ class Surface {
     }
     for (uint8_t b = 0; b < kButtons; ++b) {  // a long press of anything else ends it, doing nothing else
       if (copyHolding_ && b == sourceButton()) continue;
-      if (copy_ == Copy::Slot && b == sourceButton() && copySlot_ == selected() * kSlotsPerTrack + copyButton_ &&
-          press_.heldMs(b, ms) >= kCopyHoldMs) {  // the source held again: LOAD LOOP (owner 2026-11-10)
+      if (copy_ == Copy::Slot && press_.heldMs(b, ms) >= kCopyHoldMs &&
+          (b == kTrackSwitch || (b == sourceButton() && copySlot_ == selected() * kSlotsPerTrack + copyButton_))) {
+        // TRACK switch held, or the source held again: LOAD LOOP (owner 2026-11-10; its short press is the next track)
         press_.consume(b);
         exitButton_ = b;
         loadLoop();
@@ -1397,7 +1394,7 @@ class Surface {
            : copy_ == Copy::Note ? static_cast<uint8_t>(kStep0 + copyButton_)
                                  : 0xFF;
   }
-  /// LOAD LOOP (copy mode on a slot: TRACK switch's short press, or the source held again): the get-a-loop picker for
+  /// LOAD LOOP (copy mode on a slot: TRACK switch held, or the source held again): the get-a-loop picker for
   /// the source slot; copy mode ends.
   void loadLoop() {
     const uint8_t src = copySlot_;
