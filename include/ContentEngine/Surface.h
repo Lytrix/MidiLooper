@@ -69,8 +69,8 @@
 //   `kCopyHoldMs` — or in NOTE_EDIT a bar button, or a step whose lock changed nothing — starts it (the source's LED
 //   pulses, the screen shows the copy window); the source's release keeps it. A short press of another slot / bar / step
 //   pastes there (`TrackControl::copySlot`, `EditSurface::copyBar` / `copyNote`; one undo step each; its LED flashes
-//   three times) and copy mode stays for more. The track buttons select tracks as ever, so a slot goes onto other
-//   tracks; TRACK switch's short press is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
+//   three times) and copy mode ends (owner 2026-11-10: the window closes after the copy; a refused paste keeps it). The
+//   track buttons select tracks as ever, so a slot goes onto other tracks before its press; TRACK switch's short press is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
 //   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
 //   is copy mode (it was the picker: now LOAD LOOP).
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
@@ -335,8 +335,10 @@ class Surface {
       } else if (barsHeld_ & bit) {
         barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~bit);
         if (copyReleased(Copy::Bar, bar)) return;  // the source's own release
-        if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs && edit_.copyBar(copyBar_, bar, ms))
+        if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs && edit_.copyBar(copyBar_, bar, ms)) {
           flash(static_cast<uint8_t>(40 + bar), selected(), ms);
+          endCopy();  // done: the window closes
+        }
       }
       return;
     }
@@ -1283,11 +1285,16 @@ class Surface {
     if (copy_ == Copy::Slot) {
       const uint8_t s = static_cast<uint8_t>(b - kSlot0);
       if (control().copySlot(copySlot_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us()) ==
-          X::Result::Ok)
+          X::Result::Ok) {
         flash(static_cast<uint8_t>(kSlotBase + s), selected(), ms);
+        endCopy();  // done: the window closes (owner 2026-11-10)
+      }
     } else if (copy_ == Copy::Note) {
       const uint8_t k = static_cast<uint8_t>(b - kStep0);
-      if (edit_.copyNote(copyNote_, k, ms)) flash(k, selected(), ms);
+      if (edit_.copyNote(copyNote_, k, ms)) {
+        flash(k, selected(), ms);
+        endCopy();
+      }
     }
   }
   void flash(uint8_t led, uint8_t track, uint32_t ms) {

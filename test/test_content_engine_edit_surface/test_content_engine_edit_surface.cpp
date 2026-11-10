@@ -1701,7 +1701,7 @@ void test_no_heap() {
 
 // Copy mode in NOTE_EDIT (DEC-279 amendment 1): a step held 600 ms whose lock changed nothing, or a bar button held, starts
 // it; its release keeps it; a short press of another step copies the note there (same offset, beside what is there), of
-// another bar copies that bar over it — one undo step each, copy mode staying. A hold whose lock changed the note is a
+// another bar copies that bar over it — one undo step each, then copy mode ends. A hold whose lock changed the note is a
 // parameter lock, not a copy. The source again, or a long press of anything, ends it.
 static uint32_t notesIn(uint32_t from, uint32_t to) {
   uint32_t n = 0;
@@ -1736,11 +1736,14 @@ void test_copy_mode_copies_notes_and_bars() {
   TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the lock's release: the selection back
   shortPress(10);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // done
+  hold(2, 700);  // again, onto step 12
   shortPress(12);
   TEST_ASSERT_TRUE(noteAt(480) >= 0 && noteAt(576) >= 0);
   TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
   TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(noteAt(576))).length);
-  shortPress(2);  // the source again: ends
+  hold(2, 700);
+  shortPress(2);  // the source again: ends, nothing copied
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   dbl(S::kRecordNote);
   ms(450);
@@ -1764,6 +1767,8 @@ void test_copy_mode_copies_notes_and_bars() {
   shortPress(18);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(768, 1536));
   TEST_ASSERT_TRUE(noteAt(768 + 96) >= 0 && noteAt(768 + 100) >= 0 && noteAt(768 + 384) >= 0);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // done
+  hold(17, 700);  // a long press of a step ends it without a copy
   hold(5, 700);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   // Bar 2 over bar 1: replaced, not added to.

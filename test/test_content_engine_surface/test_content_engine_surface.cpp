@@ -395,8 +395,9 @@ void test_the_transport_button_stops_and_starts_locally_under_an_external_clock(
 
 // Copy mode (DEC-279 amendment 1, owner 2026-11-10): a slot held 600 ms starts it — its LED pulses, no long press of
 // its own — and its release keeps it; a short press of another slot copies onto it (the rows into the target's own
-// runs, the loop kept, one undo step; its LED flashes three times) and copy mode stays: a track button selects another
-// track and its slot takes a copy too. The source again, or a long press of anything (its own gesture dropped), ends it.
+// runs, the loop kept, one undo step; its LED flashes three times) and copy mode ends. Meanwhile a track button selects
+// another track, whose slot takes the copy. The source again, or a long press of anything (its own gesture dropped),
+// ends it without a copy.
 static uint32_t rowsOf(uint8_t slot) {
   const ManifestId m = X().contentOf(slot);
   if (m == kNoManifest) return 0;
@@ -437,10 +438,16 @@ void test_copy_mode_copies_slots_across_tracks() {
     last = gLed[S::kSlotBase + 3];
   }
   TEST_ASSERT_EQUAL_UINT8(3, flashes);
-  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());  // still copying
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // done: the window closes
   TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));    // nothing launched
-  shortPress(S::kSlotBase + 4);
-  TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(4));
+  shortPress(S::kSlotBase + 4);  // an ordinary press now: no copy
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(0, rowsOf(4));
+  // Across tracks: copy mode again, track 2 selected, its slot 2 pressed.
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(100);
   tap(S::kTrackBase + 1);  // track 2
   ms(400);
   TEST_ASSERT_EQUAL_UINT8(1, C().selectedTrack());
@@ -450,6 +457,11 @@ void test_copy_mode_copies_slots_across_tracks() {
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(10, gLast, gUs, gClk.usPerTick()));  // one step
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(10));
   // A long press of anything ends it, its own gesture dropped (no solo).
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // track 2's slot 1 (empty) as the source
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
   tap(S::kTrackBase + 1, 700);
   ms(100);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());

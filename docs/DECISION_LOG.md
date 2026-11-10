@@ -15945,3 +15945,10 @@ and every copy undone (1-3 and 1-5 empty again).
   (768, 24 rows), its LED lit three times; track 2, 2-5 pressed → the same; a long track press ended it; LOAD LOOP →
   the picker (`HOLD EXIT`), a long REC → playing; TRACK held → the browser (`HOLD EXIT`), a long EDIT → playing; both
   copies undone. The 2× / 3× TRACK trash was not run on the card (native only).
+- **Amendment 3 (owner 2026-11-10: "I tried copying slot 1 to slot 3 but after copying it doesn't close the window"):**
+  a paste ends copy mode — the window closes, the target's three flashes confirm; a refused paste keeps it (another
+  target can be tried). Choosing another track still comes before the paste. Native: the copy-mode tests now expect
+  the end after one paste (a second press is an ordinary press) — the mutation keeping copy mode fails them; full
+  4,514 passed. Device (image `ea7f8b9d…`): the hold showed `COPY LOOP 1-1`, the press on 1-3 copied (768, 5 runs) and
+  the next frame had no window; undone. Meanwhile a check script's `!ENGINE` reboot left the board silent on USB (the
+  DEC-266 symptom) until the owner replugged it; its `prev_crumbs` were not captured.
