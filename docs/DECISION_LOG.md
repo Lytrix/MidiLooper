@@ -15667,3 +15667,10 @@ PLAY/STOP down to 2-1 (3 bars), TRACK auditioned it on the beat (track 1 played 
 the confirmation (first build: REC moved the cursor under it — fixed), YES put an empty 1-bar loop in 1-4, undo back.
 Two of my capture scripts mispressed: one loaded SET 2 T03 (already the working set's stage), one opened and cancelled
 a trash confirmation; nothing else was written.
+- **Amendment 1 (owner 2026-11-10): the new-loop length decides where the picker starts.** The global new-loop length
+  (`Surface::kNewLoopBars`, a setting later) is now 4 bars (was 1): an empty loop made without the picker — LOOP_EDIT's
+  NOTELEN, a slot's long press without a browser — is 4 bars. The picker starts an empty destination on the preset
+  closest to it (`Browser::startPreset`, a tie to the longer; the surface hands the length over with `setBrowser`).
+  Native: browser +1 (the nearest preset for 1–32 bars, an empty loop of it), surface and edit-surface updated (two
+  tests assumed 1 bar); full 4,500 passed. Device `d537fbcd…`, boot `crash=0`: a long press of the empty 8-8 opened
+  the picker on 4, TRACK put a 4-bar empty loop there (`loop=3072`), undo removed it.

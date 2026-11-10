@@ -530,16 +530,17 @@ void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   gBrowser.add(r);
   gBrowser.setWorking(1, 1);
   gS.setBrowser(&gBrowser);
+  TEST_ASSERT_EQUAL_UINT8(2, gBrowser.startPreset());  // the surface's new-loop length, 4 bars
   tap(S::kSlotBase, 700);  // track 1's slot 1, empty
   ms(400);
   TEST_ASSERT_TRUE(gS.browsing());
   TEST_ASSERT_EQUAL(ProductionBrowser::View::Picker, gBrowser.view());
   TEST_ASSERT_EQUAL_UINT8(0, gBrowser.pickDestination());
-  TEST_ASSERT_EQUAL_UINT8(ProductionBrowser::kStartPreset, gBrowser.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(gBrowser.startPreset(), gBrowser.pickPreset());
   TEST_ASSERT_TRUE(X().contentOf(0) == kNoManifest);  // no empty loop made by the long press any more
   tap(S::kRecordNote);  // left: the presets' edge
   ms(600);
-  TEST_ASSERT_EQUAL_UINT8(ProductionBrowser::kStartPreset, gBrowser.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(gBrowser.startPreset(), gBrowser.pickPreset());
   TEST_ASSERT_EQUAL(ProductionControl::kNone, C().queuedRecordSlot(0));  // not a take
   tap(38);  // right: into the grid, the nearest track (4)
   ms(600);

@@ -944,7 +944,8 @@ void test_notelen_long_press_creates() {
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
 }
 
-// A long press on an empty slot creates an empty 1-bar loop (owner 2026-11-08), selected and not played; NOTE_EDIT
+// A long press on an empty slot creates an empty loop of the new-loop length (owner 2026-11-08; 4 bars since
+// 2026-11-10; without a browser — with one it opens the get-a-loop picker, DEC-272), selected and not played; NOTE_EDIT
 // opens on it, a step is entered with NOTELEN, and it plays; Undo takes the loop back.
 void test_slot_long_press_creates_an_empty_loop() {
   TEST_ASSERT_TRUE(gE.transport().contentOf(0) == kNoManifest);
@@ -954,24 +955,25 @@ void test_slot_long_press_creates_an_empty_loop() {
   ms(100);
   const ManifestId m = gE.transport().contentOf(0);
   TEST_ASSERT_TRUE(m != kNoManifest);
-  TEST_ASSERT_EQUAL_UINT32(768, gE.manifests().manifest(m).loopLengthTicks);
+  TEST_ASSERT_EQUAL_UINT32(S::kNewLoopBars * 768, gE.manifests().manifest(m).loopLengthTicks);
   TEST_ASSERT_EQUAL_UINT16(1, gE.runs().run(gE.manifests().manifest(m).runs[0]).refs);  // the manifest's alone
   TEST_ASSERT_FALSE(gE.transport().playing(0));
   TEST_ASSERT_EQUAL_UINT8(1, gE.history().undoDepth(0));
   enterEdit();
   TEST_ASSERT_EQUAL_UINT16(0, gE.noteEdit().size());
   settle();
-  f1(pbFor(4, 16));  // 192
+  f1(pbFor(4, 16));  // a 16th of the loop's span (F1 maps across it)
   tap(S::kLengthNote);
   ms(450);
   TEST_ASSERT_EQUAL_UINT16(1, gE.noteEdit().size());
-  TEST_ASSERT_EQUAL_UINT32(192, sel().tick);
+  const uint32_t at = sel().tick;
+  TEST_ASSERT_TRUE(at > 0 && at < S::kNewLoopBars * 768 && at % 96 == 0);  // on a 16th inside the new loop
   tap(S::kEditModeNote);  // leave
   ms(400);
   tap(S::kPlayStopNote);  // the selected slot plays
   ms(500);
   TEST_ASSERT_TRUE(gE.transport().playing(0));
-  TEST_ASSERT_EQUAL_UINT32(192, heardAt(60));
+  TEST_ASSERT_EQUAL_UINT32(at % 768, heardAt(60));  // heard where it was entered (`heardAt`: the bar position)
 }
 
 // The edit button cycles NOTE_EDIT ↔ LOOP_EDIT and its long press leaves (owner 2026-11-08); from performance an empty
@@ -1350,13 +1352,13 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   ms(50);
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(1, gS.popupSlot());
-  TEST_ASSERT_EQUAL_UINT32(768, loopOf(1));
-  taps(S::kSlotBase + 1, 2);  // a double from 1 bar: round to 128
-  TEST_ASSERT_EQUAL_UINT32(128 * 768, loopOf(1));
-  taps(S::kSlotBase + 1, 1);  // a single from 128: round to 1
-  TEST_ASSERT_EQUAL_UINT32(768, loopOf(1));
+  TEST_ASSERT_EQUAL_UINT32(S::kNewLoopBars * 768, loopOf(1));  // 4 bars
+  taps(S::kSlotBase + 1, 2);  // a double from 4 bars: 3
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(1));
+  taps(S::kSlotBase + 1, 1);  // a single from 3: 4
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(1));
   taps(S::kSlotBase + 1, 1);
-  TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(1));
+  TEST_ASSERT_EQUAL_UINT32(5 * 768, loopOf(1));
   ms(600);
   gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2 sets the popup's slot, not the playing one
   ms(400);

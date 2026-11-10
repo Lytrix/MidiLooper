@@ -46,7 +46,8 @@ swept, switched without stale bars, hidden. **Step d (DEC-272 — the picker):**
 bars, USE); built: `GET A LOOP` in a set's view and a slot's long press, the grid, the preview, audition and USE, empty
 loops (asked over a filled slot). Native 4,499 passed; device `abc7df2a…`: both entries, preview, audition (heard),
 USE, a preset with its confirmation, undo — all as designed. Slice 6b complete; owner on the panel: "Looks right" (grid size and dots
-kept; squares remain a serial switch, `!ENGINE pick-squares 1`).
+kept; squares remain a serial switch, `!ENGINE pick-squares 1`). Then (owner, DEC-272 amendment 1) the new-loop
+length is 4 bars and the picker starts on the preset closest to it; device `d537fbcd…`.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

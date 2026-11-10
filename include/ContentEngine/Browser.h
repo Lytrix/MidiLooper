@@ -33,7 +33,8 @@
 // * Get a loop (DEC-272; plan §6.1): a set's view has a `GET A LOOP` row; TRACK lists the set's stages (`FROM STAGE`),
 //   TRACK on one opens the picker — the stage's slots as a grid (tracks as rows, slots as columns, from its mosaic) with
 //   a column of empty-loop presets (1–16 bars) left of slot 1 — for a destination fixed on entry (the selected slot, or
-//   the slot whose long press opened it: `openPickerFromSlot`, on the working set's base stage). Moves: NOTELEN up,
+//   the slot whose long press opened it: `openPickerFromSlot`, on the working set's base stage); for an empty
+//   destination the cursor starts on the preset closest to the new-loop length (`setNewLoopBars`). Moves: NOTELEN up,
 //   PLAY/STOP down, REC left, EDIT right (`pickUp` …). TRACK on a loop asks to audition it, once heard (or previewed
 //   silently) to USE it; on a preset to USE an empty loop — over a filled destination after a confirmation. A move ends
 //   an audition; HOLD TRACK leaves it (back to the stages). The preview the panel shows is the owner's: it reads the
@@ -80,7 +81,7 @@ class Browser {
   enum class Audition : uint8_t { None, Pending, Sounding, Silent };
   static constexpr uint8_t kPresets = 5;
   static constexpr uint8_t kPresetBars[kPresets] = {1, 2, 4, 8, 16};
-  static constexpr uint8_t kStartPreset = 2;  // 4 bars (plan §6.1)
+
   static constexpr uint16_t kNone = 0xFFFF;
   static constexpr uint8_t kStages = static_cast<uint8_t>(library::Stage::kCount);
 
@@ -559,6 +560,17 @@ class Browser {
       pickDestFilled_ = filled;
     }
   }
+  /// The new-loop length in bars (the surface's global setting): the picker starts on the preset closest to it.
+  void setNewLoopBars(uint16_t bars) { newLoopBars_ = bars; }
+  /// The preset closest to the new-loop length (a tie: the longer one; DEC-272 amendment 1).
+  uint8_t startPreset() const {
+    uint8_t best = 0;
+    for (uint8_t i = 1; i < kPresets; ++i) {
+      const int32_t d = static_cast<int32_t>(kPresetBars[i]) - newLoopBars_, db = static_cast<int32_t>(kPresetBars[best]) - newLoopBars_;
+      if ((d < 0 ? -d : d) <= (db < 0 ? -db : db)) best = i;
+    }
+    return best;
+  }
   /// Entry 2 (a slot's long press): the picker over the working set's base stage (else its newest; none: presets
   /// only) for `slot`.
   void openPickerFromSlot(uint8_t slot, bool filled) {
@@ -775,7 +787,7 @@ class Browser {
       pickTrack_ = static_cast<uint8_t>(pickDest_ / 8);
       pickSlot_ = static_cast<uint8_t>(pickDest_ % 8);
     } else {
-      pickPreset_ = kStartPreset;
+      pickPreset_ = startPreset();
       pickTrack_ = 0;
       pickSlot_ = 0;
     }
@@ -844,7 +856,7 @@ class Browser {
     request_ = Request{};
     request_.action = Action::UseEmpty;
     request_.into = pickDest_;
-    request_.bars = kPresetBars[pickPreset_ == kNoPreset ? kStartPreset : pickPreset_];
+    request_.bars = kPresetBars[pickPreset_ == kNoPreset ? startPreset() : pickPreset_];
     pending_ = request_;
   }
   void scroll() {
@@ -883,6 +895,7 @@ class Browser {
   Preview preview_ = Preview::None;
   uint16_t previewBars_ = 0;
   Audition audition_ = Audition::None;
+  uint16_t newLoopBars_ = 4;
   char failWhat_[kText] = {}, failWhy_[kText] = {};
 };
 

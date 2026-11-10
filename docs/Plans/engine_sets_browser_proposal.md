@@ -154,8 +154,8 @@ half:
   and the working set's mosaic with that slot boxed); TRACK (`[TRK] OPEN`, as a set
   row) lists the set's stages under `FROM STAGE`, and TRACK on one (`[TRK] SELECT STAGE`, owner 2026-11-10) opens its
   grid. (2) From a slot on a controller: the slot's long press opens the same
-  window with that slot as the destination — the cursor on the 4-bar empty preset when the slot is empty, on the
-  slot's own position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): long press,
+  window with that slot as the destination — the cursor on the empty-loop preset closest to the new-loop length (4
+  bars; owner 2026-11-10) when the slot is empty, on the slot's own position when it holds a loop. This replaces the long press's empty loop (owner 2026-11-08): long press,
   then TRACK on a preset. The destination is fixed on entry and always shown:
   `INTO TRACK 3 SLOT 2`. The grid cursor chooses the source only. Entry is refused while a take is open or armed on
   any track (`STOP THE TAKE FIRST`: in the picker REC is a move, so a take could not be ended), during NOTE_EDIT or
@@ -171,7 +171,7 @@ half:
   and 16 bars, dotted boxes unlike a loop — with space on both sides (5 px to the window's edge, 6 px to the slots;
   owner: a quick empty loop, and the first choice to reach: left of the slots, not past slot 8). LEFT from a
   track's slot 1 goes to the nearest preset, RIGHT from a preset back to the nearest track. A preset needs no audition: `[TRK] USE` at once (one undo step; then `EMPTY LOOP IN 3-2`). The
-  cursor starts on the 4-bar preset only when the destination is empty; otherwise on the grid cell of the destination's
+  cursor starts on the preset closest to the new-loop length only when the destination is empty; otherwise on the grid cell of the destination's
   own track and slot, and an empty loop kept over a filled destination asks once more (`REPLACE 3-2 WITH AN EMPTY
   8-BAR LOOP?`, centred), so two reflex presses never wipe a loop.
 * **The panel** shows the loop under the cursor: its piano roll — the whole loop however long (owner 2026-11-10: all

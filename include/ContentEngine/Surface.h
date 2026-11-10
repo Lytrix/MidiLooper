@@ -190,7 +190,7 @@ class Surface {
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
   static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
   static constexpr uint32_t kVelocityHoldMs = 600;
-  static constexpr uint32_t kNewLoopBars = 1;  // an empty loop's length (owner 2026-11-08: a global setting later)  // NOTELEN held this long: velocity mode (the long press)
+  static constexpr uint32_t kNewLoopBars = 4;  // an empty loop's length (owner 2026-11-10: 4; a global setting later)  // NOTELEN held this long: velocity mode (the long press)
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
@@ -363,7 +363,10 @@ class Surface {
   void selectSlot(uint8_t t, uint8_t s) { slot_[t] = s; }
 
   /// The sets browser (slice 3): opened by a long track switch while the library is ready; nullptr: none.
-  void setBrowser(ProductionBrowser* b) { browser_ = b; }
+  void setBrowser(ProductionBrowser* b) {
+    browser_ = b;
+    if (b != nullptr) b->setNewLoopBars(kNewLoopBars);  // the picker starts on the preset closest to it (DEC-272)
+  }
   bool browsing() const { return browser_ != nullptr && browser_->isOpen(); }
 
   /// The DROID's fader bank when it is to change (owner 2026-11-06: F2–F4 sent the loop-edit bank's messages in

@@ -698,7 +698,7 @@ void test_the_picker_opens_from_a_sets_get_a_loop() {
   openPickerOn(17, false);
   TEST_ASSERT_EQUAL_UINT16(stage, gB.pickRecord());
   TEST_ASSERT_EQUAL_UINT8(17, gB.pickDestination());
-  TEST_ASSERT_EQUAL_UINT8(B::kStartPreset, gB.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(gB.startPreset(), gB.pickPreset());
   TEST_ASSERT_EQUAL_UINT8(4, B::kPresetBars[gB.pickPreset()]);
   TEST_ASSERT_EQUAL_UINT8(3, gB.pickLevel(2));
   TEST_ASSERT_EQUAL_UINT8(2, gB.pickLevel(9));
@@ -860,7 +860,25 @@ void test_a_slots_long_press_opens_the_picker_on_the_base_stage() {
   gB.setWorking(9, 0);  // a working set without stages: the presets only
   gB.openPickerFromSlot(3, false);
   TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.pickRecord());
-  TEST_ASSERT_EQUAL_UINT8(B::kStartPreset, gB.pickPreset());
+  TEST_ASSERT_EQUAL_UINT8(gB.startPreset(), gB.pickPreset());
+}
+
+/// DEC-272 amendment 1 (owner 2026-11-10): the picker starts on the preset closest to the new-loop length (a tie: the
+/// longer one) — on an empty destination, and for an empty loop TRACK makes there.
+void test_the_picker_starts_on_the_preset_nearest_the_new_loop_length() {
+  const uint8_t want[][2] = {{1, 0}, {2, 1}, {3, 2}, {4, 2}, {6, 3}, {8, 3}, {12, 4}, {16, 4}, {32, 4}};
+  for (const auto& w : want) {
+    gB.setNewLoopBars(w[0]);
+    TEST_ASSERT_EQUAL_UINT8(w[1], gB.startPreset());
+  }
+  gB.setNewLoopBars(8);
+  gB.openPickerFromSlot(5, false);
+  TEST_ASSERT_EQUAL_UINT8(3, gB.pickPreset());
+  gB.press();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::UseEmpty, r.action);
+  TEST_ASSERT_EQUAL_UINT8(8, r.bars);
 }
 
 int main(int, char**) {
@@ -899,6 +917,7 @@ int main(int, char**) {
   RUN_TEST(test_the_picker_auditions_then_uses_a_loop);
   RUN_TEST(test_a_preset_uses_an_empty_loop_asking_over_a_filled_slot);
   RUN_TEST(test_a_slots_long_press_opens_the_picker_on_the_base_stage);
+  RUN_TEST(test_the_picker_starts_on_the_preset_nearest_the_new_loop_length);
   RUN_TEST(test_a_boot_starts_in_the_working_set_the_card_names);
   RUN_TEST(test_an_empty_working_set_survives_a_boot);
   RUN_TEST(test_a_card_naming_no_working_set_falls_back_to_the_newest);
