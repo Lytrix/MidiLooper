@@ -186,6 +186,26 @@ The repository's agent build/upload default remains `teensy41-capture-serial`; t
 
 On a fresh card, the engine reads without writing until the owner enables saving with `!ENGINE approve-saving`. That approval is remembered by the engine folder. Once enabled, settled changes autosave into `/MidiLooper/engine/store.bin`. Existing legacy workspace files remain untouched. See [storage and migration](docs/Guides/FIXED_MEMORY_ENGINE.md#storage-and-migration) before relying on imported content.
 
+### Optional: groove templates from Samples From Mars
+
+Groove quantize is planned, not yet in the firmware (see the [groove design](docs/Plans/groove_quantize_design.md)). It will read groove templates from MIDI files in the `/GROOVES/` folder on the SD card. The built-in swing settings will work without them. A good source is the free **Grooves From Mars** pack by Samples From Mars: timing captured from 27 drum machines, including the MPC60, MPC3000 and SP-1200.
+
+The pack is **not included** in this repository and must not be added to it or shared. Samples From Mars' terms do not allow copying or redistributing their content without written permission. Everyone gets their own copy from the source:
+
+1. Get the free pack from <https://samplesfrommars.com/products/grooves-from-mars> (it asks for a name and email).
+2. Unzip it. Only the `MIDI` folder is needed; it has one subfolder per machine.
+3. Put the machine folders into `/GROOVES/` on the looper's SD card, either:
+   - with the card in a computer, by copying them into a `GROOVES` folder at the card's root; or
+   - with the card in the looper, over USB:
+     ```sh
+     .venv/bin/python scripts/upload_grooves.py "path/to/Grooves From Mars/MIDI"
+     ```
+     The script checks each file on the card, skips the `Patterns` folders (whole drum patterns, not timing grooves) and can be limited to some machines with `--only "MPC60" "SP 1200"`.
+
+Keep the pack outside the repository folder, or in a folder git ignores. A `grooves/` folder in a clone can be excluded locally with `echo "grooves/" >> .git/info/exclude`.
+
+The firmware only reads `/GROOVES/`: it never changes, renames or deletes files there. A grooved loop will store the timing it uses with the loop itself, so your loops keep working if the folder changes.
+
 ## What is available, and what is next
 
 The engine supports record/overdub, quantized slot switching and launch, step / bar restarts, track mute/solo, per-slot undo/redo, note creation/deletion and geometry/velocity editing (faders, step buttons and the encoder), copy / paste of slots, bars and notes, loop start/length editing, and autosave/boot restore. Shortening a loop keeps notes beyond its end for later lengthening.
