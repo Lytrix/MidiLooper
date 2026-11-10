@@ -97,14 +97,33 @@ Each of the 64 slots has its own undo and redo history. Every change to a slot i
 
 The base module's encoder (Teensy pins 29 / 30, push on 31) works in NOTE_EDIT. A push steps through pitch, move, length and velocity, marked by a line under that label. A turn changes the selected note's value, faster when turned quickly (move up to ×24, length ×8, pitch and velocity ×4). With a step button held, a turn edits that step's note at once, a push adds a 16th C4 on the step and a double push deletes the selected note. The long push is reserved for a future CC menu.
 
+### Loop length: ranges, switching and the full loop
+
+A loop never loses notes when you shorten it. The notes you recorded form the **stored loop**, and the loop you hear is a range inside it. That makes shortening a loop a way to jam: pick a part, play it, switch to another part, and go back to the whole phrase.
+
+**Pick a range (LOOP_EDIT).** Hold a bar button and press another, in either order: those bars become the loop. The 16th buttons do the same inside a bar, so odd lengths and off-beat starts work too. Double-press one bar or 16th to loop just that one. The buttons always name the same bars of the stored loop, so after looping bars 2–4 you can still pick bars 1–3. Choosing bars past the end of the stored loop makes it longer.
+
+**See where you are.** The bar LEDs show the stored loop: bars in the loop are lit (brighter where they hold notes), and bars outside it that hold notes glow dim, so you can see which ranges still contain music. The progress bar spans the whole stored loop, with brackets around the part playing and gaps every 1, 4, 8, 16 or 32 bars, even while stopped.
+
+**Switch while playing (performance and LOOP_EDIT).** The loop remembers the last two ranges you picked.
+
+| NOTELEN | Action |
+|---------|--------|
+| Single press | Switch to the other remembered range |
+| Double press | Play the whole stored loop |
+
+A new range replaces the older of the two; the range that was playing becomes the other one. For example: an 8-bar phrase, pick bars 5–6, then bar 8. A single press now flips between bars 5–6 and bar 8, and a double press brings back all 8 bars. Every switch is one undo step, and note edits made in a range are kept.
+
+The start, the length and both ranges are saved with the slot and come back after a reboot. F1 moves the loop start in 16ths of the stored loop and F2 sets the length; neither changes the remembered ranges.
+
 ### Loop-length popup
 
-Long-press NOTELEN in LOOP_EDIT. While the popup is open:
+Long-press NOTELEN in LOOP_EDIT. The popup shows every choice in three rows — `FULL · A · B`, `1 … 8`, `16 32 64 128` bars — with the selected one highlighted. FULL is the whole stored loop, A and B the remembered ranges (dim while not set), and the numbers are lengths from the start of the stored loop. While the popup is open:
 
 | Control | Action |
 |---------|--------|
-| Opening button: single press | Step to the next length: 1–8, 16, 32, 64, 128 bars, wrapping at the end |
-| Opening button: double press | Step to the previous length |
+| Opening button: single press | Select the next choice, wrapping at the end |
+| Opening button: double press | Select the previous choice |
 | Opening button: hold | Cancel and restore the length from when the popup opened |
 | F2 | Choose length using the fader scale below |
 | No change for three seconds | Close the popup, keeping changes as one undo step |
