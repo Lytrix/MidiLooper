@@ -58,8 +58,8 @@ Native 4,501 passed; device `2dd0ee38…`. **Slice C (DEC-275):** step buttons (
 (a bar of the 8-bar page) restart the playing slot there at the next launch step — a positioned launch joined late
 inside its window; the queued restart shows parked at its position. Native 4,505 passed; device `5b5cad21…`. Then (owner: the transport button "cannot stop the playback" under a
 MIDI Start and external clock) **DEC-276:** under a running external clock the transport button is a local stop /
-start — tracks stop while the clock runs on, back at the next bar line, a toast each; nothing sent to the master.
-Device `86ccbcd9…`. Next: slice D, NOTE_EDIT step buttons.
+start — tracks stop while the clock runs on, back at the next bar line; nothing sent to the master (the toasts
+dropped, owner: amendment 1). Device `ec0d2d6b…`. Next: slice D, NOTE_EDIT step buttons.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

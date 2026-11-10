@@ -1944,12 +1944,6 @@ void loop() {
   }
   crumb(kSurface);
   gSurface.service(millis(), gLastTick, micros());
-  switch (gSurface.takeNotice()) {  // DEC-276: the transport button under an external clock
-    case Surface<EngineRoot>::Notice::ExternalStop: gDisplay.toast("EXT CLOCK  LOCAL STOP", millis()); break;
-    case Surface<EngineRoot>::Notice::ExternalStart: gDisplay.toast("EXT CLOCK  JOINS ON THE BAR", millis()); break;
-    case Surface<EngineRoot>::Notice::ExternalWaiting: gDisplay.toast("EXT CLOCK  WAITING FOR START", millis()); break;
-    default: break;
-  }
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   stampSaves();
   serviceLibrary();

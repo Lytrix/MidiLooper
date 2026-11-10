@@ -15806,3 +15806,7 @@ old handling and a next-16th resume fail it. Full 4,506 passed. Device (image `8
 the press stopped all six tracks while the ticks ran on (2,605 → 3,448), the next press at 3,724 brought them back on
 the 3,840 bar line (track 1 at position 1,012 at 4,852); after the master's Stop the press waited; the three toasts
 captured.
+- **Amendment 1 (owner 2026-11-10: "we can remove the popups, as it now feels logical again"):** no notices — the
+  three toasts and `Surface::takeNotice` are gone; under a stopped external clock the press does nothing. Device
+  `ec0d2d6b…` (the upload tool reported a failure after programming; boot `crash=0`, `BOOT,load,ok`, and the frame
+  without a toast show the new image): local stop, back on the bar line, nothing under a stopped master.

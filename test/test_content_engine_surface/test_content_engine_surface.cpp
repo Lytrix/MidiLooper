@@ -354,7 +354,7 @@ void test_step_and_bar_buttons_restart_the_playing_slot_there() {
 
 // DEC-276 (owner 2026-11-10: the transport button could not stop a MIDI-started external clock): under a running
 // external clock the transport button is a local stop — every track ends, the clock runs on — and the next press
-// brings the tracks back at the next bar line; under a stopped one it waits. Each leaves a notice for the screen.
+// brings the tracks back at the next bar line; under a stopped one it does nothing (owner: no popups).
 void test_the_transport_button_stops_and_starts_locally_under_an_external_clock() {
   recordOneBar(0, 60);  // on the internal clock: slot 0 plays
   TEST_ASSERT_TRUE(X().playing(0));
@@ -368,29 +368,25 @@ void test_the_transport_button_stops_and_starts_locally_under_an_external_clock(
   run(gUs + kBarUs + kBarUs / 3);
   TEST_ASSERT_TRUE(gClk.external());
   TEST_ASSERT_TRUE(X().playing(0));
-  gS.takeNotice();
   tap(S::kTransportNote);
   ms(400);
   TEST_ASSERT_FALSE(X().playing(0));  // stopped locally
   TEST_ASSERT_TRUE(gClk.running());    // the master's clock runs on
-  TEST_ASSERT_EQUAL(S::Notice::ExternalStop, gS.takeNotice());
   const uint32_t stoppedAt = gLast;
   run(gUs + kBarUs / 2);
   TEST_ASSERT_FALSE(X().playing(0));
   TEST_ASSERT_TRUE(gLast > stoppedAt);
   tap(S::kTransportNote);
   ms(400);
-  TEST_ASSERT_EQUAL(S::Notice::ExternalStart, gS.takeNotice());
   TEST_ASSERT_TRUE(C().switchQueued(0));
   const uint32_t back = until(2 * kBarUs, [] { return X().playing(0); });
   TEST_ASSERT_EQUAL_UINT32(0, back % 768);                         // on the bar line
   TEST_ASSERT_EQUAL_UINT32(0, (back - X().origin(0)) % 768);      // from the loop start
-  // The master stops: the button waits for its Start.
+  // The master stops: the button does nothing; its Start starts.
   gClk.midiStop(gUs);
   C().transportStop(gLast, gUs, gClk.usPerTick());
   tap(S::kTransportNote);
   ms(400);
-  TEST_ASSERT_EQUAL(S::Notice::ExternalWaiting, gS.takeNotice());
   TEST_ASSERT_FALSE(gClk.running());
   TEST_ASSERT_FALSE(X().playing(0));
 }
