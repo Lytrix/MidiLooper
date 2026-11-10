@@ -266,6 +266,16 @@ class TrackControl {
       x_->launch(t, x_->playingSlot(t));  // ready to start from position 0
     }
   }
+  /// DEC-276, an external clock running on: the tracks a local `transportStop` ended join again at the next bar line
+  /// (their launches queued, not committed now — the master's bar grid stays theirs).
+  void resumeAtBar(uint32_t clock) {
+    for (uint8_t t = 0; t < Tracks; ++t) {
+      if (!wasPlaying_[t]) continue;
+      wasPlaying_[t] = false;
+      const uint8_t slot = x_->launchingSlot(t);
+      if (slot != kNone) queueSwitch(t, slot, Quantize::NextBar, clock, false);
+    }
+  }
   void transportStart(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[T];
     for (uint8_t t = 0; t < Tracks; ++t) {

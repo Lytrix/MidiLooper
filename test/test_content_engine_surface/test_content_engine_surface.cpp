@@ -55,9 +55,15 @@ struct Live {
   uint32_t on, off;
   uint8_t pitch;
 };
+static bool gExternal = false;  // a master's clock: 24 pulses a quarter
+static uint32_t gNextPulseUs = 0;
 static void run(uint32_t toUs, std::initializer_list<Live> live = {}) {
   ProductionHub::Sent buf[32];
   for (; gUs < toUs; gUs += 125) {
+    if (gExternal && gUs >= gNextPulseUs) {
+      gClk.midiPulse(gUs);
+      gNextPulseUs += 8 * 2604;  // 120 BPM
+    }
     uint8_t count = 0;
     uint32_t t;
     while (gClk.due(gUs, t, count)) {
@@ -92,6 +98,7 @@ void setUp() {
   gS.init(gE, gClk);
   gUs = 1000000;
   gLast = 0;
+  gExternal = false;
   for (uint8_t& v : gLed) v = 0;
   gLedSends = 0;
 }
@@ -343,6 +350,49 @@ void test_step_and_bar_buttons_restart_the_playing_slot_there() {
   TEST_ASSERT_FALSE(X().playing(0));
   press(3);
   TEST_ASSERT_FALSE(C().switchQueued(0));
+}
+
+// DEC-276 (owner 2026-11-10: the transport button could not stop a MIDI-started external clock): under a running
+// external clock the transport button is a local stop — every track ends, the clock runs on — and the next press
+// brings the tracks back at the next bar line; under a stopped one it waits. Each leaves a notice for the screen.
+void test_the_transport_button_stops_and_starts_locally_under_an_external_clock() {
+  recordOneBar(0, 60);  // on the internal clock: slot 0 plays
+  TEST_ASSERT_TRUE(X().playing(0));
+  // The master starts: its Start as the firmware handles it, then pulses.
+  gExternal = true;
+  gNextPulseUs = gUs;
+  C().transportStop(gLast, gUs, gClk.usPerTick());
+  gClk.midiStart(gUs);
+  C().transportStart(gClk.nextTick(), gUs, gClk.usPerTick());
+  gS.transportStarted(gClk.nextTick());
+  run(gUs + kBarUs + kBarUs / 3);
+  TEST_ASSERT_TRUE(gClk.external());
+  TEST_ASSERT_TRUE(X().playing(0));
+  gS.takeNotice();
+  tap(S::kTransportNote);
+  ms(400);
+  TEST_ASSERT_FALSE(X().playing(0));  // stopped locally
+  TEST_ASSERT_TRUE(gClk.running());    // the master's clock runs on
+  TEST_ASSERT_EQUAL(S::Notice::ExternalStop, gS.takeNotice());
+  const uint32_t stoppedAt = gLast;
+  run(gUs + kBarUs / 2);
+  TEST_ASSERT_FALSE(X().playing(0));
+  TEST_ASSERT_TRUE(gLast > stoppedAt);
+  tap(S::kTransportNote);
+  ms(400);
+  TEST_ASSERT_EQUAL(S::Notice::ExternalStart, gS.takeNotice());
+  TEST_ASSERT_TRUE(C().switchQueued(0));
+  const uint32_t back = until(2 * kBarUs, [] { return X().playing(0); });
+  TEST_ASSERT_EQUAL_UINT32(0, back % 768);                         // on the bar line
+  TEST_ASSERT_EQUAL_UINT32(0, (back - X().origin(0)) % 768);      // from the loop start
+  // The master stops: the button waits for its Start.
+  gClk.midiStop(gUs);
+  C().transportStop(gLast, gUs, gClk.usPerTick());
+  tap(S::kTransportNote);
+  ms(400);
+  TEST_ASSERT_EQUAL(S::Notice::ExternalWaiting, gS.takeNotice());
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_FALSE(X().playing(0));
 }
 
 void test_an_armed_slot_punches_in_on_its_second_press() {
@@ -715,6 +765,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
+  RUN_TEST(test_the_transport_button_stops_and_starts_locally_under_an_external_clock);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);

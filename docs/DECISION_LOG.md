@@ -15781,3 +15781,28 @@ Device (image `5b5cad21…`, boot `crash=0`, `BOOT,load,ok`; 1-4, a 9-bar loop):
 bar 3 → 1,539, bar 8 → 5,379 (the target plus the ticks to the read); with `launch-q bar`, bar 4 queued at position 848
 showed the parked playhead on bar 4 counting down, and restarted on the 4,608 bar line (position 2,531 at 4,835).
 Transport stopped, launch-q back to 16.
+
+## DEC-276 — Under an external clock the transport button is a local stop / start
+
+**Date:** 2026-11-10. **Owner:** the transport button "cannot stop the playback" — the board was driven by a MIDI
+Start and an external clock, which the button ignored ("an external clock runs the transport itself"). Asked how other
+hardware sequencers handle it and whether to send a MIDI Stop back; chosen: a local stop / start with a notice.
+
+**Decision:**
+- **Running external clock:** the transport button's short press is a local stop — `TrackControl::transportStop` as on
+  a master's Stop (takes end, queued gestures dropped, each playing track ready at its loop start) — while the clock
+  runs on. The next press brings the tracks back at the next bar line: the ones stopped (`resumeAtBar`) and, as a
+  Start does, every unmuted track's selected slot with content. As Elektron and Squarp slaves do; nothing is sent
+  back to the master (masters seldom act on a Stop from a slave, and one that echoes would loop it).
+- **Stopped external clock** (pulses, no Start): the press waits for the master's Start.
+- **The screen:** each press shows a toast — `EXT CLOCK  LOCAL STOP`, `EXT CLOCK  JOINS ON THE BAR`,
+  `EXT CLOCK  WAITING FOR START` (`Surface::takeNotice`). The double press (back to the loop start) does nothing under
+  an external clock. PLAY/STOP stays per track; the internal clock is unchanged.
+
+**Evidence:** native: `test_the_transport_button_stops_and_starts_locally_under_an_external_clock` (local stop with the
+clock running on; back on a bar line from the loop start; waiting under a stopped master; the three notices) — the
+old handling and a next-16th resume fail it. Full 4,506 passed. Device (image `86ccbcd9…`, boot `crash=0`,
+`BOOT,load,ok`; the host as master: Start, then 24 ppqn at 120 BPM): internal start / stop unchanged; under the clock
+the press stopped all six tracks while the ticks ran on (2,605 → 3,448), the next press at 3,724 brought them back on
+the 3,840 bar line (track 1 at position 1,012 at 4,852); after the master's Stop the press waited; the three toasts
+captured.

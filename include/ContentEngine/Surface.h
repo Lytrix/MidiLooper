@@ -42,8 +42,12 @@
 //     kept; without a library: the mute toggle as before — mute stays on the track buttons' double press). While the
 //     browser is open record = up, edit = down, track switch = its action (a quick double or triple acts twice or
 //     three times: the browser gives no button a double), long track switch = close;
-//   - transport 39: short = start / stop (the internal clock; an external clock runs the transport itself); double =
-//     back to the loop start (stop, then start at the next bar line);
+//   - transport 39: short = start / stop (the internal clock); double = back to the loop start (stop, then start at the
+//     next bar line). Under a running external clock (DEC-276; as Elektron / Squarp slaves) it is a local stop / start:
+//     every track and take ends while the master's clock runs on, and the next press brings the tracks back (the ones
+//     stopped, and every unmuted track's selected slot with content, as a Start) at the next bar line; nothing is sent
+//     back to the master. Under a stopped external clock it waits for the master's Start. Each shows a `notice`.
+//     The double does nothing under an external clock;
 //   - play / stop 40: short = the selected track stops, or plays its selected slot;
 //   - tracks 60–67: short = select; double = mute toggle; long = solo toggle;
 //   - step buttons 0–15 and bar buttons 17–24 (slice C, legacy `BarStepButtonHandler`; performance only — not in an
@@ -240,6 +244,7 @@ class Surface {
     for (uint8_t s = 0; s < kSlotsPerTrack; ++s) press_.configure(kSlot0 + s, T{300, 400, 600, 0, true});
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t& s : slot_) s = 0;
+    notice_ = Notice::None;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
     blinkMs_ = 0;
@@ -379,6 +384,13 @@ class Surface {
   /// launch point until the switch (`shownQueued`) — else the playing slot, else the selected one.
   uint8_t shown(uint8_t t) { return shownSlot(t); }
   bool shownQueued(uint8_t t) { return control().switchQueued(t); }
+  /// A one-line notice for the screen (DEC-276: the transport button under an external clock), taken once.
+  enum class Notice : uint8_t { None, ExternalStop, ExternalStart, ExternalWaiting };
+  Notice takeNotice() {
+    const Notice n = notice_;
+    notice_ = Notice::None;
+    return n;
+  }
   /// The loop position a queued switch starts at (a step or bar button's; 0: the loop start).
   uint32_t shownQueuedPosition(uint8_t t) { return control().queuedPosition(t); }
   void setBrowser(ProductionBrowser* b) {
@@ -441,6 +453,29 @@ class Surface {
   bool empty(uint8_t slot) { return e_->transport().contentOf(slot) == kNoManifest; }
   uint8_t selected() { return control().selectedTrack(); }
 
+  /// DEC-276: the transport button under an external clock — a local stop, or the tracks back at the next bar line.
+  void externalTransport() {
+    if (!clock_->running()) {
+      notice_ = Notice::ExternalWaiting;
+      return;
+    }
+    auto& x = transport();
+    bool active = x.writingTrack() != 0xFF;
+    for (uint8_t t = 0; t < kTracks && !active; ++t)
+      active = x.playing(t) || control().switchQueued(t) || control().recordQueued(t);
+    if (active) {
+      control().transportStop(tick_, us_, us());
+      notice_ = Notice::ExternalStop;
+      return;
+    }
+    control().resumeAtBar(tick_);
+    for (uint8_t t = 0; t < kTracks; ++t) {  // as a Start: every unmuted track's selected slot with content
+      const uint8_t slot = selectedSlot(t);
+      if (control().switchQueued(t) || control().muted(t) || empty(slot)) continue;
+      control().queueSwitch(t, slot, Engine::Control::Quantize::NextBar, tick_, false);
+    }
+    notice_ = Notice::ExternalStart;
+  }
   void startClock() {
     if (clock_->running() || clock_->external()) return;  // an external clock runs the transport itself
     clock_->start(us_);
@@ -526,7 +561,9 @@ class Surface {
         }
         return;
       case kTransport:
-        if (p == Press::Short) {
+        if (clock_->external()) {
+          if (p == Press::Short) externalTransport();
+        } else if (p == Press::Short) {
           if (clock_->running()) stopClock();
           else startClock();
         } else if (p == Press::Double) {  // back to the loop start: the next bar line
@@ -1017,6 +1054,7 @@ class Surface {
   PressDetector<kButtons> press_;
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
+  Notice notice_ = Notice::None;
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
