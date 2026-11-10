@@ -45,8 +45,8 @@ swept by the same sweep, its request pinned until swept, cancelled cleanly; nati
 swept, switched without stale bars, hidden. **Step d (DEC-272 — the picker):** mockups agreed (layout A, presets 1–16
 bars, USE); built: `GET A LOOP` in a set's view and a slot's long press, the grid, the preview, audition and USE, empty
 loops (asked over a filled slot). Native 4,499 passed; device `abc7df2a…`: both entries, preview, audition (heard),
-USE, a preset with its confirmation, undo — all as designed. Slice 6b complete; owner to judge the grid size and dots
-vs squares (`!ENGINE pick-squares 1`) on the panel.
+USE, a preset with its confirmation, undo — all as designed. Slice 6b complete; owner on the panel: "Looks right" (grid size and dots
+kept; squares remain a serial switch, `!ENGINE pick-squares 1`).
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
