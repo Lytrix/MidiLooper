@@ -16064,6 +16064,12 @@ press nothing) — no-rotation and off-by-one mutations fail it; full 4,522 pass
 copied onto 1-3): LOOP_EDIT, step 10 held + step 3 → 384 ticks (rotated); bar 1 held + bar 4 → 3,072; leaving, two
 undos → 1-3 empty again.
 
+**Amendment 1 (2026-11-10, a one-bar loop):** owner: "I need a way to loop 1 bar … it needs to prevent to trigger the
+copy flow"; chosen: the double press. A bar or a 16th pressed twice within `kCopyDoubleMs` (300 ms), nothing else held,
+is the loop alone: its position the start, one bar or one 16th long. No hold is involved, so copy mode never starts.
+Evidence: native `test_loop_edit_double_press_loops_one_step` (one press: 768 kept; the double: 48 ticks, the note at
+96 at its start).
+
 ## DEC-281 — NOTELEN's double press in LOOP_EDIT restores the previous loop; notes past the end light dim
 
 **Date:** 2026-11-10. **Owner:** "when a new loop length has been selected show the bars which still have notes but

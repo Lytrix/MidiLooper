@@ -2002,6 +2002,22 @@ void test_loop_edit_a_held_range_sets_start_and_length() {
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
 }
 
+// DEC-280 amendment 1 (owner 2026-11-10: "I also need a way to loop 1 bar"): a step or bar double-pressed in LOOP_EDIT
+// is the loop alone — the 16th from its position, one 16th long.
+void test_loop_edit_double_press_loops_one_step() {
+  recordBar({{96, 60}, {600, 62}});
+  enterLoopEditOnContent();
+  tap(2);
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // one press: nothing
+  tap(2);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(48, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, heardAt(60) % 48);  // the note at 96 starts it
+  tap(S::kEditModeNote, 700);
+  ms(100);
+}
+
 // DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"): NOTELEN's double press in LOOP_EDIT
 // restores the loop before the last LOOP_EDIT change — length and start — as a new undo step, keeping the edits made
 // since; pressed again it goes back.
@@ -2096,6 +2112,7 @@ int main(int, char**) {
   RUN_TEST(test_copy_mode_pastes_into_another_bar_and_another_track);
   RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
   RUN_TEST(test_loop_edit_a_held_range_sets_start_and_length);
+  RUN_TEST(test_loop_edit_double_press_loops_one_step);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
