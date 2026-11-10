@@ -61,8 +61,9 @@
 //     show that bar's notes and the bracket's step. In LOOP_EDIT (DEC-280, owner 2026-11-10) a bar or a step held and
 //     another of its kind pressed, either way round, makes the range between them the loop (a double press: that bar or
 //     16th alone, DEC-280 amendment 1): its left end the new start
-//     (a rotation), its length the bars / 16ths covered (odd lengths too) — bars of the 8-bar page playing, 16ths of the
-//     bar playing; the visit's one undo step, as F1 / F2. NOTELEN's double press in LOOP_EDIT (DEC-281) restores the
+//     (a rotation), its length the bars / 16ths covered (odd lengths too) — places in the stored loop (DEC-283: the
+//     start is saved with the state; bars of its 8-bar page playing, 16ths of its bar playing); the visit's one undo
+//     step, as F1 / F2. NOTELEN's double press in LOOP_EDIT (DEC-281) restores the
 //     slot's loop length and start from before its last LOOP_EDIT change, as a new undo step keeping the edits made
 //     since (`loopMemory_`, RAM only); pressed again it goes back. Bars, and the last bar's 16ths, that hold notes past
 //     the loop's end (kept by a shortening) light dim.
@@ -304,7 +305,7 @@ class Surface {
     pendingMs_ = 0;
     coarseBpm_ = 120;
     pendingLoop_ = 0;
-    startMs_ = pendingStart_ = appliedStart_ = 0;
+    startMs_ = pendingStart_ = 0;
     startPending_ = false;
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
@@ -458,39 +459,18 @@ class Surface {
   uint8_t copySourceSlot() const { return copySlot_; }  // Slot: the engine slot
   uint8_t copySourceBar() const { return copyButton_; }  // Bar: 0–7 of its page
   int16_t copySourceNote() const { return copyNote_; }  // Note: its index in the session
-  /// The shown slot's loop as a part of the loop it had before its last LOOP_EDIT change (DEC-281's memory; the progress
-  /// bar's section, owner 2026-11-10): that `original` length and the current loop's `start` in it. False: no memory,
-  /// or the current loop is not shorter.
-  /// The progress bar's frame (DEC-282 amendment 1, owner 2026-11-10: "all notes in the stored loop must be known"):
-  /// `scale` the ticks the bar spans — the loop before the last LOOP_EDIT change when the current one is a part of it,
-  /// else the stored notes' end in whole bars, at least the loop — `start` the current loop's start in it, `known` how
-  /// far the stored notes reach (the loop past it is drawn as past the known length). False: no content.
+  /// The progress bar's frame (DEC-282 amendment 1, owner 2026-11-10: "all notes in the stored loop must be known";
+  /// DEC-283: absolute): `scale` the stored loop's ticks (`frameOf`), `start` the current loop's start in it, `known`
+  /// how far its notes reach from its start in whole bars (the loop past it is drawn as past the known length). False:
+  /// no content.
   bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known) {
     if (slot >= Config::kSlotCount) return false;
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return false;
     beyondEnd(c);
-    const uint32_t loop = loopTicks(slot);
-    const uint32_t stored = (storedEnd_ + kBar - 1) / kBar * kBar;
-    uint32_t original = 0, from = 0;
-    if (loopSection(slot, original, from)) {
-      scale = original > stored ? original : stored;
-      start = from;
-      known = scale;  // the earlier loop's notes: the whole of it
-      return true;
-    }
-    scale = stored > loop ? stored : loop;
-    start = 0;
-    known = stored;
-    return true;
-  }
-  bool loopSection(uint8_t slot, uint32_t& original, uint32_t& start) {
-    if (slot >= Config::kSlotCount) return false;
-    const LoopMemory& m = loopMemory_[slot];
-    const uint32_t now = loopTicks(slot);
-    if (m.loop == 0 || m.rotateFirst || now == 0 || now >= m.loop) return false;
-    original = m.loop;
-    start = (m.loop - m.shift) % m.loop;
+    scale = frame_;
+    start = frameStart_;
+    known = absEnd_;
     return true;
   }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
@@ -532,8 +512,10 @@ class Surface {
     const ManifestId c = e_->transport().contentOf(popupSlot_);
     return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
   }
-  /// LOOP_EDIT's loop start, in ticks from the content as LOOP_EDIT found it (F1; pending while it settles).
-  uint32_t loopStart() const { return startPending_ ? pendingStart_ : appliedStart_; }
+  /// LOOP_EDIT's loop start in the stored loop (DEC-283; F1's pending one while it settles).
+  uint32_t loopStart() {
+    return startPending_ ? pendingStart_ : e_->transport().window(shownSlot(selected())).start;
+  }
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
   bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) {
     if (edit_.motor(ms, m)) return true;
@@ -866,7 +848,6 @@ class Surface {
     visitState_ = 0;   // a new visit: its first change is a step
     loopPark_ = true;  // every fader to its value, at the next motor pass
     pendingLoop_ = 0;
-    appliedStart_ = 0;  // rotations count from the content as it is now
     startPending_ = false;
     coarseBpm_ = static_cast<uint16_t>(tempoTenths() / 10);
   }
@@ -885,8 +866,17 @@ class Surface {
   void parkLoopFaders(uint32_t ms) {
     loopPark_ = false;
     loopMotorCount_ = 0;
-    loopWrite(0, 0xE0 | kProgramChannel, 0, 0, kProgramChannel, kStartTrigger, ms);  // the start: the bottom
     const ManifestId c = transport().contentOf(shownSlot(selected()));
+    {  // the start (DEC-283): its place in the stored loop, F1's travel over the frame's 16ths
+      uint16_t wire = 0;
+      if (c != kNoManifest) {
+        beyondEnd(c);
+        const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth, k = frameStart_ / EditSurface<Engine>::kSixteenth;
+        if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + steps - 2) / (steps - 1));
+      }
+      loopWrite(0, 0xE0 | kProgramChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
+                kProgramChannel, kStartTrigger, ms);
+    }
     const uint32_t loop = c == kNoManifest ? EditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
     loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
     if (clock_->external()) return;
@@ -899,14 +889,14 @@ class Surface {
     loopWrite(2, 0xB0 | kProgramChannel, kFineCc, cc, kTempoChannel, kFineTrigger, ms);
   }
   bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < EditSurface<Engine>::kMotorSettleMs; }
-  /// LOOP_EDIT's F1 (legacy `handleLoopStartFaderInput`: pitch bend on channel 16 over the loop's 16ths): the loop start,
-  /// counted from the content as LOOP_EDIT found it (owner 2026-11-08: rotate). Applied at rest as one rotation, one
-  /// undo step; not while its motor lands.
+  /// LOOP_EDIT's F1 (legacy `handleLoopStartFaderInput`: pitch bend on channel 16): the loop start in the stored loop,
+  /// over its 16ths (DEC-283: absolute). Applied at rest (`setWindow`), one undo step a visit; not while its motor lands.
   void startFader(int16_t pb, uint32_t ms) {
     if (landing(0, ms)) return;
     const ManifestId c = transport().contentOf(shownSlot(selected()));
     if (c == kNoManifest) return;
-    const uint32_t steps = e_->manifests().manifest(c).loopLengthTicks / EditSurface<Engine>::kSixteenth;
+    beyondEnd(c);
+    const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth;
     const uint32_t k = steps > 1 ? static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) / 16383 : 0;
     pendingStart_ = k * EditSurface<Engine>::kSixteenth;
     startPending_ = true;
@@ -919,15 +909,7 @@ class Surface {
     const uint8_t slot = shownSlot(selected());
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
-    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-    const uint32_t shift = (pendingStart_ % loop + loop - appliedStart_ % loop) % loop;
-    if (shift == 0) return;
-    beforeLoopChange(slot);
-    if (control().rotate(slot, shift, tick_, us_, us(), visitState_) == X::Result::Ok) {
-      appliedStart_ = pendingStart_;
-      visited(slot);
-      loopRotated(slot, shift, loop);
-    }
+    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks);
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
@@ -998,93 +980,100 @@ class Surface {
     held = static_cast<uint16_t>(held | bit);
   }
   /// The range between buttons `a` and `b` (either way) as the shown loop (owner 2026-11-10): the left one's position
-  /// its new start, the buttons covered its length. Refused when the start lies at or past the loop's end.
+  /// its new start, the buttons covered its length. The buttons are absolute (DEC-283, owner 2026-11-10: "the selected
+  /// bars should always stay absolute"): bars of the stored loop's 8-bar page holding the playhead (stopped: the loop's
+  /// start), 16ths of its bar. Refused when the start lies at or past the stored loop's end.
   void loopRange(bool bars, uint8_t a, uint8_t b) {
     const uint8_t t = selected(), slot = shownSlot(t);
     auto& x = transport();
     const ManifestId c = x.contentOf(slot);
     if (c == kNoManifest) return;
+    beyondEnd(c);
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
     constexpr uint32_t kBar = EditSurface<Engine>::kBar, kStep = EditSurface<Engine>::kSixteenth;
     const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
-    const uint32_t unit = bars ? kBar : kStep, base = bars ? pos / (8 * kBar) * (8 * kBar) : pos / kBar * kBar;
+    const uint32_t at = (frameStart_ + pos) % frame_;
+    const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;
     const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
     const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
-    if (start >= loop) return;
-    if (start != 0) {
-      beforeLoopChange(slot);
-      if (control().rotate(slot, start, tick_, us_, us(), visitState_) != X::Result::Ok) return;
-      appliedStart_ = (appliedStart_ + start) % loop;  // F1 counts from the content LOOP_EDIT found
-      visited(slot);
-      loopRotated(slot, start, loop);
-    }
-    if (length != loop) resizeTo(slot, length);
-    loopPark_ = true;  // the faders to the new start and length
+    if (start >= frame_) return;
+    setWindow(slot, start, length, true, true);  // buttons past the stored loop's end lengthen it
   }
   void resizeTo(uint8_t slot, uint32_t loop) {
-    beforeLoopChange(slot);
-    if (control().resize(slot, loop, tick_, us_, us(), visitState_) != X::Result::Ok) return;
-    visited(slot);
-    loopRotated(slot, 0, 0);
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest) return;
+    beyondEnd(c);
+    setWindow(slot, frameStart_, loop);
+  }
+  /// The shown loop becomes `length` ticks from `start` in the stored loop (DEC-283), in this visit's undo step: the
+  /// content back to the whole stored loop, rotated there to the start (lossless: rotated at the frame's length), then
+  /// cut to the length; a loop reaching past the stored loop's end wraps to its start. A loop longer than the stored loop
+  /// — or, `grow`, one reaching past its end — makes it longer (rotated back to its start first, so the stored notes
+  /// keep their places). `remember`: the loop before is the way back (DEC-281).
+  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, bool remember = true, bool grow = false) {
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest || length == 0) return false;
+    beyondEnd(c);
+    uint32_t frame = frame_, at = frameStart_;
+    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
+    if (start >= frame) return false;
+    if (start == at && length == loop) return false;
+    if (remember && (visitState_ == 0 || memSlot_ != slot)) {  // the visit's first change notes the loop as it was
+      memSlot_ = slot;
+      memLoop_ = loop;
+      memStart_ = at;
+    }
+    const auto ok = [&](typename X::Result r) {
+      if (r != X::Result::Ok) return false;
+      visited(slot);
+      return true;
+    };
+    if (loop != frame && !ok(control().resize(slot, frame, tick_, us_, us(), visitState_))) return false;
+    if (length > frame || (grow && start + length > frame)) {  // longer: back to its start, then the frame grows
+      if (at != 0 && !ok(control().rotate(slot, frame - at, tick_, us_, us(), visitState_))) return false;
+      at = 0;
+      frame = start + length;
+      if (!ok(control().resize(slot, frame, tick_, us_, us(), visitState_))) return false;
+    }
+    const uint32_t shift = (start + frame - at) % frame;
+    if (shift != 0 && !ok(control().rotate(slot, shift, tick_, us_, us(), visitState_))) return false;
+    if (length != frame && !ok(control().resize(slot, length, tick_, us_, us(), visitState_))) return false;
+    if (remember && memSlot_ == slot) {
+      LoopMemory m;
+      m.loop = memLoop_;
+      m.start = memStart_;
+      loopMemory_[slot] = m;
+    }
+    loopPark_ = true;  // the faders to the new start and length
+    return true;
   }
   // ---- The loop before the last change (DEC-281, owner 2026-11-10: "how can you revert to the earlier set loop
   // length?") ----------------------------------------------------------------------------------------------------------
-  /// The way back for a slot: a length, and a rotation applied after the resize at that length — or (`rotateFirst`,
-  /// after a restore) before it, at the length then — so a start moved at the old length is undone at that length.
+  /// The way back for a slot (DEC-283: absolute): the loop's length and its start in the stored loop.
   struct LoopMemory {
     uint32_t loop = 0;  // 0: nothing remembered
-    uint32_t shift : 31;
-    uint32_t rotateFirst : 1;
-    LoopMemory() : shift(0), rotateFirst(0) {}
+    uint32_t start = 0;
   };
   uint32_t loopTicks(uint8_t slot) {
     const ManifestId c = transport().contentOf(slot);
     return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
   }
-  /// A LOOP_EDIT change is about to happen: its visit's first notes the loop as it is.
-  void beforeLoopChange(uint8_t slot) {
-    if (visitState_ != 0 && memSlot_ == slot) return;
-    memSlot_ = slot;
-    memLoop_ = loopTicks(slot);
-    memRotation_ = 0;
-  }
-  /// A change was made (`shift` rotated at length `at`; 0 for a resize): the way back is the noted loop, rotated back.
-  void loopRotated(uint8_t slot, uint32_t shift, uint32_t at) {
-    if (memSlot_ != slot || memLoop_ == 0) return;
-    if (shift != 0 && at == memLoop_) memRotation_ = (memRotation_ + shift) % memLoop_;
-    LoopMemory m;
-    m.loop = memLoop_;
-    m.shift = (memLoop_ - memRotation_) % memLoop_;
-    m.rotateFirst = 0;
-    loopMemory_[slot] = m;
-  }
   /// NOTELEN's double press in LOOP_EDIT: the slot's loop as it was before its last change, a new undo step (edits made
   /// since kept); the way back is remembered in its place.
   void restoreLoop(uint8_t slot) {
     const LoopMemory m = loopMemory_[slot];
-    const uint32_t now = loopTicks(slot);
-    if (m.loop == 0 || now == 0) return;
-    visitState_ = 0;  // its own step
+    const ManifestId c = transport().contentOf(slot);
+    if (m.loop == 0 || c == kNoManifest) return;
+    beyondEnd(c);
     LoopMemory back;
-    back.loop = now;
-    if (m.rotateFirst) {
-      if (m.shift != 0 && control().rotate(slot, m.shift, tick_, us_, us(), visitState_) != X::Result::Ok) return;
-      if (m.shift != 0) visited(slot);
-      if (m.loop != now && control().resize(slot, m.loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
-      back.shift = (now - m.shift % now) % now;
-      back.rotateFirst = 0;
-    } else {
-      if (m.loop != now && control().resize(slot, m.loop, tick_, us_, us(), visitState_) != X::Result::Ok) return;
-      if (m.loop != now) visited(slot);
-      if (m.shift != 0 && control().rotate(slot, m.shift, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
-      back.shift = (m.loop - m.shift) % m.loop;
-      back.rotateFirst = 1;
-    }
+    back.loop = loopTicks(slot);
+    back.start = frameStart_;
+    visitState_ = 0;  // its own step
+    if (!setWindow(slot, m.start, m.loop, false)) return;
     loopMemory_[slot] = back;
     memSlot_ = 0xFF;  // the next change notes the loop afresh
-    appliedStart_ = pendingStart_ = 0;  // F1 counts from the content as it is now
+    pendingStart_ = 0;
     startPending_ = false;
-    loopPark_ = true;
   }
 
   // ---- The length popup (owner 2026-11-08) ---------------------------------------------------------------------------
@@ -1258,8 +1247,15 @@ class Surface {
     if (loop == 0) return;
     const uint32_t pos = (tick_ - x.origin(t)) % loop;
     constexpr uint32_t kPage = 8 * kBar;
-    const uint32_t target = note < kBarStepBase ? pos / kBar * kBar + note * kSixteenth
-                                                : pos / kPage * kPage + (note - kBarStepBase) * kBar;
+    // DEC-283 amendment 1 (owner 2026-11-10: the buttons absolute everywhere): a place in the stored loop — the 16th of
+    // its bar playing, the bar of its 8-bar page playing — taken into the loop; outside the loop nothing; past the stored
+    // loop's end modulo the loop, as before.
+    beyondEnd(m);
+    const uint32_t at = (frameStart_ + pos) % frame_;
+    const uint32_t place = note < kBarStepBase ? at / kBar * kBar + note * kSixteenth
+                                               : at / kPage * kPage + (note - kBarStepBase) * kBar;
+    const uint32_t target = place >= frame_ ? place % loop : (place + frame_ - frameStart_) % frame_;  // past it: legacy
+    if (target >= loop) return;  // a stored place outside the loop: nothing
     control().queueSeek(t, target, tick_);
   }
   /// A slot's double press (slice B): the filled slot plays at the next launch step, its arm or queue replaced.
@@ -1366,6 +1362,11 @@ class Surface {
       pos = edit_.bracket() % loop;
       moving = true;
     }
+    if (m != kNoManifest && x.writingSlot() != slot && !(edit_.editing() && edit_.slot() == slot)) {
+      // DEC-283 (amendment 1: performance too): the stored loop's bars, absolute
+      loopEditLeds(m, loop, pos, moving, want);
+      return;
+    }
     const uint32_t bar = pos / kBar;
     for (uint8_t i = 0; i < 8 && i < bars; ++i) {
       const auto* d = e_->tiles().densityTile(slot, i);
@@ -1409,7 +1410,12 @@ class Surface {
   uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
   uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
   uint32_t storedEnd_ = 0;                     // ... the end of its stored notes (ticks; DEC-282 amendment 1)
-  uint32_t memLoop_ = 0, memRotation_ = 0;     // ... its loop then, and the rotation made at that length since
+  uint32_t memLoop_ = 0, memStart_ = 0;        // ... its loop then, and its start in the stored loop
+  uint32_t frame_ = 0, frameStart_ = 0;        // ... the stored loop's length and the loop's start in it (DEC-283)
+  uint32_t absEnd_ = 0;                        // ... how far its notes reach from the stored loop's start (whole bars)
+  uint64_t absBars_ = 0;                       // ... the stored loop's bars holding a NoteOn
+  uint32_t stepsIdentity_ = 0, stepsBar_ = 0;  // `absSteps`: the state and stored bar last scanned
+  uint16_t steps_ = 0;                         // ... its 16ths holding a NoteOn
   uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint8_t rangeTapNote_ = 0xFF;                // ... the last one pressed alone, and when (a double: one bar / 16th)
   uint32_t rangeTapMs_ = 0;
@@ -1725,7 +1731,7 @@ class Surface {
   /// The bars (and the 16ths of the bar holding the loop's end) with a NoteOn stored at or past the loop's end, for a
   /// resized state (one with a fit run): its content rows scanned once a state (DEC-281). A take's notes played past
   /// its bar line count too.
-  static constexpr uint8_t kBeyondLed = 8;
+  static constexpr uint8_t kBeyondLed = 20;  // DEC-283 amendment 1: 8 did not show on the DROID
   void beyondEnd(ManifestId m) {
     const auto& d = e_->manifests().manifest(m);
     if (d.identity == beyondIdentity_) return;
@@ -1742,8 +1748,8 @@ class Surface {
       for (uint32_t r = 0; r < run.rowCount; ++r) {
         const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
         const uint8_t type = e.status & 0xF0;
-        if (type == 0x80 || (type == 0x90 && e.data2 != 0))  // DEC-282 amendment 1: the stored notes' end
-          if (e.tick + 1 > storedEnd_) storedEnd_ = e.tick + 1;
+        if (type == 0x90 && e.data2 != 0 && e.tick + 1 > storedEnd_)  // the stored notes' reach (a NoteOff may wrap)
+          storedEnd_ = e.tick + 1;
         if (!fit || run.kind == RunKind::kEdit) continue;
         if (type != 0x90 || e.data2 == 0 || e.tick < loop) continue;
         const uint32_t b = e.tick / kBar;
@@ -1751,6 +1757,74 @@ class Surface {
         if (b == endBar) beyondSteps_ = static_cast<uint16_t>(beyondSteps_ | (1u << ((e.tick % kBar) / kSixteenth)));
       }
     }
+    // DEC-283: the stored loop — the window's frame, at least the stored notes' reach in whole bars — and its notes'
+    // bars counted from its start.
+    const LoopWindow w = windowOf(e_->runs(), e_->pool(), d.runs, d.runCount, loop);
+    const uint32_t stored = (storedEnd_ + kBar - 1) / kBar * kBar;
+    frame_ = w.frame > stored ? w.frame : stored;
+    if (frame_ == 0) frame_ = kBar;
+    frameStart_ = w.start % frame_;
+    absBars_ = 0;
+    absEnd_ = 0;
+    for (uint8_t i = 0; i < d.runCount; ++i) {
+      const auto& run = e_->runs().run(d.runs[i]);
+      if (run.kind == RunKind::kFit) continue;
+      for (uint32_t r = 0; r < run.rowCount; ++r) {
+        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
+        if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
+        const uint32_t a = (e.tick + frameStart_) % frame_;
+        if (a / kBar < 64) absBars_ |= 1ull << (a / kBar);
+        if ((a / kBar + 1) * kBar > absEnd_) absEnd_ = (a / kBar + 1) * kBar;
+      }
+    }
+    if (absEnd_ > frame_) absEnd_ = frame_;
+  }
+  /// The 16ths of stored bar `bar` (DEC-283: counted from the stored loop's start) holding a NoteOn, for state `m`.
+  uint16_t absSteps(ManifestId m, uint32_t bar) {
+    const auto& d = e_->manifests().manifest(m);
+    beyondEnd(m);
+    if (d.identity == stepsIdentity_ && bar == stepsBar_) return steps_;
+    stepsIdentity_ = d.identity;
+    stepsBar_ = bar;
+    steps_ = 0;
+    for (uint8_t i = 0; i < d.runCount; ++i) {
+      const auto& run = e_->runs().run(d.runs[i]);
+      if (run.kind == RunKind::kFit) continue;
+      for (uint32_t r = 0; r < run.rowCount; ++r) {
+        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
+        if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
+        const uint32_t a = (e.tick + frameStart_) % frame_;
+        if (a / kBar == bar) steps_ = static_cast<uint16_t>(steps_ | (1u << ((a % kBar) / kSixteenth)));
+      }
+    }
+    return steps_;
+  }
+  /// LOOP_EDIT's bar and step LEDs (DEC-283, owner 2026-11-10: "the selected bars should always stay absolute"): the
+  /// stored loop's 8-bar page holding the playhead (stopped: the loop's start) and the 16ths of its bar — in the loop lit
+  /// (notes brighter), outside it dark, its notes there dim; the playhead full.
+  void loopEditLeds(ManifestId m, uint32_t loop, uint32_t pos, bool moving, uint8_t* want) {
+    beyondEnd(m);
+    const uint32_t frame = frame_, start = frameStart_;
+    const uint32_t at = (start + (moving ? pos % loop : 0)) % frame;
+    const auto in = [&](uint32_t a) { return (a + frame - start) % frame < loop; };
+    const uint32_t page = at / (8 * kBar) * 8, bar = at / kBar;
+    for (uint8_t i = 0; i < 8; ++i) {
+      const uint32_t b = page + i, a = b * kBar;
+      if (a >= frame) {
+        want[40 + i] = 0;
+        continue;
+      }
+      const bool notes = b < 64 && ((absBars_ >> b) & 1u);
+      const bool inside = in(a) || in(a + kBar - 1 < frame ? a + kBar - 1 : frame - 1);
+      want[40 + i] = moving && b == bar ? 127 : inside ? (notes ? 64 : 32) : notes ? kBeyondLed : 0;
+    }
+    const uint16_t steps = absSteps(m, bar);
+    for (uint8_t k = 0; k < 16; ++k) {
+      const uint32_t a = bar * kBar + k * kSixteenth;
+      want[k] = a >= frame || !((steps >> k) & 1u) ? 0 : in(a) ? 64 : kBeyondLed;
+      want[16 + k] = 0;
+    }
+    if (moving) want[16 + (at % kBar) / kSixteenth] = 127;
   }
   /// The step button held in NOTE_EDIT (the first; 0xFF: none).
   uint8_t heldStep() const {
@@ -1778,7 +1852,7 @@ class Surface {
   bool popup_ = false, popupHeld_ = false;  // the length popup; its button is down
   uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
-  uint32_t startMs_ = 0, pendingStart_ = 0, appliedStart_ = 0;
+  uint32_t startMs_ = 0, pendingStart_ = 0;
   bool startPending_ = false;
   uint32_t tick_ = 0, us_ = 0, nowMs_ = 0, blinkMs_ = 0;
 };

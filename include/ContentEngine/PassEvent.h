@@ -57,5 +57,9 @@ constexpr uint8_t kFit = 4;   // a resized state's lookups (DEC-257, `FitRun.h`)
 constexpr uint8_t kFitFilterStatus = 0xF5u;
 constexpr uint8_t kFitCrossStatus = 0xF6u;
 constexpr uint8_t kFitHeldStatus = 0xF7u;
+/// The loop's play window in its stored notes (DEC-283), the fit run's last row: `seq` the loop's start, `noteId` the
+/// frame's length (ticks) — the stored loop the start counts in; `tick` 0xFFFFFFFF so it sorts after every lookup. Absent:
+/// start 0, the frame the loop.
+constexpr uint8_t kFitWindowStatus = 0xF8u;
 
 }  // namespace ContentEngine

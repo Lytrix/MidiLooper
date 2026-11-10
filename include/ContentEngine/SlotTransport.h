@@ -423,8 +423,11 @@ class SlotTransport {
     uint8_t n = 0;
     for (uint8_t i = 0; i < b.runCount; ++i)
       if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
+    // DEC-283: the start kept, the frame at least the new loop.
+    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
+    if (w.frame < loop) w.frame = loop;
     RunId fit = kNoRun;
-    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit);
+    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
     if (f == FitResult::DeniedRun) return Result::DeniedRun;
     if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
     if (fit != kNoRun) {
@@ -440,6 +443,14 @@ class SlotTransport {
     adopt(slot, base, m, replace);
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
+  }
+
+  /// The slot's play window in its stored notes (DEC-283; start 0 and the frame 0 without content).
+  LoopWindow window(uint8_t slot) const {
+    const ManifestId c = contentOf(slot);
+    if (c == kNoManifest) return LoopWindow{};
+    const auto& m = manifests_->manifest(c);
+    return windowOf(*runs_, *pool_, m.runs, m.runCount, m.loopLengthTicks);
   }
 
   /// Loop start (owner 2026-11-08: rotate): a state whose content runs are the slot's rotated `shift` ticks earlier
@@ -468,9 +479,12 @@ class SlotTransport {
       else
         result = f == FitResult::DeniedRun ? Result::DeniedRun : Result::Refused;
     }
+    // DEC-283: the start moves `shift` on in the frame (exact when the loop is the frame, as LOOP_EDIT rotates).
+    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
+    w.start = (w.start + shift) % w.frame;
     RunId fit = kNoRun;
     if (result == Result::Ok) {
-      const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit);
+      const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
       if (f == FitResult::DeniedRun) result = Result::DeniedRun;
       else if (f != FitResult::Ok && f != FitResult::None) result = Result::Refused;
       else if (fit != kNoRun && n == Manifests::kMaxRuns) result = Result::Refused;

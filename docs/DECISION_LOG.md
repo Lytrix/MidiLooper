@@ -16133,3 +16133,41 @@ row at its left, the counter right-aligned beside it. The save dots (and RO befo
 tempo's label row, right-aligned over the BPM — a static value — so a save no longer touches the progress bar. Device
 (image `93242274…`): 1-2 stopped — a full-width 8-bar bar with gaps, the stop square left of the dim counter; playing —
 the play triangle beside `1.4.1.26`, the fill in the bar; the dots over the BPM are not yet seen on the panel.
+
+## DEC-283 — The loop's start is a place in its stored loop, saved with the state; the buttons are absolute
+
+**Date:** 2026-11-10. **Owner:** "the selected bars should always stay absolute on both the progress bar and on the
+button leds, so when selecting bar 2-4 it should show this as button leds still, else you can never select bar 1-3
+later"; asked how, chose the stored start (over a RAM-only offset). Amends DEC-257 amendment 1 (the start rotated the
+content, recording nothing), DEC-280, DEC-281, DEC-282. Formal trigger: persistent state model change (a fit-run row).
+
+**Decision:**
+- A state's window — the content's tick 0 lies `start` ticks into the stored loop, `frame` ticks long — is the fit run's
+  last row (`kFitWindowStatus` 0xF8: `seq` the start, `noteId` the frame, `tick` 0xFFFFFFFF so it sorts after every
+  lookup). `FitBuilder::build` writes it when the window is not the plain one (start 0, the frame the loop), so a state
+  with a moved start always lists a fit run. No set-file layout change: the row is saved and loaded with the run, and
+  overdubs, NOTE_EDIT commits and slot copies carry it with the base's runs. `SlotTransport::resize` keeps the start
+  (the frame at least the new loop); `rotate` moves it on in the frame.
+- `Surface::setWindow` is the one way LOOP_EDIT changes the loop (ranges, the double press, F1, F2, the length popup,
+  NOTELEN's restore): back to the whole stored loop, rotated there to the start (lossless at the frame's length), cut
+  to the length — one visit step. A loop longer than the stored loop, or a range whose buttons reach past its end,
+  grows it (rotated back to its start first, so the notes keep their places); otherwise a loop past the end wraps.
+- The stored loop (`frame_`) is the window's frame, at least the stored NoteOns' reach in whole bars (states saved
+  before this — no window row — count from their content). DEC-281's memory is now an absolute start and length.
+- The buttons and LEDs name stored places, in LOOP_EDIT and (amendment 1) in performance: bars of the stored loop's
+  8-bar page holding the playhead (stopped: the loop's start), 16ths of its bar; inside the loop lit (notes brighter),
+  outside dark, outside with notes dim; a performance press outside the loop does nothing (past the stored loop's end:
+  modulo the loop, as before). The progress bar spans the frame, brackets wrapping when the loop does.
+- Rejected: a RAM-only offset (lost on a reboot, the rotated loop then reads as bar 1); a new set-file field (the
+  preallocated store sizes slot files by `9 + 2 × runs` a state, DEC-253).
+
+**Amendment 1 (same day):** owner, on the device: "the button leds do [not] follow the absolute logic … or are not
+showing the dimmed values" — they were absolute in LOOP_EDIT only. Performance now uses the same LEDs and maps its
+step / bar presses through the window; the dim level is 20 (8 did not show on the DROID).
+
+**Evidence:** native `test_loop_edit_ranges_are_absolute_in_the_stored_loop` (steps 3..10 → start 96; steps 1..3 then
+start 0, the note at 96 heard at 96; steps 5..16 → 576 from 192; a new visit reads 192; bars 1..2 grow the 1-bar store
+to 2 bars, notes in place) — a relative-range mutation fails it; `test_buttons_are_absolute_in_performance`;
+`test_loop_edit_f1_rotates_the_loop_start` and the restore test unchanged. Device (images `52dce019…`, `d592ddbf…`, on
+1-2 copied onto 1-3): LOOP_EDIT bars 2–4 → START 2.1, bars 1–3 → 1.1, bar 2 double → one bar; across a reboot
+(`crash=0`, `BOOT,load,ok`) START 2.1 kept and bars 1–3 selectable; performance LEDs: stored bar 1 dim (20).

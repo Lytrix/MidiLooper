@@ -20,6 +20,9 @@
 // every note `shift` ticks earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its
 // NoteOff past the loop end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by
 // `loop − shift` gives the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation.
+// The window (DEC-283, owner 2026-11-10: "the selected bars should always stay absolute"): a state's content is its
+// stored loop rotated `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so
+// (`kFitWindowStatus`), written by `build` when the window is not the plain one (start 0, the frame the loop).
 
 #pragma once
 
@@ -32,6 +35,27 @@
 namespace ContentEngine {
 
 enum class FitResult : uint8_t { Ok, None, DeniedRun, DeniedCapacity, TooLarge, TooManyOpen };
+
+/// A loop's play window in its stored notes (DEC-283): the content's tick 0 lies `start` ticks into the stored loop,
+/// which is `frame` ticks long (at least the loop).
+struct LoopWindow {
+  uint32_t start = 0, frame = 0;
+};
+/// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
+/// loop.
+template <typename Runs, typename Pool>
+LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32_t loop) {
+  LoopWindow w{0, loop};
+  for (uint8_t i = 0; i < n; ++i) {
+    const auto& d = runs.run(list[i]);
+    if (d.kind != RunKind::kFit || d.rowCount == 0) continue;
+    const PassEvent& e = runs.rowAt(list[i], d.rowCount - 1, pool);
+    if (e.status == kFitWindowStatus) w = LoopWindow{e.seq, e.noteId};
+  }
+  if (w.frame < loop) w.frame = loop;
+  if (w.frame != 0) w.start %= w.frame;
+  return w;
+}
 
 template <typename Pool, typename Runs, typename Res>
 class FitBuilder {
@@ -101,9 +125,10 @@ class FitBuilder {
   }
 
   /// The fit run of `content[0..n)` (no fit run among them) at loop length `loop`, for `slot`: `fit` is a sealed run
-  /// with the writer's reference, or kNoRun when the result is not Ok.
+  /// with the writer's reference, or kNoRun when the result is not Ok. `window` (DEC-283): the state's window, written
+  /// as the last row unless it is the plain one.
   FitResult build(Pool& pool, Runs& runs, Res& res, uint8_t slot, const RunId* content, uint8_t n, uint32_t loop,
-                  RunId& fit) {
+                  RunId& fit, LoopWindow window = LoopWindow{}) {
     fit = kNoRun;
     if (n > kMaxRuns) return FitResult::TooLarge;
     RunId order[kMaxRuns];
@@ -120,10 +145,11 @@ class FitBuilder {
       const FitResult r = scan(pool, runs, order[i], loop);
       if (r != FitResult::Ok) return r;
     }
-    if (count_ == 0) return FitResult::None;
+    const bool windowed = window.start != 0 || (window.frame != 0 && window.frame != loop);
+    if (count_ == 0 && !windowed) return FitResult::None;
     const RunId run = runs.allocate(slot, RunKind::kFit);
     if (run == kNoRun) return FitResult::DeniedRun;
-    if (res.reserve(run, count_) != Admission::Ok) {
+    if (res.reserve(run, count_ + (windowed ? 1u : 0u)) != Admission::Ok) {
       runs.seal(run);
       runs.release(run);
       return FitResult::DeniedCapacity;
@@ -134,6 +160,14 @@ class FitBuilder {
       e.noteId = entries_[i].noteId;
       e.seq = entries_[i].offTick;
       e.status = entries_[i].status;
+      res.writeOwed(run, e);
+    }
+    if (windowed) {
+      PassEvent e{};
+      e.tick = 0xFFFFFFFFu;
+      e.noteId = window.frame;
+      e.seq = window.start;
+      e.status = kFitWindowStatus;
       res.writeOwed(run, e);
     }
     runs.seal(run);

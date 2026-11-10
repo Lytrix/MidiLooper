@@ -1199,7 +1199,7 @@ class EngineDisplay {
   }
 
   /// The progress bar over the stored loop (DEC-282, owner 2026-11-10: mockup B; amendment 1): the whole bar is the
-  /// earlier loop or the stored notes' reach, gapped every 1 / 4 / 8 / 16 / 32 bars (the finest that fits); brackets
+  /// stored loop (DEC-283's frame) or the stored notes' reach, gapped every 1 / 4 / 8 / 16 / 32 bars (the finest that fits); brackets
   /// around the part looping now; the playhead fills it while playing; the loop past the stored notes dotted.
   void drawSection(int16_t x0, int16_t x1, const SlotInfo& info) {
     const uint32_t scale = edit_.barScale, start = edit_.barStart % scale, known = edit_.barKnown;
@@ -1218,19 +1218,29 @@ class EngineDisplay {
         if (at(k * kBar) == x) return true;
       return false;
     };
-    const int16_t a = at(start), b = at(start + info.loop), past = at(known);
-    const int16_t fill = info.moving ? at(start + info.pos) : static_cast<int16_t>(a - 1);
-    for (int16_t x = x0; x <= x1; ++x)
+    // DEC-283: the loop's place in the stored loop is absolute, so it may wrap past the frame's end to its start.
+    const uint32_t loop = info.loop < scale ? info.loop : scale;
+    const auto into = [&](int16_t x) {  // ticks from the loop's start to column x's tick
+      const uint32_t t = static_cast<uint32_t>(static_cast<int64_t>(x - x0) * scale / (w > 0 ? w : 1));
+      return (t + scale - start) % scale;
+    };
+    const int16_t a = at(start), b = (start + loop) % scale == 0 ? x1 : at((start + loop) % scale), past = at(known);
+    for (int16_t x = x0; x <= x1; ++x) {
+      const uint32_t d = into(x);
+      const bool in = d < loop || loop == scale;
       if (gap(x)) px(x, y, 0);
-      else if (x >= a && x <= fill && x <= b) px(x, y, 15);
-      else if (x >= past && x >= a && x <= b) px(x, y, (x - past) % 2 == 0 ? 6 : 0);  // the loop past the notes
-      else px(x, y, x >= a && x <= b ? 6 : 3);
-    for (int16_t x : {a, b}) {  // the brackets
-      px(x, static_cast<int16_t>(y - 2), 12);
-      px(x, static_cast<int16_t>(y - 1), 12);
-      px(x, static_cast<int16_t>(y + 1), 12);
-      px(x, static_cast<int16_t>(y + 2), 12);
+      else if (in && info.moving && d <= info.pos) px(x, y, 15);
+      else if (in && x >= past) px(x, y, (x - past) % 2 == 0 ? 6 : 0);  // the loop past the notes
+      else px(x, y, in ? 6 : 3);
     }
+    px(a, static_cast<int16_t>(y - 2), 12);  // the brackets: [ at the start, ] at the end
+    px(a, static_cast<int16_t>(y - 1), 12);
+    px(a, static_cast<int16_t>(y + 1), 12);
+    px(a, static_cast<int16_t>(y + 2), 12);
+    px(b, static_cast<int16_t>(y - 2), 12);
+    px(b, static_cast<int16_t>(y - 1), 12);
+    px(b, static_cast<int16_t>(y + 1), 12);
+    px(b, static_cast<int16_t>(y + 2), 12);
     px(static_cast<int16_t>(a + 1), static_cast<int16_t>(y - 2), 12);
     px(static_cast<int16_t>(a + 1), static_cast<int16_t>(y + 2), 12);
     px(static_cast<int16_t>(b - 1), static_cast<int16_t>(y - 2), 12);

@@ -63,7 +63,7 @@ The same buttons provide their main action with a short press and secondary acti
 | **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
 | **16th steps 1–16** (NOTE_EDIT) | Select the step's note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step's note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |
 | **Bars 1–8** (NOTE_EDIT) | — | — | — | [Copy mode](#copy-mode) for that bar |
-| **16th steps / Bars** (LOOP_EDIT) | Hold one and press another (either way): that range becomes the loop — the left one its new start, the buttons covered its length (16ths allow odd lengths) | — | — | — |
+| **16th steps / Bars** (LOOP_EDIT) | Hold one and press another (either way): that range becomes the loop — the left one its new start, the buttons covered its length (16ths allow odd lengths). The buttons are absolute places in the stored loop | That one bar / 16th becomes the loop | — | — |
 
 Changing track during NOTE_EDIT keeps the previous session as one undo step and follows the new track. External clock controls transport when present. A long press of any button closes an open window (the sets browser, the get-a-loop picker, the length popup) back to playing. The launch step is set over serial: `!ENGINE launch-q 16|8|4|bar`.
 
@@ -112,7 +112,7 @@ Long-press NOTELEN in LOOP_EDIT. While the popup is open:
 
 | Fader | NOTE_EDIT | LOOP_EDIT |
 |-------|-----------|-----------|
-| **F1** | Select a note or an empty 16th for creation | Rotate loop start in 16ths |
+| **F1** | Select a note or an empty 16th for creation | Loop start in 16ths of the stored loop |
 | **F2** | Coarse note position; note end in length mode | Loop length, from 1/16 to 128 bars |
 | **F3** | Fine note timing | Fine tempo, 0.1 BPM steps around the centre |
 | **F4** | Note pitch; velocity while NOTELEN is held (zero mutes the note) | Whole tempo, 20–300 BPM; recentres F3 |

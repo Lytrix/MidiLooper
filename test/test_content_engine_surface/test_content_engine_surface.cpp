@@ -329,6 +329,29 @@ static void restartsAt(uint8_t note, uint32_t position, uint32_t loop) {
   TEST_ASSERT_TRUE(at - pressed <= 48);
   TEST_ASSERT_EQUAL_UINT32(position, (at - X().origin(0)) % loop);
 }
+// DEC-283 amendment 1 (owner 2026-11-10: the button LEDs absolute): a loop shortened to bars 2..3 of a 4-bar stored loop
+// lights its bars where they are stored — bar 1 and 4 outside it (dim with notes) — and a bar button names a stored bar.
+void test_buttons_are_absolute_in_performance() {
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().createEmpty(0, 4 * 768));
+  tap(S::kSlotBase + 0);
+  ms(100);
+  tap(S::kSlotBase + 0);
+  until(2 * kBarUs, [] { return X().playing(0) && !C().switchQueued(0); });
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().rotate(0, 768, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 2 * 768, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL_UINT32(768, C().window(0).start);
+  run(gUs + 2 * kBarUs);
+  TEST_ASSERT_EQUAL_UINT8(0, gLed[40]);   // stored bar 1: outside the loop, no notes
+  TEST_ASSERT_TRUE(gLed[41] >= 32);       // stored bars 2..3: the loop
+  TEST_ASSERT_TRUE(gLed[42] >= 32);
+  TEST_ASSERT_EQUAL_UINT8(0, gLed[43]);   // stored bar 4: outside
+  press(19);  // stored bar 3: the loop's second bar
+  TEST_ASSERT_TRUE(C().switchQueued(0));
+  TEST_ASSERT_EQUAL_UINT32(768, C().queuedPosition(0));
+  run(gUs + kBarUs);
+  press(17);  // stored bar 1: outside the loop, nothing
+  TEST_ASSERT_FALSE(C().switchQueued(0));
+}
 void test_step_and_bar_buttons_restart_the_playing_slot_there() {
   recordOneBar(0, 60);
   run(gUs + 100 * kTick);
@@ -563,7 +586,7 @@ void test_notes_past_a_shortened_end_light_dim() {
   recordOneBar(0, 60);  // a note at 50
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 48, gLast, gUs, gClk.usPerTick()));
   ms(400);
-  TEST_ASSERT_EQUAL_UINT8(8, gLed[1]);  // 50 lies in step 2, past the 48-tick end
+  TEST_ASSERT_EQUAL_UINT8(20, gLed[1]);  // 50 lies in step 2, past the 48-tick end (DEC-283 amendment 1: 20)
   TEST_ASSERT_EQUAL_UINT8(0, gLed[5]);  // nothing there
 }
 
@@ -976,6 +999,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
+  RUN_TEST(test_buttons_are_absolute_in_performance);
   RUN_TEST(test_copy_mode_copies_slots_across_tracks);
   RUN_TEST(test_copy_mode_counts_down_and_a_double_press_clears_the_source);
   RUN_TEST(test_a_slot_press_on_a_stopped_transport_only_selects);

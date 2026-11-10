@@ -190,6 +190,8 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
+  /// The slot's play window in its stored notes (DEC-283).
+  LoopWindow window(uint8_t slot) const { return x_->window(slot); }
   /// Loop start (owner 2026-11-08): the slot's content rotated `shift` ticks earlier.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
     Emit buf[Tracks * T];

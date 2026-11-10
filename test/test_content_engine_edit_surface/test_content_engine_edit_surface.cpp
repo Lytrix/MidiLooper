@@ -2018,6 +2018,52 @@ void test_loop_edit_double_press_loops_one_step() {
   ms(100);
 }
 
+// DEC-283 (owner 2026-11-10: "the selected bars should always stay absolute … else you can never select bar 1-3
+// later"): the step / bar buttons name places in the stored loop, whatever the loop's start; the start is stored with
+// the state (its fit run) and the bar shows it.
+void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
+  recordBar({{96, 60}, {600, 62}});
+  enterLoopEditOnContent();
+  const auto range = [](uint8_t a, uint8_t b) {
+    gS.input(0x9F, a, 127, gUs / 1000);
+    ms(50);
+    gS.input(0x9F, b, 127, gUs / 1000);
+    ms(50);
+    gS.input(0x8F, b, 0, gUs / 1000);
+    gS.input(0x8F, a, 0, gUs / 1000);
+    ms(200);
+  };
+  range(2, 9);  // steps 3..10: from 96, 384 long
+  TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(96, gE.control().window(0).start);
+  uint32_t scale = 0, from = 0, known = 0;
+  TEST_ASSERT_TRUE(gS.loopFrame(0, scale, from, known));
+  TEST_ASSERT_EQUAL_UINT32(768, scale);
+  TEST_ASSERT_EQUAL_UINT32(96, from);
+  range(0, 2);  // steps 1..3 of the stored loop — not of the current one: from 0, 144 long
+  TEST_ASSERT_EQUAL_UINT32(144, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 144), 96);  // the note at 96 where it was recorded
+  range(4, 15);  // steps 5..16: from 192, to the stored loop's end
+  TEST_ASSERT_EQUAL_UINT32(576, loopOf(0));
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 62, 576), 600 - 192);
+  tap(S::kEditModeNote, 700);
+  ms(100);
+  // The start survives the visit: a new one names the same places.
+  enterLoopEditOnContent();
+  TEST_ASSERT_EQUAL_UINT32(192, gS.loopStart());
+  range(17, 18);  // bars 1..2: past the stored loop's end, which grows to 2 bars; the notes where they were
+  TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  run(gUs + 3 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 2 * 768), 96);
+  EXPECT_ALL(positions(true, 62, 2 * 768), 600);
+  tap(S::kEditModeNote, 700);
+  ms(100);
+}
+
 // DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"): NOTELEN's double press in LOOP_EDIT
 // restores the loop before the last LOOP_EDIT change — length and start — as a new undo step, keeping the edits made
 // since; pressed again it goes back.
@@ -2032,10 +2078,6 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   gS.input(0x8F, 2, 0, gUs / 1000);
   ms(200);
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
-  uint32_t original = 0, start = 0;  // DEC-282: the progress bar's section — the 768-tick loop, from 96
-  TEST_ASSERT_TRUE(gS.loopSection(0, original, start));
-  TEST_ASSERT_EQUAL_UINT32(768, original);
-  TEST_ASSERT_EQUAL_UINT32(96, start);
   uint32_t scale = 0, from = 0, known = 0;  // DEC-282 amendment 1: the bar spans the earlier loop, the part bracketed
   TEST_ASSERT_TRUE(gS.loopFrame(0, scale, from, known));
   TEST_ASSERT_EQUAL_UINT32(768, scale);
@@ -2062,7 +2104,6 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(96, heardAt(70));
-  TEST_ASSERT_FALSE(gS.loopSection(0, original, start));  // the longer loop again: no section
   TEST_ASSERT_TRUE(gS.loopFrame(0, scale, from, known));  // the whole bar the loop, the stored notes' bar known
   TEST_ASSERT_EQUAL_UINT32(768, scale);
   TEST_ASSERT_EQUAL_UINT32(0, from);
@@ -2113,6 +2154,7 @@ int main(int, char**) {
   RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
   RUN_TEST(test_loop_edit_a_held_range_sets_start_and_length);
   RUN_TEST(test_loop_edit_double_press_loops_one_step);
+  RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
