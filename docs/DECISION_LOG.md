@@ -15840,3 +15840,13 @@ no-cycle, no-restore and unconsumed-release mutations fail them. Full 4,508 pass
 each step selects its note; step 4 of bar 3 emptied by doubles, then a press added a C4 16th (`pitch=60,len=48`);
 holding step 1 locked its note (pitch 12), F4 set 52, the release restored the C4 selection; the visit undone on the
 slot afterwards (step 4 back to its pitch-93 note).
+- **Amendment 1 (owner 2026-11-10: a note added on a step, held and moved with the fine fader, "jumps back to the
+  previous 16th grid including the fader … it should hold the last value"):** two causes — a step's add moved the
+  bracket but left F3's reference 16th on the old selection's (F3 written to 127), and the lock's release restored the
+  bracket and reference saved at its start although the selection coming back was the note just moved (its motor
+  rewritten, the next F3 value placed from the old 16th). Now an added note's 16th is F3's reference, and a release
+  whose previous selection is the locked note keeps the bracket and reference with it (`follow`); another previous
+  selection comes back as saved. Native `test_a_lock_on_an_added_note_keeps_its_fine_move` (F3 64 at the add, 587
+  kept on release, F3 not rewritten, a resting F3 changes nothing, 77 goes on from the note's 16th) — both halves'
+  reverts fail it; full native 4,509 passed. Device `11fb2422…` (boot `crash=0`): a held note moved 144 → 155 by F3 stayed at 155 on release,
+  F3 at rest kept it, 77 → 157; the visit undone on the slot.

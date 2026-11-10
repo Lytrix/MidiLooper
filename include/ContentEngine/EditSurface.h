@@ -437,6 +437,8 @@ class EditSurface {
     if (session().create(EditNote{id, bracket_ % loop_, length, 60, 80, channel, 0}, focus(), at) ==
         EditResult::Ok) {
       pick(static_cast<int16_t>(at));
+      length_ = false;
+      refStep_ = (bracket_ % loop_) / kSixteenth;  // F3's reference: the new note's 16th (a step button moved the bracket)
       armedMs_ = ms;  // a new selection: the geometry faders wait the grace period (legacy)
       armed_ = false;
       drive(kMotorAll, ms);
@@ -504,10 +506,15 @@ class EditSurface {
     if (!editing()) return;
     EditNote n;
     const int16_t back = lockSel_ >= 0 && !session().current(static_cast<uint16_t>(lockSel_)).deleted ? lockSel_ : -1;
+    const bool same = back >= 0 && back == sel_;  // the locked note was the selection: it stays where the lock left it
     pick(back);
-    bracket_ = lockBracket_;
-    refStep_ = lockRef_;
-    length_ = lockLength_ && selected(n);
+    if (same) {
+      follow(base());  // the bracket and F3's reference 16th stay with the moved note (owner 2026-11-10: they jumped back)
+    } else {
+      bracket_ = lockBracket_;
+      refStep_ = lockRef_;
+      length_ = lockLength_ && selected(n);
+    }
     armed_ = true;
     drive(kMotorAll, ms);
   }

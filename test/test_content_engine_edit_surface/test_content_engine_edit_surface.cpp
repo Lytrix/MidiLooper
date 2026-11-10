@@ -983,6 +983,35 @@ void test_a_held_step_is_a_parameter_lock() {
   TEST_ASSERT_EQUAL_UINT16(size, gE.noteEdit().size());
 }
 
+// Owner 2026-11-10: a note added on a step, then held and moved with F3 (fine), jumped back to its 16th with the fader
+// on the release. F3's reference is the added note's own 16th; the release keeps the bracket and the reference with the
+// moved note when it is the selection coming back, and F3 is not driven away from where the hand left it.
+void test_a_lock_on_an_added_note_keeps_its_fine_move() {
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  drainMotors(600);  // entry's writes
+  tap(12);  // a 16th C4 at 576
+  const auto added = drainMotors(1000);
+  const Sent* fine = findMsg(added, 0xBE, 2);
+  TEST_ASSERT_NOT_NULL(fine);
+  TEST_ASSERT_EQUAL_UINT8(64, fine->m.d2);  // its own 16th: the centre (was 127, the old reference)
+  gS.input(0x9F, 12, 127, gUs / 1000);
+  drainMotors(1000);
+  for (uint8_t cc = 65; cc <= 75; ++cc) f3(cc), ms(30);
+  TEST_ASSERT_EQUAL_UINT32(587, sel().tick);
+  gS.input(0x8F, 12, 0, gUs / 1000);
+  const auto released = drainMotors(1500);
+  TEST_ASSERT_EQUAL_UINT32(587, sel().tick);
+  TEST_ASSERT_EQUAL_UINT32(587, gS.edit().bracket());
+  TEST_ASSERT_EQUAL_UINT32(0, written(released, 2));  // F3 stays where the hand left it
+  f3(75);  // the fader at rest there: nothing moves
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(587, sel().tick);
+  f3(77);  // and it goes on from the note's 16th
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(589, sel().tick);
+}
+
 // A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor
 // arriving at the velocity is not a move; moved by hand, the hold edits the velocity and creates nothing.
 void test_notelen_long_press_creates() {
@@ -1608,6 +1637,7 @@ int main(int, char**) {
   RUN_TEST(test_notelen_short_on_an_empty_step_creates);
   RUN_TEST(test_step_buttons_select_cycle_create_and_delete);
   RUN_TEST(test_a_held_step_is_a_parameter_lock);
+  RUN_TEST(test_a_lock_on_an_added_note_keeps_its_fine_move);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
