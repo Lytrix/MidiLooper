@@ -6,8 +6,9 @@
 //
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
-// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (short: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from
-// performance LOOP_EDIT when the slot is empty; long: leave; owner 2026-11-08; LOOP_EDIT's F4 is the coarse tempo,
+// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (DEC-291: short: the track buttons' select / mute mode;
+// long: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from performance LOOP_EDIT when the slot is empty; held 1.5 s:
+// leave; owner 2026-11-08 / 2026-11-10; LOOP_EDIT's F4 is the coarse tempo,
 // whole BPM, pitch bend on channel 15, and F3 the fine tempo, 0.1 BPM from its centre, CC 100 on channel 16; F2 the
 // loop length on a scale of 25 notches, 1/16 bar to 128 bars, CC 101 on channel 16 (or pitch bend on channel 14),
 // applied at rest as a play window (one undo step a LOOP_EDIT visit),
@@ -304,6 +305,7 @@ class Surface {
     loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
     groove_ = groovePending_ = false;  // DEC-289
     grooveChord_ = false;
+    trackMute_ = false;
     grooveSlot_ = 0xFF;
     autoTried_ = 0;
     parkedStart_ = -1;
@@ -622,6 +624,9 @@ class Surface {
   /// (built in the background, heard from a bar line); a visit's changes are one undo step.
   enum GrooveField : uint8_t { kFieldTemplate = 0, kFieldAmount, kFieldScope, kFieldAuto, kGrooveFields };
   static constexpr uint32_t kGrooveIdleMs = 6000;
+  static constexpr uint32_t kEditExitMs = 1500;  // DEC-291: EDIT held this long leaves the edit modes
+  /// The track buttons' mode (DEC-291): select (false) or mute (true), toggled by EDIT's short press.
+  bool trackMuteMode() const { return trackMute_; }
   bool grooveOpen() const { return groove_; }
   uint8_t grooveField() const { return grooveField_; }
   const groove::Settings& grooveSettings() const { return grooveSet_; }
@@ -691,6 +696,12 @@ class Surface {
       edit_.velocityBegin(ms, true);
     }
     serviceCopy(ms);
+    // DEC-291: EDIT held `kEditExitMs` leaves the edit modes at once; its release is then no press.
+    if ((edit_.editing() || edit_.entering() || loopEdit_) && press_.pressed(kEditMode) &&
+        press_.heldMs(kEditMode, ms) >= kEditExitMs) {
+      press_.consume(kEditMode);
+      leaveEdit();
+    }
     if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_) == Engine::Transport::Result::Ok)
       visited(grooveSlot_);  // DEC-288: a groove published; this visit's next one replaces it
     serviceGroove(ms);
@@ -842,7 +853,13 @@ class Surface {
 
   /// DEC-276: the transport button under an external clock — a local stop, or the tracks back at the next bar line.
   void externalTransport() {
-    if (!clock_->running()) return;  // the master's Start starts
+    if (!clock_->running()) {  // DEC-276 am. 2 (owner: "cannot start playing"): a stopped master — start locally,
+      clock_->startOnPulse();   // the next pulse as a bar line, as a Start
+      control().transportStart(clock_->nextTick(), us_, us());
+      tick_ = clock_->nextTick() - 1;
+      transportStarted(clock_->nextTick());
+      return;
+    }
     auto& x = transport();
     bool active = x.writingTrack() != 0xFF;
     for (uint8_t t = 0; t < kTracks && !active; ++t)
@@ -983,10 +1000,12 @@ class Surface {
           startClock();
         }
         return;
-      case kEditMode:
-        if (p == Press::Short) cycleEdit(t);
-        else if (p == Press::Long) leaveEdit();
-        return;  // double: the set browser (a later slice)
+      case kEditMode:  // DEC-291 (owner 2026-11-10): short = the track buttons' select / mute mode, in every mode;
+        // long (released before `kEditExitMs`) = into NOTE_EDIT, then NOTE_EDIT ↔ LOOP_EDIT; held `kEditExitMs` =
+        // out of the edit modes (`service`, while held)
+        if (p == Press::Short) trackMute_ = !trackMute_;
+        else if (p == Press::Long) cycleEdit(t);
+        return;
       case kLength:
         if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
           if (p == Press::Short && !empty(shownSlot(t))) {  // the other range, as in performance (DEC-284 am. 2, 3)
@@ -1057,7 +1076,8 @@ class Surface {
     }
     if (b >= kTrack0 && b < kTrack0 + kTracks) {
       const uint8_t tt = static_cast<uint8_t>(b - kTrack0);
-      if (p == Press::Short) switchTrack(tt);
+      if (p == Press::Short && trackMute_) control().setMute(tt, !control().muted(tt), us_);  // DEC-291: mute mode
+      else if (p == Press::Short) switchTrack(tt);
       else if (p == Press::Double) control().setMute(tt, !control().muted(tt), us_);
       else if (p == Press::Long) control().setSolo(tt, !control().soloed(tt), us_);
     }
@@ -1075,8 +1095,8 @@ class Surface {
     edit_.leave();
     enterEdit(tt);
   }
-  /// The edit button's short press (owner 2026-11-08, as legacy): from performance NOTE_EDIT, or LOOP_EDIT when the
-  /// shown slot has no notes to edit; then NOTE ↔ LOOP (NOTE only on content; CC later). The long press leaves.
+  /// The edit button's long press (DEC-291; owner 2026-11-08, as legacy): from performance NOTE_EDIT, or LOOP_EDIT when
+  /// the shown slot has no notes to edit; then NOTE ↔ LOOP (NOTE only on content; CC later). Held `kEditExitMs`: leave.
   void cycleEdit(uint8_t t) {
     if (edit_.active()) {
       edit_.leave();
@@ -1627,7 +1647,9 @@ class Surface {
     for (uint8_t i = 0; i < kTracks; ++i) {
       bool content = false;
       for (uint8_t s = 0; s < kSlotsPerTrack && !content; ++s) content = !empty(static_cast<uint8_t>(i * kSlotsPerTrack + s));
-      want[kTrackBase + i] = i == t ? 127 : content ? 32 : 0;
+      // DEC-291: in mute mode the track LEDs show what sounds — unmuted with content full, muted dim, empty dark
+      want[kTrackBase + i] = trackMute_ ? (!content ? 0 : control().muted(i) ? 32 : 127)
+                                        : (i == t ? 127 : content ? 32 : 0);
     }
     if (clock_->running()) want[kTransportNote] = 127;
     const bool blinkBright = (ms / 250) % 2 == 0;
@@ -2176,6 +2198,7 @@ class Surface {
   uint8_t grooveSlot_ = 0xFF;   // the slot the groove job was last asked for (DEC-288)
   bool groove_ = false, groovePending_ = false;  // the GROOVE window open; a change settling (DEC-289)
   bool grooveChord_ = false;                     // PLAY/STOP pressed with NOTELEN held: its release taken too
+  bool trackMute_ = false;                       // DEC-291: the track buttons mute (short press) instead of select
   uint8_t grooveWin_ = 0, grooveField_ = 0;      // its slot, its selected field
   groove::Settings grooveSet_;                   // the settings it shows
   uint32_t grooveUntil_ = 0, groovePendingMs_ = 0, autoTried_ = 0;

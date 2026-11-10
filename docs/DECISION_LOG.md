@@ -15810,6 +15810,14 @@ captured.
   three toasts and `Surface::takeNotice` are gone; under a stopped external clock the press does nothing. Device
   `ec0d2d6b…` (the upload tool reported a failure after programming; boot `crash=0`, `BOOT,load,ok`, and the frame
   without a toast show the new image): local stop, back on the bar line, nothing under a stopped master.
+- **Amendment 2 (owner 2026-11-10: "I only cannot start playing … with midi clock external"):** under a *stopped*
+  external clock (pulses, no Start) the transport button starts locally: `EngineClock::startOnPulse` runs the clock
+  from the next bar at the next pulse (as a Start would, `holdForPulse_`), the tracks start as on the internal clock
+  (`TrackControl::transportStart`, `Surface::transportStarted`); the next press is the local stop, the clock running on.
+  A later Start / Stop / Continue from the master takes over as before. Native: the DEC-276 test's last part now
+  presses under a stopped master — the track starts at the bar line after the stopped tick and plays from the pulses,
+  the next press stops it. Device image `4b118f6b…` (`crash=0`; the host as a master sending 24 ppqn at 120 BPM, no
+  Start): `running=0,external=1` → a 13 ms press of note 39 → `running=1`, ticks 100 → 504 a second later.
 
 ## DEC-277 — NOTE_EDIT step buttons: select / cycle, add, delete, and the hold as a parameter lock (surface slice D)
 
@@ -16433,3 +16441,27 @@ pressed while NOTELEN is held toggles it with any patch (the presses taken: no s
 NOTE_EDIT, where NOTELEN's hold is the velocity). The `longpress` output's behaviour is to be confirmed on the DROID once
 the patch is loaded. Native `test_the_groove_window_opens_by_its_note_and_by_notelen_with_play`; full 4,544 passed.
 Device image `0a4135e1…` (`crash=0`, `BOOT,load,ok`): note 43 and NOTELEN + note 39 each open the window on 1-3.
+
+## DEC-291 — EDIT: short is the track buttons' select / mute mode, long cycles the edit modes, a hold leaves
+
+**Date:** 2026-11-10. **Owner:** "performance mode short press cycles between select/mute mode on the track select
+switches. long press enters note edit mode and cycles through note and loop edit (and control later) long hold
+exits." Asked: short inside the edit modes — the same toggle; timing — 0.6 s cycle, 1.5 s exit.
+
+**Decision:**
+- **Short (any mode):** toggles the track buttons between select and mute (`Surface::trackMute_`). In mute mode a
+  track button's short press mutes / unmutes that track (`TrackControl::setMute`), and the track LEDs show the mute
+  state (no content 0, muted 32, unmuted 127) instead of the selection. Double (mute) and long (solo) are unchanged.
+  The copy mode's short EDIT (paste mode replace / merge) is unchanged.
+- **Long (released between 0.6 and 1.5 s):** `cycleEdit` — performance → NOTE_EDIT on the shown slot (LOOP_EDIT when it
+  has no notes), then NOTE_EDIT ↔ LOOP_EDIT (a CONTROL mode later). It acts on the release (the press detector).
+- **Held `kEditExitMs` (1.5 s):** leaves NOTE_EDIT / LOOP_EDIT at once while still held (`Surface::service`); the
+  release is consumed, so nothing cycles. Outside the edit modes a 1.5 s hold is an ordinary long press (enters).
+
+**Evidence:** native `test_edit_short_is_mute_mode_long_cycles_and_a_hold_leaves` (mute mode on / off, a track muted
+and unmuted, no mute in select mode; NOTE → LOOP → NOTE by long presses; a short inside NOTE_EDIT keeps editing; the
+hold leaves at 1.5 s before the release, from NOTE_EDIT and from LOOP_EDIT). The edit-surface tests now enter with a
+long press, timed a bar later so the bracket lands where it did. Full native 4,545 passed (196 suites). Device
+image `aff638dd…` (`crash=0`), the owner's presses traced (`!ENGINE trace 1`): shorts toggled the mode and track 2's
+mute; long presses of 0.77–1.49 s entered NOTE_EDIT and cycled to LOOP_EDIT and back; a 1.75 s hold left.
+

@@ -156,7 +156,8 @@ static void recordBar(std::initializer_list<std::pair<uint32_t, uint8_t>> notes)
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, gE.transport().mode());
 }
 static void enterEdit() {
-  tap(S::kEditModeNote);
+  run(gUs + kBarUs - 250000);  // DEC-291: a long press enters a bar later, where a short one did
+  tap(S::kEditModeNote, 700);
   ms(400);
   for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
   TEST_ASSERT_TRUE(gS.edit().editing());
@@ -284,7 +285,7 @@ void test_f1_at_rest_keeps_the_moved_note_selected() {
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
   // A new session: F1's first message selects, even at the value the last session left it (past the motor's echo
   // window: the opening writes F1 to the selection).
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 700);
   ms(400);
   TEST_ASSERT_FALSE(gS.edit().editing());
   enterEdit();
@@ -307,7 +308,7 @@ void test_the_droid_fader_bank_follows_note_edit() {
   TEST_ASSERT_TRUE(gS.bank(p));
   TEST_ASSERT_EQUAL_UINT8(S::kNoteEditBank, p);
   TEST_ASSERT_FALSE(gS.bank(p));
-  tap(S::kEditModeNote);  // leave
+  tap(S::kEditModeNote, 700);  // leave
   ms(400);
   TEST_ASSERT_FALSE(gS.edit().active());
   TEST_ASSERT_TRUE(gS.bank(p));
@@ -358,7 +359,8 @@ static uint32_t count(const std::vector<Sent>& v, uint8_t status) {
 
 void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   recordBar({{0, 60}, {100, 64}, {384, 67}});
-  tap(S::kEditModeNote);
+  run(gUs + kBarUs - 250000);  // the long press enters where a short one did, a bar later (the bracket at 60)
+  tap(S::kEditModeNote, 700);
   for (int i = 0; i < 1000 && !gS.edit().editing(); ++i) ms(1);
   TEST_ASSERT_TRUE(gS.edit().editing());
   const EditNote n0 = sel();
@@ -510,7 +512,7 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_EQUAL_UINT32(1, cc3);
   TEST_ASSERT_EQUAL_UINT8(64, findMsg(v, 0xBE, 3)->m.d2);
   // Outside NOTE_EDIT nothing is sent back.
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 700);
   ms(400);
   TEST_ASSERT_FALSE(gS.edit().active());
   drainMotors(300);
@@ -614,7 +616,7 @@ void test_pitch_onto_a_note_hides_it_and_deselect_settles() {
   f4(70);
   TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));  // B stays hidden
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(70, 96));
-  tap(S::kEditModeNote);  // leave
+  tap(S::kEditModeNote, 700);  // leave
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
 }
@@ -796,7 +798,7 @@ void test_f4_at_zero_mutes_the_note() {
   f4(64);  // F4's motor arrives at the pitch
   TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(67, 384));
-  tap(S::kEditModeNote);  // leave
+  tap(S::kEditModeNote, 700);  // leave
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(0, onsAt(64, 96));
   TEST_ASSERT_EQUAL_UINT32(2, onsAt(67, 384));
@@ -1171,7 +1173,7 @@ void test_an_empty_loop_takes_a_note_and_plays() {
   TEST_ASSERT_EQUAL_UINT16(1, gE.noteEdit().size());
   const uint32_t at = sel().tick;
   TEST_ASSERT_TRUE(at > 0 && at < S::kNewLoopBars * 768 && at % 96 == 0);  // on a 16th inside the new loop
-  tap(S::kEditModeNote);  // leave
+  tap(S::kEditModeNote, 700);  // leave
   ms(400);
   tap(S::kPlayStopNote);  // the selected slot plays
   ms(500);
@@ -1182,29 +1184,29 @@ void test_an_empty_loop_takes_a_note_and_plays() {
 // The edit button cycles NOTE_EDIT ↔ LOOP_EDIT and its long press leaves (owner 2026-11-08); from performance an empty
 // slot opens LOOP_EDIT, where NOTELEN creates an empty loop; NOTE_EDIT then opens on it.
 void test_edit_button_cycles_note_and_loop_edit() {
-  tap(S::kEditModeNote);  // slot 0 empty: LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // slot 0 empty: LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   TEST_ASSERT_FALSE(gS.edit().active());
-  tap(S::kEditModeNote);  // still empty: stays in LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // still empty: stays in LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   tap(S::kLengthNote);  // an empty loop
   ms(450);
   TEST_ASSERT_TRUE(gE.transport().contentOf(0) != kNoManifest);
-  tap(S::kEditModeNote);  // NOTE_EDIT on it
+  tap(S::kEditModeNote, 700);  // NOTE_EDIT on it
   ms(400);
   for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
   TEST_ASSERT_TRUE(gS.edit().editing());
   TEST_ASSERT_FALSE(gS.loopEdit());
-  tap(S::kEditModeNote);  // LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_FALSE(gS.edit().active());
   TEST_ASSERT_TRUE(gS.loopEdit());
   tap(S::kLengthNote);  // a filled slot: no second loop
   ms(450);
   TEST_ASSERT_EQUAL_UINT8(1, gE.history().undoDepth(0));
-  tap(S::kEditModeNote, 700);  // long: performance
+  tap(S::kEditModeNote, 1600);  // long: performance
   ms(400);
   TEST_ASSERT_FALSE(gS.loopEdit());
   TEST_ASSERT_FALSE(gS.edit().active());
@@ -1214,7 +1216,7 @@ void test_edit_button_cycles_note_and_loop_edit() {
 // whole BPM over 20–300 and re-centres F3; F3 (CC 100 channel 16) adds tenths from its centre. On entry each motor is
 // parked — its value, then its trigger note (F3 note 1, F4 note 2 on channel 15) — and its landing changes nothing.
 void test_loop_edit_tempo_coarse_and_fine() {
-  tap(S::kEditModeNote);  // slot 0 empty: LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // slot 0 empty: LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   const auto sent = drainMotors(300);
@@ -1254,7 +1256,7 @@ void test_loop_edit_tempo_coarse_and_fine() {
   TEST_ASSERT_EQUAL_UINT32(6000000000ull / (9070ull * 192), gClk.usPerTick());
   f3(64 - 3);  // 89.7
   TEST_ASSERT_EQUAL_UINT32(6000000000ull / (8970ull * 192), gClk.usPerTick());
-  tap(S::kEditModeNote, 700);  // performance: neither fader is the tempo
+  tap(S::kEditModeNote, 1600);  // performance: neither fader is the tempo
   ms(400);
   f4(60);
   f3(100);
@@ -1365,10 +1367,10 @@ static uint8_t ccForBars(uint32_t bars) {  // the notch for whole bars (1–16, 
   return ccOfNotch(bars <= 16 ? bars + 4 : bars == 32 ? 21 : bars == 64 ? 22 : bars == 96 ? 23 : 24);
 }
 static void enterLoopEditOnContent() {
-  tap(S::kEditModeNote);  // NOTE_EDIT
+  tap(S::kEditModeNote, 700);  // NOTE_EDIT
   ms(400);
   drainMotors(800);
-  tap(S::kEditModeNote);  // LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
 }
@@ -1412,7 +1414,7 @@ void test_loop_edit_f2_sets_the_length() {
   gS.input(0xBF, 101, ccForBars(8), gUs / 1000);
   ms(400);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // still the visit's one step
-  tap(S::kEditModeNote, 700);  // leave
+  tap(S::kEditModeNote, 1600);  // leave
   ms(400);
   enterLoopEditOnContent();  // a new visit
   drainMotors(800);
@@ -1451,10 +1453,10 @@ void test_loop_edit_f1_rotates_the_loop_start() {
   recordBar({{96, 60}, {600, 62}});
   overdubHeld({{10, 20, 67}, {150, 100, 66}, {700, 200, 64}});  // 67 lands before 64's rotated NoteOff (708)
   const uint8_t undo0 = gE.history().undoDepth(0);
-  tap(S::kEditModeNote);  // NOTE_EDIT
+  tap(S::kEditModeNote, 700);  // NOTE_EDIT
   ms(400);
   drainMotors(800);  // NOTE_EDIT's own fader writes
-  tap(S::kEditModeNote);  // LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   const auto sent = drainMotors(300);
@@ -1507,9 +1509,9 @@ static uint32_t loopOf(uint8_t slot) {
 }
 /// The popup on the shown slot: LOOP_EDIT (edit twice), then NOTELEN's long press (since copy mode took a slot's hold).
 static void popupFromLoopEdit() {
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 700);
   ms(400);
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 700);
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   tap(S::kLengthNote, 700);
@@ -1552,7 +1554,7 @@ void test_length_popup_taps_and_f2() {
   TEST_ASSERT_TRUE(gE.transport().playing(0));
   ms(3100);
   TEST_ASSERT_FALSE(gS.popup());
-  tap(S::kEditModeNote, 700);  // LOOP_EDIT left: its visit kept
+  tap(S::kEditModeNote, 1600);  // LOOP_EDIT left: its visit kept
   ms(100);
   gE.control().undo(0, gLast, gUs, gClk.usPerTick());
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
@@ -1563,9 +1565,9 @@ void test_length_popup_taps_and_f2() {
 void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   recordBar({{96, 60}});  // slot 0 plays
   // From LOOP_EDIT (on the playing slot 0): a visit's change, then NOTELEN's long press — the popup's own step.
-  tap(S::kEditModeNote);  // NOTE_EDIT
+  tap(S::kEditModeNote, 700);  // NOTE_EDIT
   ms(400);
-  tap(S::kEditModeNote);  // LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   drainMotors(800);
@@ -1660,7 +1662,7 @@ void test_notelen_double_deletes_and_creates_and_leave_keeps_one_step() {
   ms(50);
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
   // Leave: the edits stay, one undo step.
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 1600);
   ms(400);
   TEST_ASSERT_FALSE(gS.edit().active());
   ms(200);
@@ -1694,6 +1696,68 @@ void test_a_window_denser_than_the_selection_is_halved() {
   TEST_ASSERT_EQUAL_UINT32(768, gS.edit().windowTicks());
 }
 
+// DEC-291 (owner 2026-11-10): EDIT short = the track buttons' select / mute mode, in every mode; long = into NOTE_EDIT,
+// then NOTE_EDIT ↔ LOOP_EDIT; held `kEditExitMs` = out, at once, with no cycle on the release.
+void test_edit_short_is_mute_mode_long_cycles_and_a_hold_leaves() {
+  recordBar({{96, 64}, {384, 67}});
+  TEST_ASSERT_FALSE(gS.trackMuteMode());
+  tap(S::kEditModeNote);
+  ms(450);
+  TEST_ASSERT_TRUE(gS.trackMuteMode());
+  TEST_ASSERT_FALSE(gS.edit().active());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  tap(S::kTrackBase + 0);  // mute mode: a short press mutes the track ...
+  ms(450);
+  TEST_ASSERT_TRUE(gE.control().muted(0));
+  tap(S::kTrackBase + 0);  // ... and unmutes it
+  ms(450);
+  TEST_ASSERT_FALSE(gE.control().muted(0));
+  tap(S::kEditModeNote);  // select mode again: no mute
+  ms(450);
+  TEST_ASSERT_FALSE(gS.trackMuteMode());
+  tap(S::kTrackBase + 0);
+  ms(450);
+  TEST_ASSERT_FALSE(gE.control().muted(0));
+  // Long: NOTE_EDIT, then LOOP_EDIT, then NOTE_EDIT again.
+  tap(S::kEditModeNote, 700);
+  for (int i = 0; i < 100 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  tap(S::kEditModeNote);  // a short press inside NOTE_EDIT: mute mode, still editing
+  ms(450);
+  TEST_ASSERT_TRUE(gS.trackMuteMode());
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  tap(S::kEditModeNote, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  TEST_ASSERT_FALSE(gS.edit().active());
+  tap(S::kEditModeNote, 700);
+  for (int i = 0; i < 100 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  // Held: out once the hold reaches `kEditExitMs`, before the release; the release cycles nothing.
+  gS.input(0x9F, S::kEditModeNote, 127, gUs / 1000);
+  ms(S::kEditExitMs - 100);
+  TEST_ASSERT_TRUE(gS.edit().active());
+  ms(150);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  ms(500);
+  gS.input(0x8F, S::kEditModeNote, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_FALSE(gS.edit().active());
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  // From LOOP_EDIT too.
+  tap(S::kEditModeNote, 700);
+  for (int i = 0; i < 100 && !gS.edit().editing(); ++i) ms(5);
+  tap(S::kEditModeNote, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  tap(S::kEditModeNote, 1600);
+  ms(450);
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  TEST_ASSERT_FALSE(gS.edit().active());
+}
+
 void test_no_heap() {
   recordBar({{96, 64}});
   gTrap = true;
@@ -1702,7 +1766,7 @@ void test_no_heap() {
   f1(pbFor(2, 16));
   f2(0);
   f4(70);
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote, 700);
   ms(400);
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
@@ -1875,7 +1939,7 @@ void test_copy_mode_replaces_or_merges_with_the_overlap_rule() {
   // Merge onto the same pitch (EDIT first, then the target at once): the 64 already on step 12 starts inside the pasted
   // 64 — the overlap rule hides it, one pasted note left there.
   hold(2, 700);
-  tap(S::kEditModeNote);
+  tap(S::kEditModeNote);  // a short press: the paste mode
   ms(450);
   TEST_ASSERT_EQUAL(S::PasteMode::Merge, gS.pasteMode());
   shortPress(12);
@@ -1918,7 +1982,7 @@ void test_copy_mode_pastes_into_another_bar_and_another_track() {
   TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(1008))).pitch);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   // A bar onto another track: bar 1 held, track 2 selected (NOTE_EDIT follows it), its bar 1 pressed.
-  tap(S::kEditModeNote, 700);  // leave, to record track 2
+  tap(S::kEditModeNote, 1600);  // leave, to record track 2
   ms(100);
   recordTrack1({{600, 72}});
   tap(S::kTrackBase + 0);
@@ -1990,7 +2054,7 @@ void test_loop_edit_a_held_range_sets_start_and_length() {
   gS.input(0x8F, 0, 0, gUs / 1000);
   ms(200);
   TEST_ASSERT_EQUAL_UINT32(3 * 48, loopOf(0));
-  tap(S::kEditModeNote, 700);  // leave: the visit is one undo step
+  tap(S::kEditModeNote, 1600);  // leave: the visit is one undo step
   ms(100);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
   gE.control().undo(0, gLast, gUs, gClk.usPerTick());
@@ -2023,7 +2087,7 @@ void test_loop_edit_double_press_loops_one_step() {
   ms(200);
   TEST_ASSERT_EQUAL_UINT32(48, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(0, heardAt(60) % 48);  // the note at 96 starts it
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
 }
 
@@ -2070,7 +2134,7 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   TEST_ASSERT_EQUAL_UINT32(576, loopOf(0));
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 62, 576), 600 - 192);
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
   // The start survives the visit: a new one names the same places.
   enterLoopEditOnContent();
@@ -2081,7 +2145,7 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   run(gUs + 3 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 2 * 768), 96);
   EXPECT_ALL(positions(true, 62, 2 * 768), 600);
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
 }
 
@@ -2105,7 +2169,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   TEST_ASSERT_EQUAL_UINT32(768, scale);
   TEST_ASSERT_EQUAL_UINT32(96, from);
   TEST_ASSERT_EQUAL_UINT32(768, known);
-  tap(S::kEditModeNote, 700);  // leave
+  tap(S::kEditModeNote, 1600);  // leave
   ms(100);
   // An edit in the short loop: the note at its start (60) to 70.
   enterEdit();
@@ -2115,7 +2179,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   settle();
   f4(70);
   ms(100);
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
   const uint8_t undo0 = gE.history().undoDepth(0);
   const auto range = [](uint8_t a, uint8_t b) {
@@ -2143,7 +2207,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   TEST_ASSERT_EQUAL_UINT32(768, known);
   TEST_ASSERT_FALSE(gS.loopFrame(5, scale, from, known));  // an empty slot: no bar
   TEST_ASSERT_EQUAL_UINT32(600, heardAt(62));
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // one step
   // A single press: the one range there is (steps 3..10).
@@ -2180,7 +2244,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(3100);
   TEST_ASSERT_FALSE(gS.popup());
   // Performance: the same presses.
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
   TEST_ASSERT_FALSE(gS.loopEdit());
   taps(S::kLengthNote, 1);
@@ -2405,7 +2469,7 @@ void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
   gS.input(0x8F, 9, 0, gUs / 1000);
   gS.input(0x8F, 2, 0, gUs / 1000);
   ms(200);
-  tap(S::kEditModeNote, 700);
+  tap(S::kEditModeNote, 1600);
   ms(100);
   const auto before = gE.control().window(0);
   TEST_ASSERT_EQUAL_UINT32(96, before.start);
@@ -2477,6 +2541,7 @@ int main(int, char**) {
   RUN_TEST(test_length_popup_long_press_cancels);
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
+  RUN_TEST(test_edit_short_is_mute_mode_long_cycles_and_a_hold_leaves);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

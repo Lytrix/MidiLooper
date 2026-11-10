@@ -347,9 +347,9 @@ void test_bars_with_notes_outside_the_loop_light_dim() {
   ms(400);
   run(start + 4 * kBarUs + 50 * kTick);
   TEST_ASSERT_EQUAL_UINT32(4 * 768, X().loopLength(X().contentOf(0)));
-  tap(S::kEditModeNote);  // NOTE_EDIT
+  tap(S::kEditModeNote, 700);  // NOTE_EDIT
   ms(400);
-  tap(S::kEditModeNote);  // LOOP_EDIT
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT
   ms(400);
   TEST_ASSERT_TRUE(gS.loopEdit());
   gS.input(0x9F, 18, 127, gUs / 1000);  // bar 2 held, bar 3 pressed
@@ -365,7 +365,7 @@ void test_bars_with_notes_outside_the_loop_light_dim() {
   TEST_ASSERT_EQUAL_UINT8(32, gLed[40]);  // bar 1: notes, outside the loop
   TEST_ASSERT_EQUAL_UINT8(32, gLed[43]);  // bar 4
   TEST_ASSERT_EQUAL_UINT8(0, gLed[44]);   // bar 5: past the stored loop
-  tap(S::kEditModeNote, 700);  // leave: performance shows the same
+  tap(S::kEditModeNote, 1600);  // leave: performance shows the same
   ms(400);
   run(gUs + kBarUs / 2);
   TEST_ASSERT_EQUAL_UINT8(32, gLed[40]);
@@ -452,12 +452,27 @@ void test_the_transport_button_stops_and_starts_locally_under_an_external_clock(
   const uint32_t back = until(2 * kBarUs, [] { return X().playing(0); });
   TEST_ASSERT_EQUAL_UINT32(0, back % 768);                         // on the bar line
   TEST_ASSERT_EQUAL_UINT32(0, (back - X().origin(0)) % 768);      // from the loop start
-  // The master stops: the button does nothing; its Start starts.
+  // The master stops, its pulses run on: the button starts locally (DEC-276 amendment 2) — the next pulse a bar line,
+  // the track from its loop start; the next press stops it again, the clock running on.
   gClk.midiStop(gUs);
   C().transportStop(gLast, gUs, gClk.usPerTick());
+  run(gUs + kBarUs / 3);
+  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_FALSE(X().playing(0));
+  const uint32_t halted = gLast;  // no tick while the master is stopped
   tap(S::kTransportNote);
   ms(400);
-  TEST_ASSERT_FALSE(gClk.running());
+  TEST_ASSERT_TRUE(gClk.running());
+  TEST_ASSERT_TRUE(gClk.external());
+  TEST_ASSERT_TRUE(X().playing(0));
+  const uint32_t from = X().origin(0);
+  TEST_ASSERT_EQUAL_UINT32(0, from % 768);  // the bar line after the stopped tick
+  TEST_ASSERT_TRUE(from > halted && from - halted <= 768);
+  run(gUs + kBarUs / 2);
+  TEST_ASSERT_TRUE(X().playing(0));
+  TEST_ASSERT_TRUE(gLast >= from + 300);  // the pulses drive it: half a bar played
+  tap(S::kTransportNote);
+  ms(400);
   TEST_ASSERT_FALSE(X().playing(0));
 }
 

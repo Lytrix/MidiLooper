@@ -87,6 +87,16 @@ class EngineClock {
     pulseLimit_ = next_;
     holdForPulse_ = true;  // the bar's first tick at the first pulse
   }
+  /// A local start under a stopped external clock (DEC-276 amendment 2): pulses arrive but no Start — the next bar's
+  /// first tick at the next pulse, as a Start would.
+  void startOnPulse() {
+    if (!external_ || running_) return;
+    running_ = true;
+    next_ = nextBar();
+    pulses_ = 0;
+    pulseLimit_ = next_;
+    holdForPulse_ = true;
+  }
   void midiStop(uint32_t nowUs) {
     external_ = true;
     lastPulseUs_ = nowUs;

@@ -52,11 +52,11 @@ The same buttons provide their main action with a short press and secondary acti
 |---------|-------------|--------------|--------------|-------------------|
 | **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute; with the transport stopped, only select | Launch at the next launch step (1/16 by default) | Redo | [Copy mode](#copy-mode) |
 | **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear the selected slot |
-| **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
+| **Track 1–8** | Select track; in mute mode (EDIT's short press): mute / unmute | Mute / unmute | — | Solo / unsolo |
 | **Next track** | Select next track | Undo | Redo | Open the sets browser |
-| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally); with NOTELEN held: the GROOVE window; in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window (needs the patch's long-press note 43 on the DROID) |
+| **Transport** | Global start / stop (with an external clock: stop / start the tracks locally, also while the master is stopped — they start on its next clock pulse as a bar line); with NOTELEN held: the GROOVE window; in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window (needs the patch's long-press note 43 on the DROID) |
 | **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
-| **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
+| **Edit** | Track buttons: switch between select and mute mode (in mute mode their LEDs show the mute state: bright playing, dim muted), in every mode | — | — | Long (0.6 s): enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT; held 1.5 s: leave edit mode |
 | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
 | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
 | **NOTELEN in LOOP_EDIT** | Switch between the two remembered button ranges, edits kept; an empty slot gets a four-bar loop | Play the whole stored loop | — | Open length popup (FULL, A, B, 1–8, 16–128 bars) |

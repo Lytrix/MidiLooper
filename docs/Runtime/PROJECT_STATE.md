@@ -1,3 +1,11 @@
+**2026-11-10 — DEC-291: the EDIT button; DEC-276 am. 2: PLAY/STOP starts under a stopped external clock.** EDIT's
+short press switches the track buttons between select and mute (mute mode: a short press mutes / unmutes, the LEDs
+show the mute state), in every mode; a long press (0.6 s) enters NOTE_EDIT, then cycles NOTE_EDIT ↔ LOOP_EDIT; held
+1.5 s it leaves. Under an external clock whose master is stopped (pulses, no Start) the transport button now starts
+the tracks on the next pulse as a bar line. Full native 4,545 passed; device `aff638dd…` (the owner's presses traced)
+and `4b118f6b…` (`crash=0`; host clock without Start: the press started the ticks). The DROID's PLAY/STOP long press
+(note 43) opens the GROOVE window but only after the DROID's own long-press time — NOTELEN + PLAY/STOP is immediate.
+
 **2026-11-10 — DEC-289: the GROOVE window (groove design slice 4).** PLAY/STOP held (600 ms) opens it on the shown
 slot: template, amount, scope, AUTO — F1–F4 or the encoder; changes apply once settled (background build, bar-line
 switch); one visit one undo step; AUTO regrooves after an overdub. Full native 4,543 passed; device `496c3791…`: the
