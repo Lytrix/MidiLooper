@@ -50,7 +50,21 @@ Serial `get <index> <T-S> <T-S>`. Done (native + device). Next, 6b on the owner'
 
 **2026-11-09 — slice 6b, get-a-loop picker (owner: "create a new branch for this and start with step a"; branch
 `feature/engine-get-a-loop`; design: plan §6.1–6.2).** Order: (a) the current-state reader (a1 done) and the preview
-partition (a2 done: 8,192 rows); (b) the audition owner (done, DEC-271); (c) the preview render path (done, DEC-270 amendment 3); (d) the picker (done, DEC-272); (c) the preview render path; (d) the picker screen.
+partition (a2 done: 8,192 rows); (b) the audition owner (done, DEC-271); (c) the preview render path (done, DEC-270 amendment 3); (d) the picker (done, DEC-272);
+
+**2026-11-10 — performance and step surface (owner: "a few things I want to add, partly from the legacy stack";
+OpenSpec `fixed-memory-engine` E9.8b-3, bar / 16th steps; legacy behaviour mapped first).** Slices, in order:
+(A) boot shows the last selected slot first (no switch on screen); a queued slot's piano roll shown at once, its
+playhead parked at the launch point and flashing until the switch (legacy `isPreviewPlayheadPending`). (B) a global
+launch quantisation — 1/16, 1/8, 1/4, bar; default 1/16; serial `launch-q`, kept in EEPROM — and a slot's double press
+launches the queued slot at the next step (clear stays on REC's long press). (C) performance step buttons (ch16 notes
+0–15) and bar buttons (17–24): the selected track's playback restarts at that position at the next launch step; the bar
+buttons are the 8-bar page playing, the 16ths the bar playing (legacy `queueBarPlaybackStart`, a 16th grid made the
+setting). (D) NOTE_EDIT step buttons: a press selects every note on the step (F1's selection), a second cycles through
+them as F1 does; an empty step adds a 16th C4 (MIDI 60); double deletes the selected note; hold is a parameter lock — a
+temporary selection the faders (F2 move, F3 fine, F4 pitch) and the encoder (pitch) act on, one edit undo step on
+release, the previous selection back. (E) the Teensy GPIO quadrature encoder (legacy pins and push button), pitch in the
+lock. Non-goals: LOOP_EDIT jam, 41–48 extended transport, a DROID control for the launch setting. (c) the preview render path; (d) the picker screen.
 
 **2026-11-09 — side task (from the sets-browser session): engine hangs after `!REBOOT`.** Watchdog, USB health check,
 boot phases, quiet reboot (DEC-266); soak tool `scripts/engine_reboot_soak.py`. Done on image `137de137…`; open only
