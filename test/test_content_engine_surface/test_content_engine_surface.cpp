@@ -232,9 +232,10 @@ void test_slot_long_press_keeps_and_record_long_clears() {
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());  // no overdub either
   TEST_ASSERT_FALSE(gS.popup());
   TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
-  tap(S::kSlotBase + 0);  // the source again: copy mode ends
-  ms(100);
+  tap(S::kSlotBase + 0);  // the source again: copy mode ends (once the double window passes)
+  ms(400);
   TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));  // a single press clears nothing
   tap(S::kSlotBase + 0);
   ms(100);
   tap(S::kSlotBase + 0);
@@ -469,6 +470,39 @@ void test_copy_mode_copies_slots_across_tracks() {
   shortPress(S::kSlotBase + 5);  // an ordinary press again: no copy
   ms(400);
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(13));
+}
+
+// Copy mode closes by itself (owner 2026-11-10): `kCopyIdleMs` after the source's release with nothing pasted, the
+// countdown restarted by a track switch; a double press of the source slot clears it (one undo step) and closes it.
+void test_copy_mode_counts_down_and_a_double_press_clears_the_source() {
+  recordOneBar(0, 60);
+  const ManifestId m = X().contentOf(0);
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(S::kCopyIdleMs - 600);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  tap(S::kTrackBase + 1);  // a track switch: the countdown again
+  ms(S::kCopyIdleMs - 600);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  ms(1000);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());  // closed, nothing changed
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+  tap(S::kTrackBase + 0);
+  ms(400);
+  // A double press of the source: cleared, closed.
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(650);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(200);
+  shortPress(S::kSlotBase + 0);
+  ms(80);
+  shortPress(S::kSlotBase + 0);
+  ms(50);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(0));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(0, gLast, gUs, gClk.usPerTick()));  // one step
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
 }
 
 void test_an_armed_slot_punches_in_on_its_second_press() {
@@ -828,6 +862,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
   RUN_TEST(test_copy_mode_copies_slots_across_tracks);
+  RUN_TEST(test_copy_mode_counts_down_and_a_double_press_clears_the_source);
   RUN_TEST(test_the_transport_button_stops_and_starts_locally_under_an_external_clock);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);

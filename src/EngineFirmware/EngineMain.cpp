@@ -1994,6 +1994,7 @@ void loop() {
   ev.copy = static_cast<uint8_t>(gSurface.copyMode());  // DEC-279 amendment 1: copy mode's window
   ev.copySlot = gSurface.copySourceSlot();
   ev.copyBar = gSurface.copySourceBar();
+  ev.copyLeft = static_cast<uint16_t>(gSurface.copyMsLeft(millis()) * 1000 / Surface<EngineRoot>::kCopyIdleMs);
   ev.loop = gSurface.loopEdit();
   ev.loopTicks = gSurface.pendingLoopTicks();
   ev.loopStart = gSurface.loopStart();

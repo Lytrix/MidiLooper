@@ -15952,3 +15952,16 @@ and every copy undone (1-3 and 1-5 empty again).
   4,514 passed. Device (image `ea7f8b9d…`): the hold showed `COPY LOOP 1-1`, the press on 1-3 copied (768, 5 runs) and
   the next frame had no window; undone. Meanwhile a check script's `!ENGINE` reboot left the board silent on USB (the
   DEC-266 symptom) until the owner replugged it; its `prev_crumbs` were not captured.
+- **Amendment 4 (owner 2026-11-10: "the copy window should auto close after a few seconds but reset the timer if you
+  switch tracks … hold to exit … isn't used in this workflow or mentioned as button, so maybe only use the countdown. I
+  would also like to clear the slot via this gesture … hold again or double press?"; chosen: the double press):** copy
+  mode closes by itself `Surface::kCopyIdleMs` (5 s) after the source's release with nothing pasted, the countdown
+  restarted by a track switch and drawn as the window's bottom edge shrinking; `HOLD EXIT` is gone from it (a long
+  press still ends it, unmentioned). A double press of the source slot (within 300 ms) clears it — one undo step, its
+  LED flashes — and closes the window; a single press of it cancels once the double window passes. The slot window's
+  hint is `[TRK] LOAD LOOP  2× CLEAR`. Native `test_copy_mode_counts_down_and_a_double_press_clears_the_source` (open
+  through 4.4 s, a track switch restarts it, closed after; a double press clears, one undo step) — no-restart and
+  no-clear mutations fail it; full 4,515 passed. Device (image `c52a0d7e…`): the window with the shrinking edge, gone
+  after 5 s; 1-1 → 1-3 copied, a double press of 1-3 in its copy mode cleared it, both undone. Seen meanwhile: an undo
+  made ~0.5 s after the copy it undid did not survive a reboot (1-3 came back as the copy, its empty state one undo
+  below); an undo made long after did — a save-versus-undo ordering question for the store, not copy mode.

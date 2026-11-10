@@ -73,6 +73,7 @@ struct EditView {
   int8_t encoder = -1;    // the encoder's option (slice E): 0 pitch, 1 move, 2 length, 3 velocity
   uint8_t copy = 0;       // copy mode (DEC-279 amendment 1): 0 none, 1 a slot, 2 a bar, 3 a note
   uint8_t copySlot = 0, copyBar = 0, copyPitch = 0;  // its source: the engine slot, the bar (0–7), the note's pitch
+  uint16_t copyLeft = 0;  // the countdown left, of 1000 (the window's bottom line shrinks with it)
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
@@ -1223,10 +1224,15 @@ class EngineDisplay {
     }
     label(title, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(title)) * 4) / 2), y0 + 4, 15);
     label(paste, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(paste)) * 4) / 2), y0 + 13, 11);
-    const char* way = edit_.copy == 1 ? "[TRK] LOAD LOOP  HOLD EXIT" : "HOLD EXIT";
-    int16_t w = 0;
-    for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
-    hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
+    if (edit_.copy == 1) {  // a slot: the picker, or cleared (owner 2026-11-10: a double press of the source)
+      const char* way = "[TRK] LOAD LOOP  2* CLEAR";
+      int16_t w = 0;
+      for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
+      hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
+    }
+    // The countdown (owner 2026-11-10: it closes by itself): the bottom edge, bright for what is left.
+    const int16_t left = static_cast<int16_t>(x0 + 1 + static_cast<int32_t>(x1 - x0 - 2) * edit_.copyLeft / 1000);
+    if (left > x0 + 1) hline(static_cast<int16_t>(x0 + 1), left, static_cast<int16_t>(y1 - 1), 15);
   }
 
   /// The legacy track letter for track `t`.
