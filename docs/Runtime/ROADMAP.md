@@ -40,6 +40,8 @@ Last updated: 2026-11-10 (sets browser future features)
   onto what the destination holds — a new pass on its current state, overdub overlap rules, the slot keeping its loop
   length (the play window, DEC-257, covers a longer source); one undo step. The picker (DEC-272) offers it on a filled
   destination. Design: browser plan §6 / §9.
+- Engine surface — **encoder CC menu** (owner 2026-11-10): the encoder's long push opens a CC menu — choose a CC, then
+  turn the encoder to set it — together with a CC mode and its view.
 - Engine sets browser — **library compaction** (owner 2026-11-10): reclaim the card space emptied sets and stages leave
   (their blobs stay in the log, DEC-268) and the index records the trash marks spend (4,096 in all; EMPTY TRASH itself
   needs one). Needs a power-safe scheme for rewriting the log and index (older records, parent references and the
