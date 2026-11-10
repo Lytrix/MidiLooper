@@ -113,7 +113,7 @@ class EngineDisplay {
   /// The firmware's version on the title (owner 2026-11-10: legacy showed v0.6; the engine is v0.7).
   static constexpr const char* kVersion = "v0.7";
   /// The title (owner 2026-11-10, as legacy `drawBootScreen`; the raster-bar title flickered on the panel — too much
-  /// of it lit — so a light raster: thin 1-px lines every 4 rows at grey 1–4 behind it, the letters kept clear of them by a
+  /// of it lit — so a light raster: thin 1-px lines every 4 rows at grey 4–9 behind it, the letters kept clear of them by a
   /// black pixel): `OSTINATIX` in the 5 × 7 font four times its size,
   /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
   /// performance frame then opens on the saved selection, DEC-273).
@@ -125,7 +125,7 @@ class EngineDisplay {
     const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * kAdvance * kScale - kScale);
     int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
     const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
-    static const uint8_t kLine[] = {1, 2, 3, 4, 3, 2};
+    static const uint8_t kLine[] = {4, 5, 7, 9, 7, 5};  // grey 1–4 was not visible on the panel (owner)
     for (int16_t y = 6, i = 0; y <= 50; y = static_cast<int16_t>(y + 4), ++i)
       hline(0, DISPLAY_WIDTH - 1, y, kLine[i % sizeof kLine]);
     const GFXfont& font = Font5x7FixedMono;
