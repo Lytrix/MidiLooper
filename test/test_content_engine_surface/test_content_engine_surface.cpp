@@ -391,6 +391,57 @@ void test_the_transport_button_stops_and_starts_locally_under_an_external_clock(
   TEST_ASSERT_FALSE(X().playing(0));
 }
 
+// Copy / paste (owner 2026-11-10): a slot held and another pressed copies the held slot onto it — one undo step, the
+// rows copied into the target's own runs, the loop length kept; neither press makes its own gesture (no length popup).
+// The held slot is the one pressed first on the track then selected: another track selected meanwhile is a copy
+// across tracks.
+static uint32_t rowsOf(uint8_t slot) {
+  const ManifestId m = X().contentOf(slot);
+  if (m == kNoManifest) return 0;
+  const auto& d = gE.manifests().manifest(m);
+  uint32_t rows = 0;
+  for (uint8_t i = 0; i < d.runCount; ++i) rows += gE.runs().run(d.runs[i]).rowCount;
+  return rows;
+}
+void test_holding_a_slot_and_pressing_another_copies_it() {
+  recordOneBar(0, 60);
+  const uint32_t rows = rowsOf(0);
+  TEST_ASSERT_TRUE(rows > 0);
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(100);
+  gS.input(0x9F, S::kSlotBase + 3, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, S::kSlotBase + 3, 0, gUs / 1000);
+  ms(700);  // the source held past its long press
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(500);
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, X().contentOf(3));
+  TEST_ASSERT_NOT_EQUAL(X().contentOf(0), X().contentOf(3));
+  TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(3));
+  TEST_ASSERT_EQUAL_UINT32(gE.manifests().manifest(X().contentOf(0)).loopLengthTicks,
+                           gE.manifests().manifest(X().contentOf(3)).loopLengthTicks);
+  const ManifestId m3 = X().contentOf(3);
+  for (uint8_t i = 0; i < gE.manifests().manifest(m3).runCount; ++i)
+    TEST_ASSERT_EQUAL_UINT8(3, gE.runs().run(gE.manifests().manifest(m3).runs[i]).slot);  // its own runs
+  TEST_ASSERT_FALSE(gS.popup());  // no long press of the source
+  TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));  // nothing launched
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(3, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(3));
+  // Across tracks: slot 0 held, track 2 selected, slot 2 pressed — onto track 2's slot 2 (engine slot 10).
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
+  ms(100);
+  tap(S::kTrackBase + 1);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(1, C().selectedTrack());
+  gS.input(0x9F, S::kSlotBase + 2, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, S::kSlotBase + 2, 0, gUs / 1000);
+  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(10));
+  TEST_ASSERT_FALSE(X().playing(1));
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -761,6 +812,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
+  RUN_TEST(test_holding_a_slot_and_pressing_another_copies_it);
   RUN_TEST(test_the_transport_button_stops_and_starts_locally_under_an_external_clock);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);

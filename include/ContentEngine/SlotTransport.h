@@ -293,6 +293,40 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  /// Copy / paste (owner 2026-11-10: hold a slot, press another): `src`'s current state onto `dst` as one undo step —
+  /// its runs' rows copied into new runs of `dst` (a state's runs are its slot's), the loop length kept; tracks playing
+  /// `dst` follow as on an undo. Empty: `src` has no content; Busy: `dst` is written or auditioned; NoChange: the same
+  /// slot; Denied* / Refused: no room (nothing changed).
+  Result copySlot(uint8_t src, uint8_t dst, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (src == dst) return Result::NoChange;
+    if ((mode_ != Mode::Idle && wSlot_ == dst) || dst == audSlot_) return Result::Busy;
+    const ManifestId base = contentOf(src);
+    if (base == kNoManifest) return Result::Empty;
+    const auto& b = manifests_->manifest(base);
+    RunId list[Manifests::kMaxRuns];
+    uint8_t n = 0;
+    Result result = Result::Ok;
+    for (uint8_t i = 0; i < b.runCount && result == Result::Ok; ++i) {
+      RunId r;
+      const FitResult f = fit_.copy(*pool_, *runs_, writer_->reservations(), dst, b.runs[i], r);
+      if (f == FitResult::Ok)
+        list[n++] = r;
+      else
+        result = f == FitResult::DeniedRun ? Result::DeniedRun : Result::Refused;
+    }
+    ManifestId m = kNoManifest;
+    if (result == Result::Ok) {
+      m = manifests_->create(dst, ++revision_, b.loopLengthTicks, list, n, *runs_);
+      if (m == kNoManifest) result = Result::DeniedManifest;
+    }
+    for (uint8_t i = 0; i < n; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
+    if (result != Result::Ok) return result;
+    history_->commit(dst, m);
+    emitted = selectSlot(dst, clock, false, out, max);
+    return Result::Ok;
+  }
+
   // ---- Get a loop's audition (DEC-271) --------------------------------------------------------------------------------
   /// Starts auditioning `m` — a preview state made for `slot` (one reference, now the audition's) — as `track`'s
   /// `slot`: when the track plays that slot it plays `m` instead from the next beat line (`PlaybackTrack::audition`); the

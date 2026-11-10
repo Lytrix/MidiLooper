@@ -201,6 +201,29 @@ class EditWriter {
     return r;
   }
 
+  /// One E: step of `n` changes and `m` new notes (copy / paste, owner 2026-11-10): `changes[n .. n + m)` hold the new
+  /// notes' values (fresh noteIds; their indices are set here), which take selection indices from `count()` on
+  /// (`first`). Nothing changes when the step is refused.
+  EditResult applyAdding(EditChange* changes, uint16_t n, uint16_t m, uint16_t& first) {
+    if (!open_ || leaving_) return EditResult::NotEditing;
+    if (count_ + m > MaxSelection) return EditResult::DeniedSelection;
+    for (uint16_t k = 0; k < m; ++k)
+      if (!valid(changes[n + k].value) || changes[n + k].value.tick >= loop_) return EditResult::DeniedSelection;
+    first = count_;
+    for (uint16_t k = 0; k < m; ++k) {
+      EditChange& c = changes[n + k];
+      EditNote absent = c.value;
+      absent.deleted = 1;
+      orig_[count_ + k] = cur_[count_ + k] = absent;
+      c.index = static_cast<uint16_t>(count_ + k);
+      c.value.deleted = 0;
+    }
+    count_ = static_cast<uint16_t>(count_ + m);
+    const EditResult r = apply(changes, static_cast<uint16_t>(n + m));
+    if (r != EditResult::Ok) count_ = static_cast<uint16_t>(count_ - m);
+    return r;
+  }
+
   /// O(changes of the step).
   EditResult undo() {
     if (!open_ || leaving_) return EditResult::NotEditing;

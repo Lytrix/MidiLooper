@@ -64,6 +64,11 @@
 //   velocity ×2 / ×3 / ×4 under 100 / 75 / 50 ms). While a step button is held: the turn edits its note (the lock
 //   begins at once), a push adds a 16th C4 on it, a double push deletes the selected note; the step's release is then
 //   no press. The long push does nothing yet (a CC menu later).
+// * Copy / paste (owner 2026-11-10: hold the source, press the target; no other buttons): a slot held and another slot
+//   pressed copies the held slot's state onto it (`TrackControl::copySlot`, one undo step; the held slot is the one
+//   pressed first, on the track then selected — select another track meanwhile for a copy across tracks); in NOTE_EDIT a
+//   step held and another pressed copies its note there, a bar button held and another pressed copies that bar over the
+//   other (`EditSurface::copyNote` / `copyBar`). Both presses are then no gesture.
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
 //   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
@@ -262,6 +267,8 @@ class Surface {
     encoderStep_ = 0xFF;
     encoderMs_ = 0;
     lockStep_ = 0xFF;
+    copyHeld_ = 0xFF;
+    barsHeld_ = 0;
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
@@ -313,6 +320,33 @@ class Surface {
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     uint8_t b;
+    if (d1 >= kBarStepBase && d1 < kStepNotes && edit_.editing()) {  // NOTE_EDIT's bar buttons: copy / paste only
+      const uint8_t bar = static_cast<uint8_t>(d1 - kBarStepBase);
+      if (type == 0x90 && d2 != 0) {
+        for (uint8_t h = 0; h < 8; ++h)
+          if (h != bar && ((barsHeld_ >> h) & 1u)) {
+            edit_.copyBar(h, bar, ms);
+            break;
+          }
+        barsHeld_ = static_cast<uint8_t>(barsHeld_ | (1u << bar));
+      } else {
+        barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~(1u << bar));
+      }
+      return;
+    }
+    if (d1 < 16 && edit_.editing() && type == 0x90 && d2 != 0) {  // a step held, another pressed: its note copied
+      const uint8_t held = heldStep();
+      if (held != 0xFF && held != d1) {
+        if (lockStep_ == 0xFF) {  // the held step's note, locked at once
+          lockStep_ = held;
+          edit_.lockBegin(held, ms);
+        }
+        if (lockStep_ == held && edit_.locked()) edit_.copyNote(d1, ms);
+        press_.down(static_cast<uint8_t>(kStep0 + d1), ms);
+        press_.consume(static_cast<uint8_t>(kStep0 + d1));
+        return;
+      }
+    }
     if (d1 < kStepNotes) {
       if (d1 >= 16 || !(edit_.editing() || press_.pressed(kStep0 + d1))) {  // performance: they act on the press
         if (type == 0x90 && d2 != 0) stepPress(d1);
@@ -326,6 +360,18 @@ class Surface {
     if (popup_ && b == popupButton_) {  // the length popup takes the button that opened it: taps
       popupPress(type == 0x90 && d2 != 0, ms);
       return;
+    }
+    if (type == 0x90 && d2 != 0 && b >= kSlot0 && b < kSlot0 + kSlotsPerTrack && !browsing()) {  // copy / paste
+      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
+      if (copyHeld_ != 0xFF && copyHeld_ != s && press_.pressed(static_cast<uint8_t>(kSlot0 + copyHeld_))) {
+        control().copySlot(copySource_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us());
+        press_.consume(static_cast<uint8_t>(kSlot0 + copyHeld_));
+        press_.down(b, ms);
+        press_.consume(b);
+        return;
+      }
+      copyHeld_ = s;  // the source, should another slot be pressed while it is held
+      copySource_ = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
     }
     if (type == 0x90 && d2 != 0) {
       press_.down(b, ms);
@@ -1130,6 +1176,8 @@ class Surface {
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
+  uint8_t copyHeld_ = 0xFF, copySource_ = 0;  // copy / paste: the slot button pressed first, its engine slot
+  uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
   typename EditSurface<Engine>::Nudge encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
   uint8_t encoderStep_ = 0xFF;  // the step held when the encoder was pushed (0xFF: none)
   uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)

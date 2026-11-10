@@ -66,7 +66,10 @@ one undo step, the previous selection back on release); step LEDs show that bar.
 GPIO encoder in NOTE_EDIT — push steps pitch / move / length / velocity (a line under the option), the turn edits the
 selected note with legacy acceleration; with a step held the turn locks its note, a push adds a stacked 16th C4, a
 double push deletes. Device `774d18a0…` (idle pins clean; owner on the physical encoder: "Works"). The
-performance and step surface batch (slices A–E) is complete.
+performance and step surface batch (slices A–E) is complete. **Copy / paste (DEC-279):** hold the source, press the
+target — slots (rows copied into the target's own runs, one undo step, across tracks by selecting the track while
+holding), bars in NOTE_EDIT (replaced, one edit step) and single notes (the held step's note beside the target's).
+Native 4,513 passed; device `f50f2dcb…`.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

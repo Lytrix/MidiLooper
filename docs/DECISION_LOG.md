@@ -15882,3 +15882,36 @@ microseconds under a parallel build) that passed alone on rerun. Device (image `
 Homebrew loader per the upload guide; boot `crash=0`, `BOOT,load,ok`): NOTE_EDIT open 6 s with the encoder untouched —
 the selected note unchanged (no stray detents or pushes from the pins), the line under NOTE drawn. On the physical
 encoder the owner confirmed the turn and push: "Works" (2026-11-10).
+
+## DEC-279 — Copy / paste: hold the source, press the target (slots, bars in NOTE_EDIT, single notes)
+
+**Date:** 2026-11-10. **Owner:** "continue with copy/paste"; then "all 3 needs to be implemented. slots should use the
+slot buttons. bar copy in note edit should use the bar buttons, a single note should use the 16th buttons … with a
+minimal button / encoder setup"; gesture: hold the source, press the target. Legacy only reserved a note-44 "Copy
+Note" button (short copy, long paste), never implemented and not wired in the DROID patch. Scope: OpenSpec
+`fixed-memory-engine` E9.8b-3 (copy / paste).
+
+**Decision:**
+- **Slots:** a slot button held and another pressed copies the held slot's current state onto the pressed one —
+  `SlotTransport::copySlot`: the state's runs' rows copied unchanged into new runs of the target (`FitBuilder::copy`; a
+  state's runs are its slot's), the loop length kept, one undo step on the target; tracks playing the target follow
+  as on an undo, nothing launches. The source is the slot pressed first, on the track selected then: select another
+  track while holding it for a copy across tracks. Refused (nothing changes) when the source is empty, the target is
+  written or auditioned, or the runs or pool have no room.
+- **Bars (NOTE_EDIT):** a bar button held and another pressed copies that bar of the 8-bar page holding the bracket
+  over the other — the target bar's notes deleted, the source's added at the same offsets with fresh ids, one edit
+  step (`EditWriter::applyAdding`: changes and new notes together), at most `kMaxPaste` (128) notes; the bars must lie
+  in the window and the loop.
+- **Single notes (NOTE_EDIT):** a step held and another pressed copies the held step's note (the lock's: the selected
+  one there, else its first) to that 16th at the same offset in it, beside what is there; one edit step; the
+  selection stays on the source.
+- Neither press makes its own gesture (no length popup, picker, select or lock of the target).
+
+**Evidence:** native: `test_holding_a_slot_and_pressing_another_copies_it` (the same rows in the target's own runs,
+the loop kept, no popup, nothing launched, undone; across tracks onto engine slot 10),
+`test_copy_paste_a_note_and_a_bar` (a note copied at its offset, undone; bar 1 over an empty bar 2, then bar 2 over
+bar 1 replacing it, both undone) — unconsumed-source, no-delete and dropped-row mutations fail them. Full native 4,513
+passed. Device (image `f50f2dcb…`, boot `crash=0`, `BOOT,load,ok`; RAM1 15,040 B free for the stack): 1-1 held, 1-5
+pressed → 1-5 the same loop and rows (768, 24), kept across a reboot (loads 26); 1-2 → 1-3, then in NOTE_EDIT bar 1
+over bar 3 (the same pattern there before) and step 2's note (95) onto step 8 (now 89 and 95 stacked); the edit visit
+and every copy undone (1-3 and 1-5 empty again).

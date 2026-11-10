@@ -182,6 +182,14 @@ class TrackControl {
     return r;
   }
   Result createEmpty(uint8_t slot, uint32_t loop) { return x_->createEmpty(slot, loop); }
+  /// Copy / paste (owner 2026-11-10): `src`'s state onto `dst`, one undo step.
+  Result copySlot(uint8_t src, uint8_t dst, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    Emit buf[Tracks * T];
+    uint8_t n;
+    const Result r = x_->copySlot(src, dst, clock, buf, Tracks * T, n);
+    out_->route(buf, n, nowUs, usPerTick);
+    return r;
+  }
   /// Loop start (owner 2026-11-08): the slot's content rotated `shift` ticks earlier.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0) {
     Emit buf[Tracks * T];

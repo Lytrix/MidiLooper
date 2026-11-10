@@ -1713,6 +1713,71 @@ void test_no_heap() {
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
 }
 
+// Copy / paste in NOTE_EDIT (owner 2026-11-10: hold the source, press the target): a step held and another pressed
+// copies the held step's note there (same offset in the 16th, beside what is there); a bar button held and another
+// pressed copies that bar over the other. One undo step each; the presses make no gesture of their own.
+static uint32_t notesIn(uint32_t from, uint32_t to) {
+  uint32_t n = 0;
+  for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
+    const EditNote& e = gE.noteEdit().current(i);
+    if (!e.deleted && e.tick >= from && e.tick < to) ++n;
+  }
+  return n;
+}
+void test_copy_paste_a_note_and_a_bar() {
+  recordBar({{96, 64}, {100, 72}, {384, 67}});
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(2 * 768));  // bar 2 empty
+  enterEdit();
+  settle();
+  TEST_ASSERT_EQUAL_UINT32(1536, gS.edit().windowTicks());
+  // A note: step 2's selected note (64 @ 96) onto step 10 (480), the held step pressed first.
+  tap(2);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  gS.input(0x9F, 2, 127, gUs / 1000);
+  ms(100);
+  gS.input(0x9F, 10, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 10, 0, gUs / 1000);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  ms(450);
+  const int32_t copy = noteAt(480);
+  TEST_ASSERT_TRUE(copy >= 0);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(copy)).pitch);
+  TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(copy)).length);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);  // the selection stays on the source
+  TEST_ASSERT_EQUAL_UINT32(96, sel().tick);
+  dbl(S::kRecordNote);  // one undo step
+  ms(450);
+  TEST_ASSERT_EQUAL_INT32(-1, noteAt(480));
+  // A bar: bar 1 held, bar 2 pressed — bar 1's three notes over bar 2.
+  TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
+  gS.input(0x9F, 17, 127, gUs / 1000);
+  ms(100);
+  gS.input(0x9F, 18, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 18, 0, gUs / 1000);
+  gS.input(0x8F, 17, 0, gUs / 1000);
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(3, notesIn(768, 1536));
+  TEST_ASSERT_TRUE(noteAt(768 + 96) >= 0 && noteAt(768 + 100) >= 0 && noteAt(768 + 384) >= 0);
+  TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
+  // Bar 2 over bar 1: bar 1 is replaced, not added to.
+  gS.input(0x9F, 18, 127, gUs / 1000);
+  ms(100);
+  gS.input(0x9F, 17, 127, gUs / 1000);
+  gS.input(0x8F, 17, 0, gUs / 1000);
+  gS.input(0x8F, 18, 0, gUs / 1000);
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
+  dbl(S::kRecordNote);  // undo: bar 1's own notes back
+  ms(450);
+  dbl(S::kRecordNote);  // undo: bar 2 empty again
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
+  TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
@@ -1738,6 +1803,7 @@ int main(int, char**) {
   RUN_TEST(test_a_lock_on_an_added_note_keeps_its_fine_move);
   RUN_TEST(test_the_encoder_cycles_its_options_and_nudges_the_note);
   RUN_TEST(test_the_encoder_with_a_step_held);
+  RUN_TEST(test_copy_paste_a_note_and_a_bar);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

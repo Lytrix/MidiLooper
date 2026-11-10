@@ -45,6 +45,10 @@
 //   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `Surface` — one undo step
 //   a note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even
 //   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
+// * Copy / paste (owner 2026-11-10: hold the source, press the target; one undo step each): a step held, another step
+//   pressed — the selected note (the held step's, locked) copied to that 16th at the same offset in it, beside what is
+//   there (`copyNote`); a bar button held, another pressed — that bar of the 8-bar page holding the bracket copied over
+//   the other (its notes replaced; `copyBar`, at most `kMaxPaste` notes deleted and added).
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
 //   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
@@ -523,6 +527,64 @@ class EditSurface {
     drive(kMotorAll, ms);
   }
   bool locked() const { return lock_; }
+  /// Copy / paste: the selected note onto step `k` at its offset in the 16th, a new note beside those there. False:
+  /// nothing selected, outside the window, or refused.
+  bool copyNote(uint8_t k, uint32_t ms) {
+    EditNote n;
+    uint32_t tick;
+    if (!selected(n) || !stepTick(k, tick)) return false;
+    EditNote c = n;
+    c.tick = tick + n.tick % kSixteenth;
+    if (c.tick >= loop_ || c.tick >= first_ + ticks_) return false;
+    c.noteId = e_->noteIds().peek();
+    e_->noteIds().advance();
+    c.deleted = 0;
+    open_ = false;
+    session().settle();
+    uint16_t at = 0;
+    if (session().create(c, focus(), at) != EditResult::Ok) return false;
+    drive(kMotorSelect, ms);  // F1's stack for the selection may have grown
+    return true;
+  }
+  /// Copy / paste: bar `from` of the 8-bar page holding the bracket over bar `to` (its notes deleted, `from`'s added at
+  /// the same offsets). False: the same bar, outside the window or the loop, too many notes, or refused.
+  bool copyBar(uint8_t from, uint8_t to, uint32_t ms) {
+    if (!editing() || from == to || from >= 8 || to >= 8) return false;
+    const uint32_t page = bracket_ / (8 * kBar) * (8 * kBar);
+    const uint32_t src = page + from * kBar, dst = page + to * kBar;
+    const auto inside = [&](uint32_t t) { return t < loop_ && t >= first_ && t < first_ + ticks_; };
+    if (!inside(src) || !inside(dst)) return false;
+    uint16_t del = 0, add = 0;
+    const uint16_t size = session().size();
+    for (uint16_t i = 0; i < size; ++i) {  // the target bar's notes go
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < dst || e.tick >= dst + kBar) continue;
+      if (del == kMaxPaste) return false;
+      paste_[del] = EditChange{i, e};
+      paste_[del++].value.deleted = 1;
+    }
+    for (uint16_t i = 0; i < size; ++i) {  // the source bar's come
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < src || e.tick >= src + kBar) continue;
+      const uint32_t t = e.tick - src + dst;
+      if (!inside(t)) continue;
+      if (del + add == kMaxPaste) return false;
+      EditNote c = e;
+      c.tick = t;
+      c.noteId = e_->noteIds().peek();
+      e_->noteIds().advance();
+      paste_[del + add++] = EditChange{0, c};
+    }
+    if (del + add == 0) return false;
+    open_ = false;
+    session().settle();
+    uint16_t first = 0;
+    if (session().applyAdding(paste_, del, add, focus(), first) != EditResult::Ok) return false;
+    EditNote n;
+    if (sel_ >= 0 && !selected(n)) pick(-1);  // the selection was in the target bar
+    drive(kMotorAll, ms);
+    return true;
+  }
   /// The encoder's push while step `k` is held (slice E): a 16th C4 there, stacked beside the notes it holds.
   void stepAdd(uint8_t k, uint32_t ms) {
     uint32_t tick;
@@ -886,6 +948,8 @@ class EditSurface {
   uint32_t lastFineMs_ = 0;
   bool hadFine_ = false;
   bool open_ = false;  // the selected note has its step: a change replaces it
+  static constexpr uint16_t kMaxPaste = 128;  // a bar copy's notes deleted and added together
+  EditChange paste_[kMaxPaste];
   bool lock_ = false, lockLength_ = false;  // a step held (slice D): the selection before it
   int16_t lockSel_ = -1;
   uint32_t lockBracket_ = 0, lockRef_ = 0;

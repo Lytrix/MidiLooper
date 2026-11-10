@@ -134,6 +134,15 @@ class NoteEditSession {
     }
     return r;
   }
+  /// Copy / paste: `n` changes and `m` new notes (`changes[n .. n + m)`) as one E: step (`EditWriter::applyAdding`).
+  EditResult applyAdding(EditChange* changes, uint16_t n, uint16_t m, uint32_t focus, uint16_t& first) {
+    const EditResult r = writer_->applyAdding(changes, n, m, first);
+    if (r == EditResult::Ok) {
+      focus_[index(writer_->depth())] = focus;
+      stepTaken();
+    }
+    return r;
+  }
   /// The E: level (an edit surface collapses a fader gesture into its one step while the level is unchanged).
   uint8_t depth() const { return writer_->depth(); }
   /// The session's notes as they are now (edits applied, created notes included): `size` of them.

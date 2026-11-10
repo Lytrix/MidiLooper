@@ -81,6 +81,25 @@ class FitBuilder {
     return FitResult::Ok;
   }
 
+  /// The rows of run `src` unchanged in a new sealed run of the same kind for `slot` (`out`, the writer's reference): a
+  /// slot copy (owner 2026-11-10; a state's runs are its slot's, so another slot takes its own).
+  FitResult copy(Pool& pool, Runs& runs, Res& res, uint8_t slot, RunId src, RunId& out) {
+    out = kNoRun;
+    const auto& d = runs.run(src);
+    if (d.rowCount > kMaxScanRows) return FitResult::TooLarge;
+    const RunId run = runs.allocate(slot, d.kind);
+    if (run == kNoRun) return FitResult::DeniedRun;
+    if (res.reserve(run, d.rowCount) != Admission::Ok) {
+      runs.seal(run);
+      runs.release(run);
+      return FitResult::DeniedCapacity;
+    }
+    for (uint32_t i = 0; i < d.rowCount; ++i) res.writeOwed(run, runs.rowAt(src, i, pool));
+    runs.seal(run);
+    out = run;
+    return FitResult::Ok;
+  }
+
   /// The fit run of `content[0..n)` (no fit run among them) at loop length `loop`, for `slot`: `fit` is a sealed run
   /// with the writer's reference, or kNoRun when the result is not Ok.
   FitResult build(Pool& pool, Runs& runs, Res& res, uint8_t slot, const RunId* content, uint8_t n, uint32_t loop,

@@ -55,6 +55,10 @@ partition (a2 done: 8,192 rows); (b) the audition owner (done, DEC-271); (c) the
 **2026-11-10 — performance and step surface (owner: "a few things I want to add, partly from the legacy stack";
 OpenSpec `fixed-memory-engine` E9.8b-3, bar / 16th steps; legacy behaviour mapped first).** Slice A done (DEC-273);
 slice B done (DEC-274); slice C done (DEC-275); slice D done (DEC-277); slice E done (DEC-278) — the batch is complete.
+
+**2026-11-10 — copy / paste (owner: "continue with copy/paste"; all three — slots on the slot buttons, bars in NOTE_EDIT
+on the bar buttons, single notes on the 16th buttons — hold the source, press the target).** Done (DEC-279). Next in
+E9.8b-3: quantize, the 41–48 extended transport.
 Slices, in order:
 (A) boot shows the last selected slot first (no switch on screen); a queued slot's piano roll shown at once, its
 playhead parked at the launch point and flashing until the switch (legacy `isPreviewPlayheadPending`). (B) a global
