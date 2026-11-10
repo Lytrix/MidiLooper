@@ -2499,7 +2499,7 @@ void test_auto_grooves_an_overdub() {
 
 // DEC-294 / DEC-295 (owner: "audition no groove, previous groove, new groove"): A (the groove when the window opened)
 // and B (a copy), both edited; PLAY/STOP steps OFF → A → B, its double cycles A / B two bars each from bar lines, a
-// short press keeps the one playing; NOTELEN is AUTO Q; applying keeps what plays, one undo step.
+// short press keeps the one playing; TRK is AUTO Q; applying keeps what plays, one undo step.
 void test_the_groove_window_compares_a_b_and_off() {
   recordBar({{130, 60}});
   ContentEngine::groove::Settings a;
@@ -2527,11 +2527,15 @@ void test_the_groove_window_compares_a_b_and_off() {
   EXPECT_ALL(positions(true, 60, 768), 137);
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gClk.running());  // PLAY/STOP in the window: no stop
-  // NOTELEN: AUTO Q (the slot's), kept with what plays.
+  // TRK: AUTO Q (the slot's), kept with what plays — not a track switch; NOTELEN does nothing here.
   TEST_ASSERT_FALSE(gS.grooveAuto());
   tap(S::kLengthNote);
   ms(400);
+  TEST_ASSERT_FALSE(gS.grooveAuto());
+  tap(S::kTrackSwitchNote);
+  ms(400);
   TEST_ASSERT_TRUE(gS.grooveAuto());
+  TEST_ASSERT_EQUAL_UINT8(0, gE.control().selectedTrack());
   // Double: the cycle — A, B two bars each from the next bar line, each turn on its bar line.
   dbl(S::kPlayStopNote);
   ms(450);

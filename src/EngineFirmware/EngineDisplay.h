@@ -1253,8 +1253,8 @@ class EngineDisplay {
     const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
-    {  // AUTO Q: a checkbox in the title bar (GEM's widget place), NOTELEN's
-      const char* t = "[ADD]";
+    {  // AUTO Q: a checkbox in the title bar (GEM's widget place), TRK's (DEC-295 am. 1, as in the load / save window)
+      const char* t = "[TRK]";
       const int16_t w = static_cast<int16_t>(strlen(t)) * 4 + 4 + 7 + 24 + 3, x = static_cast<int16_t>(x1 - 4 - w);
       oled_.gfx.draw_rect_filled(fb(), x, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(x + w), y0 + 8, 0);
       int16_t cx = hintLabel(t, static_cast<int16_t>(x + 2), static_cast<int16_t>(y0 + 2));

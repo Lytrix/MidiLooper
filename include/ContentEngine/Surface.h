@@ -481,7 +481,7 @@ class Surface {
     }
   }
   // ---- The GROOVE window (DEC-289) -------------------------------------------------------------------------------
-  // Fields (DEC-295): A's groove, A's amount, B's groove, B's amount (AUTO Q: NOTELEN, the title bar's checkbox). REC / EDIT move
+  // Fields (DEC-295): A's groove, A's amount, B's groove, B's amount (AUTO Q: TRK, the title bar's checkbox). REC / EDIT move
   // up / down as in the load / save window, the encoder's push down, its turn the value; F1 / F2 the grooves of A / B,
   // F3 / F4 their amounts.
   void nextGrooveField(int8_t d) {
@@ -498,7 +498,7 @@ class Surface {
     pendingCol_ = col;
     groovePendingMs_ = ms;
   }
-  /// AUTO Q (NOTELEN in the window): the slot's (owner: "keep auto on slot level"), kept with what plays.
+  /// AUTO Q (TRK in the window, DEC-295 am. 1): the slot's (owner: "keep auto on slot level"), kept with what plays.
   void toggleAutoQ(uint32_t ms) {
     grooveAuto_ = !grooveAuto_;
     if (grooveHeard() != Heard::Off) grooveChanged(grooveHeard(), ms);
@@ -1067,9 +1067,9 @@ class Surface {
       grooveCompare(p);
       return;
     }
-    if (groove_ && (b == kRecord || b == kEditMode || b == kLength)) {  // REC up, EDIT down (the load / save window's)
-      if (p == Press::Short && b == kLength) toggleAutoQ(nowMs_);  // NOTELEN: AUTO Q
-      else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);
+    if (groove_ && (b == kRecord || b == kEditMode || b == kLength || b == kTrackSwitch)) {  // the load / save window's
+      if (p == Press::Short && b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q (DEC-295 am. 1)
+      else if (p == Press::Short && b != kLength) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
       return;
     }
     if (popup_ && p == Press::Long && b != popupButton_) {  // a long press of another button closes the popup, kept

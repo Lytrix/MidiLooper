@@ -16570,4 +16570,9 @@ STOP B → OFF 130 → A 137 without stopping the clock; NOTELEN AUTO Q; double 
 applied with AUTO Q; one undo step). Full native 4,546 passed. Device image `a39c3b56…` (`crash=0`): T7 S1 —
 open (A heard, A's groove selected), EDIT → A's amount, PLAY/STOP → B with the bar, double → cycling hints, the
 highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
+- **Amendment 1 (owner 2026-11-11: "instead of add maybe we can use TRK for consistency with load/save and it is a sort
+  of 'track' level setting anyways"):** AUTO Q is on the track-switch button (`[TRK] ☐ AUTO Q` in the title bar), not
+  NOTELEN; in the window TRK switches no track and NOTELEN does nothing. Native: the compare test presses NOTELEN (no
+  change), then TRK (AUTO Q on, still track 1). Full native 4,546 passed. Device image `901e8b65…` (`crash=0`): TRK in
+  the window on T1 S3 → `[TRK] ■ AUTO Q`.
 

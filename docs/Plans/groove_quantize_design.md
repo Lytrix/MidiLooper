@@ -145,7 +145,7 @@ by the UI exploration.
 - **Compare (DEC-294, reshaped by DEC-295):** a static table like the load / save window — `OFF · A · B` over two
   columns (A the groove at opening, B a copy; both edited) of GROOVE and AMOUNT; F1 / F2 the grooves of A / B, F3 / F4
   their amounts; REC / EDIT select, the encoder turns; PLAY/STOP steps OFF → A → B, its double cycles A / B (two bars a
-  turn, global), a short press while cycling keeps the one playing, its hold applies; NOTELEN is AUTO Q, a checkbox in
+  turn, global), a short press while cycling keeps the one playing, its hold applies; TRK is AUTO Q (DEC-295 am. 1), a checkbox in
   the title bar. The scope (BARS) is gone: the whole loop (a selection later, maybe asked on applying).
 - **The cycle as a design language (owner 2026-11-10):** the same turn-taking is meant for the "loop chain" —
   slots queued as a musical preset, a bar each (`A A A B A A A C`, `A A A B A B A C`), using the custom loop lengths

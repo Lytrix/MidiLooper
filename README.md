@@ -134,7 +134,7 @@ Grooves: STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC
 | **REC** / **EDIT** | Select the value above / below; the encoder turns it (its push selects the next) |
 | **PLAY/STOP** | Step through OFF → A → B. While cycling: keep the one playing |
 | **PLAY/STOP** twice | Cycle: A and B take turns of two bars, each from its bar line (again: stop) |
-| **NOTELEN** (`[ADD]`) | AUTO Q, the checkbox in the title bar: an overdub on this loop is grooved too once it ends |
+| **Next track** (`[TRK]`) | AUTO Q, the checkbox in the title bar: an overdub on this loop is grooved too once it ends |
 | **Hold PLAY/STOP** | Apply: what is playing stays, and the window closes (a long press of any button does the same) |
 
 A change is heard once you stop moving it: built in the background while the loop keeps playing, from the next beat — under a second at 120 BPM. Changing A or B makes that one heard (while cycling, its next turn plays it). A bar along the window's bottom fills while a change is on its way; `WAIT` or `TOO BIG` shows when the loop cannot be grooved yet or at all. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
