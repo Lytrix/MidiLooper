@@ -70,6 +70,7 @@ struct EditView {
   uint8_t notePitch = 0, noteVelocity = 0;
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
+  int8_t encoder = -1;    // the encoder's option (slice E): 0 pitch, 1 move, 2 length, 3 velocity
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
@@ -1367,6 +1368,7 @@ class EngineDisplay {
       } else {
         position(nullptr, xr, 4, 4, false);
       }
+      if (edit_.ready && edit_.encoder == 1) hline(x0, xr, kLabY + 6, 15);  // the encoder moves the start (slice E)
     } else {
       // Save dots, or RO before saving is approved.
       if (!started_) {
@@ -1488,6 +1490,9 @@ class EngineDisplay {
         snprintf(cells[2].value, sizeof cells[2].value, "%u", ch);
     }
     for (uint8_t i = 0; i < 3; ++i) {
+      static constexpr int8_t kEncoderCell[3] = {0, 3, 2};  // NOTE pitch, VELOCITY, LENGTH (slice E)
+      if (noteEdit && edit_.ready && edit_.encoder == kEncoderCell[i])  // the encoder's option: a line under its label
+        hline(x0, static_cast<int16_t>(x0 + cells[i].width - 1), kLabY + 6, 15);
       if (i) separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
       label(cells[i].label, x0, kLabY, noteEdit || loopEdit ? 0 : 5);
       if (loopEdit && i == 2)

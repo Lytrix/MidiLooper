@@ -1012,6 +1012,104 @@ void test_a_lock_on_an_added_note_keeps_its_fine_move() {
   TEST_ASSERT_EQUAL_UINT32(589, sel().tick);
 }
 
+// Slice E (owner 2026-11-10): the GPIO encoder in NOTE_EDIT — its push steps pitch → move → length → velocity → pitch,
+// its turn changes the selected note's option, accelerated as legacy `processEncoderMovement` (a quick move ×24).
+static void push(uint32_t holdMs = 40) {
+  gS.encoderButton(true, gUs / 1000);
+  ms(holdMs);
+  gS.encoderButton(false, gUs / 1000);
+}
+static void turn(int32_t d, uint32_t gapMs = 200) {
+  ms(gapMs);
+  gS.encoderTurn(d, gUs / 1000);
+  ms(1);
+}
+void test_the_encoder_cycles_its_options_and_nudges_the_note() {
+  using N = EditSurface<EngineRoot>::Nudge;
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  tap(2);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL(N::Pitch, gS.encoderOption());
+  turn(1);
+  turn(1);
+  TEST_ASSERT_EQUAL_UINT8(66, sel().pitch);
+  turn(1, 30);  // quick: ×4
+  TEST_ASSERT_EQUAL_UINT8(70, sel().pitch);
+  push();
+  ms(400);
+  TEST_ASSERT_EQUAL(N::Move, gS.encoderOption());
+  const uint32_t at = sel().tick;
+  turn(1);
+  TEST_ASSERT_EQUAL_UINT32(at + 1, sel().tick);
+  turn(1, 10);  // quick: ×24
+  TEST_ASSERT_EQUAL_UINT32(at + 25, sel().tick);
+  turn(-1);
+  TEST_ASSERT_EQUAL_UINT32(at + 24, sel().tick);
+  push();
+  ms(400);
+  TEST_ASSERT_EQUAL(N::Length, gS.encoderOption());
+  const uint32_t len = sel().length;
+  turn(1);      // the first turn after the push: slow
+  turn(1, 30);  // ×4
+  TEST_ASSERT_EQUAL_UINT32(len + 5, sel().length);
+  push();
+  ms(400);
+  TEST_ASSERT_EQUAL(N::Velocity, gS.encoderOption());
+  const uint8_t vel = sel().velocity;
+  turn(-1);
+  TEST_ASSERT_EQUAL_UINT8(vel - 1, sel().velocity);
+  push();
+  ms(400);
+  TEST_ASSERT_EQUAL(N::Pitch, gS.encoderOption());  // round
+  // Every change to the note was one undo step.
+  dbl(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(96))).pitch);
+}
+
+// With a step held: the turn edits the step's note at once (the lock), a push adds a 16th C4 there beside its notes,
+// a double push deletes the selected note; the step's release is no press.
+void test_the_encoder_with_a_step_held() {
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  tap(8);
+  ms(350);
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  gS.input(0x9F, 2, 127, gUs / 1000);
+  turn(2, 100);  // before the lock's hold: it locks at once
+  TEST_ASSERT_TRUE(gS.edit().locked());
+  TEST_ASSERT_EQUAL_UINT8(66, gE.noteEdit().current(static_cast<uint16_t>(noteAt(96))).pitch);
+  const uint16_t size = gE.noteEdit().size();
+  push();
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());  // a 16th C4 beside it
+  uint32_t c4 = 0;
+  for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
+    const EditNote& e = gE.noteEdit().current(i);
+    if (!e.deleted && e.tick == 96 && e.pitch == 60 && e.length == 48) ++c4;
+  }
+  TEST_ASSERT_EQUAL_UINT32(1, c4);
+  push();
+  ms(80);
+  push();
+  ms(400);  // double: the selected note (the new C4) deleted
+  c4 = 0;
+  for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
+    const EditNote& e = gE.noteEdit().current(i);
+    if (!e.deleted && e.tick == 96 && e.pitch == 60) ++c4;
+  }
+  TEST_ASSERT_EQUAL_UINT32(0, c4);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  ms(450);
+  TEST_ASSERT_FALSE(gS.edit().locked());
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the previous selection, no press of the step
+  TEST_ASSERT_EQUAL(EditSurface<EngineRoot>::Nudge::Pitch, gS.encoderOption());  // the pushes did not cycle
+}
+
 // A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor
 // arriving at the velocity is not a move; moved by hand, the hold edits the velocity and creates nothing.
 void test_notelen_long_press_creates() {
@@ -1638,6 +1736,8 @@ int main(int, char**) {
   RUN_TEST(test_step_buttons_select_cycle_create_and_delete);
   RUN_TEST(test_a_held_step_is_a_parameter_lock);
   RUN_TEST(test_a_lock_on_an_added_note_keeps_its_fine_move);
+  RUN_TEST(test_the_encoder_cycles_its_options_and_nudges_the_note);
+  RUN_TEST(test_the_encoder_with_a_step_held);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_slot_long_press_creates_an_empty_loop);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

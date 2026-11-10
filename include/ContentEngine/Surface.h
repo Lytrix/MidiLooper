@@ -57,6 +57,13 @@
 //     the step buttons are the 16ths of the bracket's bar (`EditSurface`): short = select / cycle (an empty step: a
 //     16th C4), double = delete, held `kLockMs` = the parameter lock until the release (no gesture then); their LEDs
 //     show that bar's notes and the bracket's step.
+// * The encoder (slice E; the Teensy's GPIO quadrature encoder and its push, legacy pins 29 / 30 / 31, read by the
+//   firmware: `encoderTurn` in detents, `encoderButton`), NOTE_EDIT only: push = the next option — pitch (first),
+//   move, length, velocity; turn = the selected note's option by the turn, accelerated as legacy
+//   `processEncoderMovement` (move ×4 / ×8 / ×24 under 100 / 50 / 25 ms a detent, length ×2 / ×4 / ×8, pitch and
+//   velocity ×2 / ×3 / ×4 under 100 / 75 / 50 ms). While a step button is held: the turn edits its note (the lock
+//   begins at once), a push adds a 16th C4 on it, a double push deletes the selected note; the step's release is then
+//   no press. The long push does nothing yet (a CC menu later).
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
 //   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
@@ -229,7 +236,8 @@ class Surface {
     kSlot0,
     kTrack0 = kSlot0 + 8,
     kStep0 = kTrack0 + 8,  // NOTE_EDIT's step buttons (slice D; in performance they act on the press)
-    kButtons = kStep0 + 16
+    kEncoder = kStep0 + 16,  // the GPIO encoder's push (slice E)
+    kButtons = kEncoder + 1
   };
   static constexpr uint32_t kLockMs = 400;  // a step held this long in NOTE_EDIT: the parameter lock
   static constexpr uint8_t kTracks = 8, kSlotsPerTrack = 8;
@@ -249,6 +257,10 @@ class Surface {
     for (uint8_t s = 0; s < kSlotsPerTrack; ++s) press_.configure(kSlot0 + s, T{300, 400, 600, 0, true});
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t k = 0; k < 16; ++k) press_.configure(kStep0 + k, T{300, 400, 600, 0, false});
+    press_.configure(kEncoder, T{300, 400, 600, 0, false});
+    encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
+    encoderStep_ = 0xFF;
+    encoderMs_ = 0;
     lockStep_ = 0xFF;
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
@@ -328,6 +340,37 @@ class Surface {
       if (b == kLength && edit_.velocityDone(ms)) edit_.create(ms);
     }
   }
+
+  // ---- The encoder (slice E) ----------------------------------------------------------------------------------------
+  /// The encoder turned `detents` (signed) at `ms`: in NOTE_EDIT the selected note's option, accelerated as legacy.
+  void encoderTurn(int32_t detents, uint32_t ms) {
+    const uint32_t interval = ms - encoderMs_;
+    encoderMs_ = ms;
+    if (detents == 0 || !edit_.editing()) return;
+    const uint8_t k = heldStep();
+    if (k != 0xFF && lockStep_ == 0xFF) {  // a held step: its note now, without waiting for the lock's hold
+      lockStep_ = k;
+      edit_.lockBegin(k, ms);
+    }
+    using N = typename EditSurface<Engine>::Nudge;
+    int32_t accel = 1;
+    if (encoderOption_ == N::Move) accel = interval < 25 ? 24 : interval < 50 ? 8 : interval < 100 ? 4 : 1;
+    else if (encoderOption_ == N::Length) accel = interval < 25 ? 8 : interval < 50 ? 4 : interval < 100 ? 2 : 1;
+    else accel = interval < 50 ? 4 : interval < 75 ? 3 : interval < 100 ? 2 : 1;
+    edit_.nudge(encoderOption_, detents * accel, ms);
+  }
+  /// The encoder's push pressed (`down`) or released, debounced by the firmware.
+  void encoderButton(bool down, uint32_t ms) {
+    if (down) {
+      encoderStep_ = edit_.editing() ? heldStep() : 0xFF;  // a push with a step held acts on that step
+      if (encoderStep_ != 0xFF) press_.consume(static_cast<uint8_t>(kStep0 + encoderStep_));
+      press_.down(kEncoder, ms);
+    } else {
+      press_.up(kEncoder, ms);
+    }
+  }
+  /// The encoder's option (pitch, move, length, velocity), for the screen.
+  typename EditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
   /// Once per main-loop pass: the gestures due, at the last played tick.
   void service(uint32_t ms, uint32_t lastTick, uint32_t nowUs) {
@@ -601,6 +644,19 @@ class Surface {
         return;
       default:
         break;
+    }
+    if (b == kEncoder) {  // slice E: NOTE_EDIT only
+      if (!edit_.editing()) return;
+      const uint8_t k = encoderStep_;
+      if (k != 0xFF && p == Press::Short) {
+        edit_.stepAdd(k, nowMs_);
+      } else if (k != 0xFF && p == Press::Double) {
+        edit_.deleteSelected(nowMs_);
+      } else if (k == 0xFF && p == Press::Short) {  // the next option: pitch, move, length, velocity
+        using N = typename EditSurface<Engine>::Nudge;
+        encoderOption_ = static_cast<N>((static_cast<uint8_t>(encoderOption_) + 1) % 4);
+      }
+      return;  // long: a CC menu later
     }
     if (b >= kStep0 && b < kStep0 + 16) {  // NOTE_EDIT's step buttons (slice D)
       const uint8_t k = static_cast<uint8_t>(b - kStep0);
@@ -1074,6 +1130,15 @@ class Surface {
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
+  typename EditSurface<Engine>::Nudge encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
+  uint8_t encoderStep_ = 0xFF;  // the step held when the encoder was pushed (0xFF: none)
+  uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)
+  /// The step button held in NOTE_EDIT (the first; 0xFF: none).
+  uint8_t heldStep() const {
+    for (uint8_t k = 0; k < 16; ++k)
+      if (press_.pressed(static_cast<uint8_t>(kStep0 + k))) return k;
+    return 0xFF;
+  }
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode

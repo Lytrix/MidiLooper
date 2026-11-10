@@ -15850,3 +15850,35 @@ slot afterwards (step 4 back to its pitch-93 note).
   kept on release, F3 not rewritten, a resting F3 changes nothing, 77 goes on from the note's 16th) — both halves'
   reverts fail it; full native 4,509 passed. Device `11fb2422…` (boot `crash=0`): a held note moved 144 → 155 by F3 stayed at 155 on release,
   F3 at rest kept it, 77 → 157; the visit undone on the slot.
+
+## DEC-278 — The GPIO encoder in NOTE_EDIT: options, accelerated turns, and a held step's push (surface slice E)
+
+**Date:** 2026-11-10. **Owner:** "pushing the encoder button you cycle through, turning will have the acceleration /
+deceleration logic from legacy. double pressing the encoder will remove the note, single press add while a step is
+held. long press will probably be a CC menu … future feature"; the Teensy's GPIO encoder, as legacy; pitch first.
+Legacy: `GpioButtonManager` (Encoder on pins 29 / 30, four counts a detent; push on 31) and
+`ControlSurfaceManager::processEncoderMovement`. Scope: `CURRENT_WORK` performance and step surface, slice E.
+
+**Decision:**
+- **Firmware** (`serviceEncoder`, once a main-loop pass): the Encoder library on 29 / 30, detents to
+  `Surface::encoderTurn`; the push on 31 (pull-up, a level held 5 ms) to `Surface::encoderButton`, timed by the
+  surface's press detector (`kEncoder`).
+- **NOTE_EDIT only.** Push: the next option — pitch (first), move, length, velocity, round. Turn: the selected note's
+  option by the turn (`EditSurface::nudge`: semitones; start ticks, wrapped; length ticks, 1 … loop; velocity 1–127, a
+  mute kept), accelerated by the gap since the last detent as legacy — move ×4 / ×8 / ×24 under 100 / 50 / 25 ms,
+  length ×2 / ×4 / ×8, pitch and velocity ×2 / ×3 / ×4 under 100 / 75 / 50 ms; one undo step a note, as the faders;
+  the faders showing the option follow.
+- **A step held** (DEC-277): a turn locks its note at once (no 400 ms wait); a push adds a 16th C4 on the step, stacked
+  beside its notes (`stepAdd`); a double push deletes the selected note (`deleteSelected`); the pushes do not cycle,
+  and the step's release is no press. Long push: nothing yet (a CC menu, a future feature).
+- **Screen:** a bright line under the option's label — START (move), NOTE, VELOCITY or LENGTH.
+
+**Evidence:** native: `test_the_encoder_cycles_its_options_and_nudges_the_note` (64 → 66, a quick detent ×4; move +1,
+×24, −1; length ×4; velocity −1; round to pitch; one undo per note) and `test_the_encoder_with_a_step_held` (a turn
+locks and edits the step's note, a push adds the stacked C4, a double push deletes it, the release restores the
+selection, the pushes did not cycle) — no-acceleration, push-cycles-while-held and no-early-lock mutations fail them.
+Full native 4,511 passed and one timing assertion in a legacy suite (`test_riao2_p_derive_cost_profile`, wall-clock
+microseconds under a parallel build) that passed alone on rerun. Device (image `774d18a0…`; the GUI upload left the board in HalfKay, programmed again with the
+Homebrew loader per the upload guide; boot `crash=0`, `BOOT,load,ok`): NOTE_EDIT open 6 s with the encoder untouched —
+the selected note unchanged (no stray detents or pushes from the pins), the line under NOTE drawn. The turn and push
+on the physical encoder are the owner's check.

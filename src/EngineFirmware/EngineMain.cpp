@@ -44,6 +44,7 @@
 #include <cstring>
 
 #include <EEPROM.h>
+#include <Encoder.h>
 
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
@@ -300,6 +301,31 @@ void pollInput(uint32_t nowUs) {
       channelMessage(static_cast<uint8_t>(type | ((gHostMidi.getChannel() - 1) & 0x0F)), gHostMidi.getData1(),
                      gHostMidi.getData2(), nowUs);
     }
+  }
+}
+
+// ---- The GPIO encoder (surface slice E; legacy pins `Buttons::ENCODER_PIN_A/B`, `ENCODER_BUTTON_PIN`) ------------------
+// Quadrature on 29 / 30 (the Encoder library's interrupts, four counts a detent, as legacy `GpioButtonManager`), the push
+// on 31 to ground (pull-up), debounced: a level held `kEncoderDebounceMs` is taken.
+constexpr uint8_t kEncoderPinA = 29, kEncoderPinB = 30, kEncoderButtonPin = 31;
+constexpr uint32_t kEncoderDebounceMs = 5;
+Encoder gEncoder(kEncoderPinA, kEncoderPinB);
+long gEncoderDetents = 0;
+bool gEncoderDown = false, gEncoderRaw = false;
+uint32_t gEncoderRawMs = 0;
+void serviceEncoder(uint32_t ms) {
+  const long detents = gEncoder.read() / 4;
+  if (detents != gEncoderDetents) {
+    gSurface.encoderTurn(static_cast<int32_t>(detents - gEncoderDetents), ms);
+    gEncoderDetents = detents;
+  }
+  const bool raw = digitalRead(kEncoderButtonPin) == LOW;
+  if (raw != gEncoderRaw) {
+    gEncoderRaw = raw;
+    gEncoderRawMs = ms;
+  } else if (raw != gEncoderDown && ms - gEncoderRawMs >= kEncoderDebounceMs) {
+    gEncoderDown = raw;
+    gSurface.encoderButton(raw, ms);
   }
 }
 
@@ -1858,6 +1884,7 @@ void setup() {
   for (uint8_t t = 0; t < kTrackCount; ++t) gEngine.output().setChannel(t, static_cast<uint8_t>(t + 1));
   gClock.init(kDefaultTempo, kTicksPerBar);
   loadSwitchAt();
+  pinMode(kEncoderButtonPin, INPUT_PULLUP);
   loadLaunchGrid();
   gSurface.init(gEngine, gClock);
   phase(kPhaseDisplay);
@@ -1943,6 +1970,7 @@ void loop() {
     gBootReported = true;
   }
   crumb(kSurface);
+  serviceEncoder(millis());
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
   stampSaves();
@@ -1979,6 +2007,7 @@ void loop() {
     ev.length = ed.lengthMode();
     ev.steps = ed.steps();
     ev.velocity = ed.velocityMode();
+    ev.encoder = static_cast<int8_t>(gSurface.encoderOption());
     EditNote n;
     if (ed.selected(n)) {
       ev.note = true;

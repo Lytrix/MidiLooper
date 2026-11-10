@@ -41,6 +41,10 @@
 //   selection is elsewhere). A hold is a parameter lock (`lockBegin` / `lockEnd`): the step's note is selected while it
 //   is held, the faders act on it at once, and the release closes its changes as one undo step and brings the
 //   previous selection back. The bar buttons do nothing here (as legacy).
+// * The encoder (slice E, `nudge`): the selected note's pitch (semitones), start (ticks, wrapped), length (ticks, at
+//   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `Surface` — one undo step
+//   a note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even
+//   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
 //   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
@@ -418,7 +422,7 @@ class EditSurface {
   }
   /// A note at the bracket (C3, velocity 80, a 32nd — a step button's a 16th; the window's channel), unless one starts
   /// within `kSnapTicks`.
-  void create(uint32_t ms, uint32_t length = kSixteenth / 2) {
+  void create(uint32_t ms, uint32_t length = kSixteenth / 2, bool stacked = false) {
     if (!editing()) return;
     open_ = false;
     const uint16_t size = session().size();
@@ -428,7 +432,7 @@ class EditSurface {
       if (i == 0) channel = e.channel;
       if (e.deleted) continue;
       const uint32_t d1 = (e.tick + loop_ - bracket_) % loop_, d2 = (bracket_ + loop_ - e.tick) % loop_;
-      if ((d1 < d2 ? d1 : d2) <= kSnapTicks) return;  // a note is there already
+      if (!stacked && (d1 < d2 ? d1 : d2) <= kSnapTicks) return;  // a note is there already
     }
     session().settle();  // the selected note's results stay before the new note's step
     const uint32_t id = e_->noteIds().peek();
@@ -519,6 +523,53 @@ class EditSurface {
     drive(kMotorAll, ms);
   }
   bool locked() const { return lock_; }
+  /// The encoder's push while step `k` is held (slice E): a 16th C4 there, stacked beside the notes it holds.
+  void stepAdd(uint8_t k, uint32_t ms) {
+    uint32_t tick;
+    if (!stepTick(k, tick)) return;
+    bracket_ = tick;
+    create(ms, kSixteenth, true);
+  }
+  /// The encoder's double push while a step is held (slice E): the selected note is deleted.
+  void deleteSelected(uint32_t ms) {
+    EditNote n;
+    if (selected(n)) deleteOrCreate(ms);
+  }
+
+  // ---- The encoder (slice E) ------------------------------------------------------------------------------------
+  enum class Nudge : uint8_t { Pitch, Move, Length, Velocity };
+  /// The selected note changed by `d` (already accelerated): pitch in semitones, start / length in ticks, velocity.
+  void nudge(Nudge what, int32_t d, uint32_t ms) {
+    EditNote n;
+    if (d == 0 || !selected(n)) return;
+    EditNote v = n;
+    const auto clamp = [](int32_t x, int32_t lo, int32_t hi) { return x < lo ? lo : x > hi ? hi : x; };
+    uint8_t mask = 0;
+    switch (what) {
+      case Nudge::Pitch:
+        v.pitch = static_cast<uint8_t>(clamp(n.pitch + d, 0, 127));
+        mask = velocity_ ? 0 : kMotorPitch;
+        break;
+      case Nudge::Move: {
+        const int32_t loop = static_cast<int32_t>(loop_);
+        int32_t t = (static_cast<int32_t>(n.tick) + d) % loop;
+        v.tick = static_cast<uint32_t>(t < 0 ? t + loop : t);
+        mask = kMotorSelect | kMotorCoarse | kMotorFine;
+        break;
+      }
+      case Nudge::Length:
+        v.length = static_cast<uint32_t>(clamp(static_cast<int32_t>(n.length) + d, 1, static_cast<int32_t>(loop_)));
+        mask = length_ ? kMotorCoarse | kMotorFine : 0;
+        break;
+      case Nudge::Velocity:
+        v.velocity = static_cast<uint8_t>(clamp(velocityOf(n.velocity) + d, 1, 127) | (n.velocity & kVelocityMuted));
+        mask = velocity_ ? kMotorPitch : 0;
+        break;
+    }
+    if (!commit(v)) return;
+    if (what == Nudge::Move) refStep_ = v.tick / kSixteenth;  // F3 offsets from the note's 16th again
+    if (mask != 0) drive(mask, ms);
+  }
 
   /// The record button's double / triple while editing.
   bool undo(uint32_t ms) { return step(true, ms); }

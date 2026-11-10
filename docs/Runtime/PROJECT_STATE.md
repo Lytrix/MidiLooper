@@ -62,7 +62,11 @@ start — tracks stop while the clock runs on, back at the next bar line; nothin
 dropped, owner: amendment 1). Device `ec0d2d6b…`. **Slice D (DEC-277):** NOTE_EDIT step buttons — the 16ths of the bracket's bar: press selects /
 cycles the step's notes, an empty step gets a 16th C4, double deletes, hold is a parameter lock (faders on its note,
 one undo step, the previous selection back on release); step LEDs show that bar. Native 4,508 passed; device
-`b40a5be6…`. Next: slice E, the encoder.
+`b40a5be6…`; then a lock keeps a fine move on release (amendment 1, `11fb2422…`). **Slice E (DEC-278):** the
+GPIO encoder in NOTE_EDIT — push steps pitch / move / length / velocity (a line under the option), the turn edits the
+selected note with legacy acceleration; with a step held the turn locks its note, a push adds a stacked 16th C4, a
+double push deletes. Device `774d18a0…` (idle pins clean; the physical turn / push is the owner's check). The
+performance and step surface batch (slices A–E) is complete.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the
