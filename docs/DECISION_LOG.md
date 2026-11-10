@@ -15716,3 +15716,6 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
   raster bars' lit area. Device `0f8bd40a…`, boot `crash=0`: drawn as intended; flicker to be judged on the panel.
 - **Amendment 5 (owner 2026-11-10: the lines were not visible on the panel):** the title's lines at grey 4–9 (was
   1–4), still 1 px every 4 rows. Device `971cb737…`, boot `crash=0`.
+- **Amendment 6 (owner 2026-11-10: the lines too dark on the lower half):** the 12 lines symmetric about the title,
+  grey 6 at the edges rising to 11 in the middle (the repeating 4–9 put the darkest steps in the lower half). Device
+  `db88488a…`, boot `crash=0`.
