@@ -15915,3 +15915,33 @@ passed. Device (image `f50f2dcb…`, boot `crash=0`, `BOOT,load,ok`; RAM1 15,040
 pressed → 1-5 the same loop and rows (768, 24), kept across a reboot (loads 26); 1-2 → 1-3, then in NOTE_EDIT bar 1
 over bar 3 (the same pattern there before) and step 2's note (95) onto step 8 (now 89 and 95 stacked); the edit visit
 and every copy undone (1-3 and 1-5 empty again).
+- **Amendment 1 — copy mode (owner 2026-11-10: "the get loop window workflow might seem to be a bit too convoluted
+  for a quick copy … copy will require its own minimal UI state"; "the copy mode UI can have the option to load loop").**
+  A slot held 600 ms (`Surface::kCopyHoldMs`) — or in NOTE_EDIT a bar button, or a step whose lock changed nothing —
+  starts copy mode: the source's LED pulses, a small window shows `COPY LOOP 1-1` / `COPY BAR 3` / `COPY NOTE C3`, what
+  pastes it, `[TRK] LOAD LOOP` (a slot) and `HOLD EXIT`; the source's release keeps it. A short press (released before
+  600 ms) of another slot / bar / step pastes there (one undo step; its LED flashes three times) and copy mode stays;
+  the track buttons still select tracks, so slots go across tracks. TRACK switch's short press is LOAD LOOP: the
+  get-a-loop picker for the source slot. A long press of any other button (its own gesture dropped), or the source
+  again, ends it; leaving NOTE_EDIT ends a bar's or note's. A slot's long press is copy mode now (it opened the picker,
+  without a library the length popup); the popup opens from LOOP_EDIT's NOTELEN long press. The hold-and-press copies
+  of DEC-279 are replaced by copy mode. A step held with the lock used (a fader or the encoder changed its note) stays a
+  parameter lock.
+- **Amendment 2 — a long press exits every window; trash on 2× TRACK (owner 2026-11-10: "when within any window a long
+  press should always exit a window to main"; trash "via menu row … 2x TRK but with immediate undo with triple press").**
+  In the sets browser and the picker a long press of any button closes them to playing; in the length popup a long
+  press of another button closes it, kept (its own button still cancels). A set's view ends with `MOVE SET TO TRASH`;
+  a double TRACK there moves the set, on a stage moves the stage, to the trash at once (no confirmation; a single TRACK
+  does nothing there); a triple TRACK right after brings it back (`Browser::trashSelected` / `undoTrash`; the corner
+  shows `3× [TRK] UNDO`, else `HOLD EXIT`). The trash opens from its `TRASH` row only. Hints read `HOLD EXIT`.
+- Evidence (both): native — `test_copy_mode_copies_slots_across_tracks` (pulse, paste, three flashes, across tracks,
+  undo, a long track press ends it without a solo), `test_copy_mode_copies_notes_and_bars` (a note twice from a held
+  step, a used lock is no copy, bars both ways with replacement, a long step press ends it),
+  `test_a_double_track_trashes_and_a_triple_brings_it_back`, the browser surface test's long-press exits and 2× TRACK
+  trash; the popup tests open from LOOP_EDIT; the picker test enters through LOAD LOOP. Mutations (no long-press end, a
+  used lock copying, a long press not closing the browser, the undo never armed) fail them. Full native 4,514 passed.
+  Device (image `9cc54f15…`; the first upload left the board off USB until the owner reconnected it, then a normal
+  upload; boot `crash=0`, `BOOT,load,ok`): 1-1 held → the COPY window and its LED pulsing; 1-5 pressed → the same loop
+  (768, 24 rows), its LED lit three times; track 2, 2-5 pressed → the same; a long track press ended it; LOAD LOOP →
+  the picker (`HOLD EXIT`), a long REC → playing; TRACK held → the browser (`HOLD EXIT`), a long EDIT → playing; both
+  copies undone. The 2× / 3× TRACK trash was not run on the card (native only).

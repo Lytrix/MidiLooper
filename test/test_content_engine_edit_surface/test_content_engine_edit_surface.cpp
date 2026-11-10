@@ -1149,14 +1149,12 @@ void test_notelen_long_press_creates() {
   TEST_ASSERT_EQUAL_UINT16(size + 1, gE.noteEdit().size());
 }
 
-// A long press on an empty slot creates an empty loop of the new-loop length (owner 2026-11-08; 4 bars since
-// 2026-11-10; without a browser — with one it opens the get-a-loop picker, DEC-272), selected and not played; NOTE_EDIT
-// opens on it, a step is entered with NOTELEN, and it plays; Undo takes the loop back.
-void test_slot_long_press_creates_an_empty_loop() {
+// An empty loop of the new-loop length (4 bars; a slot's long press made it until copy mode took the hold, DEC-279
+// amendment 1 — now LOOP_EDIT's NOTELEN or the picker's presets), selected and not played; NOTE_EDIT opens on it, a step
+// is entered with NOTELEN, and it plays.
+void test_an_empty_loop_takes_a_note_and_plays() {
   TEST_ASSERT_TRUE(gE.transport().contentOf(0) == kNoManifest);
-  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
-  ms(700);
-  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().createEmpty(0, S::kNewLoopBars * 768));
   ms(100);
   const ManifestId m = gE.transport().contentOf(0);
   TEST_ASSERT_TRUE(m != kNoManifest);
@@ -1507,6 +1505,16 @@ void test_loop_edit_f1_rotates_the_loop_start() {
 static uint32_t loopOf(uint8_t slot) {
   return gE.manifests().manifest(gE.transport().contentOf(slot)).loopLengthTicks;
 }
+/// The popup on the shown slot: LOOP_EDIT (edit twice), then NOTELEN's long press (since copy mode took a slot's hold).
+static void popupFromLoopEdit() {
+  tap(S::kEditModeNote);
+  ms(400);
+  tap(S::kEditModeNote);
+  ms(400);
+  TEST_ASSERT_TRUE(gS.loopEdit());
+  tap(S::kLengthNote, 700);
+  ms(50);
+}
 static void taps(uint8_t note, uint8_t n) {  // 1: a single press, 2: a double
   for (uint8_t i = 0; i < n; ++i) {
     tap(note, 40);
@@ -1517,60 +1525,39 @@ static void taps(uint8_t note, uint8_t n) {  // 1: a single press, 2: a double
 void test_length_popup_taps_and_f2() {
   recordBar({{96, 60}, {600, 62}});
   const uint8_t undo0 = gE.history().undoDepth(0);
-  tap(S::kSlotBase + 0, 700);  // long: the popup
-  ms(50);
+  popupFromLoopEdit();
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
   const auto sent = drainMotors(300);
   TEST_ASSERT_NOT_NULL(findMsg(sent, 0xBF, 101));  // F2 parked on the length
-  taps(S::kSlotBase + 0, 1);
+  taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
-  for (int i = 0; i < 6; ++i) taps(S::kSlotBase + 0, 1);  // 3 … 8
+  for (int i = 0; i < 6; ++i) taps(S::kLengthNote, 1);  // 3 … 8
   TEST_ASSERT_EQUAL_UINT32(8 * 768, loopOf(0));
-  taps(S::kSlotBase + 0, 1);  // after 8: 16
+  taps(S::kLengthNote, 1);  // after 8: 16
   TEST_ASSERT_EQUAL_UINT32(16 * 768, loopOf(0));
-  taps(S::kSlotBase + 0, 2);  // a double: back to 8
+  taps(S::kLengthNote, 2);  // a double: back to 8
   TEST_ASSERT_EQUAL_UINT32(8 * 768, loopOf(0));
-  taps(S::kSlotBase + 0, 1);
+  taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(16 * 768, loopOf(0));
   TEST_ASSERT_TRUE(gS.popup());
-  TEST_ASSERT_FALSE(gS.loopEdit());
   gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2: notch 8, 4 bars
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // the popup's one step
-  TEST_ASSERT_TRUE(gE.transport().playing(0));  // the slot's taps never toggled it
+  TEST_ASSERT_TRUE(gE.transport().playing(0));
   ms(3100);
   TEST_ASSERT_FALSE(gS.popup());
-  tap(S::kSlotBase + 0);  // the slot button again: the playing slot's toggle mutes the track
-  ms(450);
-  TEST_ASSERT_TRUE(gE.control().muted(0));
+  tap(S::kEditModeNote, 700);  // LOOP_EDIT left: its visit kept
+  ms(100);
   gE.control().undo(0, gLast, gUs, gClk.usPerTick());
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
 }
 
-// An empty slot's long press creates its empty loop and opens the popup on it; NOTELEN's long press in LOOP_EDIT opens
-// it on the shown slot.
+// NOTELEN's long press in LOOP_EDIT opens the popup on the shown slot (an empty slot's long press no longer makes a loop
+// and opens it: copy mode took the hold, DEC-279 amendment 1).
 void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   recordBar({{96, 60}});  // slot 0 plays
-  tap(S::kSlotBase + 1, 700);  // an empty slot: its loop, then the popup on it
-  ms(50);
-  TEST_ASSERT_TRUE(gS.popup());
-  TEST_ASSERT_EQUAL_UINT8(1, gS.popupSlot());
-  TEST_ASSERT_EQUAL_UINT32(S::kNewLoopBars * 768, loopOf(1));  // 4 bars
-  taps(S::kSlotBase + 1, 2);  // a double from 4 bars: 3
-  TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(1));
-  taps(S::kSlotBase + 1, 1);  // a single from 3: 4
-  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(1));
-  taps(S::kSlotBase + 1, 1);
-  TEST_ASSERT_EQUAL_UINT32(5 * 768, loopOf(1));
-  ms(600);
-  gS.input(0xBF, 101, (8 * 127 + 12) / 24, gUs / 1000);  // F2 sets the popup's slot, not the playing one
-  ms(400);
-  TEST_ASSERT_EQUAL_UINT32(4 * 768, loopOf(1));
-  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
-  ms(3100);
-  TEST_ASSERT_FALSE(gS.popup());
   // From LOOP_EDIT (on the playing slot 0): a visit's change, then NOTELEN's long press — the popup's own step.
   tap(S::kEditModeNote);  // NOTE_EDIT
   ms(400);
@@ -1604,21 +1591,20 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
 void test_length_popup_long_press_cancels() {
   recordBar({{96, 60}});
   const uint8_t undo0 = gE.history().undoDepth(0);
-  tap(S::kSlotBase + 0, 700);
-  ms(50);
+  popupFromLoopEdit();
   TEST_ASSERT_TRUE(gS.popup());
-  taps(S::kSlotBase + 0, 1);
-  taps(S::kSlotBase + 0, 1);
+  taps(S::kLengthNote, 1);
+  taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
-  tap(S::kSlotBase + 0, 700);  // hold: cancel
+  tap(S::kLengthNote, 700);  // hold: cancel
   ms(50);
   TEST_ASSERT_FALSE(gS.popup());
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT8(undo0, gE.history().undoDepth(0));
-  tap(S::kSlotBase + 0, 700);  // opened again, cancelled with no change: nothing undone
+  tap(S::kLengthNote, 700);  // opened again, cancelled with no change: nothing undone
   ms(50);
   TEST_ASSERT_TRUE(gS.popup());
-  tap(S::kSlotBase + 0, 700);
+  tap(S::kLengthNote, 700);
   ms(50);
   TEST_ASSERT_FALSE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(undo0, gE.history().undoDepth(0));
@@ -1713,9 +1699,10 @@ void test_no_heap() {
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
 }
 
-// Copy / paste in NOTE_EDIT (owner 2026-11-10: hold the source, press the target): a step held and another pressed
-// copies the held step's note there (same offset in the 16th, beside what is there); a bar button held and another
-// pressed copies that bar over the other. One undo step each; the presses make no gesture of their own.
+// Copy mode in NOTE_EDIT (DEC-279 amendment 1): a step held 600 ms whose lock changed nothing, or a bar button held, starts
+// it; its release keeps it; a short press of another step copies the note there (same offset, beside what is there), of
+// another bar copies that bar over it — one undo step each, copy mode staying. A hold whose lock changed the note is a
+// parameter lock, not a copy. The source again, or a long press of anything, ends it.
 static uint32_t notesIn(uint32_t from, uint32_t to) {
   uint32_t n = 0;
   for (uint16_t i = 0; i < gE.noteEdit().size(); ++i) {
@@ -1724,55 +1711,68 @@ static uint32_t notesIn(uint32_t from, uint32_t to) {
   }
   return n;
 }
-void test_copy_paste_a_note_and_a_bar() {
+static void shortPress(uint8_t note) {
+  gS.input(0x9F, note, 127, gUs / 1000);
+  ms(60);
+  gS.input(0x8F, note, 0, gUs / 1000);
+  ms(20);
+}
+static void hold(uint8_t note, uint32_t forMs) {
+  gS.input(0x9F, note, 127, gUs / 1000);
+  ms(forMs);
+  gS.input(0x8F, note, 0, gUs / 1000);
+  ms(20);
+}
+void test_copy_mode_copies_notes_and_bars() {
   recordBar({{96, 64}, {100, 72}, {384, 67}});
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(2 * 768));  // bar 2 empty
   enterEdit();
   settle();
-  TEST_ASSERT_EQUAL_UINT32(1536, gS.edit().windowTicks());
-  // A note: step 2's selected note (64 @ 96) onto step 10 (480), the held step pressed first.
-  tap(2);
+  tap(8);
   ms(350);
-  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);
+  // A note: step 2 held (its first note, 64 @ 96), then steps 10 and 12 pressed.
+  hold(2, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the lock's release: the selection back
+  shortPress(10);
+  shortPress(12);
+  TEST_ASSERT_TRUE(noteAt(480) >= 0 && noteAt(576) >= 0);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(480))).pitch);
+  TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(noteAt(576))).length);
+  shortPress(2);  // the source again: ends
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  dbl(S::kRecordNote);
+  ms(450);
+  dbl(S::kRecordNote);
+  ms(450);
+  TEST_ASSERT_EQUAL_INT32(-1, noteAt(480));  // one undo step each
+  TEST_ASSERT_EQUAL_INT32(-1, noteAt(576));
+  // A hold that changed its note is a lock, not a copy.
   gS.input(0x9F, 2, 127, gUs / 1000);
-  ms(100);
-  gS.input(0x9F, 10, 127, gUs / 1000);
-  ms(50);
-  gS.input(0x8F, 10, 0, gUs / 1000);
+  ms(450);
+  settle();
+  f4(70);
+  ms(300);
   gS.input(0x8F, 2, 0, gUs / 1000);
-  ms(450);
-  const int32_t copy = noteAt(480);
-  TEST_ASSERT_TRUE(copy >= 0);
-  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(copy)).pitch);
-  TEST_ASSERT_EQUAL_UINT32(40, gE.noteEdit().current(static_cast<uint16_t>(copy)).length);
-  TEST_ASSERT_EQUAL_UINT8(64, sel().pitch);  // the selection stays on the source
-  TEST_ASSERT_EQUAL_UINT32(96, sel().tick);
-  dbl(S::kRecordNote);  // one undo step
-  ms(450);
-  TEST_ASSERT_EQUAL_INT32(-1, noteAt(480));
-  // A bar: bar 1 held, bar 2 pressed — bar 1's three notes over bar 2.
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  // A bar: bar 1 held, bar 2 pressed — bar 1's notes over bar 2; then a long press of a step ends copy mode.
   TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
-  gS.input(0x9F, 17, 127, gUs / 1000);
-  ms(100);
-  gS.input(0x9F, 18, 127, gUs / 1000);
-  ms(50);
-  gS.input(0x8F, 18, 0, gUs / 1000);
-  gS.input(0x8F, 17, 0, gUs / 1000);
-  ms(100);
+  hold(17, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Bar, gS.copyMode());
+  shortPress(18);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(768, 1536));
   TEST_ASSERT_TRUE(noteAt(768 + 96) >= 0 && noteAt(768 + 100) >= 0 && noteAt(768 + 384) >= 0);
+  hold(5, 700);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  // Bar 2 over bar 1: replaced, not added to.
+  hold(18, 700);
+  shortPress(17);
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
-  // Bar 2 over bar 1: bar 1 is replaced, not added to.
-  gS.input(0x9F, 18, 127, gUs / 1000);
-  ms(100);
-  gS.input(0x9F, 17, 127, gUs / 1000);
-  gS.input(0x8F, 17, 0, gUs / 1000);
-  gS.input(0x8F, 18, 0, gUs / 1000);
-  ms(100);
-  TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
-  dbl(S::kRecordNote);  // undo: bar 1's own notes back
+  dbl(S::kRecordNote);  // bar 1's own notes back
   ms(450);
-  dbl(S::kRecordNote);  // undo: bar 2 empty again
+  dbl(S::kRecordNote);  // bar 2 empty again
   ms(450);
   TEST_ASSERT_EQUAL_UINT32(0, notesIn(768, 1536));
   TEST_ASSERT_EQUAL_UINT32(3, notesIn(0, 768));
@@ -1803,9 +1803,9 @@ int main(int, char**) {
   RUN_TEST(test_a_lock_on_an_added_note_keeps_its_fine_move);
   RUN_TEST(test_the_encoder_cycles_its_options_and_nudges_the_note);
   RUN_TEST(test_the_encoder_with_a_step_held);
-  RUN_TEST(test_copy_paste_a_note_and_a_bar);
+  RUN_TEST(test_copy_mode_copies_notes_and_bars);
   RUN_TEST(test_notelen_long_press_creates);
-  RUN_TEST(test_slot_long_press_creates_an_empty_loop);
+  RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);
   RUN_TEST(test_loop_edit_tempo_coarse_and_fine);
   RUN_TEST(test_resize_rewraps_notes_and_keeps_those_past_the_end);

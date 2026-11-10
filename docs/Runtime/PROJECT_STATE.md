@@ -69,7 +69,11 @@ double push deletes. Device `774d18a0…` (idle pins clean; owner on the physica
 performance and step surface batch (slices A–E) is complete. **Copy / paste (DEC-279):** hold the source, press the
 target — slots (rows copied into the target's own runs, one undo step, across tracks by selecting the track while
 holding), bars in NOTE_EDIT (replaced, one edit step) and single notes (the held step's note beside the target's).
-Native 4,513 passed; device `f50f2dcb…`.
+Native 4,513 passed; device `f50f2dcb…`. Then (owner) **copy mode** replaced the hold-and-press: a long press of a
+slot / bar / step starts it (LED pulse, a small COPY window with `[TRK] LOAD LOOP`), short presses paste (three
+flashes), track buttons reach other tracks, a long press of anything ends it; and **a long press exits every window**
+(browser, picker, popup), the trash moving to 2× TRACK (a `MOVE SET TO TRASH` row, stages directly) with 3× TRACK to
+undo (DEC-279 amendments 1–2). Native 4,514 passed; device `9cc54f15…`.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

@@ -92,7 +92,8 @@ void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
   TEST_ASSERT_EQUAL(B::RowKind::Back, kind(0));
   TEST_ASSERT_EQUAL(B::RowKind::GetLoop, kind(1));  // GET A LOOP (DEC-272)
   TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));  // LOAD STAGE (owner 2026-11-09)
-  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
+  TEST_ASSERT_EQUAL(B::RowKind::TrashSet, kind(5));  // MOVE SET TO TRASH, last (DEC-279 amendment 2)
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).record);  // T02 first
   TEST_ASSERT_EQUAL_UINT16(1, gB.row(4).record);
@@ -417,10 +418,56 @@ void test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage() {
   mark(kTrash, 7, gB.record(3).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.rowCount());
+  TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).record);  // T01
   TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
+}
+
+/// DEC-279 amendment 2 (owner 2026-11-10: trash is destructive): a double TRACK moves the selected stage — or on the
+/// set's last row, MOVE SET TO TRASH, the set — to the trash at once; a triple TRACK brings the last one back. A single
+/// TRACK on MOVE SET TO TRASH does nothing.
+void test_a_double_track_trashes_and_a_triple_brings_it_back() {
+  gB.open();
+  for (int i = 0; i < 3; ++i) gB.down();
+  gB.press();  // SET 07: T02, T01, MOVE SET TO TRASH
+  TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
+  gB.trashSelected();
+  B::Request r;
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
+  TEST_ASSERT_EQUAL_UINT16(7, r.set);
+  TEST_ASSERT_EQUAL_UINT16(3, r.record);  // T02, no confirmation
+  const uint32_t t = mark(kTrash, 7, gB.record(3).sequence);
+  gB.marked();
+  TEST_ASSERT_EQUAL(B::View::Set, gB.view());
+  const uint16_t trashRecord = gB.lastTrash();
+  TEST_ASSERT_NOT_EQUAL(B::kNone, trashRecord);
+  TEST_ASSERT_EQUAL_UINT16(1, gB.milestonesIn(7));
+  gB.undoTrash();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Restore, r.action);
+  TEST_ASSERT_EQUAL_UINT16(trashRecord, r.record);
+  TEST_ASSERT_EQUAL_UINT16(7, r.set);
+  mark(kRestore, 7, t);
+  gB.marked();
+  TEST_ASSERT_EQUAL_UINT16(2, gB.milestonesIn(7));
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.lastTrash());
+  gB.undoTrash();  // nothing left to bring back
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
+  // The set's last row: a single TRACK does nothing, a double moves the set.
+  while (gB.row(gB.selected()).kind != B::RowKind::TrashSet) gB.down();
+  gB.press();
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
+  gB.trashSelected();
+  TEST_ASSERT_TRUE(gB.takeRequest(r));
+  TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
+  TEST_ASSERT_EQUAL_UINT16(7, r.set);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.record);  // the whole set
+  // Outside a set's stages a double TRACK does nothing.
+  gB.open();
+  gB.trashSelected();
+  TEST_ASSERT_FALSE(gB.takeRequest(r));
 }
 
 /// The last stage of a set: the set goes, and the view goes back to the sets with the nearest one selected.
@@ -902,6 +949,7 @@ int main(int, char**) {
   RUN_TEST(test_a_set_item_takes_only_the_stages_still_shown);
   RUN_TEST(test_emptying_the_trash_asks_again_and_removes_for_good);
   RUN_TEST(test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage);
+  RUN_TEST(test_a_double_track_trashes_and_a_triple_brings_it_back);
   RUN_TEST(test_trashing_the_last_stage_leaves_the_set_view);
   RUN_TEST(test_trashing_the_working_set_keeps_its_row_and_base);
   RUN_TEST(test_a_failed_trash_keeps_the_set_and_retries);

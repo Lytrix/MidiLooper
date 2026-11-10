@@ -40,8 +40,9 @@
 //   - track switch 37: short = the next track; double = undo; triple = redo; long = the sets browser (slice 3,
 //     owner: "opening / cancelling needs to be a long hold"; an open NOTE_EDIT or LOOP_EDIT is left first, its changes
 //     kept; without a library: the mute toggle as before — mute stays on the track buttons' double press). While the
-//     browser is open record = up, edit = down, track switch = its action (a quick double or triple acts twice or
-//     three times: the browser gives no button a double), long track switch = close;
+//     browser is open record = up, edit = down, track switch = its action, its double = the selected stage (or on
+//     `MOVE SET TO TRASH` the set) to the trash at once, its triple = that back; a long press of any button closes the
+//     browser (DEC-279 amendment 2: a long press always exits a window — the length popup too, kept);
 //   - transport 39: short = start / stop (the internal clock); double = back to the loop start (stop, then start at the
 //     next bar line). Under a running external clock (DEC-276; as Elektron / Squarp slaves) it is a local stop / start:
 //     every track and take ends while the master's clock runs on, and the next press brings the tracks back (the ones
@@ -64,11 +65,14 @@
 //   velocity ×2 / ×3 / ×4 under 100 / 75 / 50 ms). While a step button is held: the turn edits its note (the lock
 //   begins at once), a push adds a 16th C4 on it, a double push deletes the selected note; the step's release is then
 //   no press. The long push does nothing yet (a CC menu later).
-// * Copy / paste (owner 2026-11-10: hold the source, press the target; no other buttons): a slot held and another slot
-//   pressed copies the held slot's state onto it (`TrackControl::copySlot`, one undo step; the held slot is the one
-//   pressed first, on the track then selected — select another track meanwhile for a copy across tracks); in NOTE_EDIT a
-//   step held and another pressed copies its note there, a bar button held and another pressed copies that bar over the
-//   other (`EditSurface::copyNote` / `copyBar`). Both presses are then no gesture.
+// * Copy mode (DEC-279 amendment 1, owner 2026-11-10: "copy will require its own minimal UI state"): a slot held
+//   `kCopyHoldMs` — or in NOTE_EDIT a bar button, or a step whose lock changed nothing — starts it (the source's LED
+//   pulses, the screen shows the copy window); the source's release keeps it. A short press of another slot / bar / step
+//   pastes there (`TrackControl::copySlot`, `EditSurface::copyBar` / `copyNote`; one undo step each; its LED flashes
+//   three times) and copy mode stays for more. The track buttons select tracks as ever, so a slot goes onto other
+//   tracks; TRACK switch's short press is LOAD LOOP — the get-a-loop picker for the source slot (DEC-272). A long press
+//   of any button, or the source pressed again, ends it; leaving NOTE_EDIT ends a bar's or a note's. A slot's long press
+//   is copy mode (it was the picker: now LOAD LOOP).
 //   A play on a stopped transport starts the internal clock first, and the gesture then acts on the clock's first
 //   tick (a play starts on that bar line, not one bar later); a Record only arms (owner 2026-11-06: as legacy). Every
 //   transport start (`transportStarted`, MIDI Start too) re-queues the armed Records on its first tick and starts
@@ -267,8 +271,10 @@ class Surface {
     encoderStep_ = 0xFF;
     encoderMs_ = 0;
     lockStep_ = 0xFF;
-    copyHeld_ = 0xFF;
     barsHeld_ = 0;
+    copy_ = Copy::None;
+    copyHolding_ = false;
+    flashLed_ = 0xFF;
     for (uint8_t& s : slot_) s = 0;
     for (uint8_t& v : sent_) v = 0xFF;
     bankSent_ = 0xFF;
@@ -320,32 +326,19 @@ class Surface {
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
     uint8_t b;
-    if (d1 >= kBarStepBase && d1 < kStepNotes && edit_.editing()) {  // NOTE_EDIT's bar buttons: copy / paste only
+    if (d1 >= kBarStepBase && d1 < kStepNotes && edit_.editing()) {  // NOTE_EDIT's bar buttons: copy mode only
       const uint8_t bar = static_cast<uint8_t>(d1 - kBarStepBase);
+      const uint8_t bit = static_cast<uint8_t>(1u << bar);
       if (type == 0x90 && d2 != 0) {
-        for (uint8_t h = 0; h < 8; ++h)
-          if (h != bar && ((barsHeld_ >> h) & 1u)) {
-            edit_.copyBar(h, bar, ms);
-            break;
-          }
-        barsHeld_ = static_cast<uint8_t>(barsHeld_ | (1u << bar));
-      } else {
-        barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~(1u << bar));
+        barsHeld_ = static_cast<uint8_t>(barsHeld_ | bit);
+        barDownMs_[bar] = ms;
+      } else if (barsHeld_ & bit) {
+        barsHeld_ = static_cast<uint8_t>(barsHeld_ & ~bit);
+        if (copyReleased(Copy::Bar, bar)) return;  // the source's own release
+        if (copy_ == Copy::Bar && ms - barDownMs_[bar] < kCopyHoldMs && edit_.copyBar(copyBar_, bar, ms))
+          flash(static_cast<uint8_t>(40 + bar), selected(), ms);
       }
       return;
-    }
-    if (d1 < 16 && edit_.editing() && type == 0x90 && d2 != 0) {  // a step held, another pressed: its note copied
-      const uint8_t held = heldStep();
-      if (held != 0xFF && held != d1) {
-        if (lockStep_ == 0xFF) {  // the held step's note, locked at once
-          lockStep_ = held;
-          edit_.lockBegin(held, ms);
-        }
-        if (lockStep_ == held && edit_.locked()) edit_.copyNote(d1, ms);
-        press_.down(static_cast<uint8_t>(kStep0 + d1), ms);
-        press_.consume(static_cast<uint8_t>(kStep0 + d1));
-        return;
-      }
     }
     if (d1 < kStepNotes) {
       if (d1 >= 16 || !(edit_.editing() || press_.pressed(kStep0 + d1))) {  // performance: they act on the press
@@ -361,17 +354,22 @@ class Surface {
       popupPress(type == 0x90 && d2 != 0, ms);
       return;
     }
-    if (type == 0x90 && d2 != 0 && b >= kSlot0 && b < kSlot0 + kSlotsPerTrack && !browsing()) {  // copy / paste
-      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
-      if (copyHeld_ != 0xFF && copyHeld_ != s && press_.pressed(static_cast<uint8_t>(kSlot0 + copyHeld_))) {
-        control().copySlot(copySource_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us());
-        press_.consume(static_cast<uint8_t>(kSlot0 + copyHeld_));
+    if (copy_ != Copy::None && copyTarget(b)) {  // copy mode: a slot / step is a paste target, on its release
+      if (type == 0x90 && d2 != 0) {
         press_.down(b, ms);
-        press_.consume(b);
-        return;
+        press_.consume(b);  // no gesture of its own
+      } else {
+        const uint32_t held = press_.heldMs(b, ms);
+        const bool pressed = press_.pressed(b);
+        press_.up(b, ms);
+        if (b == kStep0 + lockStep_) {  // the source step's lock ends with its release
+          edit_.lockEnd(ms);
+          lockStep_ = 0xFF;
+        }
+        if (!pressed || copyReleased(copy_, static_cast<uint8_t>(b - (copy_ == Copy::Slot ? kSlot0 : kStep0)))) return;
+        if (held < kCopyHoldMs) paste(b, ms);
       }
-      copyHeld_ = s;  // the source, should another slot be pressed while it is held
-      copySource_ = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
+      return;
     }
     if (type == 0x90 && d2 != 0) {
       press_.down(b, ms);
@@ -415,6 +413,13 @@ class Surface {
       press_.up(kEncoder, ms);
     }
   }
+  // ---- Copy mode (DEC-279 amendment 1) ------------------------------------------------------------------------------
+  enum class Copy : uint8_t { None, Slot, Bar, Note };
+  static constexpr uint32_t kCopyHoldMs = 600, kFlashMs = 100;  // the hold that starts it; a flash's half period
+  Copy copyMode() const { return copy_; }
+  uint8_t copySourceSlot() const { return copySlot_; }  // Slot: the engine slot
+  uint8_t copySourceBar() const { return copyButton_; }  // Bar: 0–7 of its page
+  int16_t copySourceNote() const { return copyNote_; }  // Note: its index in the session
   /// The encoder's option (pitch, move, length, velocity), for the screen.
   typename EditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
@@ -427,6 +432,7 @@ class Surface {
       press_.consume(kLength);  // a long hold: velocity mode, F4's motor to the velocity
       edit_.velocityBegin(ms, true);
     }
+    serviceCopy(ms);
     for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
       if (press_.heldMs(kStep0 + k, ms) >= kLockMs) {  // the parameter lock (an empty step: nothing, no gesture)
         lockStep_ = k;
@@ -519,6 +525,7 @@ class Surface {
   uint8_t leds(uint32_t lastTick, uint32_t ms, Send send, uint8_t max) {
     uint8_t want[128] = {};
     desired(lastTick, ms, want);
+    copyLeds(ms, want);
     uint8_t n = 0;
     for (uint8_t note = 0; note < 128 && n < max; ++note) {
       if (sent_[note] == want[note]) continue;
@@ -601,17 +608,17 @@ class Surface {
 
   void browse(uint8_t b, Press p) {
     const uint8_t times = p == Press::Triple ? 3 : p == Press::Double ? 2 : 1;
-    if (b == kTrackSwitch && p == Press::Long) {
-      browser_->hold();
+    if (p == Press::Long) {  // DEC-279 amendment 2: a long press always exits the window, back to playing
+      browser_->close();
       return;
     }
     if (b == kTrackSwitch) {  // once per gesture (a double press must not confirm, then act on the row under it)
       if (p == Press::Short) browser_->press();
-      else if (p == Press::Double) browser_->openTrash();  // DEC-268: the trash, and back
+      else if (p == Press::Double) browser_->trashSelected();  // destructive: a double, undone by a triple
+      else if (p == Press::Triple) browser_->undoTrash();
       return;
     }
     if (browser_->picking()) {  // DEC-272, the picker: NOTELEN up, PLAY/STOP down, REC left, EDIT right
-      if (p == Press::Long) return;
       if (browser_->view() != ProductionBrowser::View::Picker) {  // its confirmation: REC YES, EDIT CANCEL
         if (b == kRecord) browser_->up();
         else if (b == kEditMode) browser_->down();
@@ -633,9 +640,23 @@ class Surface {
   void dispatch(uint8_t b, Press p) {
     const uint8_t t = selected();
     const uint8_t slot = selectedSlot(t);
-    if (browsing() && (b == kRecord || b == kTrackSwitch || b == kEditMode ||
+    if (copy_ == Copy::Slot && b == kTrackSwitch && p == Press::Short) {  // LOAD LOOP: the picker for the source slot
+      const uint8_t src = copySlot_;
+      endCopy();
+      if (browser_ != nullptr) {
+        leaveEdit();
+        browser_->openPickerFromSlot(src, !empty(src));
+      }
+      return;
+    }
+    if (browsing() && (p == Press::Long || b == kRecord || b == kTrackSwitch || b == kEditMode ||
                        (browser_->picking() && (b == kLength || b == kPlayStop)))) {
-      browse(b, p);
+      browse(b, p);  // a long press of any button closes it
+      return;
+    }
+    if (popup_ && p == Press::Long && b != popupButton_) {  // a long press of another button closes the popup, kept
+      popup_ = false;
+      visitState_ = 0;
       return;
     }
     switch (b) {
@@ -720,15 +741,7 @@ class Surface {
       } else if (p == Press::Triple) {
         slot_[t] = s;
         control().redo(target, tick_, us_, us());
-      } else if (browser_ != nullptr) {  // long (DEC-272): get a loop for it — the picker, an open edit left first
-        slot_[t] = s;
-        leaveEdit();
-        browser_->openPickerFromSlot(target, !empty(target));
-      } else {  // long: the length popup — on an empty slot after its empty loop (owner 2026-11-08)
-        slot_[t] = s;
-        if (empty(target)) control().createEmpty(target, kNewLoopBars * EditSurface<Engine>::kBar);
-        openPopup(target, static_cast<uint8_t>(kSlot0 + s), nowMs_);
-      }
+      }  // long: copy mode takes the hold (`serviceCopy`)
       return;
     }
     if (b >= kTrack0 && b < kTrack0 + kTracks) {
@@ -1176,11 +1189,128 @@ class Surface {
   EditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
-  uint8_t copyHeld_ = 0xFF, copySource_ = 0;  // copy / paste: the slot button pressed first, its engine slot
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
+  uint32_t barDownMs_[8] = {};                // ... since
+  Copy copy_ = Copy::None;
+  uint8_t copySlot_ = 0;       // Slot: the source's engine slot
+  uint32_t copyBar_ = 0;       // Bar: the source bar's start
+  int16_t copyNote_ = -1;      // Note: the source note's index
+  uint8_t copyButton_ = 0;     // the source's slot (0–7), bar (0–7) or step (0–15)
+  bool copyHolding_ = false;   // the source is still held (its release keeps copy mode)
+  uint8_t flashLed_ = 0xFF, flashTrack_ = 0;  // a paste's LED (channel 15 note) flashing three times, on that track
+  uint32_t flashMs_ = 0;
   typename EditSurface<Engine>::Nudge encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
   uint8_t encoderStep_ = 0xFF;  // the step held when the encoder was pushed (0xFF: none)
   uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)
+  /// Starts copy mode from a held source, ends it on a long press of any other button, a source lock that changed its
+  /// note, or NOTE_EDIT left.
+  void serviceCopy(uint32_t ms) {
+    if (copy_ == Copy::None) {
+      for (uint8_t s = 0; s < kSlotsPerTrack && !browsing() && !popup_; ++s)
+        if (press_.heldMs(static_cast<uint8_t>(kSlot0 + s), ms) >= kCopyHoldMs) {
+          press_.consume(static_cast<uint8_t>(kSlot0 + s));  // no long press of its own
+          beginCopy(Copy::Slot, s);
+          copySlot_ = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
+          return;
+        }
+      if (!edit_.editing()) return;
+      for (uint8_t bar = 0; bar < 8; ++bar)
+        if (((barsHeld_ >> bar) & 1u) && ms - barDownMs_[bar] >= kCopyHoldMs) {
+          beginCopy(Copy::Bar, bar);
+          copyBar_ = edit_.barStart(bar);
+          return;
+        }
+      if (lockStep_ != 0xFF && edit_.locked() && !edit_.lockUsed() &&
+          press_.heldMs(static_cast<uint8_t>(kStep0 + lockStep_), ms) >= kCopyHoldMs) {
+        beginCopy(Copy::Note, lockStep_);
+        copyNote_ = edit_.selection();
+      }
+      return;
+    }
+    if ((copy_ == Copy::Bar || copy_ == Copy::Note) && !edit_.editing()) {
+      endCopy();
+      return;
+    }
+    if (copy_ == Copy::Note && copyHolding_ && edit_.lockUsed()) {  // it was a parameter lock after all
+      endCopy();
+      return;
+    }
+    for (uint8_t b = 0; b < kButtons; ++b) {  // a long press of anything else ends it, doing nothing else
+      if (copyHolding_ && b == sourceButton()) continue;
+      if (press_.heldMs(b, ms) >= kCopyHoldMs) {
+        press_.consume(b);
+        endCopy();
+        return;
+      }
+    }
+    for (uint8_t bar = 0; bar < 8 && edit_.editing(); ++bar)
+      if (((barsHeld_ >> bar) & 1u) && !(copyHolding_ && copy_ == Copy::Bar && bar == copyButton_) &&
+          ms - barDownMs_[bar] >= kCopyHoldMs) {
+        endCopy();
+        return;
+      }
+  }
+  void beginCopy(Copy c, uint8_t button) {
+    copy_ = c;
+    copyButton_ = button;
+    copyHolding_ = true;
+  }
+  void endCopy() {
+    copy_ = Copy::None;
+    copyHolding_ = false;
+  }
+  /// The source's press-detector button (slots and steps; 0xFF for a bar).
+  uint8_t sourceButton() const {
+    return copy_ == Copy::Slot ? static_cast<uint8_t>(kSlot0 + copyButton_)
+           : copy_ == Copy::Note ? static_cast<uint8_t>(kStep0 + copyButton_)
+                                 : 0xFF;
+  }
+  /// A slot (slot copy) or a step (note copy) button: a paste target.
+  bool copyTarget(uint8_t b) const {
+    return (copy_ == Copy::Slot && b >= kSlot0 && b < kSlot0 + kSlotsPerTrack) ||
+           (copy_ == Copy::Note && b >= kStep0 && b < kStep0 + 16);
+  }
+  /// The release of `button` of kind `c`: the source's while still held (copy mode stays: true), or the source pressed
+  /// again (copy mode ends: true). False: a target.
+  bool copyReleased(Copy c, uint8_t button) {
+    if (copy_ != c || button != copyButton_) return false;
+    if (c == Copy::Slot && copySlot_ != selected() * kSlotsPerTrack + button) return false;  // another track's slot
+    if (copyHolding_) copyHolding_ = false;
+    else endCopy();
+    return true;
+  }
+  void paste(uint8_t b, uint32_t ms) {
+    if (copy_ == Copy::Slot) {
+      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
+      if (control().copySlot(copySlot_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us()) ==
+          X::Result::Ok)
+        flash(static_cast<uint8_t>(kSlotBase + s), selected(), ms);
+    } else if (copy_ == Copy::Note) {
+      const uint8_t k = static_cast<uint8_t>(b - kStep0);
+      if (edit_.copyNote(copyNote_, k, ms)) flash(k, selected(), ms);
+    }
+  }
+  void flash(uint8_t led, uint8_t track, uint32_t ms) {
+    flashLed_ = led;
+    flashTrack_ = track;
+    flashMs_ = ms;
+  }
+  /// Copy mode's LEDs over the rest: the source pulsing (a slot on its own track), a paste's target flashing three times.
+  void copyLeds(uint32_t ms, uint8_t* want) {
+    const uint8_t t = selected();
+    if (copy_ != Copy::None) {
+      uint8_t led = 0xFF;
+      if (copy_ == Copy::Slot && copySlot_ / kSlotsPerTrack == t) led = static_cast<uint8_t>(kSlotBase + copyButton_);
+      else if (copy_ == Copy::Bar) led = static_cast<uint8_t>(40 + copyButton_);
+      else if (copy_ == Copy::Note) led = copyButton_;
+      if (led != 0xFF) want[led] = (ms / 250) % 2 == 0 ? 127 : 8;
+    }
+    if (flashLed_ != 0xFF) {
+      const uint32_t phase = (ms - flashMs_) / kFlashMs;
+      if (phase >= 6) flashLed_ = 0xFF;
+      else if (flashTrack_ == t) want[flashLed_] = phase % 2 == 0 ? 127 : 0;
+    }
+  }
   /// The step button held in NOTE_EDIT (the first; 0xFF: none).
   uint8_t heldStep() const {
     for (uint8_t k = 0; k < 16; ++k)

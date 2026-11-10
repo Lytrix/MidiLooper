@@ -30,6 +30,10 @@
 //   only → Building, or a provisional Take when every change was a recording begun while another track played;
 //   launches, switches, stops, mutes and solos only → Exploration. Arrangement and Final are never inferred: a base of
 //   either keeps its stage. Mixed evidence keeps the base's stage.
+// * DEC-279 amendment 2 (owner 2026-11-10: a long press always exits a window; trash is destructive): the surface
+//   closes the browser on any long press; `trashSelected` (a double TRACK) moves a stage, or with a set's last row
+//   `MOVE SET TO TRASH` the open set, to the trash at once, and `undoTrash` (a triple TRACK) brings the last one back.
+//   The trash opens from its `TRASH` row. `hold` and its confirmation remain the model's (no longer bound on the DROID).
 // * Get a loop (DEC-272; plan §6.1): a set's view has a `GET A LOOP` row; TRACK lists the set's stages (`FROM STAGE`),
 //   TRACK on one opens the picker — the stage's slots as a grid (tracks as rows, slots as columns, from its mosaic) with
 //   a column of empty-loop presets (1–16 bars) left of slot 1 — for a destination fixed on entry (the selected slot, or
@@ -54,7 +58,7 @@ template <uint16_t MaxRecords = library::kIndexRecords>
 class Browser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed, Stages, Picker };
-  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash, GetLoop };
+  enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash, GetLoop, TrashSet };
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set, Item: the set
@@ -88,6 +92,7 @@ class Browser {
   // ---- The index ---------------------------------------------------------------------------------------------------
   void clear() {
     count_ = sets_ = items_ = 0;
+    lastTrash_ = kNone;
     view_ = View::Closed;
   }
   /// A published record, in publication order: a milestone, or a trash / restore / empty-trash record (DEC-268).
@@ -357,6 +362,8 @@ class Browser {
       case RowKind::Trash:
         openTrash();
         return;
+      case RowKind::TrashSet:  // a double TRACK only (`trashSelected`)
+        return;
       case RowKind::Item:  // restored at once: nothing is lost by it
         list_ = view_;
         request_ = Request{};
@@ -413,6 +420,34 @@ class Browser {
     else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone)
       openConfirm(Confirm::ToTrash, r.set, kNone);
   }
+  /// A double TRACK (DEC-279 amendment 2): in a set, the selected stage — or on `MOVE SET TO TRASH` the set — to the
+  /// trash at once; elsewhere nothing.
+  void trashSelected() {
+    if (view_ != View::Set) return;
+    const Row r = row(selected_);
+    if (r.kind != RowKind::Milestone && r.kind != RowKind::TrashSet) return;
+    if (r.kind == RowKind::TrashSet && latestOf(r.set) == kNone) return;  // no stages: nothing to move
+    list_ = view_;
+    request_ = Request{};
+    request_.action = Action::Trash;
+    request_.set = r.set;
+    request_.record = r.kind == RowKind::Milestone ? r.record : kNone;
+    pending_ = request_;
+  }
+  /// A triple TRACK: what the last trash moved comes back (while it is still in the trash).
+  void undoTrash() {
+    if (lastTrash_ == kNone || !inTrash(lastTrash_)) return;
+    if (view_ != View::Top && view_ != View::Set && view_ != View::Bin) return;
+    list_ = view_;
+    request_ = Request{};
+    request_.action = Action::Restore;
+    request_.set = records_[lastTrash_].set;
+    request_.record = lastTrash_;
+    pending_ = request_;
+    lastTrash_ = kNone;
+  }
+  /// The trash record a triple TRACK would restore (kNone: none).
+  uint16_t lastTrash() const { return lastTrash_ != kNone && inTrash(lastTrash_) ? lastTrash_ : kNone; }
   /// A double TRACK: the trash from the sets or a set (its newest item selected), the sets from the trash.
   void openTrash() {
     if (view_ == View::Bin) {
@@ -435,6 +470,8 @@ class Browser {
   /// A trash, restore or empty-trash asked for was published (its record `add`ed): back to the list, the nearest row
   /// still there selected; a set left without stages leaves its view for the sets.
   void marked() {
+    if (pending_.action == Action::Trash && count_ != 0 && records_[count_ - 1].kind == library::kTrash)
+      lastTrash_ = static_cast<uint16_t>(count_ - 1);  // a triple TRACK brings it back
     view_ = list_;
     if (view_ == View::Set) {
       fillMembers(openSet_);
@@ -478,7 +515,7 @@ class Browser {
   /// The rows of the list shown (the popup's and a failure's: the list under them).
   uint16_t rowCount() const {
     const View v = shownList();
-    if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_);
+    if (v == View::Set) return static_cast<uint16_t>(kSetHead + members_ + 1);  // its stages, then MOVE SET TO TRASH
     if (v == View::Stages) return static_cast<uint16_t>(kStagesHead + members_);
     if (v == View::Bin) return static_cast<uint16_t>(kBinHead + items_);
     return static_cast<uint16_t>(kTopHead + otherSets() + 1);  // the sets, then TRASH
@@ -495,6 +532,7 @@ class Browser {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
       if (i == 1) return Row{RowKind::GetLoop, openSet_, kNone};
       if (i == 2) return Row{RowKind::Divider, openSet_, kNone};
+      if (i == kSetHead + members_) return Row{RowKind::TrashSet, openSet_, kNone};
       return Row{RowKind::Milestone, openSet_, member(static_cast<uint16_t>(i - kSetHead))};
     }
     if (shownList() == View::Stages) {
@@ -886,6 +924,7 @@ class Browser {
   uint8_t stageSel_ = 0;
   library::Stage suggested_ = library::Stage::Sketch;
   Request request_{}, pending_{};
+  uint16_t lastTrash_ = kNone;  // the trash record a triple TRACK restores (DEC-279 amendment 2)
   // DEC-272: the picker — its stage (a milestone), destination, cursor (a preset, or a track and slot), the preview
   // generation and state, the audition.
   uint16_t pickRecord_ = kNone;

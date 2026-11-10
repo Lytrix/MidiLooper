@@ -1991,6 +1991,9 @@ void loop() {
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t), gSurface.shownQueuedPosition(t));
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
+  ev.copy = static_cast<uint8_t>(gSurface.copyMode());  // DEC-279 amendment 1: copy mode's window
+  ev.copySlot = gSurface.copySourceSlot();
+  ev.copyBar = gSurface.copySourceBar();
   ev.loop = gSurface.loopEdit();
   ev.loopTicks = gSurface.pendingLoopTicks();
   ev.loopStart = gSurface.loopStart();
@@ -2008,6 +2011,9 @@ void loop() {
     ev.steps = ed.steps();
     ev.velocity = ed.velocityMode();
     ev.encoder = static_cast<int8_t>(gSurface.encoderOption());
+    EditNote cn;
+    if (gSurface.copyMode() == Surface<EngineRoot>::Copy::Note && ed.noteAt(gSurface.copySourceNote(), cn))
+      ev.copyPitch = cn.pitch;
     EditNote n;
     if (ed.selected(n)) {
       ev.note = true;

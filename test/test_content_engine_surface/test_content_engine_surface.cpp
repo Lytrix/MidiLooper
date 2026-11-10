@@ -224,15 +224,17 @@ void test_slot_buttons_record_play_switch_and_mute() {
 void test_slot_long_press_keeps_and_record_long_clears() {
   recordOneBar(0, 60);
   const ManifestId m = X().contentOf(0);
-  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // long: a filled slot stays
+  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // long: a filled slot stays — copy mode (DEC-279 amendment 1)
   ms(700);
   gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
   ms(400);
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());  // no overdub either
-  TEST_ASSERT_TRUE(gS.popup());
-  ms(3100);  // the popup hides: the slot button is the slot's again
   TEST_ASSERT_FALSE(gS.popup());
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  tap(S::kSlotBase + 0);  // the source again: copy mode ends
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   tap(S::kSlotBase + 0);
   ms(100);
   tap(S::kSlotBase + 0);
@@ -391,10 +393,10 @@ void test_the_transport_button_stops_and_starts_locally_under_an_external_clock(
   TEST_ASSERT_FALSE(X().playing(0));
 }
 
-// Copy / paste (owner 2026-11-10): a slot held and another pressed copies the held slot onto it — one undo step, the
-// rows copied into the target's own runs, the loop length kept; neither press makes its own gesture (no length popup).
-// The held slot is the one pressed first on the track then selected: another track selected meanwhile is a copy
-// across tracks.
+// Copy mode (DEC-279 amendment 1, owner 2026-11-10): a slot held 600 ms starts it — its LED pulses, no long press of
+// its own — and its release keeps it; a short press of another slot copies onto it (the rows into the target's own
+// runs, the loop kept, one undo step; its LED flashes three times) and copy mode stays: a track button selects another
+// track and its slot takes a copy too. The source again, or a long press of anything (its own gesture dropped), ends it.
 static uint32_t rowsOf(uint8_t slot) {
   const ManifestId m = X().contentOf(slot);
   if (m == kNoManifest) return 0;
@@ -403,43 +405,58 @@ static uint32_t rowsOf(uint8_t slot) {
   for (uint8_t i = 0; i < d.runCount; ++i) rows += gE.runs().run(d.runs[i]).rowCount;
   return rows;
 }
-void test_holding_a_slot_and_pressing_another_copies_it() {
+static void shortPress(uint8_t note) {
+  gS.input(0x9F, note, 127, gUs / 1000);
+  ms(60);
+  gS.input(0x8F, note, 0, gUs / 1000);
+  ms(20);
+}
+void test_copy_mode_copies_slots_across_tracks() {
   recordOneBar(0, 60);
   const uint32_t rows = rowsOf(0);
   TEST_ASSERT_TRUE(rows > 0);
   gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
-  ms(100);
-  gS.input(0x9F, S::kSlotBase + 3, 127, gUs / 1000);
-  ms(50);
-  gS.input(0x8F, S::kSlotBase + 3, 0, gUs / 1000);
-  ms(700);  // the source held past its long press
+  ms(650);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());  // while still held
   gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
   ms(500);
-  TEST_ASSERT_NOT_EQUAL(kNoManifest, X().contentOf(3));
-  TEST_ASSERT_NOT_EQUAL(X().contentOf(0), X().contentOf(3));
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  TEST_ASSERT_FALSE(gS.popup());
+  bool bright = false, dim = false;  // the source pulses
+  for (int i = 0; i < 12; ++i, ms(50)) bright |= gLed[S::kSlotBase] == 127, dim |= gLed[S::kSlotBase] == 8;
+  TEST_ASSERT_TRUE(bright && dim);
+  shortPress(S::kSlotBase + 3);
   TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(3));
-  TEST_ASSERT_EQUAL_UINT32(gE.manifests().manifest(X().contentOf(0)).loopLengthTicks,
-                           gE.manifests().manifest(X().contentOf(3)).loopLengthTicks);
+  TEST_ASSERT_NOT_EQUAL(X().contentOf(0), X().contentOf(3));
   const ManifestId m3 = X().contentOf(3);
   for (uint8_t i = 0; i < gE.manifests().manifest(m3).runCount; ++i)
     TEST_ASSERT_EQUAL_UINT8(3, gE.runs().run(gE.manifests().manifest(m3).runs[i]).slot);  // its own runs
-  TEST_ASSERT_FALSE(gS.popup());  // no long press of the source
-  TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));  // nothing launched
-  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(3, gLast, gUs, gClk.usPerTick()));
-  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(3));
-  // Across tracks: slot 0 held, track 2 selected, slot 2 pressed — onto track 2's slot 2 (engine slot 10).
-  gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);
-  ms(100);
-  tap(S::kTrackBase + 1);
+  uint8_t flashes = 0, last = 0;  // three flashes on the target
+  for (int i = 0; i < 40; ++i, ms(10)) {
+    if (gLed[S::kSlotBase + 3] == 127 && last != 127) ++flashes;
+    last = gLed[S::kSlotBase + 3];
+  }
+  TEST_ASSERT_EQUAL_UINT8(3, flashes);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());  // still copying
+  TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));    // nothing launched
+  shortPress(S::kSlotBase + 4);
+  TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(4));
+  tap(S::kTrackBase + 1);  // track 2
   ms(400);
   TEST_ASSERT_EQUAL_UINT8(1, C().selectedTrack());
-  gS.input(0x9F, S::kSlotBase + 2, 127, gUs / 1000);
-  ms(50);
-  gS.input(0x8F, S::kSlotBase + 2, 0, gUs / 1000);
-  gS.input(0x8F, S::kSlotBase + 0, 0, gUs / 1000);
-  ms(500);
+  shortPress(S::kSlotBase + 2);  // onto track 2's slot 2 (engine slot 10)
   TEST_ASSERT_EQUAL_UINT32(rows, rowsOf(10));
   TEST_ASSERT_FALSE(X().playing(1));
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().undo(10, gLast, gUs, gClk.usPerTick()));  // one step
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(10));
+  // A long press of anything ends it, its own gesture dropped (no solo).
+  tap(S::kTrackBase + 1, 700);
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_FALSE(C().soloed(1));
+  shortPress(S::kSlotBase + 5);  // an ordinary press again: no copy
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(13));
 }
 
 void test_an_armed_slot_punches_in_on_its_second_press() {
@@ -671,53 +688,36 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   ms(800);
   TEST_ASSERT_EQUAL(ProductionBrowser::View::Popup, gBrowser.view());
   TEST_ASSERT_EQUAL_UINT8(0, C().selectedTrack());  // not the next track
+  tap(S::kTrackSwitchNote, 700);  // a long press exits every window, back to playing (DEC-279 amendment 2)
+  ms(400);
+  TEST_ASSERT_FALSE(gS.browsing());
   tap(S::kTrackSwitchNote, 700);
   ms(400);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
-  // DEC-268: HOLD TRACK on the working set asks to move it to the trash; the release that ends the hold confirms nothing.
-  tap(38);
+  TEST_ASSERT_TRUE(gS.browsing());
+  tap(38, 700);  // EDIT's long press too
+  ms(400);
+  TEST_ASSERT_FALSE(gS.browsing());
+  TEST_ASSERT_FALSE(gS.edit().active());  // not NOTE_EDIT either
+  // The working set's stage: a double TRACK moves it to the trash at once.
+  tap(S::kTrackSwitchNote, 700);
+  ms(400);
+  tap(38);  // the working set
   ms(500);
-  tap(S::kTrackSwitchNote, 700);
-  ms(400);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Confirm, gBrowser.view());
-  TEST_ASSERT_EQUAL_UINT8(1, gBrowser.confirmSelected());  // CANCEL
-  ms(1000);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Confirm, gBrowser.view());
+  tap(S::kTrackSwitchNote);  // its stages
+  ms(800);
+  TEST_ASSERT_EQUAL(ProductionBrowser::View::Set, gBrowser.view());
+  TEST_ASSERT_EQUAL_UINT16(3, gBrowser.selected());
   ProductionBrowser::Request q;
-  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
-  tap(S::kTrackSwitchNote);  // a double press on CANCEL: neither cancels then acts on the row under it, nor confirms
-  ms(80);
-  tap(S::kTrackSwitchNote);
-  ms(800);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Confirm, gBrowser.view());
-  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
-  tap(S::kTrackSwitchNote);  // CANCEL
-  ms(800);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
-  tap(S::kTrackSwitchNote);  // a double press: the trash, and again: back to the sets
-  ms(80);
-  tap(S::kTrackSwitchNote);
-  ms(800);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Bin, gBrowser.view());
   tap(S::kTrackSwitchNote);
   ms(80);
-  tap(S::kTrackSwitchNote);
-  ms(800);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Top, gBrowser.view());
-  TEST_ASSERT_FALSE(gBrowser.takeRequest(q));
-  tap(38);  // back down to the working set
-  ms(500);
-  tap(S::kTrackSwitchNote, 700);  // again, YES this time
-  ms(400);
-  tap(S::kRecordNote);
-  ms(500);
   tap(S::kTrackSwitchNote);
   ms(800);
   TEST_ASSERT_TRUE(gBrowser.takeRequest(q));
   TEST_ASSERT_EQUAL(ProductionBrowser::Action::Trash, q.action);
   TEST_ASSERT_EQUAL_UINT16(1, q.set);
+  TEST_ASSERT_EQUAL_UINT16(0, q.record);
   gBrowser.failed("TRASH FAILED", "BUSY");
-  tap(S::kTrackSwitchNote, 700);  // a failure: HOLD TRACK closes
+  tap(S::kTrackSwitchNote, 700);  // a failure: a long press closes
   ms(400);
   TEST_ASSERT_FALSE(gS.browsing());
   tap(S::kTrackSwitchNote, 700);  // `< CLOSE`: TRACK closes
@@ -732,8 +732,9 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   gS.setBrowser(nullptr);
 }
 
-/// DEC-272: a slot's long press opens the picker for that slot; there NOTELEN, PLAY/STOP, REC and EDIT are the moves
-/// (up, down, left, right) — none reaches the transport, a take or a track — and HOLD TRACK goes back to the stages.
+/// DEC-272: copy mode's LOAD LOOP (a slot's long press, then TRACK) opens the picker for that slot; there NOTELEN,
+/// PLAY/STOP, REC and EDIT are the moves (up, down, left, right) — none reaches the transport, a take or a track — and a
+/// long press exits to playing.
 void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   gBrowser.clear();
   library::Record r{};
@@ -743,8 +744,12 @@ void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   gBrowser.setWorking(1, 1);
   gS.setBrowser(&gBrowser);
   TEST_ASSERT_EQUAL_UINT8(2, gBrowser.startPreset());  // the surface's new-loop length, 4 bars
-  tap(S::kSlotBase, 700);  // track 1's slot 1, empty
+  tap(S::kSlotBase, 700);  // track 1's slot 1, empty: copy mode (DEC-279 amendment 1)
+  ms(100);
+  TEST_ASSERT_EQUAL(S::Copy::Slot, gS.copyMode());
+  tap(S::kTrackSwitchNote);  // LOAD LOOP: the picker for the source slot
   ms(400);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
   TEST_ASSERT_TRUE(gS.browsing());
   TEST_ASSERT_EQUAL(ProductionBrowser::View::Picker, gBrowser.view());
   TEST_ASSERT_EQUAL_UINT8(0, gBrowser.pickDestination());
@@ -766,12 +771,10 @@ void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   TEST_ASSERT_EQUAL_UINT8(3, gBrowser.pickTrack());
   TEST_ASSERT_FALSE(gClk.running());
   TEST_ASSERT_FALSE(X().playing(0));
-  tap(S::kTrackSwitchNote, 700);  // back: the working set's stages
+  tap(S::kTrackSwitchNote, 700);  // a long press exits to playing (DEC-279 amendment 2)
   ms(400);
-  TEST_ASSERT_EQUAL(ProductionBrowser::View::Stages, gBrowser.view());
+  TEST_ASSERT_FALSE(gS.browsing());
   ProductionBrowser::Request q;
-  TEST_ASSERT_TRUE(gBrowser.takeRequest(q));
-  TEST_ASSERT_EQUAL(ProductionBrowser::Action::LeavePicker, q.action);
   // Over a filled destination a preset asks first; there REC selects YES and EDIT CANCEL, as in every confirmation —
   // not the picker's moves.
   gBrowser.openPickerFromSlot(9, true);
@@ -812,7 +815,7 @@ int main(int, char**) {
   RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
-  RUN_TEST(test_holding_a_slot_and_pressing_another_copies_it);
+  RUN_TEST(test_copy_mode_copies_slots_across_tracks);
   RUN_TEST(test_the_transport_button_stops_and_starts_locally_under_an_external_clock);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);

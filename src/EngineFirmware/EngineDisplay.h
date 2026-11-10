@@ -71,6 +71,8 @@ struct EditView {
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
   int8_t encoder = -1;    // the encoder's option (slice E): 0 pitch, 1 move, 2 length, 3 velocity
+  uint8_t copy = 0;       // copy mode (DEC-279 amendment 1): 0 none, 1 a slot, 2 a bar, 3 a note
+  uint8_t copySlot = 0, copyBar = 0, copyPitch = 0;  // its source: the engine slot, the bar (0–7), the note's pitch
   bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
@@ -422,6 +424,7 @@ class EngineDisplay {
       return;
     }
     if (edit_.popup) drawPopup();
+    if (edit_.copy != 0) drawCopy();
     if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();
   }
 
@@ -478,12 +481,16 @@ class EngineDisplay {
     oled_.gfx.draw_rect_filled(fb(), 0, 57, 255, 63, 0);
     hintLabel(s, 2, kHintY);
   }
-  /// The trash at the bottom right (owner 2026-11-09: actions left, the trash right): `2× [TRK] TRASH` and a can
-  /// (inside the trash the double press goes back: `2× [TRK] SETS`), the can as bright as the words beside it.
-  void drawTrashCorner(bool open) {
+  /// The bottom right (DEC-279 amendment 2: a long press exits every window): `HOLD EXIT`, or right after a move to the
+  /// trash `3× [TRK] UNDO` beside a can, the can as bright as the words.
+  void drawTrashCorner(bool undo) {
     const uint8_t v = kHintV;
     const int16_t y = kHintY, x = 249;  // the can's left column
-    const char* what = open ? "2* [TRK] SETS" : "2* [TRK] TRASH";
+    if (!undo) {
+      hintLabel("HOLD EXIT", static_cast<int16_t>(255 - 9 * 4), y);
+      return;
+    }
+    const char* what = "3* [TRK] UNDO";
     hintLabel(what, static_cast<int16_t>(x - 5 - static_cast<int16_t>(strlen(what)) * 4 + 2), y);
     hline(x - 1, x + 3, y, v);  // the lid
     for (int16_t yy = static_cast<int16_t>(y + 1); yy <= y + 4; ++yy) {  // the can, ribbed
@@ -528,7 +535,7 @@ class EngineDisplay {
       label(b.failWhat(), kDetailX, 14, 15);
       label(b.failWhy(), kDetailX, 24, 9);
       label(b.failChanged() ? "SET NOT AS IT WAS" : "NOTHING CHANGED", kDetailX, 32, 9);
-      snprintf(h, sizeof h, "[TRK] TRY AGAIN   HOLD [TRK] CLOSE");  // REC / EDIT and the trash do nothing here
+      snprintf(h, sizeof h, "[TRK] TRY AGAIN   HOLD EXIT");  // REC / EDIT and the trash do nothing here
     } else {
       drawDetail(b, b.row(b.selected()), h, sizeof h);
     }
@@ -538,8 +545,7 @@ class EngineDisplay {
       char line[64];
       snprintf(line, sizeof line, "%s%s", kMoves, h);
       hint(line);
-      if (b.shownView() != Browser::View::Stages)  // the stages to get a loop from: a double press does nothing there
-        drawTrashCorner(b.shownView() == Browser::View::Bin);
+      drawTrashCorner(b.lastTrash() != Browser::kNone);
     }
     if (confirming) drawConfirm(b);
   }
@@ -603,7 +609,7 @@ class EngineDisplay {
       const int16_t tw = static_cast<int16_t>(strlen(kButtons[k]) * 4 - 1);
       label(kButtons[k], static_cast<int16_t>(bx + (bw - tw) / 2 + 1), buttonY, on ? 0 : 10);
     }
-    hint("[REC]{ [EDT]}  [TRK] CONFIRM  HOLD [TRK] CANCEL");
+    hint("[REC]{ [EDT]}  [TRK] CONFIRM  HOLD EXIT");
   }
   /// A label centred on `xc`.
   void clabel(const char* s, int16_t xc, int16_t top, uint8_t v) {
@@ -714,10 +720,10 @@ class EngineDisplay {
       label(b.failWhat(), kPanelX0, 22, 15);
       label(b.failWhy(), kPanelX0, 30, 9);
       label("NOTHING CHANGED", kPanelX0, 38, 9);
-      hint("[TRK] TRY AGAIN   HOLD [TRK] CLOSE");
+      hint("[TRK] TRY AGAIN   HOLD EXIT");
       return;
     }
-    snprintf(h, sizeof h, "[LEN]{ [PLY]} [REC]< [EDT]>  [TRK] %s  HOLD [TRK] BACK", use ? "USE" : "AUDITION");
+    snprintf(h, sizeof h, "[LEN]{ [PLY]} [REC]< [EDT]>  [TRK] %s  HOLD EXIT", use ? "USE" : "AUDITION");
     hint(h);
     if (b.view() == Browser::View::Confirm) drawConfirm(b);
   }
@@ -823,6 +829,7 @@ class EngineDisplay {
         label(b.shownView() == Browser::View::Stages ? "< BACK" : "< SETS", kYearX, y, on ? 15 : 11);
         return;
       case RowKind::GetLoop: label("GET A LOOP", kYearX, y, on ? 15 : 11); return;
+      case RowKind::TrashSet: label("MOVE SET TO TRASH", kYearX, y, on ? 15 : 11); return;
       default: break;
     }
     const uint16_t rec = recordOf(r);
@@ -952,11 +959,18 @@ class EngineDisplay {
       case RowKind::Divider:
         h[0] = 0;
         return;
+      case RowKind::TrashSet:  // DEC-279 amendment 2: destructive, so a double press; a triple brings it back
+        snprintf(a, sizeof a, "SET %u", r.set);
+        label(a, kDetailX, kMosaicY, 15, 2);
+        snprintf(c, sizeof c, "%u STAGE%s", b.milestonesIn(r.set), b.milestonesIn(r.set) == 1 ? "" : "S");
+        label(b.milestonesIn(r.set) != 0 ? c : "NO STAGES", kDetailX, 30, 11);
+        label("TO THE TRASH", kDetailX, 38, 9);
+        snprintf(h, n, b.milestonesIn(r.set) != 0 ? "2* [TRK] MOVE TO TRASH" : "");
+        return;
       case RowKind::Trash:
         label("TRASH", kDetailX, kMosaicY, 15, 2);
         snprintf(a, sizeof a, "%u ITEM%s", b.itemCount(), b.itemCount() == 1 ? "" : "S");
         label(b.itemCount() != 0 ? a : "EMPTY", kDetailX, 30, 11);
-        label("ALSO 2* [TRK]", kDetailX, 38, 9);
         snprintf(h, n, "[TRK] OPEN TRASH");
         return;
       case RowKind::Empty: {  // DEC-268
@@ -990,7 +1004,7 @@ class EngineDisplay {
       }
       case RowKind::Working:
       case RowKind::Set:
-        snprintf(h, n, "[TRK] OPEN  HOLD [TRK] DELETE");
+        snprintf(h, n, "[TRK] OPEN");
         if (r.record == Browser::kNone) {
           snprintf(h, n, "[TRK] OPEN");
           snprintf(a, sizeof a, "SET %u", r.set);
@@ -1011,8 +1025,8 @@ class EngineDisplay {
           snprintf(a, sizeof a, "FROM %s", id);
         }
         drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
-        if (b.shownView() == Browser::View::Stages) snprintf(h, n, "[TRK] SELECT STAGE  HOLD [TRK] BACK");
-        else snprintf(h, n, "[TRK] LOAD  HOLD [TRK] DELETE");
+        if (b.shownView() == Browser::View::Stages) snprintf(h, n, "[TRK] SELECT STAGE");
+        else snprintf(h, n, "[TRK] LOAD  2* [TRK] TRASH");
         return;
       }
     }
@@ -1128,7 +1142,7 @@ class EngineDisplay {
       }
       label("S01", kLabel, kHeadY - 2, 9);
     }
-    hint("[REC]{ [EDT]}  [TRK] SAVE  HOLD [TRK] CANCEL");  // the suggestion: `<` (`?` likely) in the list
+    hint("[REC]{ [EDT]}  [TRK] SAVE  HOLD EXIT");  // the suggestion: `<` (`?` likely) in the list
   }
   /// The one line after a save, load or return (rule 6), over the performance screen.
   void drawToast() {
@@ -1179,6 +1193,40 @@ class EngineDisplay {
     static const char kHint[] = "PRESS +  2X -  HOLD CANCEL";  // next length, the one before, back as opened
     label(kHint, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(sizeof kHint - 1) * 4) / 2),
           static_cast<int16_t>(y1 - 7), 5);
+  }
+
+  /// Copy mode (DEC-279 amendment 1, owner 2026-11-10: its own minimal state): a small window over the roll's top —
+  /// what is copied, what pastes it, and the way out (a slot's LOAD LOOP: the get-a-loop picker for it).
+  void drawCopy() {
+    constexpr int16_t x0 = 60, y0 = 3, x1 = 195, y1 = 31, sh = 3;
+    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 2);
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 0);
+    for (int16_t x = x0; x <= x1; ++x) {
+      px(x, y0, 10);
+      px(x, y1, 10);
+    }
+    for (int16_t y = y0; y <= y1; ++y) {
+      px(x0, y, 10);
+      px(x1, y, 10);
+    }
+    char title[24], name[6];
+    const char* paste = "PRESS A SLOT TO PASTE";
+    if (edit_.copy == 1) {
+      snprintf(title, sizeof title, "COPY LOOP %u-%u", edit_.copySlot / 8 + 1, edit_.copySlot % 8 + 1);
+    } else if (edit_.copy == 2) {
+      snprintf(title, sizeof title, "COPY BAR %u", edit_.copyBar + 1);
+      paste = "PRESS A BAR TO PASTE";
+    } else {
+      ContentEngine::status::noteName(edit_.copyPitch, name);
+      snprintf(title, sizeof title, "COPY NOTE %s", name);
+      paste = "PRESS A STEP TO PASTE";
+    }
+    label(title, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(title)) * 4) / 2), y0 + 4, 15);
+    label(paste, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(paste)) * 4) / 2), y0 + 13, 11);
+    const char* way = edit_.copy == 1 ? "[TRK] LOAD LOOP  HOLD EXIT" : "HOLD EXIT";
+    int16_t w = 0;
+    for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
+    hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
   }
 
   /// The legacy track letter for track `t`.

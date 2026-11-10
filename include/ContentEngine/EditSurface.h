@@ -45,10 +45,9 @@
 //   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `Surface` — one undo step
 //   a note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even
 //   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
-// * Copy / paste (owner 2026-11-10: hold the source, press the target; one undo step each): a step held, another step
-//   pressed — the selected note (the held step's, locked) copied to that 16th at the same offset in it, beside what is
-//   there (`copyNote`); a bar button held, another pressed — that bar of the 8-bar page holding the bracket copied over
-//   the other (its notes replaced; `copyBar`, at most `kMaxPaste` notes deleted and added).
+// * Copy / paste (DEC-279; `Surface`'s copy mode picks the source and the targets; one undo step each): a note copied
+//   to a 16th at the same offset in it, beside what is there (`copyNote`); a bar copied over a bar of the 8-bar page
+//   holding the bracket (its notes replaced; `copyBar`, at most `kMaxPaste` notes deleted and added).
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
 // * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
 //   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
@@ -499,6 +498,7 @@ class EditSurface {
     for (uint8_t i = 0; i < n; ++i)
       if (stack[i] == sel_) pickNote = sel_;
     lock_ = true;
+    lockUsed_ = false;
     lockSel_ = sel_;
     lockBracket_ = bracket_;
     lockRef_ = refStep_;
@@ -527,12 +527,22 @@ class EditSurface {
     drive(kMotorAll, ms);
   }
   bool locked() const { return lock_; }
-  /// Copy / paste: the selected note onto step `k` at its offset in the 16th, a new note beside those there. False:
-  /// nothing selected, outside the window, or refused.
-  bool copyNote(uint8_t k, uint32_t ms) {
+  /// The selected note's index (< 0: none): a copy's source.
+  int16_t selection() const { return editing() ? sel_ : static_cast<int16_t>(-1); }
+  /// The lock changed its note (a fader or the encoder moved it): it was a parameter lock, not a copy's hold.
+  bool lockUsed() const { return lock_ && lockUsed_; }
+  /// The note at `index` as it is now (its pitch for the copy window). False: none, or deleted.
+  bool noteAt(int16_t index, EditNote& n) const {
+    if (!editing() || index < 0 || index >= static_cast<int16_t>(session().size())) return false;
+    n = session().current(static_cast<uint16_t>(index));
+    return !n.deleted;
+  }
+  /// Copy / paste: note `source` onto step `k` at its offset in the 16th, a new note beside those there. False: no such
+  /// note, outside the window, or refused.
+  bool copyNote(int16_t source, uint8_t k, uint32_t ms) {
     EditNote n;
     uint32_t tick;
-    if (!selected(n) || !stepTick(k, tick)) return false;
+    if (!noteAt(source, n) || !stepTick(k, tick)) return false;
     EditNote c = n;
     c.tick = tick + n.tick % kSixteenth;
     if (c.tick >= loop_ || c.tick >= first_ + ticks_) return false;
@@ -546,12 +556,15 @@ class EditSurface {
     drive(kMotorSelect, ms);  // F1's stack for the selection may have grown
     return true;
   }
-  /// Copy / paste: bar `from` of the 8-bar page holding the bracket over bar `to` (its notes deleted, `from`'s added at
-  /// the same offsets). False: the same bar, outside the window or the loop, too many notes, or refused.
-  bool copyBar(uint8_t from, uint8_t to, uint32_t ms) {
-    if (!editing() || from == to || from >= 8 || to >= 8) return false;
-    const uint32_t page = bracket_ / (8 * kBar) * (8 * kBar);
-    const uint32_t src = page + from * kBar, dst = page + to * kBar;
+  /// Bar `bar`'s start of the 8-bar page holding the bracket (a bar button's; a copy's source).
+  uint32_t barStart(uint8_t bar) const { return bracket_ / (8 * kBar) * (8 * kBar) + bar * kBar; }
+  /// Copy / paste: the bar starting at `src` over bar `to` of the 8-bar page holding the bracket (its notes deleted,
+  /// the source's added at the same offsets). False: the same bar, outside the window or the loop, too many notes, or
+  /// refused.
+  bool copyBar(uint32_t src, uint8_t to, uint32_t ms) {
+    if (!editing() || to >= 8) return false;
+    const uint32_t dst = barStart(to);
+    if (src == dst) return false;
     const auto inside = [&](uint32_t t) { return t < loop_ && t >= first_ && t < first_ + ticks_; };
     if (!inside(src) || !inside(dst)) return false;
     uint16_t del = 0, add = 0;
@@ -741,6 +754,7 @@ class EditSurface {
       return false;
     }
     why_ = Why::Acted;
+    if (lock_) lockUsed_ = true;
     open_ = true;
     openNote_ = sel_;
     openDepth_ = session().depth();
@@ -951,6 +965,7 @@ class EditSurface {
   static constexpr uint16_t kMaxPaste = 128;  // a bar copy's notes deleted and added together
   EditChange paste_[kMaxPaste];
   bool lock_ = false, lockLength_ = false;  // a step held (slice D): the selection before it
+  bool lockUsed_ = false;                   // ... and a change made through it
   int16_t lockSel_ = -1;
   uint32_t lockBracket_ = 0, lockRef_ = 0;
   int16_t openNote_ = -1;
