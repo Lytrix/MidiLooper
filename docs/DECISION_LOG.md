@@ -15696,3 +15696,10 @@ rule fails it); full 4,500 passed. Device (image `99882058…`, boot `crash=0`):
 1-4's 9-bar roll at once (`-0.1.2.02` to the switch); 1-1 queued behind 1-4 showed 1-1's roll with the parked playhead
 on in two frames and off in the next two (−7 … −4 bars); with track 2 saved as selected, the frames from a reboot were
 blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load) — never track 1.
+- **Amendment 1 (owner 2026-11-10): the title is back, v0.7.** The display starts first in setup — before the wait for
+  USB serial (up to 3 s without a host) — and draws the title as legacy did (`OSTINATIX` in the 5 × 7 font four times
+  its size, centred; the version bottom right, now `v0.7`, `EngineDisplay::kVersion`); the performance screen's first
+  frame waits for the boot load to end (it then opens on the saved selection). Device `d9431e54…`, boot `crash=0`: the
+  title in the first captures, the performance screen on track 2 once the load had ended (`BOOT,load` at 1.17 s); the
+  title is up about 1 s with USB, up to about 4 s without. Three Atari-style title mockups (a GEM desktop, raster bars,
+  an alert box) in `docs/Plans/images/title_screen_mockups.png`, for the owner to choose.

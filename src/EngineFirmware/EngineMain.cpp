@@ -1785,6 +1785,10 @@ void setup() {
   WDOG1_WICR = kWicrWie | kWicrWtis | 1;  // the warning 0.5 s before the reset
   NVIC_ENABLE_IRQ(IRQ_WDOG1);
   attachInterruptVector(IRQ_USB1, usbIsrCounted);
+  // The title first (owner 2026-11-10): before the wait for USB serial (up to 3 s without a host), until the boot load
+  // has ended.
+  gDisplay.begin();
+  gDisplay.drawTitle();
   Serial.begin(115200);
   while (!Serial && millis() < 3000) {
     feedWatchdog();
@@ -1811,7 +1815,6 @@ void setup() {
   gClock.init(kDefaultTempo, kTicksPerBar);
   loadSwitchAt();
   gSurface.init(gEngine, gClock);
-  gDisplay.begin();
   phase(kPhaseDisplay);
   Serial8.begin(31250);
   Serial8.addMemoryForWrite(gDinTx, sizeof gDinTx);
@@ -1942,7 +1945,8 @@ void loop() {
   }
   crumb(kScreen);
   if (!gSelectionKnown && (applySavedSelection() || gBootReported)) gSelectionKnown = true;
-  if (gSelectionKnown) gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);  // the first frame on the right slot
+  // The title stays until the boot load has ended; the first frame then opens on the saved selection (DEC-273).
+  if (gSelectionKnown && gBootReported) gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
   crumb(kIdle);
   checkUsb(millis());
 }

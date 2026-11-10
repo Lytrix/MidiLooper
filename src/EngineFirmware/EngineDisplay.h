@@ -110,6 +110,42 @@ class EngineDisplay {
     focus_ = 0xFF;
     started_ = false;
   }
+  /// The firmware's version on the title (owner 2026-11-10: legacy showed v0.6; the engine is v0.7).
+  static constexpr const char* kVersion = "v0.7";
+  /// The title (owner 2026-11-10, as legacy `drawBootScreen`): `OSTINATIX` in the 5 × 7 font four times its size,
+  /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
+  /// performance frame then opens on the saved selection, DEC-273).
+  void drawTitle() {
+    uint8_t* f = fb();
+    oled_.gfx.fill_buffer(f, 0);
+    static const char kTitle[] = "OSTINATIX";
+    constexpr int16_t kScale = 4, kAdvance = 6;
+    const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * kAdvance * kScale - kScale);
+    int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
+    const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
+    const GFXfont& font = Font5x7FixedMono;
+    for (const char* c = kTitle; *c != 0; ++c, x = static_cast<int16_t>(x + kAdvance * kScale)) {
+      const uint8_t code = static_cast<uint8_t>(*c);
+      if (code < font.first || code > font.last) continue;
+      const GFXglyph& g = font.glyph[code - font.first];
+      uint16_t bit = 0;
+      uint8_t bits = 0;
+      for (uint8_t yy = 0; yy < g.height; ++yy)
+        for (uint8_t xx = 0; xx < g.width; ++xx, ++bit) {
+          if ((bit & 7) == 0) bits = font.bitmap[g.bitmapOffset + (bit >> 3)];
+          if (bits & 0x80) {
+            const int16_t px0 = static_cast<int16_t>(x + (g.xOffset + xx) * kScale);
+            const int16_t py0 = static_cast<int16_t>(top + (7 + g.yOffset + yy) * kScale);
+            oled_.gfx.draw_rect_filled(f, px0, py0, static_cast<int16_t>(px0 + kScale - 1),
+                                       static_cast<int16_t>(py0 + kScale - 1), 15);
+          }
+          bits = static_cast<uint8_t>(bits << 1);
+        }
+    }
+    text(kVersion, static_cast<int16_t>(DISPLAY_WIDTH - static_cast<int16_t>(strlen(kVersion)) * 6 - 2),
+         DISPLAY_HEIGHT, 8);
+    sendBlocking();
+  }
   /// Panel check (`!ENGINE oled-test`, and once at boot): `blocking` sends a full bright frame over plain SPI, else a
   /// striped frame by DMA. The serial line names which one, so what the panel shows can be matched to it.
   void selfTest(bool blocking) {
