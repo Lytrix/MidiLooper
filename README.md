@@ -26,7 +26,7 @@ This is the [project's guiding intent](docs/Authority/PROJECT_INTENT.md), shared
 
 The base module uses **4 physical buttons and 1 rotary encoder**, connected directly to the looper through GPIO. This is the compact, standalone control setup: the intended core workflow is recording, overdubbing, undo, track/slot navigation and basic editing through button gestures and the encoder. It does not require a DROID or another MIDI controller.
 
-The hardware exists, but its GPIO control path is currently dormant and has not been connected to the fixed-memory engine. The full minimal-control workflow remains the [base-module goal](docs/Authority/PROJECT_INTENT.md); the MIDI mappings and four-fader controls below describe the currently active extension setup.
+The hardware exists. In the fixed-memory engine its **encoder is connected** (it edits notes in NOTE_EDIT, see [the encoder](#the-encoder)); the four GPIO buttons are not yet. The full minimal-control workflow remains the [base-module goal](docs/Authority/PROJECT_INTENT.md); the MIDI mappings and four-fader controls below describe the currently active extension setup.
 
 ### MIDI controller setup: extra buttons and faders
 
@@ -39,7 +39,7 @@ The workflow, button table and fader table below apply to this MIDI controller s
 1. **Choose a track and an empty slot.** Press the slot to arm recording. With transport stopped, start transport to begin the take; on a running track, press the armed slot again to punch in.
 2. **Record a loop.** Play your MIDI instrument, then press Record to finish the take at a bar boundary and keep listening as it loops.
 3. **Layer more notes.** Press Record on the playing track to overdub; press again to finish the overdub while playback continues. Double Record undoes; triple redoes—try ideas and change your mind while the groove keeps running.
-4. **Build variations.** Record into another slot, then press a filled slot to queue it at the playing loop's end. Select other tracks to build the arrangement; use mute and solo to bring parts in and out.
+4. **Build variations.** Record into another slot, then press a filled slot to queue it at the playing loop's end (double-press to launch it at the next 16th instead). With the transport stopped, a press only selects the slot that the next start plays. Hold a slot to copy it onto another slot (see [copy mode](#copy-mode)). Select other tracks to build the arrangement; use mute and solo to bring parts in and out.
 5. **Edit while listening.** Press Edit for NOTE_EDIT, press again for LOOP_EDIT, and hold Edit to return to performance. Use the four faders as described below.
 
 Settled changes autosave once saving has been enabled during setup. See the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md) for recording states, editing details and storage behavior.
@@ -50,21 +50,50 @@ The same buttons provide their main action with a short press and secondary acti
 
 | Control | Short press | Double press | Triple press | Long press / hold |
 |---------|-------------|--------------|--------------|-------------------|
-| **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute | Clear slot (undoable) | Redo | Open length popup; an empty slot first becomes a one-bar loop |
-| **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear |
+| **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute; with the transport stopped, only select | Launch at the next launch step (1/16 by default) | Redo | [Copy mode](#copy-mode) |
+| **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear the selected slot |
 | **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
-| **Next track** | Select next track | Undo | Redo | Mute / unmute current track |
-| **Transport** | Global start / stop | Return to loop start | — | — |
+| **Next track** | Select next track | Undo | Redo | Open the sets browser |
+| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally) | Return to loop start | — | — |
 | **Track play/stop** | Play / stop selected track | — | — | — |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
 | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
-| **NOTELEN in LOOP_EDIT** | Create a one-bar loop if empty | — | — | Open length popup |
+| **NOTELEN in LOOP_EDIT** | Create a four-bar loop if empty | — | — | Open length popup |
+| **16th steps 1–16** (performance) | Restart the playing slot at that 16th of the bar playing, at the next launch step | — | — | — |
+| **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
+| **16th steps 1–16** (NOTE_EDIT) | Select the step's note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step's note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |
+| **Bars 1–8** (NOTE_EDIT) | — | — | — | [Copy mode](#copy-mode) for that bar |
 
-Changing track during NOTE_EDIT keeps the previous session as one undo step and follows the new track. External clock controls transport when present.
+Changing track during NOTE_EDIT keeps the previous session as one undo step and follows the new track. External clock controls transport when present. A long press of any button closes an open window (the sets browser, the get-a-loop picker, the length popup) back to playing. The launch step is set over serial: `!ENGINE launch-q 16|8|4|bar`.
+
+### Copy mode
+
+Hold a slot for 0.6 s — or, in NOTE_EDIT, a bar button, or a step you hold without editing its note. The held button's LED pulses and a small COPY window opens.
+
+| While the COPY window is open | Action |
+|---|---|
+| Short press of another slot / bar / step | Paste there (a slot's loop; a bar over that bar, its notes replaced; a note beside what is on that step). One undo step, the target flashes three times, the window closes |
+| Track buttons (slots) | Choose another track first, to paste onto its slots |
+| Double press of the source | Clear it: the slot, or the bar's / the 16th's notes. One undo step, the window closes |
+| Short press of the source | Cancel |
+| Long hold of another slot / bar / step | Make that the source instead |
+| Next track short, or the source slot held again | LOAD LOOP: the get-a-loop picker for that slot |
+| Long press of any other button | Close at once |
+| Nothing for 5 s | Closes by itself (a track switch restarts the countdown; the window's bottom edge shows the time left) |
+
+A paste or a slot clear selects that slot, so a double Record afterwards undoes it.
+
+### Undo is per slot
+
+Each of the 64 slots has its own undo and redo history. Every change to a slot is one step in **that slot's** history: a recording, an overdub, a clear, a loop length or start change, an empty loop, a whole NOTE_EDIT visit, a loop fetched with get a loop, and a paste or clear from copy mode. A double Record (or double Next track) undoes the selected slot's last step and a triple redoes it; undoing one slot never touches another, so a copy is undone on the slot it landed on while its source stays as it is. While NOTE_EDIT or an overdub is open, the same gestures step inside that session first. The UNDO field shows the selected slot's steps. The histories share a 99-state pool (the oldest states go first when it is full), are saved with their slots and come back after a reboot; loading a set brings that set's slot histories with it.
+
+### The encoder
+
+The base module's encoder (Teensy pins 29 / 30, push on 31) works in NOTE_EDIT. A push steps through pitch, move, length and velocity, marked by a line under that label. A turn changes the selected note's value, faster when turned quickly (move up to ×24, length ×8, pitch and velocity ×4). With a step button held, a turn edits that step's note at once, a push adds a 16th C4 on the step and a double push deletes the selected note. The long push is reserved for a future CC menu.
 
 ### Loop-length popup
 
-Long-press a slot, or long-press NOTELEN in LOOP_EDIT. While the popup is open:
+Long-press NOTELEN in LOOP_EDIT. While the popup is open:
 
 | Control | Action |
 |---------|--------|
@@ -101,6 +130,8 @@ You can configure another MIDI controller to send the same messages. Button mapp
 | Track play/stop | 40 | 16 |
 | Slots 1–8 on the selected track | 50–57 | 16 |
 | Tracks 1–8 | 60–67 | 16 |
+| 16th steps 1–16 | 0–15 | 16 |
+| Bars 1–8 | 17–24 | 16 |
 
 For example, configure eight buttons to send notes 50–57 on channel 16 to control slots 1–8. These note numbers are controller messages, not the pitches recorded into the loop. Channels 13–16 are reserved for the engine control plane.
 
@@ -132,11 +163,11 @@ On a fresh card, the engine reads without writing until the owner enables saving
 
 ## What is available, and what is next
 
-The engine supports record/overdub, quantized slot switching, track mute/solo, undo/redo, note creation/deletion and geometry/velocity editing, loop start/length editing, and autosave/boot restore. Shortening a loop keeps notes beyond its end for later lengthening.
+The engine supports record/overdub, quantized slot switching and launch, step / bar restarts, track mute/solo, per-slot undo/redo, note creation/deletion and geometry/velocity editing (faders, step buttons and the encoder), copy / paste of slots, bars and notes, loop start/length editing, and autosave/boot restore. Shortening a loop keeps notes beyond its end for later lengthening.
 
-The legacy Bars/16ths jam controls, multi-slot layering gestures, extended edit buttons 41–48 and load/save overlay are not available in the engine. Scene and jam capture remain future work.
+The **sets browser** (Next track held) is available on this branch: saved milestones of the whole set, a save popup with stages, live loads with a return point, a trash, and get a loop — one slot of a saved stage onto a slot of the current set, auditioned first. The images below are the original design walkthroughs; the device screens differ in detail.
 
-A new **Sets browser** is in progress. Its milestones, save popup, live loads, return point and loop retrieval are proposed workflows, not shipped controls. The images below are design walkthroughs, not captures proving implemented browser behavior.
+The legacy jam controls, multi-slot layering gestures, quantize, extended edit buttons 41–48 and the legacy load/save overlay are not available in the engine. Scene and jam capture remain future work.
 
 ![Proposed browser: browsing a long milestone history and loading an earlier take](docs/Plans/images/walk_4_long_history.png)
 
