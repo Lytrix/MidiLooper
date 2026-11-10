@@ -547,16 +547,55 @@ class EditSurface {
     n = session().current(static_cast<uint16_t>(index));
     return !n.deleted;
   }
-  /// Copy / paste: note `source` onto step `k` at its offset in the 16th — `merge`: beside the notes there; else they
-  /// go first (replace). False: no such note, outside the window, too many, or refused.
-  bool copyNote(int16_t source, uint8_t k, uint32_t ms, bool merge = false) {
+  // ---- Copy mode's source as values (DEC-279 amendment 9: the paste may land in another slot's session) ----------
+  static constexpr uint8_t kMaxCopy = 64;  // a bar copy's notes
+  /// The note at `index`, its tick kept as its offset in its 16th. False: none.
+  bool captureNote(int16_t index) {
     EditNote n;
+    if (!noteAt(index, n)) return false;
+    n.tick %= kSixteenth;
+    copy_[0] = n;
+    copyCount_ = 1;
+    return true;
+  }
+  /// The notes starting in the bar at `start`, their ticks kept as offsets in it. False: more than `kMaxCopy`.
+  bool captureBar(uint32_t start) {
+    copyCount_ = 0;
+    const uint16_t size = session().size();
+    for (uint16_t i = 0; i < size; ++i) {
+      const EditNote& e = session().current(i);
+      if (e.deleted || e.tick < start || e.tick >= start + kBar) continue;
+      if (copyCount_ == kMaxCopy) return false;
+      copy_[copyCount_] = e;
+      copy_[copyCount_++].tick = e.tick - start;
+    }
+    return true;
+  }
+  uint8_t copyCount() const { return copyCount_; }
+  const EditNote& copied(uint8_t i) const { return copy_[i]; }
+  /// The bracket to bar `bar` of its 8-bar page (copy mode: a bar button, so the step buttons paste there). False:
+  /// outside the window or the loop.
+  bool goToBar(uint8_t bar) {
+    const uint32_t start = barStart(bar);
+    if (!editing() || bar >= 8 || start >= loop_ || start < first_ || start >= first_ + ticks_) return false;
+    bracket_ = start;
+    refStep_ = bracket_ / kSixteenth;
+    return true;
+  }
+  /// Copy / paste: the captured note onto step `k` at its offset in the 16th — `merge`: beside the notes there; else
+  /// they go first (replace). False: nothing captured, outside the window, too many, or refused.
+  bool copyNote(uint8_t k, uint32_t ms, bool merge = false) {
     uint32_t tick;
-    if (!noteAt(source, n) || !stepTick(k, tick)) return false;
-    EditNote c = n;
-    c.tick = tick + n.tick % kSixteenth;
+    if (!stepTick(k, tick)) return false;
+    return copyNoteAt(tick, ms, merge);
+  }
+  /// The captured note onto the 16th starting at `tick` (copy mode across a loop change: an absolute position).
+  bool copyNoteAt(uint32_t tick, uint32_t ms, bool merge = false) {
+    if (copyCount_ != 1 || !editing() || tick >= loop_ || tick < first_ || tick >= first_ + ticks_) return false;
+    EditNote c = copy_[0];
+    c.tick = tick + c.tick;
     if (c.tick >= loop_ || c.tick >= first_ + ticks_) return false;
-    const uint16_t del = merge ? 0 : collectDeletes(tick, kSixteenth, source);
+    const uint16_t del = merge ? 0 : collectDeletes(tick, kSixteenth, -1);
     if (del == kMaxPaste) return false;
     c.noteId = e_->noteIds().peek();
     e_->noteIds().advance();
@@ -588,29 +627,29 @@ class EditSurface {
   }
   /// Bar `bar`'s start of the 8-bar page holding the bracket (a bar button's; a copy's source).
   uint32_t barStart(uint8_t bar) const { return bracket_ / (8 * kBar) * (8 * kBar) + bar * kBar; }
-  /// Copy / paste: the bar starting at `src` over bar `to` of the 8-bar page holding the bracket (its notes deleted,
-  /// the source's added at the same offsets). False: the same bar, outside the window or the loop, too many notes, or
+  /// Copy / paste: the captured bar over bar `to` of the 8-bar page holding the bracket, at the same offsets —
+  /// `merge`: beside its notes; else they go first (replace). False: outside the window or the loop, too many notes, or
   /// refused.
-  bool copyBar(uint32_t src, uint8_t to, uint32_t ms, bool merge = false) {
+  bool copyBar(uint8_t to, uint32_t ms, bool merge = false) {
     if (!editing() || to >= 8) return false;
-    const uint32_t dst = barStart(to);
-    if (src == dst) return false;
+    return copyBarAt(barStart(to), ms, merge);
+  }
+  /// The captured bar over the bar starting at `dst` (copy mode across a loop change: an absolute position).
+  bool copyBarAt(uint32_t dst, uint32_t ms, bool merge = false) {
+    if (!editing()) return false;
     const auto inside = [&](uint32_t t) { return t < loop_ && t >= first_ && t < first_ + ticks_; };
-    if (!inside(src) || !inside(dst)) return false;
+    if (!inside(dst)) return false;
     const uint16_t del = merge ? 0 : collectDeletes(dst, kBar, -1);  // replace: the target bar's notes go
     if (del == kMaxPaste) return false;
     uint16_t add = 0;
-    const uint16_t size = session().size();
-    for (uint16_t i = 0; i < size; ++i) {  // the source bar's come
-      const EditNote& e = session().current(i);
-      if (e.deleted || e.tick < src || e.tick >= src + kBar) continue;
-      const uint32_t t = e.tick - src + dst;
-      if (!inside(t)) continue;
+    for (uint8_t i = 0; i < copyCount_; ++i) {
+      EditNote c = copy_[i];
+      c.tick = dst + c.tick;
+      if (!inside(c.tick)) continue;
       if (del + add == kMaxPaste) return false;
-      EditNote c = e;
-      c.tick = t;
       c.noteId = e_->noteIds().peek();
       e_->noteIds().advance();
+      c.deleted = 0;
       paste_[del + add++] = EditChange{0, c};
     }
     if (del + add == 0) return false;
@@ -1013,6 +1052,8 @@ class EditSurface {
   bool open_ = false;  // the selected note has its step: a change replaces it
   static constexpr uint16_t kMaxPaste = 128;  // a bar copy's notes deleted and added together
   EditChange paste_[kMaxPaste];
+  EditNote copy_[kMaxCopy];  // copy mode's source, as values (offsets in its 16th / bar)
+  uint8_t copyCount_ = 0;
   bool lock_ = false, lockLength_ = false;  // a step held (slice D): the selection before it
   bool lockUsed_ = false;                   // ... and a change made through it
   int16_t lockSel_ = -1;

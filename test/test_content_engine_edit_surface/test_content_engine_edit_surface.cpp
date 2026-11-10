@@ -1889,6 +1889,73 @@ void test_copy_mode_replaces_or_merges_with_the_overlap_rule() {
   TEST_ASSERT_EQUAL_UINT32(1, liveAt(384, 64));
 }
 
+// DEC-279 amendment 9 (owner 2026-11-10: "you need time to … select another bar via the bar buttons and paste it … the
+// same like with track switching and slots"): the copy holds its notes as values, so in a note's copy mode a bar button
+// moves the steps to that bar, and a track switch (NOTE_EDIT following) keeps copy mode — the paste lands in the other
+// slot's session. Each restarts the countdown.
+void test_copy_mode_pastes_into_another_bar_and_another_track() {
+  recordBar({{96, 64}, {384, 67}});
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, resizeTo(2 * 768));
+  enterEdit();
+  settle();
+  hold(2, 700);  // 64 @ 96
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  ms(S::kCopyIdleMs - 1500);
+  shortPress(18);  // bar 2: the steps paste there; the countdown again
+  ms(1600);
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  pastePress(5);  // bar 2's step 5: 768 + 240
+  TEST_ASSERT_TRUE(noteAt(1008) >= 0);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(1008))).pitch);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  // A bar onto another track: bar 1 held, track 2 selected (NOTE_EDIT follows it), its bar 1 pressed.
+  tap(S::kEditModeNote, 700);  // leave, to record track 2
+  ms(100);
+  recordTrack1({{600, 72}});
+  tap(S::kTrackBase + 0);
+  ms(400);
+  enterEdit();
+  settle();
+  hold(17, 700);
+  TEST_ASSERT_EQUAL(S::Copy::Bar, gS.copyMode());
+  tap(S::kTrackBase + 1);
+  ms(400);
+  for (int i = 0; i < 50 && !gS.edit().editing(); ++i) ms(5);
+  TEST_ASSERT_EQUAL_UINT8(8, gS.edit().slot());
+  TEST_ASSERT_EQUAL(S::Copy::Bar, gS.copyMode());  // kept across the switch
+  pastePress(17);  // replace track 2's bar 1 with track 1's
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_TRUE(noteAt(96) >= 0 && noteAt(384) >= 0);
+  TEST_ASSERT_EQUAL_INT32(-1, noteAt(600));  // its own 72 replaced
+  TEST_ASSERT_EQUAL_UINT8(67, gE.noteEdit().current(static_cast<uint16_t>(noteAt(384))).pitch);
+}
+
+// Owner 2026-11-10: a target past the loop's end lengthens the loop to the end of its bar, then the paste lands there
+// (NOTE_EDIT re-gathered on the longer loop): a bar onto bar 3 of a 1-bar loop, a note onto bar 4's step 1.
+void test_a_paste_past_the_loop_end_lengthens_the_loop() {
+  recordBar({{96, 64}, {384, 67}});
+  enterEdit();
+  settle();
+  TEST_ASSERT_EQUAL_UINT32(768, gS.edit().loop());
+  hold(17, 700);
+  pastePress(19);  // bar 3: the loop grows to 3 bars
+  for (int i = 0; i < 50 && gS.copyMode() != S::Copy::None; ++i) ms(5);
+  TEST_ASSERT_EQUAL(S::Copy::None, gS.copyMode());
+  TEST_ASSERT_TRUE(gS.edit().editing());
+  TEST_ASSERT_EQUAL_UINT32(3 * 768, gS.edit().loop());
+  TEST_ASSERT_TRUE(noteAt(1536 + 96) >= 0 && noteAt(1536 + 384) >= 0);
+  TEST_ASSERT_TRUE(noteAt(96) >= 0);  // bar 1 as it was
+  // A note onto bar 4 (past the 3-bar end): bar 4 chosen with its bar button, then step 1.
+  hold(2, 700);  // 64 @ 96
+  TEST_ASSERT_EQUAL(S::Copy::Note, gS.copyMode());
+  shortPress(20);
+  pastePress(0);
+  for (int i = 0; i < 50 && gS.copyMode() != S::Copy::None; ++i) ms(5);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, gS.edit().loop());
+  TEST_ASSERT_TRUE(noteAt(3 * 768) >= 0);
+  TEST_ASSERT_EQUAL_UINT8(64, gE.noteEdit().current(static_cast<uint16_t>(noteAt(3 * 768))).pitch);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
@@ -1916,6 +1983,8 @@ int main(int, char**) {
   RUN_TEST(test_the_encoder_with_a_step_held);
   RUN_TEST(test_copy_mode_copies_notes_and_bars);
   RUN_TEST(test_copy_mode_replaces_or_merges_with_the_overlap_rule);
+  RUN_TEST(test_copy_mode_pastes_into_another_bar_and_another_track);
+  RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

@@ -16016,3 +16016,19 @@ and every copy undone (1-3 and 1-5 empty again).
   full 4,518 passed. Device (image `84e0a6b3…`, on 1-2 copied onto 1-3, put back): step 2's 95 onto step 8 by a press
   → only 95 there; step 3's 94 onto step 10 by a double → 23, 87 and 94; REC, then step 4's 93 onto step 12 → only 93;
   the window with the new lines. 1-3 cleared after (it had again kept a test copy across the earlier reboot).
+- **Amendment 9 (owner 2026-11-10: "you need time to be able to select another bar via the bar buttons and paste it
+  … the same like with track switching and slots"; "it should also be allowed to select a bar outside of the current
+  loop length so it will adjust the loop length"):** a bar's or note's copy holds its notes as values
+  (`EditSurface::captureBar` / `captureNote`, at most 64 notes a bar; offsets in the bar / 16th), so the paste can
+  land in another slot's session. In a note's copy mode a bar button chooses the bar the steps paste in (the bracket
+  moves there); a track switch (NOTE_EDIT following) or a slot press (NOTE_EDIT re-opened on that filled slot) keeps
+  copy mode, each restarting the countdown; the source's clear and cancel only apply while its own slot is edited. A
+  bar or step target past the loop's end lengthens the loop to the end of its bar (`TrackControl::resize`, one undo
+  step; NOTE_EDIT is left and re-opened on the longer loop) and the paste follows once it has re-gathered
+  (`Surface::pendingPaste`). Native `test_copy_mode_pastes_into_another_bar_and_another_track` (bar 2's step 5 after
+  the bar button; track 1's bar 1 over track 2's after the switch, copy mode kept) and
+  `test_a_paste_past_the_loop_end_lengthens_the_loop` (a bar onto bar 3 of a 1-bar loop → 3 bars; a note onto bar 4 →
+  4 bars) — no-growth and no-bar-choice mutations fail them; full 4,520 passed. Device (image `bfaef163…`, on 1-1
+  copied onto 1-3): bar 1 onto bar 3 → 1-3 at 2,304 ticks, NOTE_EDIT `0+2304`; a note onto bar 4 step 1 → 3,072; the
+  copy window kept after a switch to track 2 (closed with a long press, track 2 unchanged); undone step by step, then
+  1-3 cleared. Its undo stopped at the copy: the shared 99-state pool had dropped the states below it.

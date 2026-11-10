@@ -2013,9 +2013,7 @@ void loop() {
     ev.steps = ed.steps();
     ev.velocity = ed.velocityMode();
     ev.encoder = static_cast<int8_t>(gSurface.encoderOption());
-    EditNote cn;
-    if (gSurface.copyMode() == Surface<EngineRoot>::Copy::Note && ed.noteAt(gSurface.copySourceNote(), cn))
-      ev.copyPitch = cn.pitch;
+    if (gSurface.copyMode() == Surface<EngineRoot>::Copy::Note && ed.copyCount() == 1) ev.copyPitch = ed.copied(0).pitch;
     EditNote n;
     if (ed.selected(n)) {
       ev.note = true;
