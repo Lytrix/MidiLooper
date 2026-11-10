@@ -61,7 +61,10 @@
 //     show that bar's notes and the bracket's step. In LOOP_EDIT (DEC-280, owner 2026-11-10) a bar or a step held and
 //     another of its kind pressed, either way round, makes the range between them the loop: its left end the new start
 //     (a rotation), its length the bars / 16ths covered (odd lengths too) — bars of the 8-bar page playing, 16ths of the
-//     bar playing; the visit's one undo step, as F1 / F2.
+//     bar playing; the visit's one undo step, as F1 / F2. NOTELEN's double press in LOOP_EDIT (DEC-281) restores the
+//     slot's loop length and start from before its last LOOP_EDIT change, as a new undo step keeping the edits made
+//     since (`loopMemory_`, RAM only); pressed again it goes back. Bars, and the last bar's 16ths, that hold notes past
+//     the loop's end (kept by a shortening) light dim.
 // * The encoder (slice E; the Teensy's GPIO quadrature encoder and its push, legacy pins 29 / 30 / 31, read by the
 //   firmware: `encoderTurn` in detents, `encoderButton`), NOTE_EDIT only: push = the next option — pitch (first),
 //   move, length, velocity; turn = the selected note's option by the turn, accelerated as legacy
@@ -736,6 +739,10 @@ class Surface {
         return;  // double: the set browser (a later slice)
       case kLength:
         if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
+          if (p == Press::Double) {  // the loop before the last change (DEC-281)
+            restoreLoop(shownSlot(t));
+            return;
+          }
           if (p == Press::Short || p == Press::Long)
             control().createEmpty(shownSlot(t), kNewLoopBars * EditSurface<Engine>::kBar);  // refused when filled
           if (p == Press::Long) openPopup(shownSlot(t), kLength, nowMs_);
@@ -878,9 +885,11 @@ class Surface {
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
     const uint32_t shift = (pendingStart_ % loop + loop - appliedStart_ % loop) % loop;
     if (shift == 0) return;
+    beforeLoopChange(slot);
     if (control().rotate(slot, shift, tick_, us_, us(), visitState_) == X::Result::Ok) {
       appliedStart_ = pendingStart_;
       visited(slot);
+      loopRotated(slot, shift, loop);
     }
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
@@ -954,15 +963,79 @@ class Surface {
     const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
     if (start >= loop) return;
     if (start != 0) {
+      beforeLoopChange(slot);
       if (control().rotate(slot, start, tick_, us_, us(), visitState_) != X::Result::Ok) return;
       appliedStart_ = (appliedStart_ + start) % loop;  // F1 counts from the content LOOP_EDIT found
       visited(slot);
+      loopRotated(slot, start, loop);
     }
     if (length != loop) resizeTo(slot, length);
     loopPark_ = true;  // the faders to the new start and length
   }
   void resizeTo(uint8_t slot, uint32_t loop) {
-    if (control().resize(slot, loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
+    beforeLoopChange(slot);
+    if (control().resize(slot, loop, tick_, us_, us(), visitState_) != X::Result::Ok) return;
+    visited(slot);
+    loopRotated(slot, 0, 0);
+  }
+  // ---- The loop before the last change (DEC-281, owner 2026-11-10: "how can you revert to the earlier set loop
+  // length?") ----------------------------------------------------------------------------------------------------------
+  /// The way back for a slot: a length, and a rotation applied after the resize at that length — or (`rotateFirst`,
+  /// after a restore) before it, at the length then — so a start moved at the old length is undone at that length.
+  struct LoopMemory {
+    uint32_t loop = 0;  // 0: nothing remembered
+    uint32_t shift : 31;
+    uint32_t rotateFirst : 1;
+    LoopMemory() : shift(0), rotateFirst(0) {}
+  };
+  uint32_t loopTicks(uint8_t slot) {
+    const ManifestId c = transport().contentOf(slot);
+    return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
+  }
+  /// A LOOP_EDIT change is about to happen: its visit's first notes the loop as it is.
+  void beforeLoopChange(uint8_t slot) {
+    if (visitState_ != 0 && memSlot_ == slot) return;
+    memSlot_ = slot;
+    memLoop_ = loopTicks(slot);
+    memRotation_ = 0;
+  }
+  /// A change was made (`shift` rotated at length `at`; 0 for a resize): the way back is the noted loop, rotated back.
+  void loopRotated(uint8_t slot, uint32_t shift, uint32_t at) {
+    if (memSlot_ != slot || memLoop_ == 0) return;
+    if (shift != 0 && at == memLoop_) memRotation_ = (memRotation_ + shift) % memLoop_;
+    LoopMemory m;
+    m.loop = memLoop_;
+    m.shift = (memLoop_ - memRotation_) % memLoop_;
+    m.rotateFirst = 0;
+    loopMemory_[slot] = m;
+  }
+  /// NOTELEN's double press in LOOP_EDIT: the slot's loop as it was before its last change, a new undo step (edits made
+  /// since kept); the way back is remembered in its place.
+  void restoreLoop(uint8_t slot) {
+    const LoopMemory m = loopMemory_[slot];
+    const uint32_t now = loopTicks(slot);
+    if (m.loop == 0 || now == 0) return;
+    visitState_ = 0;  // its own step
+    LoopMemory back;
+    back.loop = now;
+    if (m.rotateFirst) {
+      if (m.shift != 0 && control().rotate(slot, m.shift, tick_, us_, us(), visitState_) != X::Result::Ok) return;
+      if (m.shift != 0) visited(slot);
+      if (m.loop != now && control().resize(slot, m.loop, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
+      back.shift = (now - m.shift % now) % now;
+      back.rotateFirst = 0;
+    } else {
+      if (m.loop != now && control().resize(slot, m.loop, tick_, us_, us(), visitState_) != X::Result::Ok) return;
+      if (m.loop != now) visited(slot);
+      if (m.shift != 0 && control().rotate(slot, m.shift, tick_, us_, us(), visitState_) == X::Result::Ok) visited(slot);
+      back.shift = (m.loop - m.shift) % m.loop;
+      back.rotateFirst = 1;
+    }
+    loopMemory_[slot] = back;
+    memSlot_ = 0xFF;  // the next change notes the loop afresh
+    appliedStart_ = pendingStart_ = 0;  // F1 counts from the content as it is now
+    startPending_ = false;
+    loopPark_ = true;
   }
 
   // ---- The length popup (owner 2026-11-08) ---------------------------------------------------------------------------
@@ -1251,6 +1324,15 @@ class Surface {
       for (uint8_t k = 0; d != nullptr && k < 64 && !notes; ++k) notes = d->counts[k] != 0;
       want[40 + i] = moving && bar == i ? 127 : notes ? 64 : 32;
     }
+    // Notes kept past the loop's end (a shortening; DEC-281): their bars, and the last bar's 16ths, dim.
+    if (m != kNoManifest) {
+      beyondEnd(m);
+      for (uint8_t i = static_cast<uint8_t>(bars); i < 8; ++i)
+        if ((beyondBars_ >> i) & 1u) want[40 + i] = kBeyondLed;
+      if (bar == loop / kBar && loop % kBar != 0)
+        for (uint8_t k = static_cast<uint8_t>((loop % kBar + kSixteenth - 1) / kSixteenth); k < 16; ++k)
+          if ((beyondSteps_ >> k) & 1u) want[k] = kBeyondLed;
+    }
     if (moving) want[16 + (pos % kBar) / kSixteenth] = 127;
     if (bar >= 64) return;
     const auto src = e_->tiles().drawSource(slot, static_cast<uint8_t>(bar));
@@ -1272,6 +1354,12 @@ class Surface {
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
   uint16_t rangeSteps_ = 0, rangeBars_ = 0;   // LOOP_EDIT: the step / bar buttons held (DEC-280)
+  LoopMemory loopMemory_[Config::kSlotCount];  // DEC-281: each slot's way back to its loop before the last change
+  uint8_t memSlot_ = 0xFF;                     // ... the slot this visit's changes are noted for
+  uint32_t beyondIdentity_ = 0;                // the state `beyondEnd` last scanned
+  uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
+  uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
+  uint32_t memLoop_ = 0, memRotation_ = 0;     // ... its loop then, and the rotation made at that length since
   uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint32_t barDownMs_[8] = {};                // ... since
   Copy copy_ = Copy::None;
@@ -1580,6 +1668,32 @@ class Surface {
       const uint32_t phase = (ms - flashMs_) / kFlashMs;
       if (phase >= 6) flashLed_ = 0xFF;
       else if (flashTrack_ == t) want[flashLed_] = phase % 2 == 0 ? 127 : 0;
+    }
+  }
+  /// The bars (and the 16ths of the bar holding the loop's end) with a NoteOn stored at or past the loop's end, for a
+  /// resized state (one with a fit run): its content rows scanned once a state (DEC-281). A take's notes played past
+  /// its bar line count too.
+  static constexpr uint8_t kBeyondLed = 8;
+  void beyondEnd(ManifestId m) {
+    const auto& d = e_->manifests().manifest(m);
+    if (d.identity == beyondIdentity_) return;
+    beyondIdentity_ = d.identity;
+    beyondBars_ = 0;
+    beyondSteps_ = 0;
+    bool fit = false;
+    for (uint8_t i = 0; i < d.runCount; ++i) fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
+    if (!fit) return;
+    const uint32_t loop = d.loopLengthTicks, endBar = loop / kBar;
+    for (uint8_t i = 0; i < d.runCount; ++i) {
+      const auto& run = e_->runs().run(d.runs[i]);
+      if (run.kind == RunKind::kFit || run.kind == RunKind::kEdit) continue;
+      for (uint32_t r = 0; r < run.rowCount; ++r) {
+        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
+        if ((e.status & 0xF0) != 0x90 || e.data2 == 0 || e.tick < loop) continue;
+        const uint32_t b = e.tick / kBar;
+        if (b < 64) beyondBars_ |= 1ull << b;
+        if (b == endBar) beyondSteps_ = static_cast<uint16_t>(beyondSteps_ | (1u << ((e.tick % kBar) / kSixteenth)));
+      }
     }
   }
   /// The step button held in NOTE_EDIT (the first; 0xFF: none).

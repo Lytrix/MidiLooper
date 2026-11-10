@@ -558,6 +558,15 @@ void test_a_slot_press_on_a_stopped_transport_only_selects() {
   TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));
 }
 
+// DEC-281: notes kept past a shortened loop's end light their 16th (in the bar holding the end) dim.
+void test_notes_past_a_shortened_end_light_dim() {
+  recordOneBar(0, 60);  // a note at 50
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 48, gLast, gUs, gClk.usPerTick()));
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(8, gLed[1]);  // 50 lies in step 2, past the 48-tick end
+  TEST_ASSERT_EQUAL_UINT8(0, gLed[5]);  // nothing there
+}
+
 void test_an_armed_slot_punches_in_on_its_second_press() {
   recordOneBar(0, 60);
   tap(S::kSlotBase + 2);
@@ -983,6 +992,7 @@ int main(int, char**) {
   RUN_TEST(test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it);
   RUN_TEST(test_holding_the_copy_source_again_opens_the_picker);
   RUN_TEST(test_copy_mode_track_switch_short_is_the_next_track);
+  RUN_TEST(test_notes_past_a_shortened_end_light_dim);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

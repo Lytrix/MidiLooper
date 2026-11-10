@@ -2002,6 +2002,55 @@ void test_loop_edit_a_held_range_sets_start_and_length() {
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
 }
 
+// DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"): NOTELEN's double press in LOOP_EDIT
+// restores the loop before the last LOOP_EDIT change — length and start — as a new undo step, keeping the edits made
+// since; pressed again it goes back.
+void test_loop_edit_notelen_double_restores_the_previous_loop() {
+  recordBar({{96, 60}, {600, 62}});
+  enterLoopEditOnContent();
+  gS.input(0x9F, 2, 127, gUs / 1000);  // steps 3..10: start 96, 384 long
+  ms(50);
+  gS.input(0x9F, 9, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 9, 0, gUs / 1000);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  ms(200);
+  TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
+  tap(S::kEditModeNote, 700);  // leave
+  ms(100);
+  // An edit in the short loop: the note at its start (60) to 70.
+  enterEdit();
+  settle();
+  f1(pbFor(0, 8));
+  TEST_ASSERT_EQUAL_UINT8(60, sel().pitch);
+  settle();
+  f4(70);
+  ms(100);
+  tap(S::kEditModeNote, 700);
+  ms(100);
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  // Back to the loop before: 768, the start where it was — the edited note at 96 again, 70 now.
+  enterLoopEditOnContent();
+  tap(S::kLengthNote);
+  ms(80);
+  tap(S::kLengthNote);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(96, heardAt(70));
+  TEST_ASSERT_EQUAL_UINT32(600, heardAt(62));
+  tap(S::kEditModeNote, 700);
+  ms(100);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // one step
+  // Again: the short loop back.
+  enterLoopEditOnContent();
+  tap(S::kLengthNote);
+  ms(80);
+  tap(S::kLengthNote);
+  ms(500);
+  TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, heardAt(70) % 384);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
@@ -2032,6 +2081,7 @@ int main(int, char**) {
   RUN_TEST(test_copy_mode_pastes_into_another_bar_and_another_track);
   RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
   RUN_TEST(test_loop_edit_a_held_range_sets_start_and_length);
+  RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);
   RUN_TEST(test_an_empty_loop_takes_a_note_and_plays);
   RUN_TEST(test_edit_button_cycles_note_and_loop_edit);

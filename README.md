@@ -58,7 +58,7 @@ The same buttons provide their main action with a short press and secondary acti
 | **Track play/stop** | Play / stop selected track | — | — | — |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
 | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
-| **NOTELEN in LOOP_EDIT** | Create a four-bar loop if empty | — | — | Open length popup |
+| **NOTELEN in LOOP_EDIT** | Create a four-bar loop if empty | Restore the loop length / start from before the last LOOP_EDIT change (again: back), edits kept | — | Open length popup |
 | **16th steps 1–16** (performance) | Restart the playing slot at that 16th of the bar playing, at the next launch step | — | — | — |
 | **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
 | **16th steps 1–16** (NOTE_EDIT) | Select the step's note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step's note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |
@@ -86,7 +86,7 @@ Hold a slot for 0.6 s — or, in NOTE_EDIT, a bar button, or a step you hold wit
 | Long press of any other button | Close at once |
 | Nothing for 5 s | Closes by itself (a track switch restarts the countdown; the window's bottom edge shows the time left) |
 
-A bar or step past the loop's end lengthens the loop to the end of that bar, then the paste follows. Pasted notes follow the overlap rule of NOTE_EDIT: a note of the same pitch that starts inside a pasted note is hidden, and one that sounds into it is shortened to its start. A paste or a slot clear selects that slot, so a double Record afterwards undoes it.
+A bar or step past the loop's end lengthens the loop to the end of that bar, then the paste follows. After a loop is shortened, the bar and 16th buttons whose notes now lie past its end light dim. Pasted notes follow the overlap rule of NOTE_EDIT: a note of the same pitch that starts inside a pasted note is hidden, and one that sounds into it is shortened to its start. A paste or a slot clear selects that slot, so a double Record afterwards undoes it.
 
 ### Undo is per slot
 

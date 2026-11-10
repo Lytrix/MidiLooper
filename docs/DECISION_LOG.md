@@ -16063,3 +16063,28 @@ the note at 96 at position 0; steps 1..3 → 3 × 48; the visit one undo step ba
 press nothing) — no-rotation and off-by-one mutations fail it; full 4,522 passed. Device (image `c1b47feb…`, on 1-1
 copied onto 1-3): LOOP_EDIT, step 10 held + step 3 → 384 ticks (rotated); bar 1 held + bar 4 → 3,072; leaving, two
 undos → 1-3 empty again.
+
+## DEC-281 — NOTELEN's double press in LOOP_EDIT restores the previous loop; notes past the end light dim
+
+**Date:** 2026-11-10. **Owner:** "when a new loop length has been selected show the bars which still have notes but
+fall out of range as dimmed led buttons, same as for the 16th buttons"; "how can you revert to the earlier set loop
+length?" — chosen: restore the previous loop (the performance-mode temporary range is deferred: "skip the temporary
+flow for now").
+
+**Decision:**
+- **Restore.** Each slot remembers the way back to its loop before its last LOOP_EDIT change (`Surface::loopMemory_`,
+  RAM only, 8 B a slot): that visit's loop length and the rotation made at that length since (F1, the range), undone
+  by a resize to it and the opposite rotation. NOTELEN's double press in LOOP_EDIT (`restoreLoop`) applies it as a new
+  undo step — edits made since kept, as positions move with the rotation — and remembers the way back in its place
+  (rotation first, at the length then), so a second double press returns. A rotation made after a resize in the same
+  visit is not followed exactly (the length is).
+- **Dim LEDs.** For a resized state (one with a fit run) its content rows are scanned once a state (`beyondEnd`): bars
+  past the loop's end with a NoteOn light dim (velocity 8), and in the bar holding the end the 16ths past it with one.
+  A take's notes played past its bar line count too.
+
+**Evidence:** native `test_loop_edit_notelen_double_restores_the_previous_loop` (steps 3..10 → 384 ticks from 96; the
+note there edited to 70 in NOTE_EDIT; NOTELEN double → 768, the edited note back at 96 and 62 at 600, one undo step;
+again → 384 with the note at the start) and `test_notes_past_a_shortened_end_light_dim` (a bar resized to 48 ticks:
+step 2's LED 8) — no-restore, no-rotation and no-scan mutations fail them; full 4,524 passed. Device (image
+`d12eba43…`, on 1-2 copied onto 1-3, cleared after): bars 1..2 → 1,536 ticks, bar 3's LED 8; steps 1..3 → 144, steps
+4–16 LED 8; NOTELEN double → 2,304 (the loop before the visit), again → 144; each restore its own undo step.
