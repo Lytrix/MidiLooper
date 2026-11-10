@@ -16309,3 +16309,49 @@ window ends — all 60 extracted with their exact starts and ends, `openOverflow
 the same source; a later pass's shortening and an edit's hide applied in extraction. A fixed-48 mutation fails it.
 `test_a_rebuild_view_has_its_own_index` (edit-index): the same identity serves the first view's hides to the second
 (note 1 hidden, note 2 back); the view identity gets its own slot and hides, the first view's index untouched.
+
+## DEC-287 — The groove pass: a grooved copy of the passes before it, which are kept and not played
+
+**Date:** 2026-11-10. **Owner:** "Yes, start slice 2" (groove design `docs/Plans/groove_quantize_design.md` § 9 slice 2;
+owner direction there: non-destructive quantize, amount, templates incl. classic MPC / SP-1200 swing, the piano roll
+showing notes where they play). Formal trigger: persistent state-model change (a run kind, a marker row; set file
+version 5) and a composition rule change (runs before a groove pass are not composed). Builds on DEC-283–286.
+
+**Decision:**
+- A grooved state lists `[source prefix…] [groove pass G, kind kGroove] [passes after G…] [fit run]`. The prefix is
+  kept and saved; `SourceLease::open` composes every run before the last kGroove run **empty, in place** (row limit 0),
+  so fit lookups keep their positions (DEC-285) and the edit-hide index sees only the played runs. The piano roll, LEDs
+  and playback show G — the notes where they play. Surface scans skip the prefix too (`playedFrom`).
+- `GrooveBuilder` (`GroovePass.h`) builds G from the prefix: the extraction composer (DEC-286, 128 open, every voice,
+  its open list lent by the builder) reads the prefix's effective content over the stored loop under the prefix's view
+  identity; notes in scope move by `groove::place` (amount % toward the nearest swung target, `Groove.h`); notes from
+  edit passes keep their place; events keep theirs; same-pitch notes on one tick merge (the earliest pass's noteId),
+  an overlap ends the earlier note a tick before the later; rows sorted (NoteOffs first at a tick, DEC-244) into one
+  sealed run. Held notes past two cycles end a tick before their next start.
+- **Prefix rule** (`partition`): the old prefix plus the passes after G up to the last record / overdub — never G
+  itself — in order; edit passes after that stay after G. Amount 0 removes G.
+- `SlotTransport::groove` makes the new state (fit run rebuilt with the window's marks and the groove marker
+  `kFitGrooveStatus` 0xFB: `seq` the packed `groove::Settings`), one undo step; `Surface::applyGroove` supplies the stored
+  loop and the A / B ranges. `windowOf` reads every trailing marker row (no fixed count — the review's fourth-row
+  failure). Built-in templates: STRAIGHT, MPC 16 54 / 58 / 62 / 66 / 71, MPC 8 58 / 66, SP 16 54 / 58 / 63 / 67 / 71,
+  triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH. Serial `!ENGINE groove T AMOUNT [SCOPE]` on the shown slot (until
+  the GROOVE window, slice 4).
+- Memory: PSRAM budget line + 161,784 B (the builder: its cursor, a 1,024-entry window, 8,192 rows, the lent open
+  list; each cursor's lent-list pointer). One composer type serves playback and extraction (the limits are runtime), so
+  RAM1 holds one copy of its code; the browser's three heaviest draw functions run from flash (`DISPLAY_COLD`) to keep
+  RAM1 at 13 ITCM banks (code 424,652, padding 1,332 — the next ~1.3 KB of hot code costs a bank). Synchronous here
+  (1.8 ms on the device for a 4-pass, 3-bar loop); the background build is slice 3.
+- Also fixed on the way: the composer's carry list was written past its 16 entries when more than `T` instances were
+  selected (extraction); now bounded. `Composer::init` resets the open list and limits (engine memory is not
+  constructed — a poisoned init crashed).
+- Rejected: hiding the sources by HideNote rows (the 4,096-hide index cap; OVL-8 ghosts — review 1); a second composer
+  instantiation for extraction (+~19 KB RAM1 code).
+
+**Evidence:** native: `test_groove_timing_goes_to_the_nearest_swung_target` (MPC 71 %: a note at 70 → 68; ties to the
+earlier; amount 50 %; wrap; pack / unpack); `test_a_groove_moves_the_notes_and_keeps_the_original` (130 → 144 heard
+once, 250 → 240; amount 0 → 130 again; undo back through both) — a play-the-sources-too mutation fails it (a first
+version passed it: 100 → 96 was hidden by OVL-2, so the test was strengthened); `test_a_groove_keeps_the_window_and_a_
+resize_keeps_the_groove` (start 96 / frame / ranges read with the fourth row; the groove carried through a resize);
+`test_the_prefix_rule_keeps_pass_order`. Full native 4,538 passed (196 suites). Device image `4b14fd26…`: on 1-3
+`groove 2 50` (MPC 16 58 %, 50 %) in 1,808 µs — 4 sources + G (196 rows) + fit with the marker; after a reboot
+(`crash=0`, `BOOT,load,ok`) the same. Not yet heard by the owner.

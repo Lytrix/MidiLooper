@@ -201,7 +201,12 @@ class SourceLease {
     identity_ = m.identity;
     loop_ = m.loopLengthTicks;
     count_ = m.runCount;
-    for (uint8_t i = 0; i < count_; ++i) src_[i] = {m.runs[i], runs.run(m.runs[i]).rowCount};
+    // DEC-287: the runs before a groove pass are its sources, kept and not played — composed (and edit-indexed) empty,
+    // in place, so a fit lookup's position still names the same run.
+    uint8_t played = 0;
+    for (uint8_t i = 0; i < count_; ++i)
+      if (runs.run(m.runs[i]).kind == RunKind::kGroove) played = i;
+    for (uint8_t i = 0; i < count_; ++i) src_[i] = {m.runs[i], i < played ? 0u : runs.run(m.runs[i]).rowCount};
     index_ = store_ == nullptr ? IndexResult::NotNeeded : IndexResult::Busy;  // not reserved yet
   }
 

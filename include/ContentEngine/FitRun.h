@@ -46,6 +46,7 @@ struct LoopWindow {
   // DEC-284 amendment 3: the two last ranges of the step / bar buttons (A the older, B the newer), each a start in the
   // stored loop and a length; length 0: none.
   uint32_t aStart = 0, aLength = 0, bStart = 0, bLength = 0;
+  uint32_t groove = 0;  // DEC-287: the packed groove setting of the state's groove pass (0: none)
 };
 /// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
 /// loop.
@@ -56,7 +57,7 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
   for (uint8_t i = 0; i < n; ++i) {
     const auto& d = runs.run(list[i]);
     if (d.kind != RunKind::kFit) continue;
-    for (uint32_t r = d.rowCount; r > 0 && d.rowCount - r < 3; --r) {  // the window rows sort last
+    for (uint32_t r = d.rowCount; r > 0; --r) {  // the marker rows sort last; every one read (DEC-287: no fixed count)
       const PassEvent& e = runs.rowAt(list[i], r - 1, pool);
       if (e.tick != 0xFFFFFFFFu) break;
       if (e.status == kFitWindowStatus) {
@@ -68,6 +69,8 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
       } else if (e.status == kFitRangeBStatus) {
         w.bStart = e.seq;
         w.bLength = e.noteId;
+      } else if (e.status == kFitGrooveStatus) {
+        w.groove = e.seq;
       }
     }
   }
@@ -161,7 +164,8 @@ class FitBuilder {
     const bool windowed = window.start != 0 || (window.frame != 0 && window.frame != loop);
     const bool rangeA = window.aLength != 0;
     const bool rangeB = window.bLength != 0;
-    const uint32_t marks = (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u);
+    const bool grooved = window.groove != 0;
+    const uint32_t marks = (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u) + (grooved ? 1u : 0u);
     if (count_ == 0 && marks == 0) return FitResult::None;
     const RunId run = runs.allocate(slot, RunKind::kFit);
     if (run == kNoRun) return FitResult::DeniedRun;
@@ -186,9 +190,10 @@ class FitBuilder {
       e.status = status;
       res.writeOwed(run, e);
     };
-    if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, range A, range B
+    if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, range A, range B, groove
     if (rangeA) mark(kFitRangeAStatus, window.aStart, window.aLength);
     if (rangeB) mark(kFitRangeBStatus, window.bStart, window.bLength);
+    if (grooved) mark(kFitGrooveStatus, window.groove, 1);
     runs.seal(run);
     fit = run;
     return FitResult::Ok;

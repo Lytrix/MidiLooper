@@ -58,6 +58,11 @@
 #include "ContentEngine/StatusView.h"
 #include "ContentEngine/WallClock.h"
 
+/// Cold drawing (DEC-287): the browser's screens run from flash. Their own `.flashmem.*` section — the Teensy linker sends
+/// every `.flashmem*` section to flash — because these are inline members, which may not share `FLASHMEM`'s section with
+/// the non-inline functions placed there.
+#define DISPLAY_COLD __attribute__((section(".flashmem.display")))
+
 namespace EngineFirmware {
 
 /// What NOTE_EDIT shows (from the surface's `EditSurface`).
@@ -625,7 +630,8 @@ class EngineDisplay {
   static constexpr int16_t kPresetX = 33, kPresetW = 13, kPresetH = 7, kPresetPitch = 8, kGridX = 52, kGridY = 13;
   static constexpr int16_t kCell = 4, kPitchX = 6, kPitchY = 5;
   static constexpr int16_t kPanelX0 = 141, kPanelX1 = 225, kPanelY0 = 21, kPanelY1 = 44;
-  void drawPicker(const Browser& b, ContentEngine::EngineRoot& e) {
+  // DEC-287: the browser's drawing runs from flash (RAM1 is assigned in 32 KiB banks; the groove builder took a bank's edge).
+  DISPLAY_COLD void drawPicker(const Browser& b, ContentEngine::EngineRoot& e) {
     char title[32], a[32], c[24];
     const uint16_t rec = b.pickRecord();
     if (rec != Browser::kNone) {
@@ -907,7 +913,7 @@ class EngineDisplay {
     if (line3 != nullptr) label(line3, kDetailX, 50, kDimText);
     drawMosaic(m);
   }
-  void drawDetail(const Browser& b, const Row& r, char* h, size_t n) {
+  DISPLAY_COLD void drawDetail(const Browser& b, const Row& r, char* h, size_t n) {
     char a[32], c[32];
     switch (r.kind) {
       case RowKind::Close:
@@ -1072,7 +1078,7 @@ class EngineDisplay {
   /// SAVE CURRENT (owner 2026-11-09): left, AS NEW SET on a lane of its own, then the new node on the working set's
   /// history (newest first, the base's line on the main lane); right, every stage with the id it would get, the chosen
   /// one bright and wired to the new node, `<` on the suggested one.
-  void drawSavePopup(const Browser& b) {
+  DISPLAY_COLD void drawSavePopup(const Browser& b) {
     window(kWX0, kWY0, kWX1, kWY1, "SAVE CURRENT");
     const uint8_t sel = b.popupSelected();
     constexpr int16_t kMain = kWX0 + 30, kSide = kWX0 + 20, kLabel = kWX0 + 40, kNewY = 13, kHeadY = 24;

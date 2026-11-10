@@ -14,6 +14,7 @@
 
 #include "ContentEngine/Composer.h"
 #include "ContentEngine/EngineCore.h"
+#include "ContentEngine/GroovePass.h"
 
 using namespace ContentEngine;
 
@@ -21,7 +22,7 @@ using Pool = PagePool<256, 64>;
 using Runs = RunTable<16, Pool>;
 using Store = EditIndexStore<Pool, Runs, 2, 64>;
 using Playback = Composer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, Store>;
-using Extraction = Composer<Pool, Runs, 64, 128, Store, 128>;
+using Extraction = Playback;  // the same type, `extractAll` (DEC-287: one code copy)
 using Window = SpanWindow<512>;
 
 static Pool gPool;
@@ -30,6 +31,7 @@ static Store gStore;
 static Playback gPlay;
 static Extraction gExtract;
 static Window gWin;
+static Extraction::Open gLent[128];  // the open list lent to the extraction composer (DEC-286)
 
 constexpr uint32_t kLoop = 4 * 768, kWindow = 768;
 
@@ -50,6 +52,7 @@ void setUp() {
   TEST_ASSERT_TRUE(gStore.init(gPool, gRuns));
   gPlay.init(gPool, gRuns, &gStore);
   gExtract.init(gPool, gRuns, &gStore);
+  gExtract.extractAll(gLent, 128);
 }
 void tearDown() {}
 
@@ -121,9 +124,43 @@ void test_extraction_keeps_the_effective_rules() {
   TEST_ASSERT_TRUE(got.find(2) == got.end());  // hidden by the edit
 }
 
+// DEC-287 (design review C1): the prefix rule — a rebuild folds the passes after the groove pass up to the last
+// record / overdub into the sources, in order (precedence never reordered), never the groove pass itself; edit passes
+// after that stay after it.
+using Res = RowReservations<Pool, Runs>;
+static Res gRes;
+static PassEvent gRows[64];
+static GrooveBuilder<Pool, Runs, Res, Store, Extraction, 512, 64> gBuilder;
+void test_the_prefix_rule_keeps_pass_order() {
+  gRes.init(gPool, gRuns, 0);
+  gBuilder.init(gPool, gRuns, gRes, gStore, gExtract, gWin, gRows);
+  const RunId a = gRuns.allocate(0, RunKind::kRecord), g = gRuns.allocate(0, RunKind::kGroove),
+              e = gRuns.allocate(0, RunKind::kEdit), o = gRuns.allocate(0, RunKind::kOverdub),
+              e2 = gRuns.allocate(0, RunKind::kEdit);
+  RunId prefix[8], after[8];
+  uint8_t pc = 0, ac = 0;
+  const RunId list1[] = {a, g, e, o, e2};  // groove → edit → overdub → edit
+  gBuilder.partition(list1, 5, prefix, pc, after, ac);
+  TEST_ASSERT_EQUAL_UINT8(3, pc);
+  TEST_ASSERT_TRUE(prefix[0] == a && prefix[1] == e && prefix[2] == o);  // the edit before the overdub, as made
+  TEST_ASSERT_EQUAL_UINT8(1, ac);
+  TEST_ASSERT_TRUE(after[0] == e2);
+  const RunId list2[] = {a, g, e};  // edits only after the groove: they stay after it
+  gBuilder.partition(list2, 3, prefix, pc, after, ac);
+  TEST_ASSERT_EQUAL_UINT8(1, pc);
+  TEST_ASSERT_TRUE(prefix[0] == a);
+  TEST_ASSERT_EQUAL_UINT8(1, ac);
+  TEST_ASSERT_TRUE(after[0] == e);
+  const RunId list3[] = {a, o};  // no groove yet: everything is the source
+  gBuilder.partition(list3, 2, prefix, pc, after, ac);
+  TEST_ASSERT_EQUAL_UINT8(2, pc);
+  TEST_ASSERT_EQUAL_UINT8(0, ac);
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_every_note_of_a_busy_loop_is_extracted);
   RUN_TEST(test_extraction_keeps_the_effective_rules);
+  RUN_TEST(test_the_prefix_rule_keeps_pass_order);
   return UNITY_END();
 }

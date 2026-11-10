@@ -233,10 +233,10 @@ void test_version_one_loads_and_a_later_one_is_refused() {
   MemoryFile f;
   saveSlot(f);
   TEST_ASSERT_EQUAL_UINT16(kSetFileVersion, static_cast<uint16_t>(f.bytes[4] | (f.bytes[5] << 8)));
-  TEST_ASSERT_EQUAL_UINT16(4, kSetFileVersion);
+  TEST_ASSERT_EQUAL_UINT16(5, kSetFileVersion);
   TEST_ASSERT_TRUE(withVersion(f, kSetFileVersion).bytes == f.bytes);  // the trailer recomputed as the save wrote it
   initEngine();
-  MemoryFile later = withVersion(f, 5), one = withVersion(f, 1);
+  MemoryFile later = withVersion(f, 6), one = withVersion(f, 1);
   TEST_ASSERT_EQUAL(Load::Status::BadFormat, loadSlot(later));
   TEST_ASSERT_EQUAL(Load::Status::Done, loadSlot(one));
 }

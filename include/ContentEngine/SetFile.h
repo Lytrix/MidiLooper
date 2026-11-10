@@ -42,7 +42,9 @@ constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
 // RunId (RunIds are reassigned on load). A version-3 file's lookups name RunIds of the session that saved it: they are
 // dropped on load (`legacyFitRow`), its marker rows kept — such a loop plays its notes past a shortened end, as it did,
 // until its length is set again.
-constexpr uint16_t kSetFileVersion = 4;
+// Version 5 (DEC-287): a state may list a groove pass (kind `kGroove`) whose earlier runs are its sources, not played;
+// older firmware would play both.
+constexpr uint16_t kSetFileVersion = 5;
 constexpr uint16_t kSetFileOldestVersion = 1;
 constexpr uint32_t kSetFileRowBytes = 16;
 /// A version-3 fit lookup (filter, cross, held: RunId-keyed, DEC-285): not loaded.

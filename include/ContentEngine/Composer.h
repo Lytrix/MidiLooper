@@ -68,11 +68,12 @@
 
 namespace ContentEngine {
 
-/// `MaxOpen` (DEC-286, groove design slice 1): effective instances tracked open at once. Playback keeps 48; the groove
-/// builder's extraction composer — every effective note, no output limit — takes `T` = `MaxOpen` = 128 (the writer's
-/// open-note bound), so no effective note is refused (`Stats::openOverflow` stays 0 up to 128 open).
+/// Limits (DEC-286, amended by DEC-287): playback tracks at most `kMaxOpen` (48) instances open and selects `T` voices.
+/// The groove builder's extraction lends the composer a larger open list (`extractAll`: 128, the writer's open-note
+/// bound) and selects every instance, so one composer type — one copy of its code in RAM1, each cursor within its
+/// 12 KiB — serves both, and no effective note is refused up to the lent list's size.
 template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
-          typename IndexStore = EditIndexStore<Pool, Runs>, uint8_t MaxOpen = 48>
+          typename IndexStore = EditIndexStore<Pool, Runs>>
 class Composer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
@@ -86,8 +87,16 @@ class Composer {
     uint32_t openOverflow;  // effective instances refused untracked: more than kMaxOpen open at once
     uint32_t continuousLimited;  // continuous-controller rows beyond 32 on one tick, left out of the window
   };
-  static constexpr uint8_t kMaxOpen = MaxOpen;
-  static_assert(T <= MaxOpen, "every selected instance is tracked");
+  static constexpr uint8_t kMaxOpen = 48;  // the playback tracking limit
+  static_assert(T <= kMaxOpen, "every selected instance is tracked");
+  struct Open;
+  /// Extraction (DEC-286): every effective instance selected and tracked, in `list` (`n` entries, the caller's, kept
+  /// while this composer is used) — up to `n` open at once.
+  void extractAll(Open* list, uint8_t n) {
+    open_ = list;
+    openLimit_ = n;
+    voices_ = n;
+  }
   const Stats& stats() const { return stats_; }
 
   /// `index` is the shared edit-hide index; required only for sources with edit runs.
@@ -105,6 +114,9 @@ class Composer {
     identity_ = 0;
     cycle_ = 0;
     openCount_ = 0;
+    open_ = openStore_;  // playback's own list and limits (memory is not constructed: `init` sets every field)
+    openLimit_ = kMaxOpen;
+    voices_ = T;
     stats_ = Stats{};
     lookaheadRows_ = 0;
     for (auto& z : zeroOnsetLast_) z = -1;
@@ -138,7 +150,9 @@ class Composer {
     stats_.lookaheadRowsLastWindow = 0;
     ccPos_ = UINT32_MAX;
     for (uint8_t i = 0; i < openCount_; ++i) {
-      if (open_[i].selected) w.carry[w.carryCount++] = {open_[i].noteId, open_[i].runKey};
+      // Playback selects at most T (<= the carry list); extraction (DEC-286) selects more and reads no carry list.
+      if (open_[i].selected && w.carryCount < sizeof w.carry / sizeof w.carry[0])
+        w.carry[w.carryCount++] = {open_[i].noteId, open_[i].runKey};
       open_[i].entry = kNoEntry;
     }
     windowOpen_ = true;
@@ -283,9 +297,6 @@ class Composer {
     return true;
   }
 
- private:
-  static constexpr uint16_t kNoEntry = 0xFFFF;
-
   /// An open effective source instance (Q-OUT-2). `selected`: it sounds (START written); otherwise it only counts.
   struct Open {
     uint32_t noteId;
@@ -296,6 +307,9 @@ class Composer {
     bool selected;
     bool carried;  // started in an earlier loop cycle
   };
+ private:
+  static constexpr uint16_t kNoEntry = 0xFFFF;
+
   /// Instances that occupy an output voice for admission: selected this cycle, or carried in (selected or not).
   uint8_t occupied() const {
     uint8_t n = 0;
@@ -682,12 +696,12 @@ class Composer {
     }
     if (hidden) return;
     // Q-OUT-2: selected iff fewer than T voices are occupied here (selected this cycle, or carried in).
-    if (openCount_ >= kMaxOpen) {  // refused and untracked
+    if (openCount_ >= openLimit_) {  // refused and untracked
       ++w.refusedCount;
       ++stats_.openOverflow;
       return;
     }
-    const bool selected = occupied() < T && w.count < Cap;
+    const bool selected = occupied() < voices_ && w.count < Cap;
     if (!selected) ++w.refusedCount;
     open_[openCount_++] = Open{e.noteId, runKey, pitch, static_cast<uint8_t>((e.status & 0x0F) + 1),
                                selected ? w.count : kNoEntry, selected, false};
@@ -748,7 +762,9 @@ class Composer {
   IndexLease lease_;
   IndexResult indexResult_;
   uint8_t active_[128][MaxRuns];  // source notes sounding per (pitch, pass), effective or not (OVL-8)
-  Open open_[kMaxOpen];  // effective instances open, in admission order (Q-OUT-2)
+  Open openStore_[kMaxOpen];  // effective instances open, in admission order (Q-OUT-2)
+  Open* open_ = openStore_;   // ... or the list `extractAll` lent (DEC-286)
+  uint8_t openLimit_ = kMaxOpen, voices_ = T;  // tracked at once, selected
   uint8_t openCount_;
   uint32_t loop_;
   uint32_t windowStart_;

@@ -9,6 +9,14 @@
 #include <cstddef>
 #include <cstdint>
 
+/// Code run off the hot path (DEC-287: the groove builder, run on a setting change): placed in flash on the Teensy, so it
+/// takes no RAM1 (ITCM) — RAM1 is assigned in 32 KiB banks and a few KiB of new hot code can cost a bank of stack.
+#if defined(__arm__)
+#define CE_COLD __attribute__((section(".flashmem.engine")))  // its own section: inline members (see EngineDisplay)
+#else
+#define CE_COLD
+#endif
+
 namespace ContentEngine {
 
 using PageId = uint16_t;

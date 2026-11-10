@@ -49,6 +49,8 @@ constexpr uint8_t kOverdub = 1;
 constexpr uint8_t kCompacted = 2;
 constexpr uint8_t kEdit = 3;  // NOTE_EDIT commit: HideNote rows + replacement notes (EDIT-1: not a derived occluder)
 constexpr uint8_t kFit = 4;   // a resized state's lookups (DEC-257, `FitRun.h`): no MIDI rows, never content
+constexpr uint8_t kGroove = 5;  // the groove pass (DEC-287): the effective content of the runs before it, grooved; those
+                                // runs are kept and not played
 }  // namespace RunKind
 
 /// Fit run rows (DEC-257), sorted by (tick = the content RunId, status, noteId): the run reaches the loop end (filter;
@@ -65,5 +67,7 @@ constexpr uint8_t kFitWindowStatus = 0xF8u;
 /// buttons), after the window row, same layout (`seq` the start, `noteId` the length). Absent: no such range.
 constexpr uint8_t kFitRangeAStatus = 0xF9u;
 constexpr uint8_t kFitRangeBStatus = 0xFAu;
+/// The groove setting (DEC-287): `seq` the packed `groove::Settings` (template, amount, scope, AUTO). Absent: none.
+constexpr uint8_t kFitGrooveStatus = 0xFBu;
 
 }  // namespace ContentEngine

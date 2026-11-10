@@ -72,6 +72,12 @@ using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = OutputHub<>;
 using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
+// DEC-287: the groove builder — the extraction composer (DEC-286: 128 voices, 128 open), its window, its row buffer.
+using ProductionExtraction = ProductionComposer;  // one code copy: `extractAll` sets its limits (DEC-287)
+constexpr uint16_t kGrooveWindowEntries = 1024;
+constexpr uint32_t kGrooveRows = 8192;
+using ProductionGroove = GrooveBuilder<ProductionPool, ProductionRuns, ProductionReservations, ProductionEditIndex,
+                                       ProductionExtraction, kGrooveWindowEntries, kGrooveRows>;
 using ProductionDisplayJobs = DisplayJobs<ProductionDisplayComposer, ProductionWindow, ProductionManifests,
                                           ProductionRuns, ProductionTiles, ProductionScheduler, /*workers*/ 1,
                                           Config::kSlotCount + 1>;
@@ -121,6 +127,11 @@ struct EnginePsram {
   uint8_t libraryScratch[ProductionPersistence::kSector];  // the writer's, then the load's (one runs at a time)
   // DEC-259: loading a milestone and returning (its blob reader and slot-file load job).
   ProductionSetLoad setLoad;
+  // DEC-287: the groove builder (its extraction composer, window and row buffer).
+  ProductionExtraction grooveComposer;
+  SpanWindow<kGrooveWindowEntries> grooveWindow;
+  PassEvent grooveRows[kGrooveRows];
+  ProductionGroove groove;
 };
 
 /// DMAMEM.
@@ -163,7 +174,9 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7036056u;
+constexpr size_t kPsramBudget = 7197840u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+                                           // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
+                                           // compose cursor's lent-list pointer (DEC-286)
 constexpr size_t kRam2Budget = 160072u;  // measured (DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
@@ -232,6 +245,7 @@ class EngineRoot {
     r_->transport.init(p_->pool, r_->runs, r_->manifests, r_->history, r_->writer, tracks);
     r_->control.init(r_->transport, r_->output, kTicksPerBar, kLaunchGridTicks);
     p_->displayComposer.init(p_->pool, r_->runs, &r_->index);
+    p_->groove.init(p_->pool, r_->runs, r_->reservations, r_->index, p_->grooveComposer, p_->grooveWindow, p_->grooveRows);
     r_->noteEdit.init(p_->pool, r_->runs, r_->manifests, r_->history, p_->displayComposer, p_->displayWindow,
                       r_->editWriter, p_->editGather, p_->editGatherRuns, kWindowTicks);
     gatherLive_ = rebuildLive_ = false;
@@ -566,6 +580,11 @@ class EngineRoot {
   const ProductionHub& hub() const { return r_->hub; }
   ProductionOutput& output() { return r_->output; }
   ProductionControl& control() { return r_->control; }
+  /// Groove (DEC-287): the slot's groove pass rebuilt per `q` (amount 0: removed), one undo step (`replace` as resize).
+  ProductionTransport::Result groove(uint8_t slot, const GrooveRequest& q, uint32_t clock, uint32_t nowUs,
+                                     uint32_t usPerTick, uint32_t replace = 0) {
+    return r_->control.groove(p_->groove, slot, q, clock, nowUs, usPerTick, replace);
+  }
   ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
   NoteIdSource& noteIds() { return r_->ids; }  // a created note's fresh id (ids are never reused)
   const ProductionCheckpoints& checkpoints() const { return p_->checkpoints; }

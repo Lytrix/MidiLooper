@@ -466,6 +466,29 @@ class Surface {
   /// DEC-283: absolute): `scale` the stored loop's ticks (`frameOf`), `start` the current loop's start in it, `known`
   /// how far its notes reach from its start in whole bars (the loop past it is drawn as past the known length). False:
   /// no content.
+  /// Groove (DEC-287): the slot's groove pass rebuilt per `s` (amount 0: removed) over its stored loop, scope A / B
+  /// its remembered ranges; one undo step of its own. The engine's result.
+  typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s) {
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest) return Engine::Transport::Result::Empty;
+    beyondEnd(c);
+    const LoopWindow w = transport().window(slot);
+    GrooveRequest q;
+    q.settings = s;
+    q.frame = frame_;
+    q.start = frameStart_;
+    if (s.scope == groove::kRangeA) {
+      q.scopeStart = w.aStart;
+      q.scopeLength = w.aLength;
+    } else if (s.scope == groove::kRangeB) {
+      q.scopeStart = w.bStart;
+      q.scopeLength = w.bLength;
+    }
+    visitState_ = 0;
+    const auto r = e_->groove(slot, q, tick_, us_, us(), 0);
+    if (r == Engine::Transport::Result::Ok) visited(slot);
+    return r;
+  }
   /// Is the slot's loop its whole stored loop (DEC-284 amendment 3; true without content)?
   bool isFull(uint8_t slot) {
     if (slot >= Config::kSlotCount) return true;
@@ -1838,10 +1861,11 @@ class Surface {
     storedEnd_ = 0;
     bool fit = false;
     for (uint8_t i = 0; i < d.runCount; ++i) fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
+    const uint8_t played = playedFrom(d);
     const uint32_t loop = d.loopLengthTicks, endBar = loop / kBar;
     for (uint8_t i = 0; i < d.runCount; ++i) {
       const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit) continue;
+      if (run.kind == RunKind::kFit || i < played) continue;  // DEC-287: a groove pass's sources are not played
       for (uint32_t r = 0; r < run.rowCount; ++r) {
         const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
         const uint8_t type = e.status & 0xF0;
@@ -1865,7 +1889,7 @@ class Surface {
     absEnd_ = 0;
     for (uint8_t i = 0; i < d.runCount; ++i) {
       const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit) continue;
+      if (run.kind == RunKind::kFit || i < played) continue;  // DEC-287: a groove pass's sources are not played
       for (uint32_t r = 0; r < run.rowCount; ++r) {
         const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
         if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
@@ -1876,6 +1900,15 @@ class Surface {
     }
     if (absEnd_ > frame_) absEnd_ = frame_;
   }
+  /// The first played run of state `d` (DEC-287): the groove pass when there is one (the runs before it are its
+  /// sources, not played), else 0.
+  template <typename D>
+  uint8_t playedFrom(const D& d) {
+    uint8_t p = 0;
+    for (uint8_t i = 0; i < d.runCount; ++i)
+      if (e_->runs().run(d.runs[i]).kind == RunKind::kGroove) p = i;
+    return p;
+  }
   /// The 16ths of stored bar `bar` (DEC-283: counted from the stored loop's start) holding a NoteOn, for state `m`.
   uint16_t absSteps(ManifestId m, uint32_t bar) {
     const auto& d = e_->manifests().manifest(m);
@@ -1884,9 +1917,10 @@ class Surface {
     stepsIdentity_ = d.identity;
     stepsBar_ = bar;
     steps_ = 0;
+    const uint8_t played = playedFrom(d);
     for (uint8_t i = 0; i < d.runCount; ++i) {
       const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit) continue;
+      if (run.kind == RunKind::kFit || i < played) continue;  // DEC-287: a groove pass's sources are not played
       for (uint32_t r = 0; r < run.rowCount; ++r) {
         const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
         if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;

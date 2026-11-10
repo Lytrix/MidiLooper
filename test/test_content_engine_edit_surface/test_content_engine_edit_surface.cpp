@@ -2192,6 +2192,99 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   at(0, 96);
 }
 
+// DEC-287 (groove design §§ 4, 6): the timing. A note goes toward the nearest *swung* target among the neighbouring grid
+// lines (MPC 71 %: the second 16th at 48 + 20 = 68; a note at 70 is nearer the straight 48 than 96, but its target is
+// the swung 68), amount % of the way; ties to the earlier target; around the stored loop's end.
+void test_groove_timing_goes_to_the_nearest_swung_target() {
+  using namespace ContentEngine::groove;
+  TEST_ASSERT_EQUAL_INT32(20, offsetOf(kMpc16_71, 1));
+  TEST_ASSERT_EQUAL_INT32(0, offsetOf(kMpc16_71, 2));
+  TEST_ASSERT_EQUAL_UINT32(68, target(kMpc16_71, 70, 768));
+  TEST_ASSERT_EQUAL_UINT32(96, target(kMpc16_71, 90, 768));  // nearer 96 than the swung 68
+  TEST_ASSERT_EQUAL_UINT32(48, target(kStraight, 72, 768));  // a tie (48 / 96): the earlier
+  Settings s;
+  s.tmpl = kStraight;
+  s.amount = 100;
+  TEST_ASSERT_EQUAL_UINT32(96, place(s, 100, 768));
+  s.amount = 50;
+  TEST_ASSERT_EQUAL_UINT32(98, place(s, 100, 768));  // half way
+  s.amount = 100;
+  TEST_ASSERT_EQUAL_UINT32(0, place(s, 760, 768));  // round the stored loop's end
+  TEST_ASSERT_EQUAL_UINT32(0, Settings{}.pack());   // amount 0: no groove
+  s.tmpl = kSp16_63;
+  s.scope = kRangeB;
+  s.autoGroove = true;
+  const Settings u = Settings::unpack(s.pack());
+  TEST_ASSERT_TRUE(u.tmpl == kSp16_63 && u.amount == 100 && u.scope == kRangeB && u.autoGroove);
+}
+
+// DEC-287: a groove is a new state — the recorded passes kept and not played, a groove pass with their notes moved —
+// heard at once; the window's marks (DEC-283 start / frame) survive; undo brings the original timing back; amount 0
+// removes the groove pass.
+void test_a_groove_moves_the_notes_and_keeps_the_original() {
+  recordBar({{130, 60}, {250, 62}});  // 130 moves 14 ticks: no overlap rule hides the original there
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  ContentEngine::groove::Settings s;
+  s.tmpl = ContentEngine::groove::kStraight;
+  s.amount = 100;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  const auto& m = gE.manifests().manifest(gE.transport().contentOf(0));
+  uint8_t grooves = 0, takes = 0;
+  for (uint8_t i = 0; i < m.runCount; ++i) {
+    grooves += gE.runs().run(m.runs[i]).kind == RunKind::kGroove;
+    takes += gE.runs().run(m.runs[i]).kind == RunKind::kRecord;
+  }
+  TEST_ASSERT_EQUAL_UINT8(1, grooves);
+  TEST_ASSERT_TRUE(takes >= 1);  // the take kept
+  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().window(0).groove);
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 144);  // on the 16th grid, and heard once (not also at 130)
+  EXPECT_ALL(positions(true, 62, 768), 240);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+  // Amount 0: the groove pass removed, the recorded timing back.
+  s.amount = 0;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 130);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
+  // Undo: the grooved state again, then the original.
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 130);
+}
+
+// DEC-287 (design review C2): the groove row is a fourth marker row — the window (start 96, frame 768 of a shortened
+// loop) is still read, and a length change keeps the groove setting.
+void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
+  recordBar({{96, 60}, {600, 62}});
+  enterLoopEditOnContent();
+  gS.input(0x9F, 2, 127, gUs / 1000);  // steps 3..10: start 96, 384 long
+  ms(50);
+  gS.input(0x9F, 9, 127, gUs / 1000);
+  ms(50);
+  gS.input(0x8F, 9, 0, gUs / 1000);
+  gS.input(0x8F, 2, 0, gUs / 1000);
+  ms(200);
+  tap(S::kEditModeNote, 700);
+  ms(100);
+  const auto before = gE.control().window(0);
+  TEST_ASSERT_EQUAL_UINT32(96, before.start);
+  ContentEngine::groove::Settings s;
+  s.tmpl = ContentEngine::groove::kMpc16_58;
+  s.amount = 50;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  const auto after = gE.control().window(0);
+  TEST_ASSERT_EQUAL_UINT32(before.start, after.start);
+  TEST_ASSERT_EQUAL_UINT32(before.frame, after.frame);
+  TEST_ASSERT_EQUAL_UINT32(before.bLength, after.bLength);
+  TEST_ASSERT_EQUAL_UINT32(s.pack(), after.groove);
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().resize(0, 768, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().window(0).groove);  // carried through the rebuilt fit run
+}
+
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_enter_selects_at_the_bracket_and_f1_selects_stacked_notes);
@@ -2223,6 +2316,9 @@ int main(int, char**) {
   RUN_TEST(test_a_paste_past_the_loop_end_lengthens_the_loop);
   RUN_TEST(test_loop_edit_a_held_range_sets_start_and_length);
   RUN_TEST(test_loop_edit_double_press_loops_one_step);
+  RUN_TEST(test_groove_timing_goes_to_the_nearest_swung_target);
+  RUN_TEST(test_a_groove_moves_the_notes_and_keeps_the_original);
+  RUN_TEST(test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove);
   RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);

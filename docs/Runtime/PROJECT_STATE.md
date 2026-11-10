@@ -1,3 +1,10 @@
+**2026-11-10 — DEC-287: the groove pass (groove design slice 2).** A grooved state keeps its passes as a source prefix
+(not played: composed empty in place) and plays a groove pass G built from their effective content, moved by a
+template (built-ins incl. MPC / SP-1200 swing) and an amount; prefix rule keeps pass order; amount 0 removes G; one
+undo step; set file version 5; serial `!ENGINE groove T AMOUNT [SCOPE]`. PSRAM + 161,784 B; RAM1 kept at 13 banks
+(browser draws to flash; ~1.3 KB headroom). Full native 4,538 passed; device `4b14fd26…`: 1-3 grooved (MPC 58 %, 50 %)
+in 1.8 ms, kept over a reboot.
+
 **2026-11-10 — DEC-286: extraction composer and rebuild-view identity (groove design slice 1).** `Composer`'s open-
 instance bound is a template parameter (default 48); the groove builder's extraction composer takes 128 voices and 128
 open, so every effective note of a busy loop is extracted (60 simultaneous notes across two window ends, none lost —

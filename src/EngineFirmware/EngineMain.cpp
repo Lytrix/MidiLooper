@@ -1394,6 +1394,18 @@ void command(char* line, uint32_t nowUs) {
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeLaunchGrid(1);
     else if (arg != nullptr && launchDivisionValid(static_cast<uint32_t>(a)) && a != 1) storeLaunchGrid(static_cast<uint8_t>(a));
     Serial.printf("#ENGINE,launch-q,%s\n", launchGridName());
+  } else if (std::strcmp(verb, "groove") == 0) {  // groove TEMPLATE AMOUNT [SCOPE]: the shown slot (DEC-287, slice 2)
+    ContentEngine::groove::Settings s;
+    s.tmpl = static_cast<uint8_t>(a);
+    s.amount = static_cast<uint8_t>(b > 100 ? 100 : b < 0 ? 0 : b);
+    const char* third = second != nullptr ? std::strchr(second + 1, ' ') : nullptr;
+    s.scope = static_cast<uint8_t>(third != nullptr ? std::atoi(third + 1) : 0);
+    const uint8_t slot = gSurface.shown(c.selectedTrack());
+    const uint32_t t0 = micros();
+    const auto r = gSurface.applyGroove(slot, s);
+    Serial.printf("#ENGINE,groove,slot=%u,template=%u,amount=%u,scope=%u,result=%u,why=%u,us=%lu\n", slot, s.tmpl,
+                  s.amount, s.scope, static_cast<unsigned>(r), static_cast<unsigned>(gEngine.transport().lastGroove()),
+                  static_cast<unsigned long>(micros() - t0));
   } else if (std::strcmp(verb, "leds") == 0) {  // leds: the bar and step LEDs wanted, the shown slot's frame (DEC-283)
     uint8_t want[128] = {};
     gSurface.ledsWanted(gLastTick, millis(), want);
