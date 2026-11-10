@@ -238,6 +238,9 @@ class Surface {
   // Channel 16 button notes (MidiConfig) and their detector indices.
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
   static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
+  /// DEC-289 amendment 2: the GROOVE window's own note — the DROID patch's PLAY/STOP long press (`longpress`, the
+  /// legacy extended transport's QUANTIZE note 43); its press toggles the window.
+  static constexpr uint8_t kGrooveNote = 43;
   static constexpr uint32_t kVelocityHoldMs = 600;
   static constexpr uint32_t kNewLoopBars = 4;  // an empty loop's length (owner 2026-11-10: 4; a global setting later)  // NOTELEN held this long: velocity mode (the long press)
   static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
@@ -300,6 +303,7 @@ class Surface {
     blinkMs_ = 0;
     loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
     groove_ = groovePending_ = false;  // DEC-289
+    grooveChord_ = false;
     grooveSlot_ = 0xFF;
     autoTried_ = 0;
     parkedStart_ = -1;
@@ -351,6 +355,24 @@ class Surface {
       return;
     }
     if (channel != 15 || (type != 0x90 && type != 0x80)) return;
+    // DEC-289 amendment 2 (owner: the window did not open — the DROID sends PLAY/STOP as a short-press trigger, nothing
+    // while it is held): note 43 (the patch's PLAY/STOP long press) toggles the GROOVE window; so does PLAY/STOP pressed
+    // while NOTELEN is held (any patch). Both take the press: no start / stop, no NOTELEN gesture.
+    const bool on = type == 0x90 && d2 != 0;
+    if (d1 == kGrooveNote) {
+      if (on) toggleGroove();
+      return;
+    }
+    if (d1 == kTransportNote && on && press_.pressed(kLength) && !edit_.editing()) {
+      press_.consume(kLength);
+      grooveChord_ = true;  // its release is no press either
+      toggleGroove();
+      return;
+    }
+    if (d1 == kTransportNote && !on && grooveChord_) {
+      grooveChord_ = false;
+      return;
+    }
     uint8_t b;
     if (loopEdit_ && d1 < kStepNotes && d1 != kBarStepBase - 1) {  // LOOP_EDIT: a held one and another set the loop
       rangeInput(d1, type == 0x90 && d2 != 0, ms);
@@ -620,6 +642,10 @@ class Surface {
     leaveVisit();
     groovePending_ = false;
     grooveUntil_ = nowMs_ + kGrooveIdleMs;
+  }
+  void toggleGroove() {
+    if (groove_) closeGroove();
+    else openGroove(shownSlot(selected()));
   }
   void closeGroove() {
     if (groovePending_) applyGroove(grooveWin_, grooveSet_);  // a change still settling is kept
@@ -2149,6 +2175,7 @@ class Surface {
   uint8_t popupChoice_ = 0xFF;  // the popup's selected choice (DEC-284 amendment 1)
   uint8_t grooveSlot_ = 0xFF;   // the slot the groove job was last asked for (DEC-288)
   bool groove_ = false, groovePending_ = false;  // the GROOVE window open; a change settling (DEC-289)
+  bool grooveChord_ = false;                     // PLAY/STOP pressed with NOTELEN held: its release taken too
   uint8_t grooveWin_ = 0, grooveField_ = 0;      // its slot, its selected field
   groove::Settings grooveSet_;                   // the settings it shows
   uint32_t grooveUntil_ = 0, groovePendingMs_ = 0, autoTried_ = 0;

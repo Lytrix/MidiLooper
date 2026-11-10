@@ -16423,3 +16423,13 @@ the second time with the transport button and checks its press in the window doe
 Also in this image (groundwork for slice 5, DEC-290): a template is a table (`groove::Table`, built-ins expressed
 through it) and a groove file's table and label can be stored with the state as marker rows (0xFC / 0xFD), carried
 through resize / rotate; PSRAM + 224 B.
+
+**Amendment 2 (2026-11-10, a gesture the DROID can send):** owner: "I still cannot enter the groove window with long
+press on play/stop maybe it isn't possible because short press will always register play/stop?" — right: the patch
+wires B3.29 as `shortpress = _TRIGGER_START_STOP`, so the DROID sends a trigger on a short press and nothing while the
+button is held; the Teensy never sees a hold. Now: (1) the patch adds `longpress = _TRIGGER_GROOVE` to B3.29 and sends
+it as note 43 on channel 16 (the legacy extended transport's QUANTIZE note); note 43 toggles the window; (2) PLAY/STOP
+pressed while NOTELEN is held toggles it with any patch (the presses taken: no start / stop, no NOTELEN gesture; not in
+NOTE_EDIT, where NOTELEN's hold is the velocity). The `longpress` output's behaviour is to be confirmed on the DROID once
+the patch is loaded. Native `test_the_groove_window_opens_by_its_note_and_by_notelen_with_play`; full 4,544 passed.
+Device image `0a4135e1…` (`crash=0`, `BOOT,load,ok`): note 43 and NOTELEN + note 39 each open the window on 1-3.

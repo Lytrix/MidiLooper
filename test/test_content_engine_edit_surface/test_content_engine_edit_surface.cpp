@@ -2348,6 +2348,33 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));  // two visits, two steps
 }
 
+// DEC-289 amendment 2: the DROID sends PLAY/STOP as a short-press trigger (nothing while held), so the window has its
+// own note — 43, the patch's PLAY/STOP long press — and opens with PLAY/STOP pressed while NOTELEN is held; neither
+// starts or stops the transport.
+void test_the_groove_window_opens_by_its_note_and_by_notelen_with_play() {
+  recordBar({{130, 60}});
+  TEST_ASSERT_TRUE(gClk.running());
+  gS.input(0x9F, S::kGrooveNote, 127, gUs / 1000);
+  gS.input(0x8F, S::kGrooveNote, 0, gUs / 1000);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  gS.input(0x9F, S::kGrooveNote, 127, gUs / 1000);  // again: closed
+  gS.input(0x8F, S::kGrooveNote, 0, gUs / 1000);
+  ms(50);
+  TEST_ASSERT_FALSE(gS.grooveOpen());
+  gS.input(0x9F, S::kLengthNote, 127, gUs / 1000);  // NOTELEN held …
+  ms(100);
+  gS.input(0x9F, S::kTransportNote, 127, gUs / 1000);  // … and PLAY/STOP (a DROID trigger)
+  ms(20);
+  gS.input(0x8F, S::kTransportNote, 0, gUs / 1000);
+  ms(100);
+  gS.input(0x8F, S::kLengthNote, 0, gUs / 1000);
+  ms(500);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_TRUE(gClk.running());  // no stop
+  TEST_ASSERT_TRUE(gE.transport().playing(0));
+}
+
 // DEC-289 (owner 2026-11-10: "yes in case if auto groove is turned on … at loop wrap everything is quantized"): with
 // AUTO on, an overdub on a grooved loop is grooved too once it closes — its notes folded into the sources.
 void test_auto_grooves_an_overdub() {
@@ -2433,6 +2460,7 @@ int main(int, char**) {
   RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_a_bar_line);
   RUN_TEST(test_a_stale_groove_build_is_dropped);
   RUN_TEST(test_the_groove_window_sets_a_groove);
+  RUN_TEST(test_the_groove_window_opens_by_its_note_and_by_notelen_with_play);
   RUN_TEST(test_auto_grooves_an_overdub);
   RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);

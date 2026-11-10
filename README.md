@@ -54,7 +54,7 @@ The same buttons provide their main action with a short press and secondary acti
 | **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear the selected slot |
 | **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
 | **Next track** | Select next track | Undo | Redo | Open the sets browser |
-| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally); in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window |
+| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally); with NOTELEN held: the GROOVE window; in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window (needs the patch's long-press note 43 on the DROID) |
 | **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
 | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
@@ -118,7 +118,7 @@ The start, the length and both ranges are saved with the slot and come back afte
 
 ### Groove
 
-Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Long-press **Transport** (the DROID's PLAY/STOP) — or **Track play/stop** — on a loop with content to open the GROOVE window:
+Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Open the GROOVE window on a loop with content: hold **PLAY/STOP** on the DROID (the supplied patch sends that long press as note 43 — load the updated `midilooper_v1.ini`), or hold **NOTELEN** and press **PLAY/STOP** (works with any patch). The same gesture closes it.
 
 | Field | Set with | Values |
 |-------|----------|--------|
