@@ -330,6 +330,32 @@ void storeSwitchAt(ProductionControl::SwitchAt at) {
   EEPROM.update(4, 'W');
   EEPROM.update(5, at == ProductionControl::SwitchAt::LoopEnd ? 1 : 0);
 }
+// The global launch quantisation (surface slice B: 1/16 default, 1/8, 1/4, bar), kept in EEPROM bytes 6-7 ('L', the
+// divisions of a bar: 16, 8, 4 or 1). A slot's double press launches at the next step; a queued switch shows it.
+constexpr uint8_t kLaunchDivisions[] = {16, 8, 4, 1};
+bool launchDivisionValid(uint32_t d) {
+  for (uint8_t v : kLaunchDivisions)
+    if (v == d) return true;
+  return false;
+}
+void applyLaunchDivision(uint8_t d) { gEngine.control().setLaunchGrid(kTicksPerBar / d); }
+void loadLaunchGrid() {
+  if (EEPROM.read(6) != 'L' || !launchDivisionValid(EEPROM.read(7))) return;
+  applyLaunchDivision(EEPROM.read(7));
+}
+void storeLaunchGrid(uint8_t d) {
+  applyLaunchDivision(d);
+  EEPROM.update(6, 'L');
+  EEPROM.update(7, d);
+}
+const char* launchGridName() {
+  switch (kTicksPerBar / gEngine.control().launchGrid()) {
+    case 16: return "16";
+    case 8: return "8";
+    case 4: return "4";
+    default: return "bar";
+  }
+}
 const char* switchAtName() { return gEngine.switchAt() == ProductionControl::SwitchAt::LoopEnd ? "loop" : "bar"; }
 uint32_t gLastSaveWall = 0;   // the wall time of the store's last completed slot write (0: none this boot, or no clock)
 uint32_t gSavesSeen = 0;      // `Persistence::stats().saves` when last looked at
@@ -1269,6 +1295,18 @@ void command(char* line, uint32_t nowUs) {
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeSwitchAt(ProductionControl::SwitchAt::NextBar);
     if (arg != nullptr && std::strcmp(arg, "loop") == 0) storeSwitchAt(ProductionControl::SwitchAt::LoopEnd);
     Serial.printf("#ENGINE,switch-at,%s\n", switchAtName());
+  } else if (std::strcmp(verb, "launch-q") == 0) {  // launch-q 16|8|4|bar: the launch quantisation (slice B, EEPROM)
+    if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeLaunchGrid(1);
+    else if (arg != nullptr && launchDivisionValid(static_cast<uint32_t>(a)) && a != 1) storeLaunchGrid(static_cast<uint8_t>(a));
+    Serial.printf("#ENGINE,launch-q,%s\n", launchGridName());
+  } else if (std::strcmp(verb, "track") == 0) {  // track T: its playing and queued slots (diagnostics, slice B)
+    const uint8_t t = static_cast<uint8_t>(a);
+    if (t >= kTrackCount) return;
+    const auto& x = gEngine.transport();
+    auto& c = gEngine.control();
+    Serial.printf("#ENGINE,track,%u,tick=%lu,playing=%d,slot=%u,queued=%u,to_queued=%lu,launch_q=%s\n", t,
+                  static_cast<unsigned long>(gLastTick), x.playing(t) ? 1 : 0, x.playingSlot(t), c.queuedSwitchSlot(t),
+                  static_cast<unsigned long>(c.ticksToQueued(t, gLastTick)), launchGridName());
   } else if (std::strcmp(verb, "dump-slot") == 0) {  // dump-slot S: the slot's current state, its runs and rows
     const ManifestId m = gEngine.history().current(static_cast<uint8_t>(a));
     if (m == kNoManifest) {
@@ -1814,6 +1852,7 @@ void setup() {
   for (uint8_t t = 0; t < kTrackCount; ++t) gEngine.output().setChannel(t, static_cast<uint8_t>(t + 1));
   gClock.init(kDefaultTempo, kTicksPerBar);
   loadSwitchAt();
+  loadLaunchGrid();
   gSurface.init(gEngine, gClock);
   phase(kPhaseDisplay);
   Serial8.begin(31250);

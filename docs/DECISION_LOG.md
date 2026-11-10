@@ -15722,3 +15722,29 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
 - **Amendment 7 (owner 2026-11-10: "the gradient still seems to be offset … one or two lines too high"; accepted "yes
   keep this"):** the lines move down 4 rows to 10–54 and the gradient centres on the title's middle (row 32): grey 11
   for rows 30 and 34, down to 6 for rows 10 and 54. Device `ec053352…`, boot `crash=0`, `BOOT,load,ok`.
+
+## DEC-274 — A global launch quantisation; a slot's double press launches at the next step (surface slice B)
+
+**Date:** 2026-11-10. **Owner:** "double press starts queued slot at the next global 16th step"; chosen: 1/16, 1/8,
+1/4 or bar, default 1/16; the double launches, clear stays on REC's long press. Scope: `CURRENT_WORK` performance and
+step surface, slice B.
+
+**Decision:**
+- **The launch step** is `TrackControl`'s existing `NextGrid` grid, now a setting (`setLaunchGrid`, `launchGrid`):
+  48, 96, 192 ticks or the bar. Serial `!ENGINE launch-q 16|8|4|bar` sets it and keeps it in EEPROM bytes 6–7 (`'L'`,
+  the divisions of a bar); an unknown value leaves it. A stopped track's slot press already started on this grid; a
+  queued switch's countdown (`ticksToQueued`) and its flashing playhead follow the setting.
+- **A slot's double press** (was clear, 2026-11-08): a filled slot plays at the next launch step, any arm or queue on
+  the track replaced — a slot queued by a short press (its loop end) goes sooner. On an empty slot, or on a track that
+  is taking, it is the short press. On the playing slot it drops another slot's queue and keeps playing. Clear is
+  record's long press; overdub record's short.
+- Diagnostics: `!ENGINE track T` prints the track's playing and queued slots, the ticks to the queued switch and the
+  launch setting.
+
+**Evidence:** native: `test_slot_double_press_launches_at_the_next_launch_step` (a queued slot's double switches within
+a 16th of the gesture, on a 16th, long before the loop end; the bar setting on the bar line; an empty slot's double
+arms) — the mutation launching at the loop end fails it; the long-press test now checks the playing slot's double keeps
+it and record's long clears. Full 4,501 passed. Device (image `2dd0ee38…`, boot `crash=0`, `BOOT,load,ok`): `launch-q`
+16 by default, `bar` kept across a reboot, `3` refused; 1-1 playing, 1-2 double-pressed at tick ~3,130 played by tick
+3,361 (1-1's loop end 3,840); with `bar`, a double queued at 1,209 switched on the 1,536 bar line; set back to 16,
+transport stopped.

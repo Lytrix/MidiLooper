@@ -51,7 +51,10 @@ length is 4 bars and the picker starts on the preset closest to it; device `d537
 on the saved selection (applied as the boot load's first grain reads it); a queued slot's piano roll shows at once,
 its playhead parked and flashing until the switch. Native 4,500 passed; device `99882058…`. Then the title (`OSTINATIX`, now
 `v0.7`) is back from the display's start until the boot load ends (device `d9431e54…`); three Atari-style title
-mockups wait for the owner. Next: slice B, the launch quantisation and the slot's double press.
+mockups wait for the owner — then a light raster of 12 lines behind the title, centred on it (DEC-273 amendments 4–7,
+device `ec053352…`, owner: "keep this"). **Surface slice B (DEC-274):** a global launch quantisation (`!ENGINE launch-q
+16|8|4|bar`, default 1/16, EEPROM) and a slot's double press launching at the next step (clear stays on REC's long).
+Native 4,501 passed; device `2dd0ee38…`. Next: slice C, the performance step and bar buttons.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

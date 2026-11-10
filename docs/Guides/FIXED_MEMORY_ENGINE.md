@@ -18,7 +18,7 @@ Eight tracks each have eight slots. One track at a time records or overdubs. Sel
 
 Record (36) short toggles record/overdub according to state. Record ends at a bar boundary; overdub ends immediately. Play/stop (40) controls the selected track. Transport (39) controls the internal clock; incoming external clock controls transport when active. A transport start starts the unmuted tracks' selected filled slots as well as armed recordings.
 
-Track double toggles mute; long toggles solo. The playing slot's short press also toggles mute. Slot double clears, undoably; slot triple redoes. Record and track-switch (37) double/triple route undo/redo to the relevant session or slot. Record long clears.
+Track double toggles mute; long toggles solo. The playing slot's short press also toggles mute. Slot double launches a filled slot at the next launch step — a queued one sooner than its loop end; on an empty slot, or a track taking, it is the short press. The launch step is global: `!ENGINE launch-q 16|8|4|bar` (default 1/16, kept in EEPROM). Slot triple redoes. Record and track-switch (37) double/triple route undo/redo to the relevant session or slot. Record long clears.
 
 ## Note editing
 

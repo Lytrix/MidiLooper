@@ -30,7 +30,10 @@
 //     or the bar on a running transport, or waiting for the transport — and a second press punches in on a playing
 //     track, starts a stopped transport, or cancels the arm on a running one; the playing slot toggles the track's
 //     mute; another filled slot plays from the loop end, or at once on the grid when the track is stopped); double =
-//     clear (owner 2026-11-08; overdub stays on record's short press); triple = redo; long = get a loop for it (DEC-272:
+//     launch (owner 2026-11-10, slice B): a filled slot plays at the next launch step (the global launch quantisation,
+//     `TrackControl::setLaunchGrid`: 1/16 default, 1/8, 1/4, bar) — a queued one sooner than its loop end; an empty
+//     slot, or one on a track taking, as the short press; the playing slot keeps playing, a queued switch dropped (clear is
+//     record's long press; overdub its short); triple = redo; long = get a loop for it (DEC-272:
 //     the picker over the working set's base stage, its empty-loop presets included; without a browser, as before: on
 //     an empty slot an empty loop of `kNewLoopBars` bars, then the length popup). In the picker NOTELEN, PLAY/STOP,
 //     REC and EDIT move the cursor (up, down, left, right); in its confirmation REC and EDIT select YES / CANCEL;
@@ -547,9 +550,8 @@ class Surface {
       const uint8_t target = static_cast<uint8_t>(t * kSlotsPerTrack + s);
       if (p == Press::Short) {
         slotToggle(t, s);
-      } else if (p == Press::Double) {  // Clear (owner 2026-11-08: the long press creates; overdub is Record's)
-        slot_[t] = s;
-        control().clear(target, tick_, us_, us());
+      } else if (p == Press::Double) {  // launch at the next launch step (slice B; clear is record's long press)
+        launch(t, s);
       } else if (p == Press::Triple) {
         slot_[t] = s;
         control().redo(target, tick_, us_, us());
@@ -864,6 +866,19 @@ class Surface {
     play(t, slot, Engine::Control::Quantize::NextGrid);
   }
 
+  /// A slot's double press (slice B): the filled slot plays at the next launch step, its arm or queue replaced.
+  void launch(uint8_t t, uint8_t s) {
+    const uint8_t slot = static_cast<uint8_t>(t * kSlotsPerTrack + s);
+    const auto& x = transport();
+    if (empty(slot) || x.writingTrack() == t) {
+      slotToggle(t, s);
+      return;
+    }
+    slot_[t] = s;
+    control().cancelQueued(t);
+    if (x.playing(t) && x.playingSlot(t) == slot) return;  // the playing slot: it stays, another one's queue dropped
+    play(t, slot, Engine::Control::Quantize::NextGrid);
+  }
   void slotToggle(uint8_t t, uint8_t s) {
     const uint8_t slot = static_cast<uint8_t>(t * kSlotsPerTrack + s);
     slot_[t] = s;

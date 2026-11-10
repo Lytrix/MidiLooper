@@ -79,6 +79,10 @@ class TrackControl {
     grid_ = gridTicks;
     x_->setBarTicks(bar_);
   }
+  /// The global launch quantisation (surface slice B, owner 2026-11-10): the `NextGrid` step in ticks — a 16th, an
+  /// 8th, a quarter or a bar.
+  void setLaunchGrid(uint32_t gridTicks) { grid_ = gridTicks; }
+  uint32_t launchGrid() const { return grid_; }
 
   /// E9.8j: how long before a Record take's tick 0 a note may begin and still be recorded (a 16th at 192 PPQN).
   static constexpr uint32_t kPreRollTicks = 48;

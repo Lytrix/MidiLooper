@@ -211,9 +211,10 @@ void test_slot_buttons_record_play_switch_and_mute() {
   TEST_ASSERT_FALSE(C().muted(0));
 }
 
-// A slot's double press clears it (owner 2026-11-08), undoably; its long press no longer clears a filled slot (it opens
-// the length popup, which owns the slot button until it hides).
-void test_slot_double_press_clears() {
+// A slot's long press no longer clears a filled slot (it opens the length popup, which owns the slot button until it
+// hides); its double press on the playing slot leaves it playing (slice B: double launches); record's long clears,
+// undoably.
+void test_slot_long_press_keeps_and_record_long_clears() {
   recordOneBar(0, 60);
   const ManifestId m = X().contentOf(0);
   gS.input(0x9F, S::kSlotBase + 0, 127, gUs / 1000);  // long: a filled slot stays
@@ -229,6 +230,12 @@ void test_slot_double_press_clears() {
   ms(100);
   tap(S::kSlotBase + 0);
   ms(450);
+  TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+  TEST_ASSERT_TRUE(X().playing(0));
+  TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));
+  TEST_ASSERT_FALSE(C().muted(0));
+  tap(S::kRecordNote, 700);  // record's long: clear
+  ms(100);
   TEST_ASSERT_EQUAL_UINT16(kNoManifest, X().contentOf(0));
   TEST_ASSERT_EQUAL(ProductionTransport::Mode::Idle, X().mode());
   tap(S::kRecordNote);  // undo
@@ -236,6 +243,62 @@ void test_slot_double_press_clears() {
   tap(S::kRecordNote);
   ms(450);
   TEST_ASSERT_EQUAL_UINT16(m, X().contentOf(0));
+}
+
+/// Runs until `done`, at most `maxUs`; the tick it became true.
+template <typename F>
+static uint32_t until(uint32_t maxUs, F done) {
+  const uint32_t end = gUs + maxUs;
+  while (gUs < end && !done()) run(gUs + 125);
+  TEST_ASSERT_TRUE(done());
+  return gLast;
+}
+// Slice B (owner 2026-11-10): a slot's double press launches the slot at the next launch step — 1/16 by default, a
+// queued switch taken sooner than its loop end; with the bar setting, at the next bar line.
+void test_slot_double_press_launches_at_the_next_launch_step() {
+  TEST_ASSERT_EQUAL_UINT32(48, C().launchGrid());
+  recordOneBar(0, 60);
+  tap(S::kSlotBase + 1);  // a second slot, from slot 0's loop start
+  ms(400);
+  untilRecording(2 * kBarUs);
+  const uint32_t start = gUs;
+  run(start + kBarUs - 200 * kTick, {{start + 20 * kTick, start + 90 * kTick, 62}});
+  tap(S::kSlotBase + 1);
+  run(start + kBarUs + 50 * kTick);
+  TEST_ASSERT_EQUAL_UINT8(1, X().playingSlot(0));
+  // Queued with a short press (slot 1's loop end), then a double: at the next 16th, not the loop end.
+  run(gUs + 100 * kTick);
+  tap(S::kSlotBase + 0);
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(0, C().queuedSwitchSlot(0));
+  tap(S::kSlotBase + 0);
+  ms(100);
+  tap(S::kSlotBase + 0);
+  ms(410);  // the double fires after the triple window, well before slot 1's loop end
+  TEST_ASSERT_EQUAL_UINT8(1, X().playingSlot(0));
+  TEST_ASSERT_EQUAL_UINT8(0, C().queuedSwitchSlot(0));
+  TEST_ASSERT_TRUE(gS.shownQueued(0));
+  TEST_ASSERT_TRUE(C().ticksToQueued(0, gLast) <= 48);
+  TEST_ASSERT_TRUE(X().loopLength(X().contentOf(1)) - (gLast - X().origin(0)) % X().loopLength(X().contentOf(1)) > 96);
+  const uint32_t pressed = gLast;
+  const uint32_t switched = until(kBarUs, [] { return X().playingSlot(0) == 0; });
+  TEST_ASSERT_TRUE(switched - pressed <= 48);
+  TEST_ASSERT_EQUAL_UINT32(0, switched % 48);  // on the step
+  // The bar setting: the next bar line.
+  C().setLaunchGrid(768);
+  run(gUs + 100 * kTick);
+  tap(S::kSlotBase + 1);
+  ms(100);
+  tap(S::kSlotBase + 1);
+  until(kBarUs, [] { return C().queuedSwitchSlot(0) == 1; });
+  const uint32_t barSwitched = until(2 * kBarUs, [] { return X().playingSlot(0) == 1; });
+  TEST_ASSERT_EQUAL_UINT32(0, barSwitched % 768);
+  // An empty slot's double acts as its short press: armed.
+  tap(S::kSlotBase + 5);
+  ms(100);
+  tap(S::kSlotBase + 5);
+  ms(450);
+  TEST_ASSERT_EQUAL_UINT8(5, C().queuedRecordSlot(0));
 }
 
 void test_an_armed_slot_punches_in_on_its_second_press() {
@@ -605,7 +668,8 @@ int main(int, char**) {
   RUN_TEST(test_press_timing_matches_the_legacy_processor);
   RUN_TEST(test_the_control_plane_is_the_surfaces);
   RUN_TEST(test_slot_buttons_record_play_switch_and_mute);
-  RUN_TEST(test_slot_double_press_clears);
+  RUN_TEST(test_slot_long_press_keeps_and_record_long_clears);
+  RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_an_armed_slot_punches_in_on_its_second_press);
   RUN_TEST(test_the_record_button_arms_then_starts_or_cancels);
   RUN_TEST(test_record_button_toggles_overdub_undoes_and_clears);
