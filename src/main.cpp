@@ -1288,10 +1288,31 @@ FLASHMEM __attribute__((noinline)) static void emitBootResetCapture(bool hadCras
 }
 #endif
 
+// Boot-hang diagnostics (opt-in: build with `-D BOOT_CRUMBS`, e.g. in the env's build_flags): CrashReport breadcrumbs
+// across usb_init and early setup — slot 1 the last stage reached (0xB1 startup_middle_hook … 0xBF the end of setup),
+// slot 6 a boot counter — and the previous boot's row printed early in setup (`#CAP,…,DIAG,boot_crumbs,…`). A boot
+// that hangs leaves the stage it reached for the next one to report. Without the flag nothing of it is compiled.
+#if defined(BOOT_CRUMBS)
+DMAMEM static uint32_t gBootPrevCrumbs[8];
+static FLASHMEM void bootCrumb(uint32_t stage) { CrashReport.breadcrumb(1, stage); }
+extern "C" FLASHMEM void startup_middle_hook(void) {
+  volatile crashreport_breadcrumbs_struct* bc = (volatile crashreport_breadcrumbs_struct*)0x2027FFC0;
+  for (int i = 0; i < 8; ++i) gBootPrevCrumbs[i] = ((volatile uint32_t*)bc)[i];
+  const bool valid = bc->checksum == CrashReportClass::checksum(bc, 28);
+  CrashReport.breadcrumb(6, (valid && (bc->bitmask & 0x20)) ? bc->value[5] + 1 : 1);
+  bootCrumb(0xB1);
+}
+extern "C" FLASHMEM void startup_late_hook(void) { bootCrumb(0xB2); }
+#else
+static inline void bootCrumb(uint32_t) {}
+#endif
+
 FLASHMEM void setup() {
+  bootCrumb(0xB3);
 #if defined(SESSION_CAPTURE)
   Track::resetPlaybackLaneMeasurement();
 #endif
+  bootCrumb(0xB4);
   // DEC-183: DMAMEM is not guaranteed zero-initialised here, and a garbage rate-limit stamp makes
   // `now - stamp` negative for the whole boot, silently suppressing every `paint_gate` row.
   gPaintGateLastMs = 0;
@@ -1300,6 +1321,12 @@ FLASHMEM void setup() {
   delay(500);  // USB re-enumeration after reset
   Serial.begin(115200);
   while (!Serial && millis() < 3000) delay(10);
+  bootCrumb(0xB5);
+#if defined(BOOT_CRUMBS)
+  Serial.printf_P(PSTR("#CAP,%lu,DIAG,boot_crumbs,mask=%lx,stage=%lx,boots=%lu,sum=%lx\n"), (unsigned long)micros(),
+                  (unsigned long)gBootPrevCrumbs[0], (unsigned long)gBootPrevCrumbs[1], (unsigned long)gBootPrevCrumbs[6],
+                  (unsigned long)gBootPrevCrumbs[7]);
+#endif
   const bool hadCrashReport = static_cast<bool>(CrashReport);
   if (hadCrashReport) {
     // CrashReport::printTo clears the core's retained report. Render it once
@@ -1350,7 +1377,9 @@ FLASHMEM void setup() {
   // touched, so the rest of the set restores and this slot can be retried once the cause is fixed. A normal
   // reboot leaves no crash report, so a stale breadcrumb is ignored and cleared.
   StorageManagerInternal::resetRestoreFaultSkips();
+  bootCrumb(0xB6);
   StorageManagerInternal::initLoadLoopJobsAtBoot();  // RAM2 NOLOAD: before any storage load clears a job
+  bootCrumb(0xB7);
   if (hadCrashReport) {
     uint8_t faultTrack = 0;
     uint8_t faultSlot = 0;
@@ -1369,7 +1398,9 @@ FLASHMEM void setup() {
   LoopEventStore::initPool();
 
   // Allocate Loop arrays immediately - before USB Host, faders, etc. consume heap
+  bootCrumb(0xB8);
   trackManager.allocateLoopsEarly();
+  bootCrumb(0xB9);
   trackManager.prewarmPlaybackRuntime();
   MemoryMonitor::logStatus(true);  // Log heap after loops allocated
 
@@ -1416,6 +1447,7 @@ FLASHMEM void setup() {
   // 145953 paid idle_gather=136084342 on the first STOPPED turn while the flag
   // was still false, so title drain never reached boot_commit.
   StorageManager::setBootTitleLoadDrain(true);
+  bootCrumb(0xBA);
   looper.setup();  // SD + loadState; USB + piano roll deferred until full slot drain
   if (StorageManager::bootRecoveryBlocked()) return;
 
@@ -1455,6 +1487,7 @@ FLASHMEM void setup() {
   // finishBootSetup() runs in loop() with USB after bootInteractiveReady() — keep
   // OSTINATIX title until the restore queue is empty (no piano roll during drain).
 
+  bootCrumb(0xBF);
   SC_SESSION_HEADER();
 }
 
