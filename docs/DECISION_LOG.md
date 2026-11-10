@@ -15703,3 +15703,7 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
   title in the first captures, the performance screen on track 2 once the load had ended (`BOOT,load` at 1.17 s); the
   title is up about 1 s with USB, up to about 4 s without. Three Atari-style title mockups (a GEM desktop, raster bars,
   an alert box) in `docs/Plans/images/title_screen_mockups.png`, for the owner to choose.
+- **Amendment 2 (owner 2026-11-10: "can you try 2?"; no progress — the boot is too fast to read one):** the title is
+  mockup 2, raster bars: grey bands rolling across rows 6–46, `OSTINATIX` in the 3 × 5 font five times its size cut
+  out of them in black with a bright outline, `MIDI LOOPER` under it, `(C) 2026 LYTRIX` and `V0.7` along the bottom.
+  Device `da8bf8bd…`, boot `crash=0`: as the mockup, up until the boot load ended (1.16 s); to be reviewed by the owner.
