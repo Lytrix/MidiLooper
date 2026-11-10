@@ -16506,3 +16506,35 @@ alone is saved; a damaged mute word → none muted, the selection kept); `test_t
 restored` (none muted). Full native 4,545 passed. Device image `5014600b…`: track 8 muted (double press), settled,
 reflashed (reboot) → `muted=1`; unmuted again afterwards.
 
+## DEC-294 — The GROOVE window compares A, B and OFF on a timeline
+
+**Date:** 2026-11-10. **Owner:** "the font looks too large. use the smaller font for all"; the progress bar inside the
+window, at the bottom; "the same FULL A B setup logic so you can audition no groove, previous groove new groove";
+layout A of the mockups (`docs/Plans/images/groove_window_mockups.png`), the title centred; "compare automatically by
+switching the 2 grooves after X bars (I think 2 is a good default) with the option to include the OFF state"; the
+timeline of the compare mockups (`groove_compare_mockups.png`, 3); "scope can be better named Bar Range: ALL A B … is a
+slot setting"; "keep auto on slot level … loops might need different settings".
+
+**Decision:**
+- **A and B:** opening keeps the slot's groove as A (`Surface::grooveA_`, a file template's table copied) and edits B
+  (the window's settings, starting as A or straight 50 %). OFF is no groove. BARS (the scope) and AUTO are the slot's,
+  shared by A and B; AUTO stays in the slot's groove settings (saved and undone with the slot).
+- **NOTELEN in the window** (`grooveCompare`): short A ↔ B, double OFF — each built and heard from the next beat
+  (DEC-292); long starts / stops the cycle. A B change heard at once when B is playing; while cycling, B's next turn.
+- **The cycle:** turns of 1 / 2 / 4 / 8 bars (the CYCLE field, 2 by default), A then B (then OFF with `+OFF`), from the
+  next bar line; each turn's build is asked within the beat before its bar line (`serviceCycle`), so the next beat —
+  where a build is heard — is that bar line. Stopping keeps what plays; closing keeps what plays and drops a turn built
+  for later. One visit, one undo step (replace in place).
+- **The window** (`EngineDisplay::drawGroove`): the 3 × 5 font throughout (a `%` glyph added), the title centred, the
+  compare row (or, cycling, the timeline: a cell a bar up to twelve, else a cell a turn; played dim, now bright, to come
+  framed), TEMPLATE / AMOUNT with A's dim beside them, BARS ALL · A · B and CYCLE, the AUTO checkbox with `WAIT` /
+  `TOO BIG` / `FAILED`, the progress bar along the bottom.
+- The timeline is meant to be reused by the "loop chain" (slots queued as a musical preset, owner) — not designed yet.
+
+**Evidence:** native `test_the_groove_window_compares_a_b_and_off` (A at opening 137, B 144, short → A, double → OFF
+130 and the window still open; the cycle: only A / B, each a whole two bars, three turns or more; long stops, closing
+keeps it; one undo step); `test_auto_grooves_an_overdub` (AUTO the slot's). Full native 4,546 passed. Device image
+`9f815263…` (`crash=0`): T7 S1 — opened on A, NOTELEN → B with the bar, long → `CYCLE FROM THE NEXT BAR`, then the
+timeline `A A B B` lit bar by bar, long → stopped, open; the visit one undo step (5 → 6). Image `e90eb99a…` (the `%`
+glyph): the window with `60%`.
+

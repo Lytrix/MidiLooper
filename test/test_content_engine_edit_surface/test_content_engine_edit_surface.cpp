@@ -2487,6 +2487,78 @@ void test_auto_grooves_an_overdub() {
   TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
 }
 
+// DEC-294 (owner 2026-11-10: "audition no groove, previous groove, new groove"; the timeline): in the window NOTELEN
+// switches A (the groove when it opened) and B (the one edited), its double plays OFF, its long press runs the cycle —
+// A, B (and OFF) two bars each, each turn heard from its bar line; closing keeps what plays, one undo step.
+void test_the_groove_window_compares_a_b_and_off() {
+  recordBar({{130, 60}});
+  ContentEngine::groove::Settings a;
+  a.tmpl = ContentEngine::groove::kStraight;
+  a.amount = 50;  // A: 130 → 137
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, a));
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 137);
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kPlayStopNote, 700);  // open: B starts as A
+  ms(50);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  pitchBend(15, 8191);  // B: 100 % → 144
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  tap(S::kLengthNote);  // short: A
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  EXPECT_ALL(positions(true, 60, 768), 137);
+  TEST_ASSERT_TRUE(gS.grooveOpen());  // NOTELEN does not close it
+  dbl(S::kLengthNote);  // double: OFF
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
+  EXPECT_ALL(positions(true, 60, 768), 130);
+  // The cycle: A, B two bars each from the next bar line, each turn on its bar line.
+  tap(S::kLengthNote, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.cycling());
+  const uint32_t from = gHeardCount;
+  run(gUs + 9 * 768 * kTick);
+  uint32_t seen = 0;
+  for (uint32_t i = from; i < gHeardCount; ++i) {
+    if (gHeard[i % 4096].pitch != 60) continue;
+    const uint32_t at = (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768;
+    TEST_ASSERT_TRUE(at == 137 || at == 144 || at == 130);
+    ++seen;
+  }
+  TEST_ASSERT_TRUE(seen >= 8);
+  // Turns change only on the bar lines: two bars of A (137), two of B (144), repeating — never OFF without +OFF.
+  uint32_t lastAt = 0, sameRun = 0, runs = 0;
+  for (uint32_t i = from; i < gHeardCount; ++i) {
+    if (gHeard[i % 4096].pitch != 60) continue;
+    const uint32_t at = (gHeard[i % 4096].tick - gE.transport().origin(0)) % 768;
+    if (at == 130) continue;  // the bar before the cycle's first
+    TEST_ASSERT_TRUE(at == 137 || at == 144);
+    if (at == lastAt) ++sameRun;
+    else {
+      if (lastAt != 0 && runs > 0) TEST_ASSERT_EQUAL_UINT32(2, sameRun);  // a whole turn, then the other
+      lastAt = at;
+      sameRun = 1;
+      ++runs;
+    }
+  }
+  TEST_ASSERT_TRUE(runs >= 3);
+  // Long again: stops where it is; closing keeps it — the visit one undo step.
+  tap(S::kLengthNote, 700);
+  ms(50);
+  TEST_ASSERT_FALSE(gS.cycling());
+  const S::Heard kept = gS.grooveHeard();
+  tap(S::kPlayStopNote, 700);
+  ms(50);
+  TEST_ASSERT_FALSE(gS.grooveOpen());
+  run(gUs + 2 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), kept == S::Heard::A ? 137u : 144u);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+}
+
 // DEC-287 (design review C2): the groove row is a fourth marker row — the window (start 96, frame 768 of a shortened
 // loop) is still read, and a length change keeps the groove setting.
 void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
@@ -2556,6 +2628,7 @@ int main(int, char**) {
   RUN_TEST(test_the_groove_window_sets_a_groove);
   RUN_TEST(test_the_groove_window_opens_by_its_note_and_by_notelen_with_play);
   RUN_TEST(test_auto_grooves_an_overdub);
+  RUN_TEST(test_the_groove_window_compares_a_b_and_off);
   RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);

@@ -1,3 +1,10 @@
+**2026-11-10 — DEC-294: the GROOVE window compares A, B and OFF on a timeline.** Layout A in the small font, the title
+centred: OFF · A · B on top (A the groove at opening, B edited), NOTELEN short A ↔ B, double OFF, long a cycle of
+1 / 2 / 4 / 8-bar turns (2 by default, OFF optional) shown as a timeline, each turn heard from its bar line; BARS
+(ALL / A / B) and AUTO stay the slot's; the progress bar along the bottom. Full native 4,546 passed; device
+`9f815263…` / `e90eb99a…` (`crash=0`): the compare and the cycle on T7 S1. The timeline is to be reused by the "loop
+chain" (slots queued as a preset), not designed yet.
+
 **2026-11-10 — DEC-292: GROOVE window open until closed, heard from the next beat, a progress bar; DEC-293: mutes
 saved.** The window no longer idles closed; a finished groove switches on the next beat instead of a bar two bars
 ahead (device: heard ~0.8 s after the fader move, was 4–6 s); a framed bar in the title fills while a change settles,

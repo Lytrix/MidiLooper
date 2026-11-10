@@ -124,10 +124,21 @@ Groove moves the notes of the shown loop toward a swing or quantize template whi
 |-------|----------|--------|
 | **Template** | F2, or the encoder | STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH |
 | **Amount** | F1, or the encoder (5 % a detent) | 0–100 %: how far each note moves toward its swung place (50 % by default; 0 % removes the groove) |
-| **Scope** | F3, or the encoder | FULL, or only the notes inside range A or B |
-| **Auto** | F4, or the encoder | ON: an overdub on this loop is grooved too once it ends |
+| **Bars** | F3, or the encoder | ALL, or only the notes inside range A or B (the slot's) |
+| **Cycle** | the encoder | 1, 2, 4 or 8 bars a turn, with or without OFF (2 bars by default) |
+| **Auto groove overdubs** | F4, or the encoder | a checkbox, the slot's: an overdub on this loop is grooved too once it ends |
 
-A short press of that button (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on the next beat — under a second at 120 BPM. A bar in the window's title fills while a change is on its way (settling, building, then waiting for the beat) and disappears once you hear it; the window shows `...` while it builds and `TOO BIG` if the loop is too large to groove. The window stays open while you try grooves: close it with the gesture that opened it or a long press of any button. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
+A short press of that button (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on the next beat — under a second at 120 BPM. A bar along the window's bottom fills while a change is on its way (settling, building, then waiting for the beat). The window shows `WAIT` or `TOO BIG` beside AUTO when the loop cannot be grooved yet or at all. It stays open while you try grooves: close it with the gesture that opened it or a long press of any button. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
+
+**Compare.** The window keeps two grooves: **A**, the one the loop had when you opened it, and **B**, the one you are editing (its template and amount shown bright, A's dim beside them). The top row shows `OFF · A · B` with the one you hear highlighted:
+
+| NOTELEN in the GROOVE window | |
+|------|------|
+| Short | Switch between A and B |
+| Double | OFF: the loop without groove |
+| Long | Start or stop the cycle: A, B (and OFF with `+OFF`) take turns, each for the CYCLE's bars, every turn starting on its bar line. The top row becomes a timeline — a cell a bar, played dim, now bright, to come framed. Change B while it cycles and B's turn plays the change. |
+
+Closing the window keeps what is playing.
 
 ### Loop-length popup
 

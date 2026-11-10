@@ -497,8 +497,11 @@ class Surface {
       g.amount = static_cast<uint8_t>(a < 0 ? 0 : a > 100 ? 100 : a);
     } else if (grooveField_ == kFieldScope) {
       g.scope = static_cast<uint8_t>((g.scope + 3 + d % 3) % 3);
+    } else if (grooveField_ == kFieldCycle) {  // DEC-294: 1 / 2 / 4 / 8 bars a turn, then the same with OFF
+      cycleIdx_ = static_cast<uint8_t>((cycleIdx_ + 8 + d % 8) % 8);
+      return;
     } else {
-      g.autoGroove = !g.autoGroove;
+      g.autoGroove = !g.autoGroove;  // the slot's (owner: "keep auto on slot level")
     }
     grooveChanged(ms);
   }
@@ -523,12 +526,81 @@ class Surface {
     if (g.pack() != before.pack() || g.amount != before.amount) grooveChanged(ms);
     return true;
   }
+  // ---- Compare (DEC-294, owner 2026-11-10: "audition no groove, previous groove, new groove"; the timeline) -------
+  /// What a turn plays: OFF (no groove), A (the slot's groove when the window opened) or B (the one being edited).
+  enum class Heard : uint8_t { Off, A, B };
+  static constexpr uint8_t kCycleBars[4] = {1, 2, 4, 8};
+  static constexpr uint32_t kBarTicks = EditSurface<Engine>::kBar;
+  uint8_t cycleBars() const { return kCycleBars[cycleIdx_ & 3]; }
+  bool cycleWithOff() const { return (cycleIdx_ & 4) != 0; }
+  uint8_t cycleTurns() const { return cycleWithOff() ? 3 : 2; }
+  bool cycling() const { return cycling_; }
+  static Heard turnKind(uint8_t i) { return i == 0 ? Heard::A : i == 1 ? Heard::B : Heard::Off; }
+  /// The bar of the cycle playing now (0 … bars × turns − 1), or 0xFF before its first bar line.
+  uint8_t cycleCell() const {
+    if (!cycling_ || tick_ < cycleStart_) return 0xFF;
+    const uint32_t bars = (tick_ - cycleStart_) / kBarTicks;
+    return static_cast<uint8_t>(bars % (static_cast<uint32_t>(cycleBars()) * cycleTurns()));
+  }
+  /// What is heard now: the cycle's turn, else the last choice.
+  Heard grooveHeard() const {
+    const uint8_t c = cycleCell();
+    return c == 0xFF ? heard_ : turnKind(static_cast<uint8_t>(c / cycleBars()));
+  }
+  const groove::Settings& grooveA() const { return grooveA_; }
+  /// The settings a turn builds: B's, or A's template and amount (OFF: none); BARS and AUTO are the slot's, shared.
+  groove::Settings settingsOf(Heard h) const {
+    groove::Settings x = h == Heard::B ? grooveSet_ : grooveA_;
+    if (h == Heard::Off) x.amount = 0;
+    x.scope = grooveSet_.scope;
+    x.autoGroove = grooveSet_.autoGroove;
+    return x;
+  }
+  void playHeard(Heard h, uint32_t at = 0) {
+    const groove::Settings x = settingsOf(h);
+    const bool file = x.tmpl == groove::kFileTemplate && x.amount != 0;
+    grooveAt_ = at;
+    applyGroove(grooveWin_, x, file ? &grooveATable_ : nullptr, file ? grooveALabel_ : nullptr);
+  }
+  /// NOTELEN in the window: short A ↔ B, double OFF (both stop a cycle), long the cycle on / off.
+  void grooveCompare(Press p) {
+    if (p == Press::Long) {
+      if (cycling_) {
+        heard_ = grooveHeard();  // stopped where it is: what plays stays
+        cycling_ = false;
+        if (grooveAt_ != 0 && e_->grooveState() != Engine::Groove::State::Idle) e_->grooveCancel();
+        grooveAt_ = 0;
+      } else {
+        cycling_ = true;
+        cycleStart_ = (tick_ / kBarTicks + 1) * kBarTicks;  // turn A from the next bar line
+        cycleAsked_ = 0xFFFFFFFFu;
+      }
+      return;
+    }
+    if (p != Press::Short && p != Press::Double) return;
+    cycling_ = false;
+    heard_ = p == Press::Double ? Heard::Off : heard_ == Heard::A ? Heard::B : Heard::A;
+    groovePending_ = false;
+    playHeard(heard_);
+  }
+  /// The cycle's next turn built a beat ahead of its bar line and switched in on it.
+  void serviceCycle() {
+    if (!cycling_ || !clock_->running()) return;
+    const uint32_t len = static_cast<uint32_t>(cycleBars()) * kBarTicks;
+    const uint32_t k = tick_ < cycleStart_ ? 0 : (tick_ - cycleStart_) / len + 1;  // the turn starting next
+    const uint32_t at = cycleStart_ + k * len;
+    if (k == cycleAsked_ || at - tick_ > kBarTicks / 4) return;
+    cycleAsked_ = k;
+    playHeard(turnKind(static_cast<uint8_t>(k % cycleTurns())), at);
+  }
   void serviceGroove(uint32_t ms) {
     if (groove_) {
       if (groovePending_ && ms - groovePendingMs_ >= kLengthSettleMs) {
         groovePending_ = false;
-        applyGroove(grooveWin_, grooveSet_);
+        if (!cycling_) heard_ = Heard::B;
+        if (grooveHeard() == Heard::B) playHeard(Heard::B);  // cycling: B's turn hears it now, else its next turn
       }
+      serviceCycle();
       return;  // DEC-292 (owner: "browsing for different grooves to try them out"): open until closed
     }
     // AUTO (owner 2026-11-10: "at loop wrap everything is quantized"): a grooved shown slot whose groove asks for it,
@@ -617,7 +689,7 @@ class Surface {
   /// button closes it (or note 43 / NOTELEN + PLAY/STOP again); it stays open otherwise (DEC-292). A change is applied
   /// once it rests `kLengthSettleMs` (built in the background, heard from the next beat, DEC-292); a visit's changes
   /// are one undo step.
-  enum GrooveField : uint8_t { kFieldTemplate = 0, kFieldAmount, kFieldScope, kFieldAuto, kGrooveFields };
+  enum GrooveField : uint8_t { kFieldTemplate = 0, kFieldAmount, kFieldScope, kFieldCycle, kFieldAuto, kGrooveFields };
   static constexpr uint32_t kEditExitMs = 1500;  // DEC-291: EDIT held this long leaves the edit modes
   /// The track buttons' mode (DEC-291): select (false) or mute (true), toggled by EDIT's short press.
   bool trackMuteMode() const { return trackMute_; }
@@ -652,6 +724,16 @@ class Surface {
       grooveSet_.tmpl = groove::kStraight;
       grooveSet_.amount = 50;
     }
+    grooveA_ = packed != 0 ? groove::Settings::unpack(packed) : groove::Settings{};  // DEC-294: A, as it was
+    grooveALabel_[0] = 0;
+    if (grooveA_.tmpl == groove::kFileTemplate && grooveA_.amount != 0) {
+      const LoopWindow sw = transport().window(slot);
+      if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, grooveATable_, grooveALabel_))
+        grooveA_.amount = 0;
+    }
+    heard_ = grooveA_.amount != 0 ? Heard::A : Heard::Off;
+    cycling_ = false;
+    grooveAt_ = 0;
     leaveVisit();
     groovePending_ = false;
   }
@@ -660,7 +742,12 @@ class Surface {
     else openGroove(shownSlot(selected()));
   }
   void closeGroove() {
-    if (groovePending_) applyGroove(grooveWin_, grooveSet_);  // a change still settling is kept
+    if (cycling_) {  // DEC-294: what plays now stays; a turn built for later is dropped
+      if (grooveAt_ != 0 && e_->grooveState() != Engine::Groove::State::Idle) e_->grooveCancel();
+      cycling_ = false;
+    }
+    grooveAt_ = 0;
+    if (groovePending_) playHeard(Heard::B);  // a change still settling is kept
     groovePending_ = false;
     groove_ = false;
     if (e_->grooveState() == Engine::Groove::State::Waiting) e_->grooveCancel();  // waiting for room: given up
@@ -710,6 +797,7 @@ class Surface {
       leaveEdit();
     }
     if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_) == Engine::Transport::Result::Ok) {
+      grooveAt_ = 0;
       visited(grooveSlot_);  // DEC-288: a groove published; this visit's next one replaces it
       grooveSwitchFrom_ = lastTick;  // DEC-292: the window's progress runs on to the beat it is heard on
       grooveSwitchAt_ = e_->groovePublishedAt();
@@ -962,6 +1050,10 @@ class Surface {
     if (browsing() && (p == Press::Long || b == kRecord || b == kTrackSwitch || b == kEditMode ||
                        (browser_->picking() && (b == kLength || b == kPlayStop)))) {
       browse(b, p);  // a long press of any button closes it
+      return;
+    }
+    if (groove_ && b == kLength) {  // DEC-294: NOTELEN compares A / B / OFF, its long press the cycle
+      grooveCompare(p);
       return;
     }
     if (groove_ && (p == Press::Long || b == kPlayStop || b == kTransport)) {  // the GROOVE window (DEC-289)
@@ -2210,7 +2302,16 @@ class Surface {
   bool grooveChord_ = false;                     // PLAY/STOP pressed with NOTELEN held: its release taken too
   bool trackMute_ = false;                       // DEC-291: the track buttons mute (short press) instead of select
   uint8_t grooveWin_ = 0, grooveField_ = 0;      // its slot, its selected field
-  groove::Settings grooveSet_;                   // the settings it shows
+  groove::Settings grooveSet_;                   // the settings it shows (B, DEC-294)
+  groove::Settings grooveA_;                     // DEC-294: A, the slot's groove when the window opened
+  groove::Table grooveATable_;                   // ... its file template, if one
+  char grooveALabel_[21] = {};
+  Heard heard_ = Heard::B;                       // the last choice (NOTELEN), outside a cycle
+  bool cycling_ = false;                         // the timeline running
+  uint8_t cycleIdx_ = 1;                         // 1 / 2 / 4 / 8 bars a turn (bits 0–1), with OFF (bit 2)
+  uint32_t cycleStart_ = 0, cycleAsked_ = 0;     // the cycle's first bar line; the turn last asked for
+  uint32_t grooveAt_ = 0;                        // a turn's bar line its build waits for (0: none) — asked within the
+                                                 // beat before it, so the next beat (DEC-292) is that bar line
   uint32_t groovePendingMs_ = 0, autoTried_ = 0;
   uint32_t grooveSwitchFrom_ = 0, grooveSwitchAt_ = 0;  // DEC-292: the last publish's tick and the beat it is heard on
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;

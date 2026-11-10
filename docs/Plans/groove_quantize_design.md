@@ -132,11 +132,24 @@ For a note at stored position `t` (absolute in the stored loop), template `T` (�
 
 ## 8. Controls
 
+**UI follow-up (owner, 2026-11-10):** audition OFF, the previous groove and a new groove, with progress feedback and
+optional automatic comparison. AUTO is to become a **track setting**, independent of the audition choices. Proposed
+layouts, comparison sequences and controls: [groove audition UI proposal](groove_audition_ui_proposal.md). The list
+below describes the shipped window before that proposed revision; the track-setting migration is not implemented
+by the UI exploration.
+
 - **Long press PLAY/STOP** opens the GROOVE window: `TEMPLATE` (built-ins, the preloaded ten, `MORE…` by machine),
   `AMOUNT`, `SCOPE` (FULL / A / B), `AUTO`. F1 amount, F2 template, F3 scope, F4 AUTO; the minimal setup: encoder push =
   next field, turn = value. A long press closes (and cancels a waiting build); it stays open until closed (DEC-292),
-  a progress bar in its title while a change is on its way. The window shows `…` while a build runs, `TOO BIG` when it
-  cannot fit.
+  a progress bar along its bottom while a change is on its way. The window shows `WAIT` / `TOO BIG` beside AUTO.
+- **Compare (DEC-294):** layout A, small font: the compare row `OFF · A · B` (A the groove at opening, B the one
+  edited), B's template / amount with A's dim, BARS (ALL / A / B, the slot's range — "scope" renamed) and CYCLE, AUTO
+  as the slot's checkbox. NOTELEN short A ↔ B, double OFF, long the cycle: A, B (+ OFF) a turn of 1 / 2 / 4 / 8 bars
+  each from the next bar line, each turn built in the beat before its bar line; the compare row becomes the timeline
+  (a cell a bar). Closing keeps what plays; one undo step a visit.
+- **The timeline as a design language (owner 2026-11-10):** the same row of cells is meant for the "loop chain" —
+  slots queued as a musical preset, a bar each (`A A A B A A A C`, `A A A B A B A C`), using the custom loop lengths
+  (DEC-284) — not designed yet; the groove compare is its first user.
 
 ## 9. Slices
 
