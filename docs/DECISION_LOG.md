@@ -15711,3 +15711,6 @@ blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load)
   title (amendment 1). The raster bars light most of the screen at mid to high grey across full-width rows — far more
   current than the plain title (likely the supply, as the dimming bar of 2026-11-09). The rebuilt image is
   byte-identical to amendment 1's (`d9431e54…`), boot `crash=0`.
+- **Amendment 4 (owner 2026-11-10: "try a lighter version"):** the plain title with a light raster behind it — thin
+  1-px lines every 4 rows (rows 6–50) at grey 1–4, the letters kept clear of them by a black pixel — a fraction of the
+  raster bars' lit area. Device `0f8bd40a…`, boot `crash=0`: drawn as intended; flicker to be judged on the panel.

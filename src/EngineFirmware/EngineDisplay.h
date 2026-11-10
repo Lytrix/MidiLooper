@@ -113,7 +113,8 @@ class EngineDisplay {
   /// The firmware's version on the title (owner 2026-11-10: legacy showed v0.6; the engine is v0.7).
   static constexpr const char* kVersion = "v0.7";
   /// The title (owner 2026-11-10, as legacy `drawBootScreen`; the raster-bar title flickered on the panel — too much
-  /// of it lit): `OSTINATIX` in the 5 × 7 font four times its size,
+  /// of it lit — so a light raster: thin 1-px lines every 4 rows at grey 1–4 behind it, the letters kept clear of them by a
+  /// black pixel): `OSTINATIX` in the 5 × 7 font four times its size,
   /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
   /// performance frame then opens on the saved selection, DEC-273).
   void drawTitle() {
@@ -124,7 +125,12 @@ class EngineDisplay {
     const int16_t w = static_cast<int16_t>((sizeof kTitle - 1) * kAdvance * kScale - kScale);
     int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
     const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
+    static const uint8_t kLine[] = {1, 2, 3, 4, 3, 2};
+    for (int16_t y = 6, i = 0; y <= 50; y = static_cast<int16_t>(y + 4), ++i)
+      hline(0, DISPLAY_WIDTH - 1, y, kLine[i % sizeof kLine]);
     const GFXfont& font = Font5x7FixedMono;
+    const int16_t xStart = x;
+    for (uint8_t pass = 0; pass < 2; ++pass, x = xStart)  // a black edge around each letter, then the letters
     for (const char* c = kTitle; *c != 0; ++c, x = static_cast<int16_t>(x + kAdvance * kScale)) {
       const uint8_t code = static_cast<uint8_t>(*c);
       if (code < font.first || code > font.last) continue;
@@ -137,8 +143,12 @@ class EngineDisplay {
           if (bits & 0x80) {
             const int16_t px0 = static_cast<int16_t>(x + (g.xOffset + xx) * kScale);
             const int16_t py0 = static_cast<int16_t>(top + (7 + g.yOffset + yy) * kScale);
-            oled_.gfx.draw_rect_filled(f, px0, py0, static_cast<int16_t>(px0 + kScale - 1),
-                                       static_cast<int16_t>(py0 + kScale - 1), 15);
+            if (pass == 0)
+              oled_.gfx.draw_rect_filled(f, static_cast<int16_t>(px0 - 1), static_cast<int16_t>(py0 - 1),
+                                         static_cast<int16_t>(px0 + kScale), static_cast<int16_t>(py0 + kScale), 0);
+            else
+              oled_.gfx.draw_rect_filled(f, px0, py0, static_cast<int16_t>(px0 + kScale - 1),
+                                         static_cast<int16_t>(py0 + kScale - 1), 15);
           }
           bits = static_cast<uint8_t>(bits << 1);
         }
