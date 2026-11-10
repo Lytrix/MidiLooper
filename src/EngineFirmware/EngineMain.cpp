@@ -2021,6 +2021,8 @@ void loop() {
   ev.popup = gSurface.popup();
   ev.popupSlot = gSurface.popupSlot();
   ev.popupLoop = gSurface.popupLoop();
+  ev.popupChoice = ev.popup ? gSurface.popupChoice() : 0xFF;
+  ev.popupCustom = ev.popup && gSurface.popupCustom();
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();

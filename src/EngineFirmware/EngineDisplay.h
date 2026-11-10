@@ -82,6 +82,8 @@ struct EditView {
   bool popup = false;      // the length popup (owner 2026-11-08)
   uint8_t popupSlot = 0;
   uint32_t popupLoop = 0;  // the length it shows (ticks)
+  uint8_t popupChoice = 0xFF;  // its selected choice (DEC-284 amendment 1: 0 BASE, 1 CUSTOM, 2–13 the lengths)
+  bool popupCustom = false;    // CUSTOM exists
 };
 
 /// What the sets browser shows beside its model (sets browser slice 3): the working set's save state ("SAVED 14:32"),
@@ -1168,8 +1170,11 @@ class EngineDisplay {
   /// title bar (hatched rows, the title in its own black box), the length large, the gestures in small letters. Kept
   /// light (owner 2026-11-08: "the screen gets all dimmed"): the panel dims as a whole as its total load rises — a
   /// filled bright title bar and grey interior took the frame's summed levels from ~5,000 to ~25,000.
+  /// DEC-284 amendment 1 (owner 2026-11-10: "show all possible lengths in the popup to cycle through"): every choice in
+  /// three rows — BASE · CUSTOM, 1–8, 16 · 32 · 64 · 128 — BARS in the title once, the selected one inverted, the
+  /// others dim (CUSTOM dimmer while there is none).
   void drawPopup() {
-    constexpr int16_t x0 = 72, y0 = 6, x1 = 183, y1 = 41, sh = 3;
+    constexpr int16_t x0 = 72, y0 = 1, x1 = 183, y1 = 45, sh = 3;
     oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 2);  // the shadow
     oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 0);                      // the window: black
     for (int16_t y = static_cast<int16_t>(y0 + 2); y < y0 + 9; y += 2)        // the title bar: hatched
@@ -1184,15 +1189,30 @@ class EngineDisplay {
       px(x1, y, 10);
     }
     char title[24];
-    snprintf(title, sizeof title, "LOOP LENGTH T%u S%u", edit_.popupSlot / 8 + 1, edit_.popupSlot % 8 + 1);
+    snprintf(title, sizeof title, "LOOP BARS T%u S%u", edit_.popupSlot / 8 + 1, edit_.popupSlot % 8 + 1);
     const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
-    char value[16], len[8];
-    lengthText(edit_.popupLoop, len, sizeof len);
-    snprintf(value, sizeof value, "%s %s", len, edit_.popupLoop > kBar ? "BARS" : "BAR");
-    const int16_t w = static_cast<int16_t>(strlen(value)) * 6 - 1;
-    text(value, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y0 + 23), 15);
+    static const char* const kChoice[14] = {"BASE", "CUSTOM", "1", "2", "3", "4", "5", "6", "7", "8", "16", "32", "64", "128"};
+    static constexpr uint8_t kRow[4] = {0, 2, 10, 14};     // the rows' first choices
+    static constexpr int16_t kGap[3] = {12, 8, 10};        // the space between a row's choices
+    for (uint8_t r = 0; r < 3; ++r) {
+      int16_t w = static_cast<int16_t>(-kGap[r]);
+      for (uint8_t i = kRow[r]; i < kRow[r + 1]; ++i) w = static_cast<int16_t>(w + strlen(kChoice[i]) * 4 - 1 + kGap[r]);
+      int16_t x = static_cast<int16_t>((x0 + x1 - w) / 2);
+      const int16_t y = static_cast<int16_t>(y0 + 13 + r * 8);
+      for (uint8_t i = kRow[r]; i < kRow[r + 1]; ++i) {
+        const int16_t iw = static_cast<int16_t>(strlen(kChoice[i]) * 4 - 1);
+        if (i == edit_.popupChoice) {
+          oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x - 2), static_cast<int16_t>(y - 1),
+                                     static_cast<int16_t>(x + iw + 1), static_cast<int16_t>(y + 5), 13);
+          label(kChoice[i], x, y, 0);
+        } else {
+          label(kChoice[i], x, y, i == 1 && !edit_.popupCustom ? 2 : 6);
+        }
+        x = static_cast<int16_t>(x + iw + kGap[r]);
+      }
+    }
     static const char kHint[] = "PRESS +  2X -  HOLD CANCEL";  // next length, the one before, back as opened
     label(kHint, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(sizeof kHint - 1) * 4) / 2),
           static_cast<int16_t>(y1 - 7), 5);

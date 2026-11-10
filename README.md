@@ -57,8 +57,9 @@ The same buttons provide their main action with a short press and secondary acti
 | **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally) | Return to loop start | — | — |
 | **Track play/stop** | Play / stop selected track | — | — | — |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
+| **NOTELEN in performance** | Toggle the selected slot's loop between BASE and CUSTOM | — | — | — |
 | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
-| **NOTELEN in LOOP_EDIT** | Create a four-bar loop if empty | Toggle HOME (the loop as recorded, or as set by F1 / F2 / the popup) ↔ the variation (the last button range), edits kept | — | Open length popup |
+| **NOTELEN in LOOP_EDIT** | Create a four-bar loop if empty | Toggle BASE (the loop as recorded, or as set by F1 / F2) ↔ CUSTOM (the last button range), edits kept | — | Open length popup (BASE, CUSTOM, 1–8, 16–128 bars) |
 | **16th steps 1–16** (performance) | Restart the playing slot at that 16th of the bar playing, at the next launch step | — | — | — |
 | **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
 | **16th steps 1–16** (NOTE_EDIT) | Select the step's note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step's note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |

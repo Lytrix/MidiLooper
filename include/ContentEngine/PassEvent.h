@@ -61,9 +61,9 @@ constexpr uint8_t kFitHeldStatus = 0xF7u;
 /// frame's length (ticks) — the stored loop the start counts in; `tick` 0xFFFFFFFF so it sorts after every lookup. Absent:
 /// start 0, the frame the loop.
 constexpr uint8_t kFitWindowStatus = 0xF8u;
-/// The loop's HOME and its variation (DEC-284), after the window row, same layout (`seq` the start, `noteId` the length).
-/// Absent: HOME is the current loop; no variation.
-constexpr uint8_t kFitHomeStatus = 0xF9u;
-constexpr uint8_t kFitVariationStatus = 0xFAu;
+/// The loop's BASE and its CUSTOM range (DEC-284 amendment 1: renamed from HOME / variation), after the window row, same layout (`seq` the start, `noteId` the length).
+/// Absent: BASE is the current loop; no CUSTOM.
+constexpr uint8_t kFitBaseStatus = 0xF9u;
+constexpr uint8_t kFitCustomStatus = 0xFAu;
 
 }  // namespace ContentEngine

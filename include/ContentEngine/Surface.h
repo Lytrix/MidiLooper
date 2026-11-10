@@ -63,8 +63,8 @@
 //     16th alone, DEC-280 amendment 1): its left end the new start
 //     (a rotation), its length the bars / 16ths covered (odd lengths too) — places in the stored loop (DEC-283: the
 //     start is saved with the state; bars of its 8-bar page playing, 16ths of its bar playing); the visit's one undo
-//     step, as F1 / F2. The loop has a HOME (DEC-284: as recorded, or set by F1 / F2 / the length popup) and a
-//     variation (the last range of these buttons), both saved with the state; NOTELEN's double press in LOOP_EDIT
+//     step, as F1 / F2. The loop has a BASE (DEC-284: as recorded, or set by F1 / F2 / the length popup) and a
+//     CUSTOM range (the last range of these buttons), both saved with the state; NOTELEN's double press in LOOP_EDIT
 //     toggles between them as a new undo step, the edits made since kept. Stored bars and 16ths outside the loop that
 //     hold notes light dim.
 // * The encoder (slice E; the Teensy's GPIO quadrature encoder and its push, legacy pins 29 / 30 / 31, read by the
@@ -464,11 +464,11 @@ class Surface {
   /// DEC-283: absolute): `scale` the stored loop's ticks (`frameOf`), `start` the current loop's start in it, `known`
   /// how far its notes reach from its start in whole bars (the loop past it is drawn as past the known length). False:
   /// no content.
-  /// Is the slot's loop its HOME (DEC-284; true without content)?
-  bool atHome(uint8_t slot) {
+  /// Is the slot's loop its BASE (DEC-284; true without content)?
+  bool atBase(uint8_t slot) {
     if (slot >= Config::kSlotCount || transport().contentOf(slot) == kNoManifest) return true;
-    const LoopWindow w = homeOf(slot);
-    return w.start == w.homeStart && loopTicks(slot) == w.homeLength;
+    const LoopWindow w = baseOf(slot);
+    return w.start == w.baseStart && loopTicks(slot) == w.baseLength;
   }
   bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known) {
     if (slot >= Config::kSlotCount) return false;
@@ -514,6 +514,10 @@ class Surface {
   /// The length popup is shown: its slot, and the length it shows (F2's pending one, else the slot's).
   bool popup() const { return popup_; }
   uint8_t popupSlot() const { return popupSlot_; }
+  /// The popup's selected choice (DEC-284 amendment 1; 0 BASE, 1 CUSTOM, 2–13 the lengths 1–8, 16–128 bars, 0xFF none)
+  /// and whether CUSTOM exists.
+  uint8_t popupChoice() const { return popupChoice_; }
+  bool popupCustom() { return transport().contentOf(popupSlot_) != kNoManifest && baseOf(popupSlot_).customLength != 0; }
   uint32_t popupLoop() const {
     if (pendingLoop_ != 0) return pendingLoop_;
     const ManifestId c = e_->transport().contentOf(popupSlot_);
@@ -769,13 +773,17 @@ class Surface {
         return;  // double: the set browser (a later slice)
       case kLength:
         if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
-          if (p == Press::Double) {  // HOME ↔ the variation (DEC-284)
-            toggleHome(shownSlot(t));
+          if (p == Press::Double) {  // BASE ↔ CUSTOM (DEC-284)
+            toggleBase(shownSlot(t));
             return;
           }
           if (p == Press::Short || p == Press::Long)
             control().createEmpty(shownSlot(t), kNewLoopBars * EditSurface<Engine>::kBar);  // refused when filled
           if (p == Press::Long) openPopup(shownSlot(t), kLength, nowMs_);
+          return;
+        }
+        if (p == Press::Short && !edit_.editing() && !edit_.entering()) {  // performance: BASE ↔ CUSTOM (DEC-284 am. 1)
+          toggleBase(shownSlot(t));
           return;
         }
         if (p == Press::Short) edit_.lengthOrCreate(nowMs_);
@@ -921,7 +929,7 @@ class Surface {
     const uint8_t slot = shownSlot(selected());
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
-    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Home);
+    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Base);
   }
   /// LOOP_EDIT's F2 (legacy `handleLoopLengthPitchbend`): the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
@@ -961,7 +969,8 @@ class Surface {
     const uint32_t loop = pendingLoop_;
     pendingLoop_ = 0;
     if (!loopEdit_ && !popup_) return;
-    resizeTo(popup_ ? popupSlot_ : shownSlot(selected()), loop);
+    resizeTo(popup_ ? popupSlot_ : shownSlot(selected()), loop, popup_ ? Mark::Keep : Mark::Base);
+    if (popup_) popupChoice_ = choiceOf(popupSlot_);
   }
   /// LOOP_EDIT's step / bar buttons (DEC-280): the first held is the range's anchor; another pressed while it is held
   /// sets the range (`loopRange`). A double press (DEC-280 amendment 1, owner 2026-11-10: "a way to loop 1 bar") loops
@@ -1009,22 +1018,23 @@ class Surface {
     const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
     const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
     if (start >= frame_) return;
-    setWindow(slot, start, length, Mark::Variation, true);  // buttons past the stored loop's end lengthen it
+    setWindow(slot, start, length, Mark::Custom, true);  // buttons past the stored loop's end lengthen it
   }
-  void resizeTo(uint8_t slot, uint32_t loop) {
+  /// What a LOOP_EDIT change makes of the loop (DEC-284): BASE (F1, F2, the length popup), CUSTOM (the step /
+  /// bar buttons), or neither (NOTELEN's double, toggling between them).
+  enum class Mark : uint8_t { Base, Custom, Keep };
+  /// The loop `loop` ticks long from its start: F2 in LOOP_EDIT sets BASE; in the popup (DEC-284 amendment 1) neither.
+  void resizeTo(uint8_t slot, uint32_t loop, Mark mark) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
     beyondEnd(c);
-    setWindow(slot, frameStart_, loop, Mark::Home);
+    setWindow(slot, frameStart_, loop, mark);
   }
-  /// What a LOOP_EDIT change makes of the loop (DEC-284): HOME (F1, F2, the length popup), the variation (the step /
-  /// bar buttons), or neither (NOTELEN's double, toggling between them).
-  enum class Mark : uint8_t { Home, Variation, Toggle };
   /// The shown loop becomes `length` ticks from `start` in the stored loop (DEC-283), in this visit's undo step: the
   /// content back to the whole stored loop, rotated there to the start (lossless: rotated at the frame's length), then
   /// cut to the length; a loop reaching past the stored loop's end wraps to its start. A loop longer than the stored loop
   /// — or, `grow`, one reaching past its end — makes it longer (rotated back to its start first, so the stored notes
-  /// keep their places). `mark`: what the new loop becomes (DEC-284); HOME and the variation are kept with every state.
+  /// keep their places). `mark`: what the new loop becomes (DEC-284); BASE and CUSTOM are kept with every state.
   bool setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest || length == 0) return false;
@@ -1032,13 +1042,13 @@ class Surface {
     uint32_t frame = frame_, at = frameStart_;
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
     if (start >= frame) return false;
-    LoopWindow marks = homeOf(slot);
-    if (mark == Mark::Home) {
-      marks.homeStart = start;
-      marks.homeLength = length;
-    } else if (mark == Mark::Variation) {
-      marks.varStart = start;
-      marks.varLength = length;
+    LoopWindow marks = baseOf(slot);
+    if (mark == Mark::Base) {
+      marks.baseStart = start;
+      marks.baseLength = length;
+    } else if (mark == Mark::Custom) {
+      marks.customStart = start;
+      marks.customLength = length;
     }
     if (start == at && length == loop) return false;
     const auto ok = [&](typename X::Result r) {
@@ -1059,13 +1069,13 @@ class Surface {
     loopPark_ = true;  // the faders to the new start and length
     return true;
   }
-  // ---- HOME and the variation (DEC-284, owner 2026-11-10: "trying several ranges must never lose the way home") -------
-  /// The slot's marks with HOME made explicit: the state's HOME, else the current loop.
-  LoopWindow homeOf(uint8_t slot) {
+  // ---- BASE and CUSTOM (DEC-284, owner 2026-11-10: "trying several ranges must never lose the way home") -------
+  /// The slot's marks with BASE made explicit: the state's BASE, else the current loop.
+  LoopWindow baseOf(uint8_t slot) {
     LoopWindow w = transport().window(slot);
-    if (w.homeLength == 0) {
-      w.homeStart = w.start;
-      w.homeLength = loopTicks(slot);
+    if (w.baseLength == 0) {
+      w.baseStart = w.start;
+      w.baseLength = loopTicks(slot);
     }
     return w;
   }
@@ -1073,19 +1083,19 @@ class Surface {
     const ManifestId c = transport().contentOf(slot);
     return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
   }
-  /// NOTELEN's double press in LOOP_EDIT: HOME ↔ the variation — from HOME to the variation (none: nothing), from
-  /// anywhere else to HOME; its own undo step, the edits made since kept.
-  void toggleHome(uint8_t slot) {
+  /// NOTELEN's double press in LOOP_EDIT, its single press in performance (DEC-284 amendment 1): BASE ↔ CUSTOM — from
+  /// BASE to CUSTOM (none: nothing), from anywhere else to BASE; its own undo step, the edits made since kept.
+  void toggleBase(uint8_t slot) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return;
-    const LoopWindow w = homeOf(slot);
-    const bool home = w.start == w.homeStart && loopTicks(slot) == w.homeLength;
-    if (home && w.varLength == 0) return;
+    const LoopWindow w = baseOf(slot);
+    const bool base = w.start == w.baseStart && loopTicks(slot) == w.baseLength;
+    if (base && w.customLength == 0) return;
     visitState_ = 0;  // its own step
-    if (home)
-      setWindow(slot, w.varStart, w.varLength, Mark::Toggle);
+    if (base)
+      setWindow(slot, w.customStart, w.customLength, Mark::Keep);
     else
-      setWindow(slot, w.homeStart, w.homeLength, Mark::Toggle);
+      setWindow(slot, w.baseStart, w.baseLength, Mark::Keep);
     pendingStart_ = 0;
     startPending_ = false;
   }
@@ -1093,9 +1103,11 @@ class Surface {
   // ---- The length popup (owner 2026-11-08) ---------------------------------------------------------------------------
   /// Opened by a long press on a slot (an empty one gets its empty loop first) or NOTELEN's in LOOP_EDIT, on `slot`;
   /// `button` (the one that opened it) is then the popup's (owner 2026-11-08: the tap bursts were annoying and had no way
-  /// back): a single press steps to the next length of `kPopupLengths` above the loop's, a double press to the one
-  /// below, cycling round at either end. F2 sets the length as in LOOP_EDIT. It hides `kPopupMs` after
-  /// the last change; its changes are one undo step (a visit, as LOOP_EDIT's). F2's motor is parked on opening.
+  /// back): a single press steps to the next of its choices, a double press to the one before, cycling round at either
+  /// end. The choices (DEC-284 amendment 1, owner 2026-11-10: "show all possible lengths in the popup to cycle
+  /// through"): BASE, CUSTOM (skipped while there is none), then 1–8, 16, 32, 64, 128 bars from BASE's start — trying a
+  /// length moves neither BASE nor CUSTOM. F2 sets a length the same way. It hides `kPopupMs` after the last change; its
+  /// changes are one undo step (a visit, as LOOP_EDIT's). F2's motor is parked on opening.
   void openPopup(uint8_t slot, uint8_t button, uint32_t ms) {
     if (empty(slot)) return;
     popup_ = true;
@@ -1105,6 +1117,7 @@ class Surface {
     popupHeld_ = false;
     popupUntil_ = ms + kPopupMs;
     visitState_ = 0;
+    popupChoice_ = choiceOf(slot);
     const uint32_t loop = e_->manifests().manifest(transport().contentOf(slot)).loopLengthTicks;
     loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
   }
@@ -1139,10 +1152,10 @@ class Surface {
   void servicePopup(uint32_t ms) {
     if (!popup_) return;
     if (popupTaps_ != 0 && ms - popupTapMs_ >= kPopupTapMs) {  // the burst is over
-      const uint32_t loop = e_->manifests().manifest(transport().contentOf(popupSlot_)).loopLengthTicks;
       const bool back = popupTaps_ >= 2;
       popupTaps_ = 0;
-      resizeTo(popupSlot_, popupStep(loop, back) * EditSurface<Engine>::kBar);
+      popupChoice_ = nextChoice(popupSlot_, back);
+      applyChoice(popupSlot_, popupChoice_);
       popupUntil_ = ms + kPopupMs;
     }
     if (pendingLoop_ != 0) popupUntil_ = ms + kPopupMs;
@@ -1151,23 +1164,52 @@ class Surface {
       visitState_ = 0;
     }
   }
-  /// The popup's lengths, in bars.
-  static constexpr uint8_t kPopupLengthCount = 12;
-  static uint16_t popupLength(uint8_t i) {
-    static constexpr uint16_t kBars[kPopupLengthCount] = {1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128};
-    return kBars[i];
+  /// The popup's choices: BASE, CUSTOM, then lengths in bars from BASE's start.
+  static constexpr uint8_t kChoiceBase = 0, kChoiceCustom = 1, kChoiceCount = 14, kNoChoice = 0xFF;
+  static uint16_t choiceBars(uint8_t i) {
+    static constexpr uint16_t kBars[kChoiceCount - 2] = {1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128};
+    return i >= 2 && i < kChoiceCount ? kBars[i - 2] : 0;
   }
-  /// The next length (bars) after `loop` ticks: the first above it, or (`back`) the last below it; round at the ends.
-  static uint16_t popupStep(uint32_t loop, bool back) {
-    const uint32_t bar = EditSurface<Engine>::kBar;
-    if (back) {
-      for (uint8_t i = kPopupLengthCount; i-- > 0;)
-        if (popupLength(i) * bar < loop) return popupLength(i);
-      return popupLength(kPopupLengthCount - 1);
+  /// The choice the slot's loop is now (kNoChoice: none of them — a range of another start or length).
+  uint8_t choiceOf(uint8_t slot) {
+    if (transport().contentOf(slot) == kNoManifest) return kNoChoice;
+    const LoopWindow w = baseOf(slot);
+    const uint32_t loop = loopTicks(slot);
+    if (w.start == w.baseStart && loop == w.baseLength) return kChoiceBase;
+    if (w.customLength != 0 && w.start == w.customStart && loop == w.customLength) return kChoiceCustom;
+    for (uint8_t i = 2; i < kChoiceCount; ++i)
+      if (w.start == w.baseStart && loop == choiceBars(i) * EditSurface<Engine>::kBar) return i;
+    return kNoChoice;
+  }
+  /// The next choice after the popup's (`back`: the one before), CUSTOM skipped while there is none; from none, by the
+  /// loop's length.
+  uint8_t nextChoice(uint8_t slot, bool back) {
+    const bool custom = baseOf(slot).customLength != 0;
+    uint8_t i = popupChoice_;
+    if (i == kNoChoice) {  // by length: the first numbered choice above it, or the last below it
+      const uint32_t loop = loopTicks(slot), bar = EditSurface<Engine>::kBar;
+      if (back) {
+        for (uint8_t k = kChoiceCount; k-- > 2;)
+          if (choiceBars(k) * bar < loop) return k;
+        return kChoiceCount - 1;
+      }
+      for (uint8_t k = 2; k < kChoiceCount; ++k)
+        if (choiceBars(k) * bar > loop) return k;
+      return kChoiceBase;
     }
-    for (uint8_t i = 0; i < kPopupLengthCount; ++i)
-      if (popupLength(i) * bar > loop) return popupLength(i);
-    return popupLength(0);
+    do {
+      i = static_cast<uint8_t>(back ? (i + kChoiceCount - 1) % kChoiceCount : (i + 1) % kChoiceCount);
+    } while (i == kChoiceCustom && !custom);
+    return i;
+  }
+  void applyChoice(uint8_t slot, uint8_t i) {
+    const LoopWindow w = baseOf(slot);
+    if (i == kChoiceBase)
+      setWindow(slot, w.baseStart, w.baseLength, Mark::Keep);
+    else if (i == kChoiceCustom && w.customLength != 0)
+      setWindow(slot, w.customStart, w.customLength, Mark::Keep);
+    else if (choiceBars(i) != 0)
+      setWindow(slot, w.baseStart, choiceBars(i) * EditSurface<Engine>::kBar, Mark::Keep);
   }
   /// One undo step a LOOP_EDIT visit (owner 2026-11-08: the steps exploded): a later change replaces the state the
   /// visit's last one made, while that is still the slot's current. Leaving LOOP_EDIT or switching track ends it.
@@ -1864,6 +1906,7 @@ class Surface {
   uint32_t pendingLoop_ = 0;  // LOOP_EDIT's F2 moved: the length it will take (ticks)
   bool popup_ = false, popupHeld_ = false;  // the length popup; its button is down
   uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
+  uint8_t popupChoice_ = 0xFF;  // the popup's selected choice (DEC-284 amendment 1)
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0;
   bool startPending_ = false;

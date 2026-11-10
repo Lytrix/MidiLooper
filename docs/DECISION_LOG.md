@@ -16205,3 +16205,20 @@ not the range before — then back to the variation; a variation-overwrites-HOME
 `4139bc6d…`, on 1-3: a 1-bar loop at bar 4 as found): bars 1–5, then bars 2–3; the toggle → bar 4 (HOME), again →
 bars 2–3 (the variation); after a reboot, from bars 2–3 the toggle → bar 4, again → bars 2–3 (both kept). Full native
 4,528 passed, 8 skipped.
+
+**Amendment 1 (2026-11-10, BASE / CUSTOM, the popup's choices):** owner: "show all possible lengths in the popup to
+cycle through … name wise I am doubting HOME", with a pasted proposal (BASE · CUSTOM / 1–8 / 16–128, BARS in the
+heading once, the selected choice highlighted, CUSTOM kept when a numbered length is tried, a direct way back to BASE),
+and "switching between base and custom should be able to do with a single press on notelen in performance mode".
+- Renamed: HOME → BASE, the variation → CUSTOM (`kFitBaseStatus`, `kFitCustomStatus`, `baseStart` / `customStart`,
+  `toggleBase`, `atBase`); the stored rows are unchanged.
+- The length popup's choices: BASE, CUSTOM (skipped while there is none), then 1–8, 16, 32, 64, 128 bars from BASE's
+  start; a press the next, a double the one before, round at the ends (`popupChoice_` keeps the selection, as BASE may
+  equal a numbered length). Trying a length — and F2 inside the popup — moves neither BASE nor CUSTOM; F1 and F2 in
+  LOOP_EDIT still set BASE. The window (`LOOP BARS T<n> S<n>`) shows the three rows, the selected choice inverted, the
+  others dim, CUSTOM dimmer while there is none.
+- NOTELEN's single press in performance (not in NOTE_EDIT) toggles BASE ↔ CUSTOM; its double in LOOP_EDIT still does.
+Evidence: native — the popup tests start at BASE (1 bar, then 1, 2 … bars), the BASE test opens the popup on CUSTOM
+(a numbered length from BASE's start, a double back to CUSTOM) and toggles with NOTELEN in performance; full 4,528
+passed. Device (image `844f2ed6…`): NOTELEN in performance 5 bars (CUSTOM) → 1 bar at bar 4 (BASE) → 5 bars; the popup
+opened on CUSTOM, a press → `1` (one bar at 4.1); image `5748091b…` the window moved up so the rows clear the hint.

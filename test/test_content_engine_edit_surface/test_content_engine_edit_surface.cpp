@@ -1530,6 +1530,10 @@ void test_length_popup_taps_and_f2() {
   TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
   const auto sent = drainMotors(300);
   TEST_ASSERT_NOT_NULL(findMsg(sent, 0xBF, 101));  // F2 parked on the length
+  TEST_ASSERT_EQUAL_UINT8(0, gS.popupChoice());  // DEC-284 amendment 1: BASE (the recorded bar) selected
+  taps(S::kLengthNote, 1);  // no CUSTOM: 1 bar
+  TEST_ASSERT_EQUAL_UINT8(2, gS.popupChoice());
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
   taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
   for (int i = 0; i < 6; ++i) taps(S::kLengthNote, 1);  // 3 … 8
@@ -1573,7 +1577,10 @@ void test_length_popup_on_a_new_loop_and_from_loop_edit() {
   ms(50);
   TEST_ASSERT_TRUE(gS.popup());
   TEST_ASSERT_EQUAL_UINT8(0, gS.popupSlot());
-  taps(S::kLengthNote, 1);  // from 2 bars: 3
+  taps(S::kLengthNote, 1);  // from BASE (F2 set it: 2 bars): 1, 2, 3 bars
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  taps(S::kLengthNote, 1);
+  taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
   gS.input(0xBF, 101, (4 * 127 + 12) / 24, gUs / 1000);  // F2: notch 4, 3/4 bar — off the popup's list
   ms(400);
@@ -1593,6 +1600,7 @@ void test_length_popup_long_press_cancels() {
   const uint8_t undo0 = gE.history().undoDepth(0);
   popupFromLoopEdit();
   TEST_ASSERT_TRUE(gS.popup());
+  taps(S::kLengthNote, 1);  // BASE, 1, 2, 3 bars
   taps(S::kLengthNote, 1);
   taps(S::kLengthNote, 1);
   TEST_ASSERT_EQUAL_UINT32(3 * 768, loopOf(0));
@@ -2065,8 +2073,8 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
 }
 
 // DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"), DEC-284 ("trying several ranges
-// must never lose the way home"): NOTELEN's double press in LOOP_EDIT toggles between HOME (the loop as recorded) and
-// the variation (the last range of the buttons), as a new undo step keeping the edits made since.
+// must never lose the way home"): NOTELEN's double press in LOOP_EDIT toggles between BASE (the loop as recorded) and
+// CUSTOM (the last range of the buttons), as a new undo step keeping the edits made since.
 void test_loop_edit_notelen_double_restores_the_previous_loop() {
   recordBar({{96, 60}, {600, 62}});
   enterLoopEditOnContent();
@@ -2121,7 +2129,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(0, heardAt(70) % 384);
-  // Several ranges tried: the way home stays — HOME is still the recorded bar, the variation the last range.
+  // Several ranges tried: the way home stays — BASE is still the recorded bar, CUSTOM the last range.
   gS.input(0x9F, 4, 127, gUs / 1000);  // steps 5..6 of the stored loop: 192, 96 long
   ms(50);
   gS.input(0x9F, 5, 127, gUs / 1000);
@@ -2131,21 +2139,44 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   ms(200);
   TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
-  TEST_ASSERT_FALSE(gS.atHome(0));
+  TEST_ASSERT_FALSE(gS.atBase(0));
   tap(S::kLengthNote);
   ms(80);
   tap(S::kLengthNote);
   ms(500);
-  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // HOME, not the range before
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // BASE, not the range before
   TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
-  TEST_ASSERT_TRUE(gS.atHome(0));
+  TEST_ASSERT_TRUE(gS.atBase(0));
   tap(S::kLengthNote);
   ms(80);
   tap(S::kLengthNote);
   ms(500);
-  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));  // the variation: steps 5..6
+  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));  // CUSTOM: steps 5..6
   TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
-  // F2 sets HOME: the toggle then goes there.
+  // DEC-284 amendment 1: the popup offers BASE and CUSTOM first; a numbered length moves neither.
+  tap(S::kLengthNote, 700);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.popup());
+  TEST_ASSERT_EQUAL_UINT8(1, gS.popupChoice());  // CUSTOM selected
+  taps(S::kLengthNote, 1);  // 1 bar from BASE's start
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  taps(S::kLengthNote, 2);  // back: CUSTOM
+  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
+  ms(3100);
+  TEST_ASSERT_FALSE(gS.popup());
+  // Performance: NOTELEN's single press toggles BASE ↔ CUSTOM.
+  tap(S::kEditModeNote, 700);
+  ms(100);
+  TEST_ASSERT_FALSE(gS.loopEdit());
+  taps(S::kLengthNote, 1);
+  TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // BASE
+  TEST_ASSERT_TRUE(gS.atBase(0));
+  taps(S::kLengthNote, 1);
+  TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));  // CUSTOM
+  enterLoopEditOnContent();
+  // F2 sets BASE: the toggle then goes there.
   tap(S::kEditModeNote, 700);
   ms(100);
 }
