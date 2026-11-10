@@ -2331,11 +2331,12 @@ void test_the_groove_window_sets_a_groove() {
   EXPECT_ALL(positions(true, 60, 768), 144);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
   TEST_ASSERT_FALSE(gS.grooveOpen());  // idle for longer than kGrooveIdleMs once published: closed
-  tap(S::kPlayStopNote, 700);  // opened again: the slot's groove shown
+  tap(S::kTransportNote, 700);  // opened again — by the DROID's PLAY/STOP (the transport button, DEC-289 am. 1)
   ms(50);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
-  tap(S::kPlayStopNote);  // the amount field
+  tap(S::kTransportNote);  // the amount field (the transport button's press in the window, not a stop)
   ms(400);
+  TEST_ASSERT_TRUE(gClk.running());
   gS.encoderTurn(-2, gUs / 1000);  // 10 down …
   gS.encoderTurn(-2, gUs / 1000);  // … and 10 more, before it settles: one change
   TEST_ASSERT_EQUAL_UINT8(80, gS.grooveSettings().amount);

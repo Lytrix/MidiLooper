@@ -16412,3 +16412,14 @@ showing 100 %; the encoder 20 down, a long press closes keeping it → 80 % publ
 `test_auto_grooves_an_overdub` (an overdub at 250 on a straight-100 % AUTO loop → heard at 240 once it ends, the take's
 note still at 144). Full native 4,543 passed. Device image `496c3791…`: PLAY/STOP held on 1-3 → the window with
 SP16 63 / 75 % / FULL / OFF; a press → AMOUNT selected; a long press closes it. Not yet played by the owner.
+
+**Amendment 1 (2026-11-10, the DROID's PLAY/STOP):** owner: "the groove window isn't opening if I long press play".
+The DROID's PLAY/STOP button sends note 39 (the global transport, `kTransport`); note 40 (track play / stop) has no
+button in `droid/midilooper_v1.ini` (only an LED input). The transport button's long press (now 600 ms, was 3 s and
+unused) opens the GROOVE window too, and inside the window its press is the next field (not a start / stop); note 40
+keeps it for controllers that send it. The window opens only on a slot with content. Native: the window test opens it
+the second time with the transport button and checks its press in the window does not stop the clock; full native
+4,543 passed. Device image `31d32848…` (`crash=0`, `BOOT,load,ok`): note 39 held on 1-3 → the window (SP16 63 / 75 %).
+Also in this image (groundwork for slice 5, DEC-290): a template is a table (`groove::Table`, built-ins expressed
+through it) and a groove file's table and label can be stored with the state as marker rows (0xFC / 0xFD), carried
+through resize / rotate; PSRAM + 224 B.

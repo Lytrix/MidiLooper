@@ -455,6 +455,8 @@ class SlotTransport {
     w.bStart = marks->bStart;
     w.bLength = marks->bLength;
     w.groove = marks->groove;
+    w.grooveShape = marks->grooveShape;
+    w.tableRun = marks->tableRun;
   }
   /// Groove (DEC-287, DEC-288): starts `gb`'s background build of the slot's groove pass per the prefix rule (amount 0:
   /// its removal). NoChange: no groove to remove; Busy: the slot is written or auditioned; Refused: too big at once.
@@ -499,14 +501,18 @@ class SlotTransport {
     const auto& b = manifests_->manifest(base);
     const uint32_t loop = b.loopLengthTicks;
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
-    w.groove = gb.request().settings.pack();
+    const auto& rq = gb.request();
+    w.groove = rq.settings.pack();
+    const bool file = rq.settings.tmpl == groove::kFileTemplate && rq.settings.amount != 0;  // DEC-290
+    w.grooveShape = file ? rq.table.steps | (static_cast<uint32_t>(rq.table.step) << 16) : 0;
     RunId list[Manifests::kMaxRuns];
     uint8_t ln = 0;
     for (uint8_t i = 0; i < gb.prefixCount(); ++i) list[ln++] = gb.prefixRun(i);
     if (gb.groovePass() != kNoRun) list[ln++] = gb.groovePass();
     for (uint8_t i = 0; i < gb.afterCount(); ++i) list[ln++] = gb.afterRun(i);
     RunId fit = kNoRun;
-    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, ln, loop, fit, w);
+    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, ln, loop, fit, w,
+                                   file ? &rq.table : nullptr, file ? rq.label : nullptr);
     Result result = Result::Ok;
     if (f == FitResult::DeniedRun) result = Result::DeniedRun;
     else if (f != FitResult::Ok && f != FitResult::None) result = Result::Refused;

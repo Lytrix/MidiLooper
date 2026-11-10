@@ -277,7 +277,7 @@ class Surface {
     using T = typename PressDetector<kButtons>::Timing;
     press_.configure(kRecord, T{300, 400, 600, 0, true});
     press_.configure(kTrackSwitch, T{300, 400, 600, 0, true});
-    press_.configure(kTransport, T{300, 400, 3000, 50, false});
+    press_.configure(kTransport, T{300, 400, 600, 50, false});  // DEC-289 amendment 1: long opens the GROOVE window
     press_.configure(kPlayStop, T{400, 400, 600, 50, false});  // DEC-289: long (600 ms) opens the GROOVE window
     press_.configure(kLength, T{300, 400, 600, 0, false});
     press_.configure(kEditMode, T{300, 400, 600, 0, false});
@@ -561,13 +561,25 @@ class Surface {
   /// Groove (DEC-287, DEC-288): starts the slot's groove build per `s` (amount 0: its removal) over its stored loop, scope
   /// A / B its remembered ranges. Built in the background (`service`), heard from a bar line once ready; the settings of
   /// one visit are one undo step. The engine's result (Ok: started).
-  typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s) {
+  /// `table` / `label` (DEC-290): a groove file's template; nullptr with `kFileTemplate`: the one stored with the state.
+  typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s,
+                                                 const groove::Table* table = nullptr, const char* label = nullptr) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return Engine::Transport::Result::Empty;
     beyondEnd(c);
     const LoopWindow w = transport().window(slot);
     GrooveRequest q;
     q.settings = s;
+    if (s.tmpl != groove::kFileTemplate) {
+      q.table = groove::builtin(s.tmpl);
+    } else if (table != nullptr) {
+      q.table = *table;
+      for (uint8_t k = 0; label != nullptr && k < 20 && label[k] != 0; ++k) q.label[k] = label[k];
+    } else {  // the state's own (a regroove, AUTO)
+      const LoopWindow sw = transport().window(slot);
+      if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, q.table, q.label))
+        return Engine::Transport::Result::Refused;
+    }
     q.frame = frame_;
     q.start = frameStart_;
     if (s.scope == groove::kRangeA) {
@@ -899,7 +911,7 @@ class Surface {
       browse(b, p);  // a long press of any button closes it
       return;
     }
-    if (groove_ && (p == Press::Long || b == kPlayStop)) {  // the GROOVE window (DEC-289)
+    if (groove_ && (p == Press::Long || b == kPlayStop || b == kTransport)) {  // the GROOVE window (DEC-289)
       if (p == Press::Long) closeGroove();  // a long press of any button closes it
       else if (p == Press::Short) nextGrooveField(1);
       else if (p == Press::Double) nextGrooveField(-1);
@@ -931,6 +943,10 @@ class Surface {
         }
         return;
       case kTransport:
+        if (p == Press::Long) {  // the GROOVE window on the shown slot (DEC-289 amendment 1: the DROID's PLAY/STOP)
+          openGroove(shownSlot(t));
+          return;
+        }
         if (clock_->external()) {
           if (p == Press::Short) externalTransport();
         } else if (p == Press::Short) {

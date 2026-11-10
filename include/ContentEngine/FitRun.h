@@ -32,6 +32,7 @@
 #include <cstdint>
 
 #include "ContentEngine/EngineConfig.h"
+#include "ContentEngine/Groove.h"
 #include "ContentEngine/PassEvent.h"
 #include "ContentEngine/RowReservations.h"
 
@@ -47,9 +48,44 @@ struct LoopWindow {
   // stored loop and a length; length 0: none.
   uint32_t aStart = 0, aLength = 0, bStart = 0, bLength = 0;
   uint32_t groove = 0;  // DEC-287: the packed groove setting of the state's groove pass (0: none)
+  uint32_t grooveShape = 0;  // DEC-290: a file template's shape (steps | step << 16; 0: a built-in)
+  RunId tableRun = kNoRun;   // DEC-290: the fit run holding its template and label rows (copied into a rebuilt one)
 };
 /// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
 /// loop.
+/// A file template stored in fit run `fit` (DEC-290): its table and label. False: none there.
+template <typename Runs, typename Pool>
+bool readTemplate(Runs& runs, Pool& pool, RunId fit, uint32_t shape, groove::Table& t, char* label) {
+  if (fit == kNoRun || shape == 0) return false;
+  t = groove::Table{};
+  t.steps = static_cast<uint16_t>(shape & 0xFFFF);
+  t.step = static_cast<uint16_t>(shape >> 16);
+  if (t.steps == 0 || t.steps > groove::Table::kMaxSteps) return false;
+  if (label != nullptr) label[0] = 0;
+  const auto& d = runs.run(fit);
+  for (uint32_t r = 0; r < d.rowCount; ++r) {
+    const PassEvent& e = runs.rowAt(fit, r, pool);
+    if (e.tick != 0xFFFFFFFFu) continue;
+    if (e.status == kFitTemplateStatus) {
+      const uint16_t v[5] = {static_cast<uint16_t>(e.noteId), static_cast<uint16_t>(e.noteId >> 16),
+                             static_cast<uint16_t>(e.seq), static_cast<uint16_t>(e.seq >> 16),
+                             static_cast<uint16_t>(e.data1 | (e.data2 << 8))};
+      for (uint8_t k = 0; k < 5; ++k) {
+        const uint32_t i = e.origin * 5u + k;
+        if (i < groove::Table::kMaxSteps) t.off[i] = static_cast<int16_t>(v[k]);
+      }
+    } else if (e.status == kFitLabelStatus && label != nullptr && e.origin < 2) {
+      const char c[10] = {static_cast<char>(e.noteId), static_cast<char>(e.noteId >> 8), static_cast<char>(e.noteId >> 16),
+                          static_cast<char>(e.noteId >> 24), static_cast<char>(e.seq), static_cast<char>(e.seq >> 8),
+                          static_cast<char>(e.seq >> 16), static_cast<char>(e.seq >> 24), static_cast<char>(e.data1),
+                          static_cast<char>(e.data2)};
+      for (uint8_t k = 0; k < 10; ++k) label[e.origin * 10 + k] = c[k];
+      label[20] = 0;
+    }
+  }
+  return true;
+}
+
 template <typename Runs, typename Pool>
 LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32_t loop) {
   LoopWindow w{};
@@ -71,6 +107,9 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
         w.bLength = e.noteId;
       } else if (e.status == kFitGrooveStatus) {
         w.groove = e.seq;
+        w.grooveShape = e.noteId == 1 ? 0 : e.noteId;
+      } else if (e.status == kFitTemplateStatus) {
+        w.tableRun = list[i];
       }
     }
   }
@@ -150,7 +189,8 @@ class FitBuilder {
   /// with the writer's reference, or kNoRun when the result is not Ok. `window` (DEC-283): the state's window, written
   /// as the last row unless it is the plain one.
   FitResult build(Pool& pool, Runs& runs, Res& res, uint8_t slot, const RunId* content, uint8_t n, uint32_t loop,
-                  RunId& fit, LoopWindow window = LoopWindow{}) {
+                  RunId& fit, LoopWindow window = LoopWindow{}, const groove::Table* table = nullptr,
+                  const char* label = nullptr) {
     fit = kNoRun;
     if (n > kMaxRuns) return FitResult::TooLarge;
     uint32_t rows = 0;
@@ -165,7 +205,12 @@ class FitBuilder {
     const bool rangeA = window.aLength != 0;
     const bool rangeB = window.bLength != 0;
     const bool grooved = window.groove != 0;
-    const uint32_t marks = (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u) + (grooved ? 1u : 0u);
+    // DEC-290: a file template's rows — given (a new groove) or copied from the base's fit run (a rebuild).
+    const bool fileTemplate = grooved && window.grooveShape != 0 && (table != nullptr || window.tableRun != kNoRun);
+    const uint16_t steps = static_cast<uint16_t>(window.grooveShape & 0xFFFF);
+    const uint32_t templateRows = fileTemplate ? (steps + 4u) / 5u + 2u : 0u;
+    const uint32_t marks =
+        (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u) + (grooved ? 1u : 0u) + templateRows;
     if (count_ == 0 && marks == 0) return FitResult::None;
     const RunId run = runs.allocate(slot, RunKind::kFit);
     if (run == kNoRun) return FitResult::DeniedRun;
@@ -193,7 +238,43 @@ class FitBuilder {
     if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, range A, range B, groove
     if (rangeA) mark(kFitRangeAStatus, window.aStart, window.aLength);
     if (rangeB) mark(kFitRangeBStatus, window.bStart, window.bLength);
-    if (grooved) mark(kFitGrooveStatus, window.groove, 1);
+    if (grooved) mark(kFitGrooveStatus, window.groove, window.grooveShape != 0 ? window.grooveShape : 1);
+    if (fileTemplate) {
+      groove::Table t;
+      char name[21] = {};
+      if (table != nullptr) {
+        t = *table;
+        for (uint8_t k = 0; label != nullptr && k < 20 && label[k] != 0; ++k) name[k] = label[k];
+      } else {
+        readTemplate(runs, pool, window.tableRun, window.grooveShape, t, name);
+      }
+      for (uint32_t row = 0; row * 5 < steps; ++row) {
+        PassEvent e{};
+        e.tick = 0xFFFFFFFFu;
+        e.status = kFitTemplateStatus;
+        const auto v = [&](uint32_t k) { return static_cast<uint16_t>(row * 5 + k < steps ? t.off[row * 5 + k] : 0); };
+        e.noteId = v(0) | (static_cast<uint32_t>(v(1)) << 16);
+        e.seq = v(2) | (static_cast<uint32_t>(v(3)) << 16);
+        e.data1 = static_cast<uint8_t>(v(4));
+        e.data2 = static_cast<uint8_t>(v(4) >> 8);
+        e.origin = static_cast<uint8_t>(row);
+        res.writeOwed(run, e);
+      }
+      for (uint8_t row = 0; row < 2; ++row) {
+        const char* c = name + row * 10;
+        PassEvent e{};
+        e.tick = 0xFFFFFFFFu;
+        e.status = kFitLabelStatus;
+        e.noteId = static_cast<uint8_t>(c[0]) | (static_cast<uint8_t>(c[1]) << 8) | (static_cast<uint8_t>(c[2]) << 16) |
+                   (static_cast<uint32_t>(static_cast<uint8_t>(c[3])) << 24);
+        e.seq = static_cast<uint8_t>(c[4]) | (static_cast<uint8_t>(c[5]) << 8) | (static_cast<uint8_t>(c[6]) << 16) |
+                (static_cast<uint32_t>(static_cast<uint8_t>(c[7])) << 24);
+        e.data1 = static_cast<uint8_t>(c[8]);
+        e.data2 = static_cast<uint8_t>(c[9]);
+        e.origin = row;
+        res.writeOwed(run, e);
+      }
+    }
     runs.seal(run);
     fit = run;
     return FitResult::Ok;

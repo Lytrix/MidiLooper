@@ -41,6 +41,8 @@ enum class GrooveResult : uint8_t { Ok, TooLarge, TooManyOpen, Index, DeniedRun,
 /// start in it; a range scope's start and length, absolute).
 struct GrooveRequest {
   groove::Settings settings;
+  groove::Table table;  // the template's table (DEC-290: a built-in's, or a groove file's)
+  char label[21] = {};  // a file template's name, stored with it
   uint32_t frame = 0, start = 0;
   uint32_t scopeStart = 0, scopeLength = 0;  // used for scope A / B
 };
@@ -305,7 +307,7 @@ class GrooveBuilder {
       if (x.event || x.fromEdit) continue;
       const uint32_t abs = (x.start + q.start) % frame;
       if (!inScope(q, abs)) continue;
-      uint32_t to = groove::place(q.settings, abs, frame);
+      uint32_t to = groove::place(q.settings, q.table, abs, frame);
       if (!inScope(q, to)) continue;  // a range's note stays inside its range
       const int32_t d = groove::towards(abs, to, frame);
       const uint32_t len = x.end - x.start;

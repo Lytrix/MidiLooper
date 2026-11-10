@@ -174,10 +174,10 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7198672u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+constexpr size_t kPsramBudget = 7198896u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
                                            // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
                                            // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
-                                           // run lists and source list
+                                           // run lists and source list; DEC-290: + 224 B the request's template table and label
 constexpr size_t kRam2Budget = 160072u;  // measured (DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");

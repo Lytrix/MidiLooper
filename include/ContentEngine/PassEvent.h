@@ -69,5 +69,10 @@ constexpr uint8_t kFitRangeAStatus = 0xF9u;
 constexpr uint8_t kFitRangeBStatus = 0xFAu;
 /// The groove setting (DEC-287): `seq` the packed `groove::Settings` (template, amount, scope, AUTO). Absent: none.
 constexpr uint8_t kFitGrooveStatus = 0xFBu;
+/// A groove file's template (DEC-290), after the groove row: five steps a row (signed 16-bit offsets in `noteId`, `seq`
+/// and `data1` / `data2`), `origin` the row's index; the groove row's `noteId` its shape (steps | step << 16). Then
+/// two label rows (ten characters each: `noteId`, `seq`, `data1`, `data2`; `origin` the index).
+constexpr uint8_t kFitTemplateStatus = 0xFCu;
+constexpr uint8_t kFitLabelStatus = 0xFDu;
 
 }  // namespace ContentEngine

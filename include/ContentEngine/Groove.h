@@ -31,6 +31,8 @@ enum Template : uint8_t {
   kJazzRide, kBossa, kLaidBack, kPush,
   kTemplateCount
 };
+/// A template read from a groove file on the card (DEC-290): its table is stored with the state (marker rows).
+constexpr uint8_t kFileTemplate = 0xFE;
 
 /// Where a groove applies (DEC-284's ranges).
 enum Scope : uint8_t { kFull = 0, kRangeA = 1, kRangeB = 2 };
@@ -52,7 +54,7 @@ struct Settings {
     s.amount = static_cast<uint8_t>((v >> 8) & 0xFF);
     s.scope = static_cast<uint8_t>((v >> 16) & 0x3);
     s.autoGroove = ((v >> 18) & 1u) != 0;
-    if (s.tmpl >= kTemplateCount || s.amount > 100) s.amount = 0;
+    if ((s.tmpl >= kTemplateCount && s.tmpl != kFileTemplate) || s.amount > 100) s.amount = 0;
     return s;
   }
 };
@@ -93,6 +95,22 @@ inline int32_t offsetOf(uint8_t t, uint32_t line) {
   }
 }
 
+/// A template as a table (DEC-290): grid lines `step` ticks apart, a cycle of `steps` lines, each line's offset from its
+/// straight place. Built-ins are one bar long; a file's spans its cycle (four bars in the Grooves From Mars pack).
+struct Table {
+  static constexpr uint16_t kMaxSteps = 96;  // 16th triplets over four bars
+  uint16_t step = kSixteenth, steps = 16;
+  int16_t off[kMaxSteps] = {};
+};
+/// A built-in template's table: one bar of its grid.
+inline Table builtin(uint8_t t) {
+  Table x;
+  x.step = static_cast<uint16_t>(gridOf(t));
+  x.steps = static_cast<uint16_t>(kBar / x.step);
+  for (uint16_t i = 0; i < x.steps; ++i) x.off[i] = static_cast<int16_t>(offsetOf(t, i));
+  return x;
+}
+
 /// `x` modulo `frame` for a signed `x`.
 inline uint32_t wrap(int64_t x, uint32_t frame) {
   const int64_t m = x % static_cast<int64_t>(frame);
@@ -107,17 +125,17 @@ inline int32_t towards(uint32_t a, uint32_t b, uint32_t frame) {
   return static_cast<int32_t>(d);
 }
 
-/// The swung target nearest to `t` (a tie: the earlier), in the stored loop of `frame` ticks.
-inline uint32_t target(uint8_t t, uint32_t at, uint32_t frame) {
-  const uint32_t g = gridOf(t);
+/// The swung target nearest to `at` (a tie: the earlier), in the stored loop of `frame` ticks, under table `x`.
+inline uint32_t target(const Table& x, uint32_t at, uint32_t frame) {
+  const uint32_t g = x.step == 0 ? kSixteenth : x.step;
   const int64_t base = at / g;
   uint32_t best = at;
   int32_t bestD = 0;
   bool found = false;
   for (int64_t line = base - 1; line <= base + 2; ++line) {
     const int64_t straight = line * static_cast<int64_t>(g);
-    const uint32_t lineIndex = wrap(line, frame / g == 0 ? 1 : frame / g);
-    const uint32_t cand = wrap(straight + offsetOf(t, lineIndex), frame);
+    const uint32_t lineIndex = wrap(line, x.steps == 0 ? 1 : x.steps);
+    const uint32_t cand = wrap(straight + x.off[lineIndex], frame);
     const int32_t d = towards(at, cand, frame);
     const int32_t ad = d < 0 ? -d : d, ab = bestD < 0 ? -bestD : bestD;
     if (!found || ad < ab || (ad == ab && d < bestD)) {
@@ -129,14 +147,17 @@ inline uint32_t target(uint8_t t, uint32_t at, uint32_t frame) {
   return best;
 }
 
-/// Where a note at stored position `at` plays under `s` (amount % of the way to its target), in the stored loop.
-inline uint32_t place(const Settings& s, uint32_t at, uint32_t frame) {
+inline uint32_t target(uint8_t t, uint32_t at, uint32_t frame) { return target(builtin(t), at, frame); }
+
+/// Where a note at stored position `at` plays under `s` and table `x` (amount % of the way to its target).
+inline uint32_t place(const Settings& s, const Table& x, uint32_t at, uint32_t frame) {
   if (s.amount == 0 || frame == 0) return at;
-  const int32_t d = towards(at, target(s.tmpl, at, frame), frame);
+  const int32_t d = towards(at, target(x, at, frame), frame);
   const int64_t moved = d >= 0 ? (static_cast<int64_t>(d) * s.amount + 50) / 100
                                : -((static_cast<int64_t>(-d) * s.amount + 50) / 100);
   return wrap(static_cast<int64_t>(at) + moved, frame);
 }
+inline uint32_t place(const Settings& s, uint32_t at, uint32_t frame) { return place(s, builtin(s.tmpl), at, frame); }
 
 }  // namespace groove
 }  // namespace ContentEngine

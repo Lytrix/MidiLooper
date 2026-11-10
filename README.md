@@ -54,7 +54,7 @@ The same buttons provide their main action with a short press and secondary acti
 | **Record** | Record / play / overdub according to track state | Undo; session undo while editing or overdubbing | Redo; session redo while editing or overdubbing | Clear the selected slot |
 | **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
 | **Next track** | Select next track | Undo | Redo | Open the sets browser |
-| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally) | Return to loop start | — | — |
+| **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally); in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window |
 | **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
 | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
@@ -118,7 +118,7 @@ The start, the length and both ranges are saved with the slot and come back afte
 
 ### Groove
 
-Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Long-press **Track play/stop** to open the GROOVE window:
+Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Long-press **Transport** (the DROID's PLAY/STOP) — or **Track play/stop** — on a loop with content to open the GROOVE window:
 
 | Field | Set with | Values |
 |-------|----------|--------|
@@ -127,7 +127,7 @@ Groove moves the notes of the shown loop toward a swing or quantize template whi
 | **Scope** | F3, or the encoder | FULL, or only the notes inside range A or B |
 | **Auto** | F4, or the encoder | ON: an overdub on this loop is grooved too once it ends |
 
-A short press of **Track play/stop** (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on a bar line. The window shows `...` while it builds and `TOO BIG` if the loop is too large to groove. A long press of any button closes it, as do a few seconds without a change. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
+A short press of that button (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on a bar line. The window shows `...` while it builds and `TOO BIG` if the loop is too large to groove. A long press of any button closes it, as do a few seconds without a change. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
 
 ### Loop-length popup
 
