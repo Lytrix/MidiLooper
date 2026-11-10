@@ -16222,3 +16222,15 @@ Evidence: native — the popup tests start at BASE (1 bar, then 1, 2 … bars), 
 (a numbered length from BASE's start, a double back to CUSTOM) and toggles with NOTELEN in performance; full 4,528
 passed. Device (image `844f2ed6…`): NOTELEN in performance 5 bars (CUSTOM) → 1 bar at bar 4 (BASE) → 5 bars; the popup
 opened on CUSTOM, a press → `1` (one bar at 4.1); image `5748091b…` the window moved up so the rows clear the hint.
+
+**Amendment 2 (2026-11-10, the motors' echo; one press everywhere):** owner: "when I set a new Custom via the bar
+buttons it sets it as BASE … BASE needs to be untouched. also single button switching needs to be the same in both
+performance and loop edit mode". Cause: after a range the motors park F1 / F2 on the new start and length, and the
+DROID sends their readings back after `kMotorSettleMs`; F1's reading fell one 16th short (the park rounded up, the read
+rounded down) and F2 parks on the notch below a length off its scale — both then counted as fader moves, which set
+BASE (on 1-3 BASE had become 2,256 ticks: one 16th before bar 4). Now F1's park and read both round to the nearest
+16th, and the parked place is no move — F1 within a 16th of it, F2 on its notch — until the fader reads another value
+(`parkedStart_`, `parkedNotch_`). NOTELEN's single press toggles BASE ↔ CUSTOM in LOOP_EDIT as in performance (an
+empty slot still gets its empty loop); the double does nothing there. Evidence: native — the range test echoes both
+motors after their park (the loop, its start and BASE unchanged), a guard-removed mutation fails it; the BASE test
+toggles with single presses. Device image `7e829523…` (`crash=0`, `BOOT,load,ok`).

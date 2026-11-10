@@ -299,6 +299,8 @@ class Surface {
     bankSent_ = 0xFF;
     blinkMs_ = 0;
     loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
+    parkedStart_ = -1;
+    parkedNotch_ = -1;
     popupTaps_ = 0;
     loopMotorCount_ = 0;
     for (uint32_t& w : loopWrittenMs_) w = 0;
@@ -773,7 +775,7 @@ class Surface {
         return;  // double: the set browser (a later slice)
       case kLength:
         if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
-          if (p == Press::Double) {  // BASE ↔ CUSTOM (DEC-284)
+          if (p == Press::Short && !empty(shownSlot(t))) {  // BASE ↔ CUSTOM, as in performance (DEC-284 amendment 2)
             toggleBase(shownSlot(t));
             return;
           }
@@ -892,12 +894,14 @@ class Surface {
       if (c != kNoManifest) {
         beyondEnd(c);
         const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth, k = frameStart_ / EditSurface<Engine>::kSixteenth;
-        if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + steps - 2) / (steps - 1));
+        if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + (steps - 1) / 2) / (steps - 1));
+        parkedStart_ = static_cast<int32_t>(k);
       }
       loopWrite(0, 0xE0 | kProgramChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
                 kProgramChannel, kStartTrigger, ms);
     }
     const uint32_t loop = c == kNoManifest ? EditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
+    parkedNotch_ = static_cast<int16_t>(positionOf(loop));
     loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
     if (clock_->external()) return;
     writeFine(static_cast<uint8_t>(64 + tempoTenths() % 10), ms);
@@ -917,7 +921,13 @@ class Surface {
     if (c == kNoManifest) return;
     beyondEnd(c);
     const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth;
-    const uint32_t k = steps > 1 ? static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) / 16383 : 0;
+    const uint32_t k =
+        steps > 1 ? (static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) + 8191) / 16383 : 0;
+    // DEC-284 amendment 2 (owner 2026-11-10: a range "sets it as BASE"): the motor's echo of its parked place — within a
+    // 16th of it, the fader's reading being coarser — is no move; the first other value is, and ends the guard.
+    if (parkedStart_ >= 0 && static_cast<int32_t>(k) - parkedStart_ <= 1 && parkedStart_ - static_cast<int32_t>(k) <= 1)
+      return;
+    parkedStart_ = -1;
     pendingStart_ = k * EditSurface<Engine>::kSixteenth;
     startPending_ = true;
     startMs_ = ms;
@@ -961,6 +971,8 @@ class Surface {
   /// F2 at position `pos` (CC 101 on channel 16, the DROID's loop bank; owner capture 2026-11-08).
   void lengthAt(uint8_t pos, uint32_t ms) {
     if (landing(1, ms)) return;
+    if (parkedNotch_ >= 0 && pos == parkedNotch_) return;  // the parked notch echoed (a length off the scale parks below)
+    parkedNotch_ = -1;
     pendingLoop_ = loopAt(pos);  // past the last notch: the last
     pendingMs_ = ms;
   }
@@ -1083,7 +1095,7 @@ class Surface {
     const ManifestId c = transport().contentOf(slot);
     return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
   }
-  /// NOTELEN's double press in LOOP_EDIT, its single press in performance (DEC-284 amendment 1): BASE ↔ CUSTOM — from
+  /// NOTELEN's single press, in performance and LOOP_EDIT (DEC-284 amendments 1, 2): BASE ↔ CUSTOM — from
   /// BASE to CUSTOM (none: nothing), from anywhere else to BASE; its own undo step, the edits made since kept.
   void toggleBase(uint8_t slot) {
     const ManifestId c = transport().contentOf(slot);
@@ -1900,6 +1912,8 @@ class Surface {
   uint8_t loopMotorCount_ = 0;
   uint32_t loopWrittenMs_[4] = {};  // F1–F4: last motor write
   bool loopPark_ = false;           // LOOP_EDIT entered: every fader to its value
+  int32_t parkedStart_ = -1;        // F1's parked 16th, F2's parked notch: their echo is no move (-1: moved since)
+  int16_t parkedNotch_ = -1;
   uint16_t coarseBpm_ = 120;        // F4's whole BPM
   uint32_t pendingMs_ = 0;
   uint32_t visitState_ = 0;  // identity of the state this LOOP_EDIT visit's last change made (0: none)

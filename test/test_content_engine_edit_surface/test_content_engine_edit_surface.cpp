@@ -2051,6 +2051,16 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   range(0, 2);  // steps 1..3 of the stored loop — not of the current one: from 0, 144 long
   TEST_ASSERT_EQUAL_UINT32(144, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  // DEC-284 amendment 2 (owner 2026-11-10: a range "sets it as BASE"): the motors' echo of their parked places — F1 a
+  // reading short of its 16th, F2 the notch below a length off its scale (1/8 for 144 ticks) — moves nothing.
+  drainMotors(600);  // the motors park on the new start and length
+  pitchBend(15, -8192 + 40);  // F1 back at the start, a little short
+  gS.input(0xBF, 101, (1 * 127 + 12) / 24, gUs / 1000);  // F2 at notch 1 (1/8 bar)
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT32(144, loopOf(0));
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(768, gE.control().window(0).baseLength);  // BASE untouched: still the recorded bar
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).baseStart);
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 144), 96);  // the note at 96 where it was recorded
   range(4, 15);  // steps 5..16: from 192, to the stored loop's end
@@ -2073,7 +2083,7 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
 }
 
 // DEC-281 (owner 2026-11-10: "how can you revert to the earlier set loop length?"), DEC-284 ("trying several ranges
-// must never lose the way home"): NOTELEN's double press in LOOP_EDIT toggles between BASE (the loop as recorded) and
+// must never lose the way home"): NOTELEN's press in LOOP_EDIT (a single one since amendment 2) toggles between BASE (the loop as recorded) and
 // CUSTOM (the last range of the buttons), as a new undo step keeping the edits made since.
 void test_loop_edit_notelen_double_restores_the_previous_loop() {
   recordBar({{96, 60}, {600, 62}});
@@ -2106,9 +2116,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   const uint8_t undo0 = gE.history().undoDepth(0);
   // Back to the loop before: 768, the start where it was — the edited note at 96 again, 70 now.
   enterLoopEditOnContent();
-  tap(S::kLengthNote);
-  ms(80);
-  tap(S::kLengthNote);
+  tap(S::kLengthNote);  // DEC-284 amendment 2: a single press
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(96, heardAt(70));
@@ -2123,9 +2131,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));  // one step
   // Again: the short loop back.
   enterLoopEditOnContent();
-  tap(S::kLengthNote);
-  ms(80);
-  tap(S::kLengthNote);
+  tap(S::kLengthNote);  // DEC-284 amendment 2: a single press
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(0, heardAt(70) % 384);
@@ -2140,16 +2146,12 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));
   TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
   TEST_ASSERT_FALSE(gS.atBase(0));
-  tap(S::kLengthNote);
-  ms(80);
-  tap(S::kLengthNote);
+  tap(S::kLengthNote);  // DEC-284 amendment 2: a single press
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(768, loopOf(0));  // BASE, not the range before
   TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
   TEST_ASSERT_TRUE(gS.atBase(0));
-  tap(S::kLengthNote);
-  ms(80);
-  tap(S::kLengthNote);
+  tap(S::kLengthNote);  // DEC-284 amendment 2: a single press
   ms(500);
   TEST_ASSERT_EQUAL_UINT32(96, loopOf(0));  // CUSTOM: steps 5..6
   TEST_ASSERT_EQUAL_UINT32(192, gE.control().window(0).start);
