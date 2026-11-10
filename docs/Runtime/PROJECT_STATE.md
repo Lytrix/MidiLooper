@@ -1,3 +1,8 @@
+**2026-11-10 — DEC-289: the GROOVE window (groove design slice 4).** PLAY/STOP held (600 ms) opens it on the shown
+slot: template, amount, scope, AUTO — F1–F4 or the encoder; changes apply once settled (background build, bar-line
+switch); one visit one undo step; AUTO regrooves after an overdub. Full native 4,543 passed; device `496c3791…`: the
+window shown on 1-3. Next: the groove library on the card (slice 5).
+
 **2026-11-10 — DEC-288: the groove builds in the background (groove design slice 3).** A grain-stepped job: rows
 reserved first (waiting / too big), one extraction window a grain, heap-sorted shaping, 512 rows written a grain;
 published only on the state it started from (stale builds dropped) and switched in on a bar line a window ahead. Full

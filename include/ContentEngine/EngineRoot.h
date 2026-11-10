@@ -196,6 +196,7 @@ class EngineRoot {
  public:
   enum class Region : uint8_t { Psram, Ram2 };
   using Transport = ProductionTransport;
+  using Groove = ProductionGroove;
   using Control = ProductionControl;
   using Tiles = ProductionTiles;
   using NoteEdit = ProductionNoteEdit;

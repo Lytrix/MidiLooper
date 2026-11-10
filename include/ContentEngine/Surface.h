@@ -278,7 +278,7 @@ class Surface {
     press_.configure(kRecord, T{300, 400, 600, 0, true});
     press_.configure(kTrackSwitch, T{300, 400, 600, 0, true});
     press_.configure(kTransport, T{300, 400, 3000, 50, false});
-    press_.configure(kPlayStop, T{400, 400, 3000, 50, false});
+    press_.configure(kPlayStop, T{400, 400, 600, 50, false});  // DEC-289: long (600 ms) opens the GROOVE window
     press_.configure(kLength, T{300, 400, 600, 0, false});
     press_.configure(kEditMode, T{300, 400, 600, 0, false});
     edit_.init(e);
@@ -299,6 +299,9 @@ class Surface {
     bankSent_ = 0xFF;
     blinkMs_ = 0;
     loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
+    groove_ = groovePending_ = false;  // DEC-289
+    grooveSlot_ = 0xFF;
+    autoTried_ = 0;
     parkedStart_ = -1;
     parkedNotch_ = -1;
     popupTaps_ = 0;
@@ -317,6 +320,7 @@ class Surface {
   /// A control-plane message at `ms`.
   void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
     const uint8_t type = status & 0xF0, channel = status & 0x0F;
+    if (groove_ && grooveFader(type, channel, d1, d2, ms)) return;  // DEC-289: the GROOVE window's faders
     if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
       const int16_t pb = static_cast<int16_t>(static_cast<int32_t>(d1 | (d2 << 7)) - 8192);
       if (channel == 15 && loopEdit_) startFader(pb, ms);
@@ -421,6 +425,10 @@ class Surface {
   void encoderTurn(int32_t detents, uint32_t ms) {
     const uint32_t interval = ms - encoderMs_;
     encoderMs_ = ms;
+    if (groove_ && detents != 0) {  // DEC-289: the GROOVE window's selected field
+      grooveNudge(detents, ms);
+      return;
+    }
     if (detents == 0 || !edit_.editing()) return;
     const uint8_t k = heldStep();
     if (k != 0xFF && lockStep_ == 0xFF) {  // a held step: its note now, without waiting for the lock's hold
@@ -436,6 +444,11 @@ class Surface {
   }
   /// The encoder's push pressed (`down`) or released, debounced by the firmware.
   void encoderButton(bool down, uint32_t ms) {
+    if (groove_) {  // DEC-289: a push is the next field
+      if (down) nextGrooveField(1);
+      grooveUntil_ = ms + kGrooveIdleMs;
+      return;
+    }
     if (down) {
       encoderStep_ = edit_.editing() ? heldStep() : 0xFF;  // a push with a step held acts on that step
       if (encoderStep_ != 0xFF) press_.consume(static_cast<uint8_t>(kStep0 + encoderStep_));
@@ -444,6 +457,85 @@ class Surface {
       press_.up(kEncoder, ms);
     }
   }
+  // ---- The GROOVE window (DEC-289) -------------------------------------------------------------------------------
+  void nextGrooveField(int8_t d) {
+    grooveField_ = static_cast<uint8_t>((grooveField_ + kGrooveFields + d) % kGrooveFields);
+    grooveUntil_ = nowMs_ + kGrooveIdleMs;
+  }
+  void grooveChanged(uint32_t ms) {
+    groovePending_ = true;
+    groovePendingMs_ = ms;
+    grooveUntil_ = ms + kGrooveIdleMs;
+  }
+  void grooveNudge(int32_t d, uint32_t ms) {
+    groove::Settings& g = grooveSet_;
+    if (grooveField_ == kFieldTemplate) {
+      g.tmpl = static_cast<uint8_t>((g.tmpl + groove::kTemplateCount + d % groove::kTemplateCount) % groove::kTemplateCount);
+    } else if (grooveField_ == kFieldAmount) {
+      const int32_t a = static_cast<int32_t>(g.amount) + d * 5;
+      g.amount = static_cast<uint8_t>(a < 0 ? 0 : a > 100 ? 100 : a);
+    } else if (grooveField_ == kFieldScope) {
+      g.scope = static_cast<uint8_t>((g.scope + 3 + d % 3) % 3);
+    } else {
+      g.autoGroove = !g.autoGroove;
+    }
+    grooveChanged(ms);
+  }
+  /// The loop-edit bank's faders in the window: F1 (pitch bend ch 16) the amount, F2 (CC 101) the template, F3 (CC 100)
+  /// the scope, F4 (pitch bend ch 15) AUTO (upper half on). True: taken.
+  bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) {
+    groove::Settings& g = grooveSet_;
+    const groove::Settings before = g;
+    if (type == 0xE0 && (channel == 15 || channel == 14)) {
+      const uint32_t v = static_cast<uint32_t>(d1 | (d2 << 7));  // 0..16383
+      if (channel == 15) g.amount = static_cast<uint8_t>((v * 100 + 8191) / 16383);
+      else g.autoGroove = v >= 8192;
+    } else if (type == 0xB0 && channel == 15 && d1 == kLengthCc) {
+      g.tmpl = static_cast<uint8_t>((d2 & 0x7F) * groove::kTemplateCount / 128);
+    } else if (type == 0xB0 && channel == 15 && d1 == kFineCc) {
+      g.scope = static_cast<uint8_t>((d2 & 0x7F) * 3 / 128);
+    } else {
+      return false;
+    }
+    grooveField_ = type == 0xE0 ? (channel == 15 ? kFieldAmount : kFieldAuto)
+                                : (d1 == kLengthCc ? kFieldTemplate : kFieldScope);
+    if (g.pack() != before.pack() || g.amount != before.amount) grooveChanged(ms);
+    return true;
+  }
+  void serviceGroove(uint32_t ms) {
+    if (groove_) {
+      if (groovePending_ && ms - groovePendingMs_ >= kLengthSettleMs) {
+        groovePending_ = false;
+        applyGroove(grooveWin_, grooveSet_);
+      }
+      const auto st = e_->grooveState();
+      const bool busy = st == Engine::Groove::State::Waiting || st == Engine::Groove::State::Building;
+      if (!groovePending_ && !busy && static_cast<int32_t>(ms - grooveUntil_) >= 0) closeGroove();
+      return;
+    }
+    // AUTO (owner 2026-11-10: "at loop wrap everything is quantized"): a grooved shown slot whose groove asks for it,
+    // with an overdub pass after its groove pass, is grooved again (the overdub folded in) — once per state.
+    const uint8_t slot = shownSlot(selected());
+    const ManifestId c = transport().contentOf(slot);
+    if (c == kNoManifest || transport().writingSlot() == slot || edit_.editing() || loopEdit_ ||
+        e_->grooveState() != Engine::Groove::State::Idle)
+      return;
+    const auto& d = e_->manifests().manifest(c);
+    if (d.identity == autoTried_) return;
+    const groove::Settings g = groove::Settings::unpack(transport().window(slot).groove);
+    if (g.amount == 0 || !g.autoGroove) return;
+    bool afterGroove = false, overdub = false;
+    for (uint8_t i = 0; i < d.runCount; ++i) {
+      const uint8_t k = e_->runs().run(d.runs[i]).kind;
+      if (k == RunKind::kGroove) afterGroove = true, overdub = false;
+      else if (afterGroove && k == RunKind::kOverdub) overdub = true;
+    }
+    if (!overdub) return;
+    autoTried_ = d.identity;  // once per state, whatever the outcome
+    leaveVisit();
+    applyGroove(slot, g);
+  }
+
   // ---- Copy mode (DEC-279 amendment 1) ------------------------------------------------------------------------------
   enum class Copy : uint8_t { None, Slot, Bar, Note };
   static constexpr uint32_t kCopyHoldMs = 600, kFlashMs = 100;  // the hold that starts it; a flash's half period
@@ -489,6 +581,42 @@ class Surface {
     grooveSlot_ = slot;
     return e_->grooveStart(slot, q);
   }
+  // ---- The GROOVE window (DEC-289, groove design § 8; owner 2026-11-10: "long press on play/stop") -----------------
+  /// Fields: template, amount, scope (FULL / A / B), AUTO. F1 amount, F2 template, F3 scope, F4 AUTO (the loop-edit
+  /// fader bank); the encoder's turn the selected field, its push (or PLAY/STOP's press) the next; a long press of any
+  /// button closes it, as does `kGrooveIdleMs` without a change. A change is applied once it rests `kLengthSettleMs`
+  /// (built in the background, heard from a bar line); a visit's changes are one undo step.
+  enum GrooveField : uint8_t { kFieldTemplate = 0, kFieldAmount, kFieldScope, kFieldAuto, kGrooveFields };
+  static constexpr uint32_t kGrooveIdleMs = 6000;
+  bool grooveOpen() const { return groove_; }
+  uint8_t grooveField() const { return grooveField_; }
+  const groove::Settings& grooveSettings() const { return grooveSet_; }
+  uint8_t grooveWindowSlot() const { return grooveWin_; }
+  void openGroove(uint8_t slot) {
+    if (slot >= Config::kSlotCount || empty(slot) || browsing()) return;
+    groove_ = true;
+    grooveWin_ = slot;
+    grooveField_ = kFieldTemplate;
+    const uint32_t packed = transport().window(slot).groove;
+    if (packed != 0) {
+      grooveSet_ = groove::Settings::unpack(packed);
+    } else {  // owner: 1/16 by default, 50 %
+      grooveSet_ = groove::Settings{};
+      grooveSet_.tmpl = groove::kStraight;
+      grooveSet_.amount = 50;
+    }
+    leaveVisit();
+    groovePending_ = false;
+    grooveUntil_ = nowMs_ + kGrooveIdleMs;
+  }
+  void closeGroove() {
+    if (groovePending_) applyGroove(grooveWin_, grooveSet_);  // a change still settling is kept
+    groovePending_ = false;
+    groove_ = false;
+    if (e_->grooveState() == Engine::Groove::State::Waiting) e_->grooveCancel();  // waiting for room: given up
+    leaveVisit();
+  }
+
   /// Ends the groove visit (the GROOVE window closed): the next setting is an undo step of its own.
   void leaveVisit() {
     visitState_ = 0;
@@ -527,6 +655,7 @@ class Surface {
     serviceCopy(ms);
     if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_) == Engine::Transport::Result::Ok)
       visited(grooveSlot_);  // DEC-288: a groove published; this visit's next one replaces it
+    serviceGroove(ms);
     for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
       if (press_.heldMs(kStep0 + k, ms) >= kLockMs) {  // the parameter lock (an empty step: nothing, no gesture)
         lockStep_ = k;
@@ -770,6 +899,12 @@ class Surface {
       browse(b, p);  // a long press of any button closes it
       return;
     }
+    if (groove_ && (p == Press::Long || b == kPlayStop)) {  // the GROOVE window (DEC-289)
+      if (p == Press::Long) closeGroove();  // a long press of any button closes it
+      else if (p == Press::Short) nextGrooveField(1);
+      else if (p == Press::Double) nextGrooveField(-1);
+      return;
+    }
     if (popup_ && p == Press::Long && b != popupButton_) {  // a long press of another button closes the popup, kept
       popup_ = false;
       visitState_ = 0;
@@ -835,7 +970,11 @@ class Surface {
         else if (p == Press::Double) edit_.deleteOrCreate(nowMs_);
         return;
       case kPlayStop:
-        if (p != Press::Short) return;  // double: the set browser, long: the window (later slices)
+        if (p == Press::Long) {  // the GROOVE window on the shown slot (DEC-289)
+          openGroove(shownSlot(t));
+          return;
+        }
+        if (p != Press::Short) return;  // double: the set browser (a later slice)
         if (transport().playing(t)) control().stopTrack(t, tick_, us_, us());
         else if (!empty(slot)) play(t, slot, Engine::Control::Quantize::NextGrid);
         return;
@@ -1993,6 +2132,10 @@ class Surface {
   uint8_t popupSlot_ = 0, popupButton_ = 0, popupTaps_ = 0;
   uint8_t popupChoice_ = 0xFF;  // the popup's selected choice (DEC-284 amendment 1)
   uint8_t grooveSlot_ = 0xFF;   // the slot the groove job was last asked for (DEC-288)
+  bool groove_ = false, groovePending_ = false;  // the GROOVE window open; a change settling (DEC-289)
+  uint8_t grooveWin_ = 0, grooveField_ = 0;      // its slot, its selected field
+  groove::Settings grooveSet_;                   // the settings it shows
+  uint32_t grooveUntil_ = 0, groovePendingMs_ = 0, autoTried_ = 0;
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0;
   bool startPending_ = false;

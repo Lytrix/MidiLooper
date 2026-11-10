@@ -2308,6 +2308,63 @@ void test_a_stale_groove_build_is_dropped() {
   TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
 }
 
+// DEC-289 (owner 2026-11-10: "long press on play/stop"): the GROOVE window — opened on the shown slot with the slot's
+// groove or the default (straight, 50 %); PLAY/STOP's press the next field; F1 the amount; a change applied once it
+// rests, heard from a bar line; the encoder's turn the selected field; one undo step a visit; closed after idling.
+void test_the_groove_window_sets_a_groove() {
+  recordBar({{130, 60}});
+  const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kPlayStopNote, 700);  // long: open
+  ms(50);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kStraight, gS.grooveSettings().tmpl);
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
+  tap(S::kPlayStopNote);  // short: the next field
+  ms(400);
+  TEST_ASSERT_EQUAL_UINT8(1, gS.grooveField());
+  TEST_ASSERT_TRUE(gE.transport().playing(0));  // PLAY/STOP did not stop the track while the window is open
+  pitchBend(15, 8191);  // F1 at the top: 100 %
+  ms(10);
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
+  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a bar line
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
+  TEST_ASSERT_FALSE(gS.grooveOpen());  // idle for longer than kGrooveIdleMs once published: closed
+  tap(S::kPlayStopNote, 700);  // opened again: the slot's groove shown
+  ms(50);
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
+  tap(S::kPlayStopNote);  // the amount field
+  ms(400);
+  gS.encoderTurn(-2, gUs / 1000);  // 10 down …
+  gS.encoderTurn(-2, gUs / 1000);  // … and 10 more, before it settles: one change
+  TEST_ASSERT_EQUAL_UINT8(80, gS.grooveSettings().amount);
+  tap(S::kPlayStopNote, 700);  // a long press closes it; the settling change is kept
+  ms(50);
+  TEST_ASSERT_FALSE(gS.grooveOpen());
+  run(gUs + 4 * 768 * kTick);
+  TEST_ASSERT_EQUAL_UINT8(80, ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).amount);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));  // two visits, two steps
+}
+
+// DEC-289 (owner 2026-11-10: "yes in case if auto groove is turned on … at loop wrap everything is quantized"): with
+// AUTO on, an overdub on a grooved loop is grooved too once it closes — its notes folded into the sources.
+void test_auto_grooves_an_overdub() {
+  recordBar({{130, 60}});
+  ContentEngine::groove::Settings s;
+  s.tmpl = ContentEngine::groove::kStraight;
+  s.amount = 100;
+  s.autoGroove = true;
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
+  run(gUs + 4 * 768 * kTick);
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  overdubHeld({{250, 40, 62}});
+  run(gUs + 6 * 768 * kTick);  // AUTO: grooved again, the overdub in it
+  EXPECT_ALL(positions(true, 62, 768), 240);
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
+}
+
 // DEC-287 (design review C2): the groove row is a fourth marker row — the window (start 96, frame 768 of a shortened
 // loop) is still read, and a length change keeps the groove setting.
 void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
@@ -2374,6 +2431,8 @@ int main(int, char**) {
   RUN_TEST(test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove);
   RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_a_bar_line);
   RUN_TEST(test_a_stale_groove_build_is_dropped);
+  RUN_TEST(test_the_groove_window_sets_a_groove);
+  RUN_TEST(test_auto_grooves_an_overdub);
   RUN_TEST(test_loop_edit_ranges_are_absolute_in_the_stored_loop);
   RUN_TEST(test_loop_edit_notelen_double_restores_the_previous_loop);
   RUN_TEST(test_notelen_long_press_creates);

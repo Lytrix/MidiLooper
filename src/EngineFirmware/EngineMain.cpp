@@ -2106,6 +2106,17 @@ void loop() {
   ev.popupLoop = gSurface.popupLoop();
   ev.popupChoice = ev.popup ? gSurface.popupChoice() : 0xFF;
   ev.popupRanges = ev.popup ? gSurface.popupRanges() : 0;
+  ev.groove = gSurface.grooveOpen();  // DEC-289
+  if (ev.groove) {
+    const auto& g = gSurface.grooveSettings();
+    ev.grooveSlot = gSurface.grooveWindowSlot();
+    ev.grooveField = gSurface.grooveField();
+    ev.grooveTemplate = g.tmpl;
+    ev.grooveAmount = g.amount;
+    ev.grooveScope = g.scope;
+    ev.grooveAuto = g.autoGroove;
+    ev.grooveState = static_cast<uint8_t>(gEngine.grooveState());
+  }
   if (ed.active()) {
     ev.active = true;
     ev.ready = ed.editing();

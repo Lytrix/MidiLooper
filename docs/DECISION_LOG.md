@@ -16386,3 +16386,29 @@ reclaimed, reservations consistent); the DEC-287 tests now wait for the publish.
 tick fails the bar-line test; publishing without the identity check fails the stale test. Full native 4,541 passed.
 Device image `4e68126f…`: transport running, `groove 10 75` (SP 16 63 %, 75 %) on 1-3 — 134 grains, done within 28 ms,
 the tracks switched at tick 1,536 (a bar line); frame draw worst 381 µs.
+
+## DEC-289 — The GROOVE window on PLAY/STOP's long press; AUTO grooves an overdub
+
+**Date:** 2026-11-10. **Owner:** "Yes, start slice 4" (groove design § 8; owner: "long press on play/stop", F1–F4 /
+the encoder for the settings, AUTO "at loop wrap everything is quantized"). Builds on DEC-287 / DEC-288.
+
+**Decision:**
+- PLAY/STOP's long press (now 600 ms, was 3 s and unused) opens the GROOVE window on the shown slot: TEMPLATE, AMOUNT,
+  SCOPE (FULL / RANGE A / RANGE B), AUTO — the slot's groove, else straight at 50 %. PLAY/STOP's short press is the next
+  field (double: the one before), the encoder's push the next, its turn the selected field (amount 5 % a detent); the
+  loop-edit fader bank: F1 the amount, F2 the template (CC 101 over the 19 templates), F3 the scope, F4 AUTO (upper half
+  on). A change applies once it rests `kLengthSettleMs` (a background build, heard from a bar line); a long press of any
+  button closes the window (a settling change kept; a build waiting for room given up), as do `kGrooveIdleMs` (6 s)
+  without a change once nothing builds. One visit, one undo step.
+- The window (`EngineDisplay::drawGroove`, from flash): the length popup's frame, `GROOVE T<n> S<n>` and the build's
+  state on the title bar (`...`, `WAIT`, `TOO BIG`, `FAILED`), four rows, the selected label inverted.
+- **AUTO**: a shown slot whose groove has AUTO on and whose state lists an overdub pass after its groove pass is grooved
+  again (the overdub folded into the sources by the prefix rule) — once per state, not while it is written, edited or
+  in LOOP_EDIT, nor while a groove builds.
+
+**Evidence:** native `test_the_groove_window_sets_a_groove` (long press opens straight 50 %; a short press the amount
+field, the track still playing; F1 at the top 100 % → heard on the grid; idle-closed after the publish; reopened
+showing 100 %; the encoder 20 down, a long press closes keeping it → 80 % published; two visits, two undo steps);
+`test_auto_grooves_an_overdub` (an overdub at 250 on a straight-100 % AUTO loop → heard at 240 once it ends, the take's
+note still at 144). Full native 4,543 passed. Device image `496c3791…`: PLAY/STOP held on 1-3 → the window with
+SP16 63 / 75 % / FULL / OFF; a press → AMOUNT selected; a long press closes it. Not yet played by the owner.

@@ -89,6 +89,11 @@ struct EditView {
   uint32_t popupLoop = 0;  // the length it shows (ticks)
   uint8_t popupChoice = 0xFF;  // its selected choice (DEC-284 amendment 1: 0 BASE, 1 CUSTOM, 2–13 the lengths)
   uint8_t popupRanges = 0;     // the remembered ranges there are (bit 0 A, bit 1 B; DEC-284 amendment 3)
+  // The GROOVE window (DEC-289): open, its slot, selected field, the settings shown, the build's state (0 idle,
+  // 1 waiting, 2 building, 3 ready, 4 too big, 5 failed).
+  bool groove = false;
+  uint8_t grooveSlot = 0, grooveField = 0, grooveTemplate = 0, grooveAmount = 0, grooveScope = 0, grooveState = 0;
+  bool grooveAuto = false;
 };
 
 /// What the sets browser shows beside its model (sets browser slice 3): the working set's save state ("SAVED 14:32"),
@@ -434,6 +439,7 @@ class EngineDisplay {
       return;
     }
     if (edit_.popup) drawPopup();
+    if (edit_.groove) drawGroove();
     if (edit_.copy != 0) drawCopy();
     if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();
   }
@@ -1222,6 +1228,62 @@ class EngineDisplay {
     static const char kHint[] = "PRESS +  2X -  HOLD CANCEL";  // next length, the one before, back as opened
     label(kHint, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(sizeof kHint - 1) * 4) / 2),
           static_cast<int16_t>(y1 - 7), 5);
+  }
+
+  /// The GROOVE window (DEC-289; owner 2026-11-10: "long press on play/stop"): as the length popup — a shadow, a frame,
+  /// the hatched title bar with `GROOVE T<n> S<n>` and the build's state on its right (`...` building, `WAIT`, `TOO BIG`,
+  /// `FAILED`) — then four rows, the selected one's label inverted: template, amount, scope, AUTO.
+  DISPLAY_COLD void drawGroove() {
+    constexpr int16_t x0 = 64, y0 = 1, x1 = 191, y1 = 45, sh = 3;
+    oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 2);
+    oled_.gfx.draw_rect_filled(fb(), x0, y0, x1, y1, 0);
+    for (int16_t y = static_cast<int16_t>(y0 + 2); y < y0 + 9; y += 2)
+      for (int16_t x = static_cast<int16_t>(x0 + 1); x < x1; ++x) px(x, y, 5);
+    for (int16_t x = x0; x <= x1; ++x) {
+      px(x, y0, 10);
+      px(x, static_cast<int16_t>(y0 + 9), 10);
+      px(x, y1, 10);
+    }
+    for (int16_t y = y0; y <= y1; ++y) {
+      px(x0, y, 10);
+      px(x1, y, 10);
+    }
+    char title[24];
+    snprintf(title, sizeof title, "GROOVE T%u S%u", edit_.grooveSlot / 8 + 1, edit_.grooveSlot % 8 + 1);
+    const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>(x0 + 6);
+    oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
+    label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
+    static const char* const kState[6] = {"", "WAIT", "...", "...", "TOO BIG", "FAILED"};
+    const char* st = edit_.grooveState < 6 ? kState[edit_.grooveState] : "";
+    if (st[0] != 0) {
+      const int16_t sw = static_cast<int16_t>(strlen(st)) * 4 + 3, sx = static_cast<int16_t>(x1 - 6 - sw);
+      oled_.gfx.draw_rect_filled(fb(), sx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(sx + sw), y0 + 8, 0);
+      label(st, static_cast<int16_t>(sx + 2), static_cast<int16_t>(y0 + 2), edit_.grooveState >= 4 ? 15 : 10);
+    }
+    static const char* const kTemplate[] = {"STRAIGHT", "MPC16 54", "MPC16 58", "MPC16 62", "MPC16 66", "MPC16 71",
+                                            "MPC8 58",  "MPC8 66",  "SP16 54",  "SP16 58",  "SP16 63",  "SP16 67",
+                                            "SP16 71",  "TRIPLET 8", "TRIPLET 16", "JAZZ RIDE", "BOSSA", "LAID BACK",
+                                            "PUSH"};
+    static_assert(sizeof kTemplate / sizeof kTemplate[0] == ContentEngine::groove::kTemplateCount, "every template named");
+    static const char* const kField[4] = {"TEMPLATE", "AMOUNT", "SCOPE", "AUTO"};
+    static const char* const kScope[3] = {"FULL", "RANGE A", "RANGE B"};
+    char value[16];
+    for (uint8_t f = 0; f < 4; ++f) {
+      const int16_t y = static_cast<int16_t>(y0 + 12 + f * 8);
+      const int16_t lx = static_cast<int16_t>(x0 + 6);
+      if (f == edit_.grooveField) {
+        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(lx - 2), static_cast<int16_t>(y - 1),
+                                   static_cast<int16_t>(lx + 34), static_cast<int16_t>(y + 5), 13);
+        label(kField[f], lx, y, 0);
+      } else {
+        label(kField[f], lx, y, 6);
+      }
+      if (f == 0) snprintf(value, sizeof value, "%s", edit_.grooveTemplate < ContentEngine::groove::kTemplateCount ? kTemplate[edit_.grooveTemplate] : "?");
+      else if (f == 1) snprintf(value, sizeof value, "%u%%", edit_.grooveAmount);
+      else if (f == 2) snprintf(value, sizeof value, "%s", kScope[edit_.grooveScope < 3 ? edit_.grooveScope : 0]);
+      else snprintf(value, sizeof value, "%s", edit_.grooveAuto ? "ON" : "OFF");
+      text(value, static_cast<int16_t>(x0 + 46), static_cast<int16_t>(y + 6), f == edit_.grooveField ? 15 : 9);
+    }
   }
 
   /// The progress bar over the stored loop (DEC-282, owner 2026-11-10: mockup B; amendment 1): the whole bar is the

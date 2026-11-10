@@ -55,7 +55,7 @@ The same buttons provide their main action with a short press and secondary acti
 | **Track 1–8** | Select track | Mute / unmute | — | Solo / unsolo |
 | **Next track** | Select next track | Undo | Redo | Open the sets browser |
 | **Transport** | Global start / stop (with an external clock: stop / restart the tracks locally) | Return to loop start | — | — |
-| **Track play/stop** | Play / stop selected track | — | — | — |
+| **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
 | **Edit** | Enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT | — | — | Leave edit mode |
 | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
 | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
@@ -115,6 +115,19 @@ A loop never loses notes when you shorten it. The notes you recorded form the **
 A new range replaces the older of the two; the range that was playing becomes the other one. For example: an 8-bar phrase, pick bars 5–6, then bar 8. A single press now flips between bars 5–6 and bar 8, and a double press brings back all 8 bars. Every switch is one undo step, and note edits made in a range are kept.
 
 The start, the length and both ranges are saved with the slot and come back after a reboot. F1 moves the loop start in 16ths of the stored loop and F2 sets the length; neither changes the remembered ranges.
+
+### Groove
+
+Groove moves the notes of the shown loop toward a swing or quantize template while keeping your recording: the original timing stays stored, so you can change or remove the groove at any time. Long-press **Track play/stop** to open the GROOVE window:
+
+| Field | Set with | Values |
+|-------|----------|--------|
+| **Template** | F2, or the encoder | STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH |
+| **Amount** | F1, or the encoder (5 % a detent) | 0–100 %: how far each note moves toward its swung place (50 % by default; 0 % removes the groove) |
+| **Scope** | F3, or the encoder | FULL, or only the notes inside range A or B |
+| **Auto** | F4, or the encoder | ON: an overdub on this loop is grooved too once it ends |
+
+A short press of **Track play/stop** (or the encoder's push) selects the next field; the encoder turns it. A change applies once you stop moving it: it is built in the background, the loop keeps playing as it was, and the new groove starts on a bar line. The window shows `...` while it builds and `TOO BIG` if the loop is too large to groove. A long press of any button closes it, as do a few seconds without a change. One visit is one undo step, and the piano roll shows the notes where they now play. Notes you placed by hand in NOTE_EDIT keep their place.
 
 ### Loop-length popup
 
@@ -188,7 +201,7 @@ On a fresh card, the engine reads without writing until the owner enables saving
 
 ### Optional: groove templates from Samples From Mars
 
-Groove quantize is planned, not yet in the firmware (see the [groove design](docs/Plans/groove_quantize_design.md)). It will read groove templates from MIDI files in the `/GROOVES/` folder on the SD card. The built-in swing settings will work without them. A good source is the free **Grooves From Mars** pack by Samples From Mars: timing captured from 27 drum machines, including the MPC60, MPC3000 and SP-1200.
+Groove (see [Groove](#groove)) works with its built-in templates. Reading further templates from MIDI files in the `/GROOVES/` folder on the SD card is the next step, not yet in the firmware (see the [groove design](docs/Plans/groove_quantize_design.md)). A good source is the free **Grooves From Mars** pack by Samples From Mars: timing captured from 27 drum machines, including the MPC60, MPC3000 and SP-1200.
 
 The pack is **not included** in this repository and must not be added to it or shared. Samples From Mars' terms do not allow copying or redistributing their content without written permission. Everyone gets their own copy from the source:
 
