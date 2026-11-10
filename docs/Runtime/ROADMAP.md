@@ -4,7 +4,7 @@
 
 For shipped vs next in firmware: [DELIVERABLE_TRACKING.md](../DELIVERABLE_TRACKING.md). For OpenSpec process: [DELIVERY_RULES.md](../Authority/DELIVERY_RULES.md).
 
-Last updated: 2026-08-08 (doc hygiene review)
+Last updated: 2026-11-10 (sets browser future features)
 
 ---
 
@@ -36,6 +36,14 @@ Last updated: 2026-08-08 (doc hygiene review)
 - CC value editing on faders (MVP table in DELIVERABLE_TRACKING)
 - Portability: Drumboy Pro platform split (PROJECT_INTENT decision 5)
 - DROID LFO pulse slot feedback
+- Engine sets browser — **get a loop: add as layer** (owner 2026-11-10): besides USE (replace), merge the picked loop
+  onto what the destination holds — a new pass on its current state, overdub overlap rules, the slot keeping its loop
+  length (the play window, DEC-257, covers a longer source); one undo step. The picker (DEC-272) offers it on a filled
+  destination. Design: browser plan §6 / §9.
+- Engine sets browser — **library compaction** (owner 2026-11-10): reclaim the card space emptied sets and stages leave
+  (their blobs stay in the log, DEC-268) and the index records the trash marks spend (4,096 in all; EMPTY TRASH itself
+  needs one). Needs a power-safe scheme for rewriting the log and index (older records, parent references and the
+  recovery checkpoint kept valid); two index copies are one candidate, not yet a requirement. Design: browser plan §9.
 
 ## Notes
 

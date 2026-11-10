@@ -305,3 +305,12 @@ preview render path (2); (d) the picker screen with 3, 5, 6, 9–11; mockups alo
 ## 9. Open
 
 1. A live switch that does not fit: refuse (load at stop) or a short gap.
+2. **Future (owner 2026-11-10): get a loop's "add as layer".** USE replaces the destination's loop; adding as a layer
+   would append the picked loop as a new pass on the destination's current state (overlap rules as for an overdub, the
+   slot's loop length kept; DEC-257's play window covers a longer source), one undo step — a second action on a filled
+   destination in the picker (§6.1). Engine: a state built from the destination's runs plus the read runs.
+3. **Future (owner 2026-11-10): library compaction.** Emptied sets and stages keep their log space (DEC-268) and every
+   trash, restore and empty-trash mark spends one of the 4,096 index records (EMPTY TRASH itself needs one).
+   Compaction would move the live blobs down and rewrite the index without the spent records, power-safe at every
+   step (older records, parent references and the recovery checkpoint kept valid); two index copies are one candidate.
+   Not needed yet (2026-11-09: 21 records, about 0.3 % of the log).
