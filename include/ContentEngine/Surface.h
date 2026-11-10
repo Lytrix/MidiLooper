@@ -363,6 +363,10 @@ class Surface {
   void selectSlot(uint8_t t, uint8_t s) { slot_[t] = s; }
 
   /// The sets browser (slice 3): opened by a long track switch while the library is ready; nullptr: none.
+  /// What the track's piano roll shows (slice A, as legacy): a queued switch's slot at once — the playhead parked at its
+  /// launch point until the switch (`shownQueued`) — else the playing slot, else the selected one.
+  uint8_t shown(uint8_t t) { return shownSlot(t); }
+  bool shownQueued(uint8_t t) { return control().switchQueued(t); }
   void setBrowser(ProductionBrowser* b) {
     browser_ = b;
     if (b != nullptr) b->setNewLoopBars(kNewLoopBars);  // the picker starts on the preset closest to it (DEC-272)
@@ -820,9 +824,11 @@ class Surface {
     edit_.leave();
     loopEdit_ = false;
   }
-  /// The track's shown slot: the playing one, else the selected one.
+  /// The track's shown slot: a queued switch's slot (legacy: the preview, the edit focus), else the playing one, else
+  /// the selected one.
   uint8_t shownSlot(uint8_t t) {
     auto& x = transport();
+    if (control().switchQueued(t)) return control().queuedSwitchSlot(t);
     return x.playing(t) ? x.playingSlot(t) : selectedSlot(t);
   }
   /// NOTE_EDIT on the shown slot (the playing or selected one), the window at the playhead.

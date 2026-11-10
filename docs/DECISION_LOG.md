@@ -15674,3 +15674,25 @@ a trash confirmation; nothing else was written.
   Native: browser +1 (the nearest preset for 1–32 bars, an empty loop of it), surface and edit-surface updated (two
   tests assumed 1 bar); full 4,500 passed. Device `d537fbcd…`, boot `crash=0`: a long press of the empty 8-8 opened
   the picker on 4, TRACK put a 4-bar empty loop there (`loop=3072`), undo removed it.
+
+## DEC-273 — The screen opens on the saved selection; a queued slot's piano roll shows at once (surface slice A)
+
+**Date:** 2026-11-10. **Owner:** "on boot it always shows track 1 slot 1 and then switches to the selected slot …
+when pressing a slot button the next slot gets queued. in legacy we showed the piano roll of the upcoming slot. bring
+that back." Scope: `CURRENT_WORK` performance and step surface, slice A.
+
+**Decision:**
+- **Boot.** The saved selection (selected track and each track's slot) is applied as soon as the boot load's first
+  grain has read it (`applySavedSelection`), not after the whole load; the performance screen draws no frame until the
+  selection is known (or the load ends without one: each track's first slot with content, as before). The first frame
+  is on the right slot; its tiles fill as the slots load.
+- **A queued slot** (legacy `isPreviewPlayheadPending`): `Surface::shownSlot` — the piano roll, NOTE_EDIT's and
+  LOOP_EDIT's focus — is a queued switch's slot, else the playing one, else the selected one (`Surface::shown`,
+  `shownQueued`). The display draws the queued slot's roll at once, its playhead parked at the launch point (the loop
+  start) and flashing every 250 ms, while the old slot plays on; the status counts down to the switch as before.
+
+**Evidence:** native: the slot-switch surface test asserts the shown slot while queued and after the switch (the old
+rule fails it); full 4,500 passed. Device (image `99882058…`, boot `crash=0`): pressing 1-4 while 1-1 played showed
+1-4's 9-bar roll at once (`-0.1.2.02` to the switch); 1-1 queued behind 1-4 showed 1-1's roll with the parked playhead
+on in two frames and off in the next two (−7 … −4 bars); with track 2 saved as selected, the frames from a reboot were
+blank at 0.31 s, then track 2 from the first drawn frame (0.62 s, mid boot load) — never track 1.

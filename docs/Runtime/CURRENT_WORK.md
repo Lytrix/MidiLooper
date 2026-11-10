@@ -53,7 +53,8 @@ Serial `get <index> <T-S> <T-S>`. Done (native + device). Next, 6b on the owner'
 partition (a2 done: 8,192 rows); (b) the audition owner (done, DEC-271); (c) the preview render path (done, DEC-270 amendment 3); (d) the picker (done, DEC-272);
 
 **2026-11-10 — performance and step surface (owner: "a few things I want to add, partly from the legacy stack";
-OpenSpec `fixed-memory-engine` E9.8b-3, bar / 16th steps; legacy behaviour mapped first).** Slices, in order:
+OpenSpec `fixed-memory-engine` E9.8b-3, bar / 16th steps; legacy behaviour mapped first).** Slice A done (DEC-273).
+Slices, in order:
 (A) boot shows the last selected slot first (no switch on screen); a queued slot's piano roll shown at once, its
 playhead parked at the launch point and flashing until the switch (legacy `isPreviewPlayheadPending`). (B) a global
 launch quantisation — 1/16, 1/8, 1/4, bar; default 1/16; serial `launch-q`, kept in EEPROM — and a slot's double press

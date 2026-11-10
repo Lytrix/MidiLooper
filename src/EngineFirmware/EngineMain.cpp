@@ -1503,17 +1503,23 @@ void pollSerial(uint32_t nowUs) {
 }
 
 void selectFirstSlots();
-// After boot load: the saved selection (selected track, each track's slot), else each track's first slot with content
-// (slots T x 8 .. T x 8 + 7).
-void restoreSelection() {
+// Slice A (owner 2026-11-10: boot shows the last selected slot, no switch on screen): the saved selection applied as
+// soon as the boot load's first grain has read it, before the performance screen draws its first frame.
+bool gSelectionKnown = false;
+/// The saved selection (selected track, each track's slot), once read; false: none yet (or none saved).
+bool applySavedSelection() {
   uint8_t state[ProductionPersistence::kStateBytes];
-  if (!gEngine.persistence().restoredSurfaceState(state) || state[0] >= kTrackCount) {
-    selectFirstSlots();
-    return;
-  }
+  if (!gEngine.persistence().restoredSurfaceState(state) || state[0] >= kTrackCount) return false;
   gEngine.control().selectTrack(state[0]);
   for (uint8_t t = 0; t < kTrackCount; ++t)
     if (state[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
+  return true;
+}
+// After boot load: without a saved selection, each track's first slot with content (slots T x 8 .. T x 8 + 7); the
+// saved one was applied as soon as it was read (`gSelectionKnown`).
+void restoreSelection() {
+  if (!gSelectionKnown && !applySavedSelection()) selectFirstSlots();
+  gSelectionKnown = true;
 }
 /// The selection as the surface has it now, for saving (selected track, then each track's engine slot).
 void saveSelection(uint32_t nowUs) {
@@ -1906,7 +1912,7 @@ void loop() {
     if (!hostTxRoom()) ++gHostDeferred;  // the DROID is not taking packets: the surface keeps its LEDs until it does
     else if (gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   }
-  for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.selectedSlot(t));
+  for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t));
   EngineFirmware::EditView ev;
   const auto& ed = gSurface.edit();
   ev.loop = gSurface.loopEdit();
@@ -1935,7 +1941,8 @@ void loop() {
     }
   }
   crumb(kScreen);
-  gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
+  if (!gSelectionKnown && (applySavedSelection() || gBootReported)) gSelectionKnown = true;
+  if (gSelectionKnown) gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);  // the first frame on the right slot
   crumb(kIdle);
   checkUsb(millis());
 }

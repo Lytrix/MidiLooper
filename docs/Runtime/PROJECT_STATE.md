@@ -47,7 +47,10 @@ bars, USE); built: `GET A LOOP` in a set's view and a slot's long press, the gri
 loops (asked over a filled slot). Native 4,499 passed; device `abc7df2a…`: both entries, preview, audition (heard),
 USE, a preset with its confirmation, undo — all as designed. Slice 6b complete; owner on the panel: "Looks right" (grid size and dots
 kept; squares remain a serial switch, `!ENGINE pick-squares 1`). Then (owner, DEC-272 amendment 1) the new-loop
-length is 4 bars and the picker starts on the preset closest to it; device `d537fbcd…`.
+length is 4 bars and the picker starts on the preset closest to it; device `d537fbcd…`. **Surface slice A (DEC-273):** boot draws its first frame
+on the saved selection (applied as the boot load's first grain reads it); a queued slot's piano roll shows at once,
+its playhead parked and flashing until the switch. Native 4,500 passed; device `99882058…`. Next: slice B, the launch
+quantisation and the slot's double press.
 Still owed: a trash, restore and empty on the card, on content the owner approves as disposable.
 
 **2026-11-09 — The sets browser redesigned (DEC-267).** After a round of mockups with the owner: a GEM window over the

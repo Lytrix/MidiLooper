@@ -188,12 +188,20 @@ void test_slot_buttons_record_play_switch_and_mute() {
   run(start + kBarUs + 50 * kTick);
   TEST_ASSERT_NOT_EQUAL(kNoManifest, X().contentOf(1));
   TEST_ASSERT_EQUAL_UINT8(1, X().playingSlot(0));
-  // Slot 0 again: plays from slot 1's loop end.
+  // Slot 0 again: plays from slot 1's loop end. Meanwhile the track shows it — the queued slot (legacy: its piano roll
+  // at once, the playhead parked; slice A) — while slot 1 plays on.
+  TEST_ASSERT_EQUAL_UINT8(1, gS.shown(0));
+  TEST_ASSERT_FALSE(gS.shownQueued(0));
   tap(S::kSlotBase + 0);
   ms(400);
   TEST_ASSERT_EQUAL_UINT8(0, C().queuedSwitchSlot(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gS.shown(0));
+  TEST_ASSERT_TRUE(gS.shownQueued(0));
+  TEST_ASSERT_EQUAL_UINT8(1, X().playingSlot(0));
   run(gUs + kBarUs + kTick);
   TEST_ASSERT_EQUAL_UINT8(0, X().playingSlot(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gS.shown(0));
+  TEST_ASSERT_FALSE(gS.shownQueued(0));
   // The playing slot's button toggles the track's mute.
   tap(S::kSlotBase + 0);
   ms(400);

@@ -195,9 +195,12 @@ class EngineDisplay {
     toastUntil_ = nowMs + ms;
   }
 
-  /// The slot a track shows while it plays nothing (the last one launched or recorded on it).
-  void show(uint8_t track, uint8_t slot) {
-    if (track < ContentEngine::kTrackCount) shown_[track] = slot;
+  /// The slot a track's piano roll shows (`Surface::shown`): a queued switch's slot (`queued`: its playhead parked at
+  /// the launch point, flashing, until the switch — legacy), else the playing one, else the selected one.
+  void show(uint8_t track, uint8_t slot, bool queued = false) {
+    if (track >= ContentEngine::kTrackCount) return;
+    shown_[track] = slot;
+    queued_[track] = queued;
   }
 
   /// Once per main-loop pass: a frame when one is due and the previous transfer is done. Returns the frame's draw time
@@ -344,16 +347,18 @@ class EngineDisplay {
     auto& x = e.transport();
     const uint8_t sel = e.control().selectedTrack();
     drawTracks(e, clock, sel, nowMs);
-    // The shown slot: the selected track's playing (or writing) slot, else the one it last showed.
-    uint8_t slot = x.playing(sel) ? x.playingSlot(sel) : shown_[sel];
+    // The shown slot: the selected track's queued, playing or selected one (`show`), the writing one above all.
+    uint8_t slot = shown_[sel];
+    const bool queued = queued_[sel] && x.writingTrack() != sel;
     if (x.writingTrack() == sel) slot = x.writingSlot();
+    drawMs_ = nowMs;
     SlotInfo info;
     if (slot < ContentEngine::Config::kSlotCount) {
       if (slot != focus_) {  // span tiles for the shown slot (swept first)
         e.setDisplayFocus(slot, slot);
         focus_ = slot;
       }
-      info = drawSlot(e, sel, slot, lastTick);
+      info = drawSlot(e, sel, slot, lastTick, queued);
     }
     drawStatus(e, clock, sel, info, lastTick, nowMs);
     if (browser_ != nullptr && browser_->isOpen()) {  // a window over the performance screen
@@ -1168,7 +1173,7 @@ class EngineDisplay {
     }
   }
 
-  SlotInfo drawSlot(ContentEngine::EngineRoot& e, uint8_t track, uint8_t slot, uint32_t lastTick) {
+  SlotInfo drawSlot(ContentEngine::EngineRoot& e, uint8_t track, uint8_t slot, uint32_t lastTick, bool queued = false) {
     auto& x = e.transport();
     SlotInfo info;
     info.slot = slot;
@@ -1176,7 +1181,7 @@ class EngineDisplay {
     const ContentEngine::ManifestId m = x.contentOf(slot);  // a cleared slot (an empty state) shows as empty
     uint32_t loop = m == ContentEngine::kNoManifest ? 0 : e.manifests().manifest(m).loopLengthTicks;
     uint32_t pos = 0;
-    const bool playing = x.playing(track) && x.playingSlot(track) == slot;
+    const bool playing = !queued && x.playing(track) && x.playingSlot(track) == slot;
     bool firstTake = false;
     if (writing) {
       pos = x.writePosition(lastTick);
@@ -1243,6 +1248,8 @@ class EngineDisplay {
     if (playing || writing) {
       const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
       oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
+    } else if (queued && (drawMs_ / 250) % 2 == 0) {  // queued: parked at its launch point (its loop start), flashing
+      oled_.gfx.draw_vline(fb(), kX0, kRollY0, kRollY1, 15);
     }
     if (editing && edit_.ready && edit_.bracket >= first && edit_.bracket < first + viewTicks) {  // the bracket, dotted
       const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - first) * w / viewTicks);
@@ -1474,6 +1481,8 @@ class EngineDisplay {
   uint32_t toastUntil_ = 0;
   ContentEngine::status::SaveIndicator dots_;
   uint8_t shown_[ContentEngine::kTrackCount] = {};
+  bool queued_[ContentEngine::kTrackCount] = {};
+  uint32_t drawMs_ = 0;  // the frame being drawn (a queued slot's playhead flashes on it)
   uint8_t focus_ = 0xFF;
   bool started_ = false;
   uint32_t lastFrameMs_ = 0, frames_ = 0, worstUs_ = 0;
