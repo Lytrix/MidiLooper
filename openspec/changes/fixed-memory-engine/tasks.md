@@ -154,6 +154,8 @@ revision 3 is the baseline; no whole-plan revisions.
       - [ ] E9.8b-3a Groove library (design § 7, slice 5): `GrooveFile.h` (ordinal import, written, untracked and
         untested) host-tested on synthetic MIDI, listing and loading `/GROOVES/` under card ownership, the preloaded
         ten and `MORE…` in the window. Groundwork done: template tables in marker rows 0xFC / 0xFD (DEC-290 note).
+        **Parked by the owner 2026-11-11** ("park the midi import for now. that will be a future feature"): not part of
+        this change's remaining work; `GrooveFile.h` stays untracked.
       - [x] E9.8b-3b Undo-depth sizing (design slice 6, owner: 99 was not data-analysed): states born per minute in
         real sessions, the cost of a state, the store's per-slot history size. Started 2026-11-11:
         `docs/Plans/undo_depth_sizing.md` — cost measured (`!ENGINE history-cost`, `HistoryCost.h`: the history pins 137
