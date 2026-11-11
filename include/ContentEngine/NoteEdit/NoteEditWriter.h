@@ -1,35 +1,34 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The NOTE_EDIT edit writer (fixed-memory-engine E4.5; owner decision 2026-11-05: hear each edit, rewrite one run).
+// The NOTE_EDIT edit writer.
 //
 // * Session: `begin` admits a selection of at most `MaxSelection` notes of the slot's current manifest (their noteId
 //   and geometry) and opens the SlotUndoHistory NOTE_EDIT session, which protects that manifest as the restore point.
 // * Edits: `apply` changes the geometry of selected notes (tick, length, pitch, velocity, channel) or deletes them,
-//   each note at most once per step. It is one E: step. The E: steps live in this writer's log (at most `MaxSteps`,
-//   the oldest forgotten when full; entries in caller-placed storage), not in SlotUndoHistory: each step records the values
+//   each note at most once per step. It is one E: step. The E: steps live in this writer's log (at most `MaxSteps`, the
+//   oldest forgotten when full; entries in caller-placed storage), not in SlotUndoHistory: each step records the values
 //   it replaced, and undo / redo swap them back.
 // * Audible at once: every apply / undo / redo is new input. At acceptance it reserves the rows of a fresh edit run
 //   (CE-A1: refused by name, nothing changed, only when content is full). Acceptance is O(changes of the action): the
-//   edited / live note counts are kept incrementally. The rebuild job (`step`) then works in bounded units — gather
-//   (an edited note's HideNote row), heapify and extract (one sift each), write (one replacement row; tick order,
-//   NoteOff before NoteOn at a tick, noteIds kept, DEC-245 lineage) — seals the run, publishes base runs + edit run as
-//   a new manifest, and makes it the session's one SlotUndoHistory state (the previous one is released to reclaim). With no
-//   note edited the session state is removed and the slot plays its start. A newer action supersedes a running
-//   rebuild (its reservation is forgiven, its run reclaimed).
-// * Create (E9.8b-2, the legacy NOTELEN double press on an empty bracket): `create` adds a note to the session as one
-//   that was deleted at its start, and one E: step brings it to life — undo returns it to deleted (nothing written; its
-//   hide row hides nothing), redo brings it back. Its noteId is the caller's (fresh).
+//   edited / live note counts are kept incrementally. The rebuild job (`step`) then works in bounded units — gather (an
+//   edited note's HideNote row), heapify and extract (one sift each), write (one replacement row; tick order, NoteOff
+//   before NoteOn at a tick, noteIds kept, DEC-245 lineage) — seals the run, publishes base runs + edit run as a new
+//   manifest, and makes it the session's one SlotUndoHistory state (the previous one is released to reclaim). With no
+//   note edited the session state is removed and the slot plays its start. A newer action supersedes a running rebuild
+//   (its reservation is forgiven, its run reclaimed).
+// * Create (NOTELEN's double press on an empty bracket): `create` adds a note to the session as one that was deleted at
+//   its start, and one E: step brings it to life — undo returns it to deleted (nothing written; its hide row hides
+//   nothing), redo brings it back. Its noteId is the caller's (fresh).
 // * `leave` keeps the current state as one U: step (after a running rebuild completes); `abandon` returns to the start.
-// * Overlap (owner 2026-11-07; legacy `resolveConstrainedGeometry` and DEC-030's sticky end of participation; EDIT-1:
-//   an edit run is not an occluder, so NOTE_EDIT writes its own results): the causing note is the selected note A
-//   (`cause`), once it has been edited and while it lives; it is never changed. Any other live note B of A's pitch
-//   (channel does not matter; edited or not) that starts inside A is hidden; one that starts before A and sounds into
-//   it ends at A's start; edges that only touch change nothing — on linear spans across the loop's wrap. While A stays
-//   selected the results follow it live from B's state (moving A on, by position or pitch, brings B back); they are
-//   written like edits (B's hide row, and a shortened B's replacement rows). `settle` (A deselected, or NOTE_EDIT left)
-//   makes A's results B's own state, recorded in A's last E: step, so undoing that step brings B back. Acceptance
-//   counts the rows: O(selection).
+// * Overlap (DEC-030's sticky end of participation; EDIT-1: an edit run is not an occluder, so NOTE_EDIT writes its own
+//   results): the causing note is the selected note A (`cause`), once it has been edited and while it lives; it is
+//   never changed. Any other live note B of A's pitch (channel does not matter; edited or not) that starts inside A is
+//   hidden; one that starts before A and sounds into it ends at A's start; edges that only touch change nothing — on
+//   linear spans across the loop's wrap. While A stays selected the results follow it live from B's state (moving A on,
+//   by position or pitch, brings B back); they are written like edits (B's hide row, and a shortened B's replacement
+//   rows). `settle` (A deselected, or NOTE_EDIT left) makes A's results B's own state, recorded in A's last E: step, so
+//   undoing that step brings B back. Acceptance counts the rows: O(selection).
 // No allocation; `init()` writes every field.
 
 #pragma once
@@ -201,7 +200,7 @@ class NoteEditWriter {
     return r;
   }
 
-  /// One E: step of `n` changes and `m` new notes (copy / paste, owner 2026-11-10): `changes[n .. n + m)` hold the new
+  /// One E: step of `n` changes and `m` new notes (copy / paste, DEC-279): `changes[n .. n + m)` hold the new
   /// notes' values (fresh noteIds; their indices are set here), which take selection indices from `count()` on
   /// (`first`). Nothing changes when the step is refused.
   EditResult applyAdding(EditChange* changes, uint16_t n, uint16_t m, uint16_t& first) {

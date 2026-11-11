@@ -1,24 +1,22 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// NOTE_EDIT for the surface (fixed-memory-engine E9.5): what `EditManager` / `NoteEditFocus` call, on top of the edit
-// writer (E4.5).
+// NOTE_EDIT for the surface: what `EditManager` / `NoteEditFocus` call, on top of the edit writer.
 //
 // * Selection (`request`): the notes the musician sees in a range — those starting in [from, to) within a pitch range,
 //   as the piano roll shows them (every effective note: `SpanWindowComposer` with T = 48, the display cursor) — with
 //   their **stored** geometry: the note's own NoteOn and NoteOff rows in the run that holds its current instance (an
 //   edit run's replacement after earlier edits). Effective lengths are not stored: overlap results are derived at
-//   composition (EDIT-1), so the edited note drives and the others adapt, as in the legacy NOTE_EDIT. A note hidden
-//   (deleted or wholly occluded) is not selectable. Gathered in grains (`gatherStep`): edit index, composition up to the
-//   range end, then one stored-row lookup at a time. Cycle 0 is exact for notes that start in the range: `begin` counts
-//   notes held across the loop end as sounding at position 0 and the hide look-ahead reads across the loop end, so no
-//   second cycle is composed. More than `MaxSelection` notes: `TooMany`, nothing selected.
+//   composition (EDIT-1), so the edited note drives and the others adapt. A note hidden (deleted or wholly occluded) is
+//   not selectable. Gathered in grains (`gatherStep`): edit index, composition up to the range end, then one stored-row
+//   lookup at a time. Cycle 0 is exact for notes that start in the range: `begin` counts notes held across the loop end
+//   as sounding at position 0 and the hide look-ahead reads across the loop end, so no second cycle is composed. More
+//   than `MaxSelection` notes: `TooMany`, nothing selected.
 // * Session: `enter` opens the edit writer on the gathered notes; `apply` / `undo` / `redo` are E: steps, each heard at
 //   once (the writer's rebuild runs as a transition job; `takePublished` tells the root to make the slot's playing
 //   tracks follow). Each step keeps the caller's focus token (the selection / focus to show), returned by undo / redo.
 // * `leave` keeps the edits as one U: step; `abandon` returns to the session start.
-// The gather uses the display cursor and scratch window (shared with the tile sweep, E9.6: one at a time). No
-// allocation.
+// The gather uses the display cursor and scratch window (shared with the tile sweep: one at a time). No allocation.
 
 #pragma once
 
@@ -67,7 +65,7 @@ class NoteEditSession {
   }
 
   // ---- Selection ------------------------------------------------------------------------------------------------------
-  /// One selection owner (owner 2026-11-05): refused while a NOTE_EDIT session is open (leave or abandon it first).
+  /// One selection owner: refused while a NOTE_EDIT session is open (leave or abandon it first).
   Gather request(const Query& q, uint32_t focusAtEntry) {
     if (writer_->editing()) return Gather::Refused;
     cancelGather();
@@ -131,7 +129,7 @@ class NoteEditSession {
     }
     return r;
   }
-  /// A new note (its noteId fresh: the caller's) as one E: step; `at` is its selection index (E9.8b-2).
+  /// A new note (its noteId fresh: the caller's) as one E: step; `at` is its selection index.
   EditResult create(const EditNote& note, uint32_t focus, uint16_t& at) {
     const EditResult r = writer_->create(note, at);
     if (r == EditResult::Ok) {
@@ -140,7 +138,8 @@ class NoteEditSession {
     }
     return r;
   }
-  /// Copy / paste: `n` changes and `m` new notes (`changes[n .. n + m)`) as one E: step (`NoteEditWriter::applyAdding`).
+  /// Copy / paste: `n` changes and `m` new notes (`changes[n .. n + m)`) as one E: step
+  /// (`NoteEditWriter::applyAdding`).
   EditResult applyAdding(EditChange* changes, uint16_t n, uint16_t m, uint32_t focus, uint16_t& first) {
     const EditResult r = writer_->applyAdding(changes, n, m, first);
     if (r == EditResult::Ok) {
@@ -171,7 +170,7 @@ class NoteEditSession {
     return r;
   }
   /// The selected note (selection index; < 0: none): the overlap results' causing note. Its results follow it live;
-  /// `settle` first keeps the previous selected note's (owner 2026-11-07, DEC-030 sticky).
+  /// `settle` first keeps the previous selected note's (sticky, DEC-030).
   void cause(int32_t index) {
     writer_->cause(index < 0 ? CaptureWriter::kNoCause : static_cast<uint16_t>(index));
     if (writer_->building()) building_ = true;
@@ -299,8 +298,8 @@ class NoteEditSession {
         row_ = kNoRow;
       } else if (off || row_ >= rows) {
         // No stored NoteOff (cannot happen for a sealed take), or one on the NoteOn's own tick (a press under a tick
-        // long; owner 2026-11-06: the lookup found length 0 and never moved on, which hung entering NOTE_EDIT): not
-        // selectable (an edited note is at least a tick long).
+        // long): not selectable (an edited note is at least a tick long). The lookup must move on past it: one that
+        // stayed on a length-0 note hung entering NOTE_EDIT.
         notes_[look_] = notes_[count_ - 1];
         noteRuns_[look_] = noteRuns_[count_ - 1];
         --count_;
