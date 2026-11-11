@@ -7,7 +7,7 @@ vocabulary are [NAMING.md](NAMING.md)'s; ownership and execution bounds are
 a normal reader this works confusing"); sources: the Google C++ Style Guide (comments, short functions), the C++ Core
 Guidelines NL.1 / NL.2, and common ADR practice for references in code.
 
-Check a change with `scripts/code_hygiene_report.py` (sizes and history references per file).
+Check a change with `scripts/code_hygiene_report.py` (sizes and history references per file, folder `AGENTS.md` caps).
 
 ## 1. Comments say what the code cannot
 
@@ -58,9 +58,49 @@ readable on its own.
 These sit under the project's own constraints, which win where they conflict: fixed memory (no allocation after
 boot), bounded grains on the playing path, RAM1 placement, and the execution bounds in ARCHITECTURE_RULES.
 
-## 4. How a cleanup is done
+## 4. Where the rest goes
+
+Rationale leaves the code, it is not deleted. Three places, each read at a different moment:
+
+| Place | Holds | Read |
+|---|---|---|
+| The code comment | the timeless rule: intent, invariant, unit, budget; at most one `DEC-### (short name)` | always, with the code |
+| The area folder's `AGENTS.md` (e.g. `include/ContentEngine/Composition/AGENTS.md`) | what an agent must know before editing that folder: its invariants, its traps, and the approaches already tried and rejected there — one line each, with the `DEC-### (short name)` that holds the evidence | before editing a file in that folder |
+| [DECISION_LOG.md](../DECISION_LOG.md) | the history: dates, owner quotes, measurements, device images, and the full **Tried and rejected** block (§ 5) | searched by topic or ID, never read whole |
+
+A folder `AGENTS.md` is capped at **120 lines** (`scripts/code_hygiene_report.py --strict` fails above it). It holds
+what is true now: a line is **replaced** when its rule changes and removed when the code it guards is gone, never
+appended as history. Its sections, in order: *Owns*, *Invariants*, *Traps* (including *Don't* lines for rejected
+approaches), *Decisions* (the IDs that matter for the folder, one short name each). Measurements stay in the decision
+log; a line points there.
+
+## 5. Tried and rejected
+
+An approach that was built, measured and dropped is a result, not a dead end: it is usually the obvious one, so the
+next change tries it first. It is recorded in three depths:
+
+1. **The decision log, in full.** The DEC entry the work belongs to carries a **Tried and rejected** table (template:
+   [SESSION_CLOSEOUT.md](../Templates/SESSION_CLOSEOUT.md)):
+
+   | Tried | Measured | Rejected because | Revisit if |
+   |---|---|---|---|
+
+   *Measured* names the evidence (figures, device image, test, capture). *Revisit if* names the assumption that made
+   it fail, so a rejection does not become dogma: when that assumption changes, the approach may be right.
+2. **The folder `AGENTS.md`, one line** — only for an approach an agent editing that folder is likely to retry:
+   `- Don't <approach>: <one-clause result>. DEC-### (short name).`
+3. **A guard test, where the failure is measurable.** A test that would fail if the rejected approach came back (a
+   feasibility gate, a grain-count or byte-identity check) names the lesson in its comment, so a failure explains
+   itself: `// Guards DEC-### (short name): <the rejected approach> <what it broke>.`
+
+In the code itself only a one-line warning at the exact spot where the obvious change goes wrong, e.g.
+`// Stays in RAM1: from flash the status line costs about 4x. DEC-297 (deep-overdub timing).`
+
+## 6. How a cleanup is done
 
 - One area folder or one file per commit; each commit is checked with the native suite and the image hash
   (comment-only and move-only commits must be byte-identical).
-- Rationale removed from code is first checked against the decision log; anything only the comment held is moved there.
+- Rationale removed from code is first checked against the decision log; anything only the comment held is moved
+  there, or to the folder's `AGENTS.md` (§ 4). Every "tried / reverted / did not work" comment becomes a Tried and
+  rejected row (§ 5).
 - No behaviour change rides a hygiene commit.

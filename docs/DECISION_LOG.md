@@ -16711,3 +16711,57 @@ The renames ride the legacy retirement (NAMING.md § Migration policy: a retirem
 order (sizes identical); native 544 passed. Device `31140291…`: boot clean, the 300 BPM 30-overdub stress at the
 earlier figures (worst grain 480 µs, non-engine 861 µs, 30 of 30).
 
+
+## DEC-297 — Deep-overdub timing: a grain's cost stays bounded as a slot's layers grow
+
+**Date:** 2026-11-11 (logged 2026-11-12). **Owner:** "remeasure but also stress test doing multiple overdub/playing
+tests within one loop. before the fix memory it hang around 9 overdubs"; "how can we ensure overdubs will not be
+refused?"; then "Yes, split bind", "Yes, attribute it", "Yes, LEDs and screen". Full measurements:
+[ENGINE_TIMING.md § Measured at 300 BPM](Guides/ENGINE_TIMING.md#measured-at-300-bpm-2026-11-11).
+
+**Problem:** at 300 BPM with 30 overdubs on one slot the worst grain reached 713 µs of g = 810 µs and grew about
+12 µs a layer, so a state's 63-run ceiling would pass g; the non-engine stretch (LEDs + screen) reached 1,627 µs of
+B_max = 2,000 µs. The serial `!ENGINE end` ended an overdub at the next bar, so the stress test's next overdub met a
+busy writer (`Busy`) and was refused.
+
+**Decision:**
+
+1. **Attribute the worst grain, not the average.** Each step was chosen from temporary cycle-counter probes recording
+   the worst grain per job class and its parts; a per-row average is not evidence for a worst-grain change.
+2. **A source binds in steps** — `SpanWindowComposer::bindStart` / `bindMore`, 12 runs a grain (`kRunsPerStep`); a
+   resume's seek runs in the same steps (`resumeSeekMore`). The bind starts in the grain that asks for it (a small
+   source finishes there). Each job owns its own "bind started" flag: the composers live in PSRAM and are not
+   constructed, so a member flag holds garbage until `init`.
+3. **A dirty-pitch mask** (`SpanWindowComposer::dirty_`, 16 B): a bind clears and a checkpoint `capture` scans only
+   the occluder rows raised since the last bind, in the same order (a checkpoint is unchanged).
+4. **The loop wrap is a grain of its own** (`nextCycle` re-reads every run's cursors): steady playback, a transition,
+   the checkpoint sweep and the cold start's warm-up end the grain at a wrap and compose on the next.
+5. **The LED and screen stages advance in steps:** the stored-loop scan 256 rows a pass for the LEDs and 128 for the
+   screen (`ControlSurface::kScanRows`); the step LEDs read a per-bar table; a frame is drawn over passes (tracks and
+   grid, the roll in four bands, then status and windows) and sent whole (`OledScreen::drawStage`).
+6. **`snprintf`'s core (`libc_a-svfprintf.o`) stays in ITCM** while the rest of libc formatting, parsing and the
+   demangler run from flash (the D1 RAM1 gate): the status line formats with it every frame.
+7. **`!ENGINE end` ends an overdub at once**, as REC does (`ControlSurface::endTake`); a Record take still ends at
+   the bar.
+
+**Evidence:** 300 BPM, seven tracks playing, 30 overdubs back to back: worst grain 713 → 489 µs (at 30 layers),
+non-engine 1,627 → 955 µs, 30 of 30 overdubs committed, no hang, `evicted_undo=0`. Images `4192837b…` (stepped bind),
+`1577f716…` (mask), `c1a031d1…` (wrap), `b3c8683d…` (LEDs and screen); after the renames `31140291…` (grain 480 µs,
+non-engine 861 µs). Guard tests: `test_a_source_binds_in_steps_of_runs`, `test_the_loop_wrap_is_a_grain_of_its_own`,
+`test_step_leds_follow_the_bars_without_a_row_scan`, `test_a_large_state_is_scanned_in_steps` (each caught a
+mutation).
+
+**Tried and rejected:**
+
+| Tried | Measured | Rejected because | Revisit if |
+|---|---|---|---|
+| Counting stream selection (the head keys) as grain work units | fewer rows a grain; the E5 feasibility gate test then missed its deadlines | the composer's throughput fell below what eight tracks need | g, `kGrainsPerPass` or the E5 gate's workload changes |
+| A tournament tree for the composer's stream selection | worst grain unchanged at 30 layers | selection was not the cost; the worst grain was `bind` | a state's runs grow far past 63 |
+| Per-pitch onset masks of the runs that start a pitch (1 KiB a composer) for the OVL-2/6 look-ahead (`laterPassStartsWhileSounding`) | the per-row average fell; worst grains `hard` 482 → 522, `background` 645 → 664 µs (within spread); bind 455 → 507 µs | the average row was not the worst grain; the masks cost bind time and PSRAM | a grain profile shows the look-ahead dominating the worst grain |
+| Starting the stepped bind in a grain of its own | an `engine_root` test failed (one more grain before the cold start played) | it delays the first rows of a cold start | — (the bind starts in the asking grain) |
+| One `binding_` flag on the composer shared by its jobs | garbage on the device: the composers are in PSRAM and not constructed | an unconstructed member is not a reliable flag | the composers become constructed objects |
+| All of libc's formatting in flash | screen stage 90 → 390 µs | the status line calls `snprintf` every frame | the status line stops formatting with `snprintf` |
+| (Ruled out as the LED-stage cause) the DIN, USB device and USB host sends | ≤ 5 µs each; the DIN buffer never full | the time was the stored-loop row scan | — |
+
+**Open:** composing itself still grows about 12 µs a layer in `hard` and `display` (g near 55–60 layers, close to the
+63-run ceiling); LEDs and screen about 9 and 12 µs a layer (about 1.6 ms at 63 layers).

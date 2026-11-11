@@ -15,6 +15,8 @@ Run search (e.g. `rg`) across:
 - [ ] `openspec/specs/` for archived normative behavior
 - [ ] `docs/Plans/` — handoffs and `*_enhancement.md` only (not every `.plan.md` export)
 
+- [ ] The `AGENTS.md` of each area folder the change touches (`include/ContentEngine/<Area>/AGENTS.md`): its *Don't* lines, and the **Tried and rejected** tables of the DECs it names
+
 **Search terms used:** _list keywords (module names, feature nouns, rejected pattern names)_
 
 ### Relevant findings
@@ -63,6 +65,7 @@ Implementation must be **rejected** if this review was skipped or shows:
 - Equivalent helper already exists
 - Ownership duplicated
 - Historical decision ignored without supersede entry
+- A rejected approach (a folder *Don't* line or a **Tried and rejected** row) retried without showing its *Revisit if* condition now holds
 - Migration path missing when `Migration required: YES`
 
 See [Agents/reviewer.md](../Agents/reviewer.md).

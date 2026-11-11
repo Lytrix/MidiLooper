@@ -93,6 +93,9 @@ surface 15 µs; every grain class 0. A measurement while playing is the gate for
 
 ## Measured at 300 BPM (2026-11-11)
 
+The decisions and the approaches tried and rejected on the way are DEC-297 (deep-overdub timing) in the
+[decision log](../DECISION_LOG.md#dec-297--deep-overdub-timing-a-grains-cost-stays-bounded-as-a-slots-layers-grow).
+
 The owner's set playing (27 slots), internal clock at 300 BPM (1,041 µs a tick), the DROID connected; per phase the
 worst values of one `!ENGINE take` window. What bounds a tick's lateness is not `pass_max_us`: a pass runs up to 8
 grains (`kGrainsPerPass`) and plays a tick that comes due between them, so a long `grains` stage is by design. A tick

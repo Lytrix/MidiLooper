@@ -101,6 +101,9 @@ path and confidence when alternatives exist; do not block on vagueness.
   functions over 60 are reviewed; DRY and SOLID as adapted in
   [`docs/Authority/CODE_HYGIENE.md`](docs/Authority/CODE_HYGIENE.md). Report:
   `scripts/code_hygiene_report.py`.
+- **Folder notes:** before editing a file under `include/ContentEngine/<Area>/`, `include/Teensy/` or
+  `src/`, read that folder's `AGENTS.md` (≤ 120 lines): its invariants, traps and the approaches
+  already tried and rejected there (*Don't* lines). Retrying one needs its DEC's *Revisit if* to hold.
 - **Prose:** refer to functions by name; line numbers are for navigation and
   citations only. In every chat mention, pair stage/task/gate/decision IDs with a
   short name, including repeats and link labels: **S2b — boot/load admission**,

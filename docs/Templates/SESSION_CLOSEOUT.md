@@ -10,6 +10,7 @@ Use when ending a chat that involved **design, alternatives, exclusions, or arch
 
 - [ ] Update [`PROJECT_STATE.md`](../Runtime/PROJECT_STATE.md) and [`CURRENT_WORK.md`](../Runtime/CURRENT_WORK.md)
 - [ ] **Append** to [`DECISION_LOG.md`](../DECISION_LOG.md) for each new or changed decision (structured `DEC-###` entry)
+- [ ] Every approach tried and dropped this session → a **Tried and rejected** row in its DEC, and a *Don't* line in the folder `AGENTS.md` when an agent is likely to retry it
 - [ ] OpenSpec `tasks.md` / `design.md` / `OPEN_QUESTIONS.md` if the change has a folder
 - [ ] [`DELIVERABLE_TRACKING.md`](../DELIVERABLE_TRACKING.md) if something shipped
 
@@ -33,6 +34,9 @@ Add to [`DECISION_LOG.md`](../DECISION_LOG.md) using the full structure in that 
 ### Rationale
 ### Alternatives considered
 | Alternative | Rejected because |
+### Tried and rejected
+_Approaches that were built and measured, then dropped ([CODE_HYGIENE.md § 5](../Authority/CODE_HYGIENE.md#5-tried-and-rejected))._
+| Tried | Measured | Rejected because | Revisit if |
 ### Affected modules
 ### Constraints created
 ### Related OpenSpec
@@ -52,6 +56,7 @@ Each rejected alternative needs a **reason a future agent can act on**:
 | "Too complex" | "Duplicates state already on `StorageManager` dirty flags" |
 | "Later" | "Blocked until JamRecorder; D13 parked in archive" |
 | "Didn't work" | "HITL 203729: overlap restore failed when …" |
+| "Reverted" | "Worst grain 482 → 522 µs (no gain), bind +52 µs; revisit if a grain profile shows the look-ahead dominating" |
 
 ---
 
