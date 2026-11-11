@@ -154,7 +154,7 @@ revision 3 is the baseline; no whole-plan revisions.
       - [ ] E9.8b-3a Groove library (design § 7, slice 5): `GrooveFile.h` (ordinal import, written, untracked and
         untested) host-tested on synthetic MIDI, listing and loading `/GROOVES/` under card ownership, the preloaded
         ten and `MORE…` in the window. Groundwork done: template tables in marker rows 0xFC / 0xFD (DEC-290 note).
-      - [ ] E9.8b-3b Undo-depth sizing (design slice 6, owner: 99 was not data-analysed): states born per minute in
+      - [x] E9.8b-3b Undo-depth sizing (design slice 6, owner: 99 was not data-analysed): states born per minute in
         real sessions, the cost of a state, the store's per-slot history size. Started 2026-11-11:
         `docs/Plans/undo_depth_sizing.md` — cost measured (`!ENGINE history-cost`, `HistoryCost.h`: the history pins 137
         runs / 7,722 rows, 60 % of the runs in use; run descriptors bind), birth counters in place; the owner's session
@@ -165,6 +165,10 @@ revision 3 is the baseline; no whole-plan revisions.
         requires no migration of development storage. Recommendation is now run-once directly, superseding the
         A/B-copy extension preference; note § 6 records durable identities, atomic publication, snapshot/reader-safe
         reclaim and capacity/backlog conditions. No implementation begun by this design discussion.
+        **Closed 2026-11-11:** the owner chose DEC-254's run-once store ("I choose DEC-254's run-once store") and waived
+        the session birth-rate measurement; built as E4.6b–e — 99 undo steps per slot, recent ones hot in PSRAM, older
+        ones on the card (`store.bin`), undo into them fetched in grains. Stress at 300 BPM: 31 steps on one slot, no
+        hang, nothing forgotten (`docs/Guides/ENGINE_TIMING.md`).
       - [ ] E9.8b-3c GROOVE motor feedback (the bank's faders to the A / B values on opening, travel not read as moves)
         and the global cycle length saved with the engine's settings (2 bars, no control yet).
   - [x] E9.8c Display: grid, playhead and piano roll from tiles (owner 2026-11-06: before the controls). `EngineDisplay` on the `SSD1322_OLED` library in the legacy layout — track column, 4-bar detailed view paged with the playhead (beat / bar grid, notes from tiles and the live overlay via `drawRollBand`, playhead), overview strip from density tiles only for loops longer than the view, status line and sidebar (tempo, clock source, transport, read-only); a frame every 33 ms after the previous DMA transfer, the first frame over blocking SPI (the panel stayed blank when the first frame was DMA); `!ENGINE select` / `oled-test`. Device `ada72d97…`: owner confirmed slot 24 drawn and playing; worst frame draw 733 µs.

@@ -1,3 +1,9 @@
+**2026-11-11 — DEC-254 merged into `feature/engine-sets-browser`; E9.8b-3b closed.** `feature/engine-per-slot-history`
+(E4.6b–e, the store rename, the LED-stage fix, `!ENGINE end` as REC, `ENGINE_TIMING.md`) merged (`f2c3d9d5`; the code
+identical to the tested branch: native 4,564, device `f90715c7…`). The design notes found uncommitted in the main checkout
+were committed first (`5d124eca`, owner). E9.8b-3b (undo-depth sizing) closed by DEC-254. Next proposed: bound the
+grain cost per overdub layer (686 µs at 31 layers; g = 810 µs at about 40).
+
 **2026-11-11 — the LED stage within B_max at 300 BPM (branch `feature/engine-per-slot-history`).** A 300 BPM device
 check found `Surface::leds` blocking 1.5 ms a bar and up to 4.4 ms during overdubs (B_max 2,000 µs): the shown slot's
 rows were rescanned on every bar and on every new state. Now the scan builds every bar's 16ths once and the LEDs and
