@@ -158,7 +158,13 @@ revision 3 is the baseline; no whole-plan revisions.
         real sessions, the cost of a state, the store's per-slot history size. Started 2026-11-11:
         `docs/Plans/undo_depth_sizing.md` — cost measured (`!ENGINE history-cost`, `HistoryCost.h`: the history pins 137
         runs / 7,722 rows, 60 % of the runs in use; run descriptors bind), birth counters in place; the owner's session
-        measurement and the decision are open.
+        measurement and the decision are open. Owner-requested recommendation (2026-11-11, design only): note § 6
+        proposes overdub session isolation and fair recent retention, with deferred DEC-254 — per-slot card-backed
+        history as the deep-history direction; NOTE_EDIT already has a separate log and one History state. No
+        implementation approved or task checked off by this review. Follow-up: owner favors option 2 and explicitly
+        requires no migration of development storage. Recommendation is now run-once directly, superseding the
+        A/B-copy extension preference; note § 6 records durable identities, atomic publication, snapshot/reader-safe
+        reclaim and capacity/backlog conditions. No implementation begun by this design discussion.
       - [ ] E9.8b-3c GROOVE motor feedback (the bank's faders to the A / B values on opening, travel not read as moves)
         and the global cycle length saved with the engine's settings (2 bars, no control yet).
   - [x] E9.8c Display: grid, playhead and piano roll from tiles (owner 2026-11-06: before the controls). `EngineDisplay` on the `SSD1322_OLED` library in the legacy layout — track column, 4-bar detailed view paged with the playhead (beat / bar grid, notes from tiles and the live overlay via `drawRollBand`, playhead), overview strip from density tiles only for loops longer than the view, status line and sidebar (tempo, clock source, transport, read-only); a frame every 33 ms after the previous DMA transfer, the first frame over blocking SPI (the panel stayed blank when the first frame was DMA); `!ENGINE select` / `oled-test`. Device `ada72d97…`: owner confirmed slot 24 drawn and playing; worst frame draw 733 µs.

@@ -23,3 +23,8 @@ __pycache__/
 
 # Editor backup files
 *.save
+
+# Independent review loop: per-run history and per-iteration evidence (local)
+.ai/reviews/
+.ai/latest-test-summary.txt
+.ai/latest-device-evidence.txt

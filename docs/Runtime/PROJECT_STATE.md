@@ -1,3 +1,29 @@
+**2026-11-11 — E9.8b-3b run-once recommendation after owner clarification (design only).** Owner favors option 2
+and clarifies that rebuilding development storage is acceptable and no migration is required. Recommendation
+changes to the run-once representation of DEC-254 — per-slot card-backed history directly; whole-slot A/B was
+previously favored too heavily for reuse. Keep A/B for small state/catalog publication, stable checked durable run
+identities, content-before-state durability, bounded reclaim honoring snapshots/readers, and background write/fetch
+with recording/Stop independent of SD. Note § 6 and current scope/task context updated; no implementation started,
+firmware/device/test change, or card content alteration.
+
+**2026-11-11 — E9.8b-3b card-history representation comparison (design only; recommendation superseded above).** Owner presented A/B-copy extension
+versus the run-once representation in DEC-254 — per-slot card-backed history. Source review and independent critique
+favor reusing A/B as the first implementation, conditional on maximum-history write/latency measurements. It avoids
+a new allocator/reclaimer but still needs a versioned checked-run body, a proven cold-history byte/run budget, safe
+migration if copy geometry changes, and source-generation protection during saves/fetches. 99 undo targets plus the
+current state can require 100 states. Alternative captured in `docs/Plans/undo_depth_sizing.md` § 6; no representation
+accepted, no deferred implementation reauthorized, no firmware/device/test changes.
+
+**2026-11-11 — E9.8b-3b undo-depth recommendation (design only).** Owner asked how to maximize useful undo per slot;
+source inspection and focused independent critique recommend isolating overdub wrap history, fair recent per-slot
+retention, and ultimately the deferred DEC-254 — per-slot card-backed history. No implementation decision accepted.
+Corrections to the sizing assumptions: NOTE_EDIT already uses its own edit log and replaces one History state;
+overdub is bounded by the 63-run manifest before 99 nonempty wraps, and removing intermediate states does not free
+runs the final state still references. A 200-state pool leaves 136 previous states with 64 currents, not deep undo
+for each slot; the measured descriptor extrapolation is not a capacity guarantee. Card failure/backlog must have
+bounded, explicit retention degradation without waiting in recording or Stop. Note updated; no firmware, device
+operation or tests in this review. Existing local changes preserved. Session birth-rate measurement remains open.
+
 **2026-11-11 — E9.8b-3b undo-depth sizing, part 1: the cost measured.** The 99 is one pool for all 64 slots. On the
 owner's set (`958a4649…`): 99 states (26 currents), the history alone pins 137 runs (60 % of the 227 in use, 285 of 512
 free) and 7,722 rows (limit 131,072); a manifest 148 B, a run 80 B. Run descriptors bind, not memory; a depth of ~200
@@ -29,6 +55,16 @@ centred: OFF · A · B on top (A the groove at opening, B edited), NOTELEN short
 (ALL / A / B) and AUTO stay the slot's; the progress bar along the bottom. Full native 4,546 passed; device
 `9f815263…` / `e90eb99a…` (`crash=0`): the compare and the cycle on T7 S1. The timeline is to be reused by the "loop
 chain" (slots queued as a preset), not designed yet.
+
+**2026-11-10 — Groove audition UI exploration (design only).** Owner: compare no groove, previous and new, with a
+progress bar; AUTO belongs to the track, not to each audition choice. Proposed OFF / PREV / NEW with NEW always
+editable; one comparison-sequence control includes OFF explicitly; whole-loop dwell intervals; separate NEW-build
+and listening-interval progress. Preferred compare strip and side-by-side alternative are in
+`docs/Plans/groove_audition_ui_proposal.md` and `docs/Plans/images/groove_audition_proposal.png`; an interactive preview
+accompanies the chat. Local interaction checks exercised manual selection, two/three/four-step sequences, continuing
+OFF/PREV while NEW builds, and track AUTO independent of audition. Three screen frames inspected. No firmware
+changed; exit/acceptance, history, three-treatment admission and track-setting persistence remain implementation
+contract work. Existing unrelated changes left untouched.
 
 **2026-11-10 — DEC-292: GROOVE window open until closed, heard from the next beat, a progress bar; DEC-293: mutes
 saved.** The window no longer idles closed; a finished groove switches on the next beat instead of a bar two bars
@@ -76,6 +112,33 @@ order, `Composer` matching by source index; set file version 4, a version-3 file
 play notes past a shortened end until their length is set again). Copy and get a loop keep the order. Native: the
 save/load round trip red then green, copy and get-a-loop checks, a RunId-composer mutation fails; full 4,531 passed.
 Device `2c41ee6d…`: 1-3's lookups at positions 0–3 before and after a reboot. PSRAM unchanged (flags in padding).
+
+**2026-11-10 — Groove revision 2 review (design only).** Reviewed the revised pasted design, including the SD
+groove library; no implementation authorization added. The previous findings now have proposed contracts, not
+firmware fixes. Two additional host probes against current headers: using the same edit-index identity for the
+playback suffix and rebuild prefix reuses the suffix's hides (prefix unexpectedly emits one NoteOn; a separate
+identity emits none); a composer with voice allowance 64 still emits only 48 of 49 simultaneous distinct-pitch
+notes (`openOverflow=1`). The pre-voice-selection content projection therefore needs an explicit bounded contract,
+and prefix/suffix source views need distinct cache identities and correct pass-order indexing. Read-only analysis
+of the local pack: nearest-sixteenth assignment, ties earlier, changes the intended ordinal in 17 of 273 checked
+64-note swing files; an inspected 16T file has 96 NoteOns over four bars, beyond the proposed 64 straight steps.
+Importer contracts must preserve step association/subdivision or reject unsupported shapes. Also pin live SD I/O
+ownership and bounds (existing filesystem operations can block), lazy CRC calculation, permanent-capacity versus
+temporary-wait outcomes, and the embedded-template encoding (64 x 3 B exceeds eight 16-byte marker rows). No device
+run or full native suite; only review probes. Existing firmware/upload-tool edits were left untouched.
+
+**2026-11-10 — Groove proposal review (design only).** Owner requested a review of the pasted groove design;
+branch verified as `feature/engine-sets-browser`. No groove implementation authorized or firmware changed. Host
+probes against the current headers reproduced: an added fourth fit metadata row makes `windowOf` miss the stored
+start/frame; folding a later overdub into the rebuilt groove before a retained edit changes the edited note's
+effective length (49 ticks to 200); and the proposal's R1 — fit-run references after load — is a real save/load
+failure (source RunId 1 becomes 0, fit lookup unchanged, one NoteOn before versus two after). The swing formula
+also chooses tick 96 for a note at 73 with a 48-tick grid and 75 % swing, although the nearby swung target is 72.
+Before implementation, resolve edit/overdub ordering, fit metadata preservation through resize/rotate, the timing
+target rule, complete replacement content (unaffected notes and non-note MIDI), peak capacity (sources + current
+groove + rebuilding groove), and generation-qualified publication/ready-window handoff. The existing fit-reference
+failure also affects copy/current-state-reader paths by inspection; those paths were not exercised by the probes.
+No device run or full native suite: review evidence only. Undo-depth sizing remains a separate investigation.
 
 **2026-11-09 — The trash (DEC-268).** Owner: deletion as an Atari-style trash. HOLD TRACK on a set or stage asks
 `MOVE SET 03 TO TRASH?` / `MOVE SET 02 T03 TO TRASH?` (what and when, CANCEL selected); a double TRACK opens the trash

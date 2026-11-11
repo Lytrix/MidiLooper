@@ -1,5 +1,18 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-11 — card-history representation direction (design only).** For E9.8b-3b — undo-depth sizing, the owner
+favors option 2 and clarifies that development storage may be rebuilt with no migration required. Recommend the
+run-once representation of DEC-254 — per-slot card-backed history directly, superseding the earlier preference to
+extend whole-slot A/B copies. The sizing note § 6 records checked stable run identities, small A/B state publication,
+content durability, snapshot/reader-safe bounded reclaim and background I/O requirements. No implementation started
+or device/card operation performed.
+
+**2026-11-11 — undo-depth recommendation (owner request; design only).** Proposed direction for E9.8b-3b — undo-depth
+sizing: isolate overdub's temporary wrap states, retain recent history fairly across slots, then use DEC-254 —
+per-slot card-backed history for genuinely deep retention. NOTE_EDIT already has a separate edit log and one History
+state. See `docs/Plans/undo_depth_sizing.md` § 6 for the recommendation and capacity qualifications. No implementation
+scope added, no history rule changed, no deferred work reauthorized; the owner's session measurement remains open.
+
 **2026-11-10 / 11 — owner-directed surface and groove work on `feature/engine-sets-browser` (scope as delivered).**
 Owner requests in session, each recorded as a decision: the progress bar and loop ranges (DEC-282 am., DEC-283,
 DEC-284 am. 1–3), quantize as a non-destructive groove — design `docs/Plans/groove_quantize_design.md` (rev. 3,
@@ -8,6 +21,23 @@ button (DEC-291), saved mutes (DEC-293), PLAY/STOP under a stopped external cloc
 `docs/Guides/ENGINE_UI_UX_GUIDE.md`. OpenSpec: `fixed-memory-engine` E9.8b-3 (delivered list updated; open: 41–48,
 E9.8b-3a groove library, 3b undo-depth sizing, 3c GROOVE motor feedback / saved cycle length). Next authorized only on
 the owner's word. Evidence: `PROJECT_STATE` entries of 2026-11-10 / 11 and the DECs.
+
+**2026-11-10 — groove audition UI design (owner request).** Design scope: compare OFF / previous / new groove,
+progress feedback and optional automatic comparison; owner directs AUTO to track settings independently of these
+choices. Proposal: `docs/Plans/groove_audition_ui_proposal.md`, with compare-strip and side-by-side previews. This
+request produced a UI exploration, not firmware changes or a new implementation slice.
+
+**2026-11-10 — groove revision 2 review (owner supplied revised design).** Review only; no groove implementation
+authorized. The revised contracts address the earlier findings on paper. Additional host evidence requires a
+bounded pre-voice-selection content projection and distinct edit-index identities for rebuild/playback source
+views. Local-pack analysis also exposes step-assignment and triplet-import gaps; live SD access, permanent-capacity
+outcomes and embedded-template sizing need contracts. Evidence: the newest `PROJECT_STATE` entry.
+
+**2026-11-10 — groove design review (owner: "can you review this?").** Review only; this does not authorize groove
+implementation or expand the implementation declarations below. Host probes confirmed edit/overdub reordering,
+the fourth fit metadata row hiding the stored window, and the existing save/load fit-reference failure. The design
+also needs a corrected swing-target rule, complete replacement-content semantics, peak capacity including both
+groove generations, and publication/cancellation rules. Evidence and limitations: the newest `PROJECT_STATE` entry.
 
 **2026-11-08 — owner-requested scope (“start stage 1”), branch `feature/engine-sets-browser` from
 `rewrite/fixed-memory-engine`.** Design: [engine sets browser proposal](../Plans/engine_sets_browser_proposal.md)
