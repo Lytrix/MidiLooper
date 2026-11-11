@@ -107,6 +107,9 @@ class Composer {
     lease_ = IndexLease{};
     indexResult_ = IndexResult::NotNeeded;
     count_ = 0;
+    for (auto& p : active_)  // once: the composers live in PSRAM regions set up here, not constructed
+      for (auto& c : p) c = 0;
+    dirty_[0] = dirty_[1] = 0;
     binding_ = false;  // the composers live in PSRAM regions set up here, not constructed
     bindRun_ = seekRun_ = 0;
     loop_ = 0;
@@ -227,11 +230,14 @@ class Composer {
     cp.cycle = windowStart_ < loop_ ? cycle_ : cycle_ + 1;
     cp.runCount = count_;
     cp.activeCount = 0;
-    for (uint8_t p = 0; p < 128; ++p)
-      for (uint8_t r = 0; r < count_; ++r) {
-        if (active_[p][r] == 0) continue;
-        if (cp.activeCount >= kCheckpointActive) return false;
-        cp.active[cp.activeCount++] = {p, r, active_[p][r], 0};
+    for (uint8_t w = 0; w < 2; ++w)  // only the pitches raised since the bind, ascending (owner 2026-11-11)
+      for (uint64_t m = dirty_[w]; m != 0; m &= m - 1) {
+        const uint8_t p = static_cast<uint8_t>(w * 64 + __builtin_ctzll(m));
+        for (uint8_t r = 0; r < count_; ++r) {
+          if (active_[p][r] == 0) continue;
+          if (cp.activeCount >= kCheckpointActive) return false;
+          cp.active[cp.activeCount++] = {p, r, active_[p][r], 0};
+        }
       }
     if (openCount_ > kCheckpointOpen || stats_.openOverflow != 0) return false;
     cp.openCount = openCount_;
@@ -266,7 +272,10 @@ class Composer {
   }
   /// After a bind of the same source (`bindStart(..., false)` + `bindMore` Done): the checkpoint's carried state.
   void resumeApply(const Checkpoint& cp) {
-    for (uint8_t i = 0; i < cp.activeCount; ++i) active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
+    for (uint8_t i = 0; i < cp.activeCount; ++i) {
+      active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
+      markDirty(cp.active[i].pitch);
+    }
     openCount_ = cp.openCount;
     for (uint8_t i = 0; i < cp.openCount; ++i)
       open_[i] = Open{cp.open[i].noteId, cp.open[i].runKey, cp.open[i].pitch,
@@ -408,8 +417,7 @@ class Composer {
     end();
     count_ = count > MaxRuns ? MaxRuns : count;
     loop_ = loopLength;
-    for (auto& p : active_)
-      for (auto& c : p) c = 0;
+    clearActive();  // only the rows raised since the last bind (owner 2026-11-11: the whole 8 KiB took ~330 µs)
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
     wrapReach_ = 0;
@@ -464,7 +472,10 @@ class Composer {
       if (bindFromStart_) {
         for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
           const PassEvent& e = row(r, i);
-          if (cls(e) == 0 && wraps(r, e) && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
+          if (cls(e) == 0 && wraps(r, e) && active_[e.data1 & 0x7F][r] < 0xFF) {
+            ++active_[e.data1 & 0x7F][r];
+            markDirty(e.data1 & 0x7F);
+          }
         }
       }
       for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
@@ -496,6 +507,14 @@ class Composer {
     return bindMore(0xFF) == BindStep::Done;
   }
 
+  void markDirty(uint8_t pitch) { dirty_[pitch >> 6] |= 1ull << (pitch & 63); }
+  void clearActive() {
+    for (uint8_t w = 0; w < 2; ++w) {
+      for (uint64_t m = dirty_[w]; m != 0; m &= m - 1)
+        for (auto& c : active_[w * 64 + __builtin_ctzll(m)]) c = 0;
+      dirty_[w] = 0;
+    }
+  }
   /// Head key of a stream: position << 2 | class (DEC-244 order: position, then class), or kNoHead when exhausted.
   void refreshHead(uint8_t r, uint8_t b) {
     uint32_t pos;
@@ -734,6 +753,7 @@ class Composer {
     if (!edit_[r]) {  // EDIT-1: an edit run's notes neither shorten earlier passes nor count as occluders
       shorten(w, r, pitch, pos);
       if (active_[pitch][r] < 0xFF) ++active_[pitch][r];
+      markDirty(pitch);
     }
     if (hidden) return;
     // Q-OUT-2: selected iff fewer than T voices are occupied here (selected this cycle, or carried in).
@@ -805,6 +825,7 @@ class Composer {
   IndexLease lease_;
   IndexResult indexResult_;
   uint8_t active_[128][MaxRuns];  // source notes sounding per (pitch, pass), effective or not (OVL-8)
+  uint64_t dirty_[2] = {};        // pitches whose `active_` row was raised since it was last cleared
   Open openStore_[kMaxOpen];  // effective instances open, in admission order (Q-OUT-2)
   Open* open_ = openStore_;   // ... or the list `extractAll` lent (DEC-286)
   uint8_t openLimit_ = kMaxOpen, voices_ = T;  // tracked at once, selected

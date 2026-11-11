@@ -161,8 +161,20 @@ the other (about two a loop), sampled every 3 or 6:
   walking every later pass). Per-pitch masks of the runs that start a pitch (1 KiB a composer) cut that walk, but the
   worst grains did not move (`hard` 482 → 522, `background` 645 → 664 µs, within run-to-run spread) and the bind grew
   (455 → 507 µs): reverted. The worst grain is set by something other than the average row — a grain over a dense
-  cluster, or another path in the same job. **Next:** attribute the *worst* grain (which job and which part, timed
-  inside that grain) before changing code again.
+  cluster, or another path in the same job.
+- **The worst grains attributed (2026-11-11, temporary probes recording, per job class, the worst grain's job and its
+  parts).** At 30 layers: `transition` (the cold start) = `Composer::bindStart` **~330 µs, flat** + `bindMore` 121 µs;
+  `background` (the checkpoint sweep) = the loop-end `capture` and store **355 → 435 µs, growing** + composing 210 µs;
+  `display` = composing 291 + the tiles' `consume` 169 µs; `hard` = composing 355 µs + ~177 µs not in any probed part.
+  `bindStart` cleared the whole 8 KiB occluder table (`active_`, 128 pitches x 64 runs) in PSRAM; `capture` scanned
+  128 pitches x every run.
+- **The dirty-pitch mask (2026-11-11, `1577f716…`).** `Composer::dirty_` (16 B) marks the pitches whose occluder row
+  was raised since the last bind; a bind clears only those rows and `capture` scans only those pitches, in the same
+  order (a checkpoint is unchanged); `init` clears the table once (the composers are set up in PSRAM, not
+  constructed). Same stress, worst grain at 30 layers: `background` 645 → **380 µs**, `transition` 455 → **351 µs**
+  (at the take 343 → 46 µs), `display` 511, `hard` 517–525 µs (unchanged, within spread). 30 of 30 overdubs, no hang.
+  **Open:** `hard` and `display` still grow (about 14 µs a layer: composing, plus ~177 µs unattributed in a playback
+  grain); g at about 50 layers.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).

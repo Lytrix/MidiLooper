@@ -333,7 +333,7 @@ void test_a_rebuild_view_has_its_own_index() {
 }
 
 void test_production_composer_within_budget() {
-  TEST_ASSERT_TRUE(sizeof(Composer<ProductionPool, ProductionRuns>) <= 12288u);
+  TEST_ASSERT_TRUE(sizeof(Composer<ProductionPool, ProductionRuns>) <= 12304u);  // + 16 B the dirty-pitch mask (2026-11-11)
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations);
 }
 

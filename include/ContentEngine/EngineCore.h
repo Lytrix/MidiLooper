@@ -89,8 +89,10 @@ static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
 using ProductionComposer = Composer<ProductionPool, ProductionRuns>;
 using ProductionEditIndex = EditIndexStore<ProductionPool, ProductionRuns>;
 constexpr uint8_t kComposeCursors = 18;
-static_assert(sizeof(ProductionComposer) <= 12288u, "a compose cursor stays within its 12 KiB budget");
-static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221184u, "compose cursors fit the 221,184 B budget");
+// 12 KiB + 16 B (owner 2026-11-11): the mask of pitches whose occluder row was raised (`Composer::dirty_`), so a bind
+// clears and a checkpoint scans only those rows.
+static_assert(sizeof(ProductionComposer) <= 12304u, "a compose cursor stays within its 12 KiB + 16 B budget");
+static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221472u, "compose cursors fit the 221,472 B budget");
 static_assert(ProductionEditIndex::kSlots >= kComposeCursors, "every cursor can pin a distinct identity: Busy is unreachable");
 static_assert(ProductionEditIndex::kPages == Config::kIndexReservePages,
               "the shared index is exactly the pool's edit-index partition (E5.3)");
