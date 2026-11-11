@@ -1,3 +1,38 @@
+**2026-11-11 — the LED stage within B_max at 300 BPM (branch `feature/engine-per-slot-history`).** A 300 BPM device
+check found `Surface::leds` blocking 1.5 ms a bar and up to 4.4 ms during overdubs (B_max 2,000 µs): the shown slot's
+rows were rescanned on every bar and on every new state. Now the scan builds every bar's 16ths once and the LEDs and
+screen advance a new state's scan 512 rows a pass (`Surface::beyondScan`); re-measured `c23ede89…`: LEDs 10 µs in
+playback, ≤ 688 µs during overdubs. Details in `docs/Guides/ENGINE_TIMING.md`. Seen twice during the runs: USB serial
+stopped answering after the gate's transport stop (the known USB wedge; a PROGRAM press recovered it once) — for the
+hang investigation. Slot 11 keeps two test overdubs (owner: keep them).
+
+**2026-11-11 — store file names (owner); storage and undo docs (branch `feature/engine-per-slot-history`).** The
+run-once store is now `/MidiLooper/engine/store.bin`, the DEC-253 store kept as `store.bak` (boot renames once,
+`Persistence::nameStores`; never over a file, nothing deleted); `library.bin` unchanged. Device `bb0d3b0a…`: `crash=0`,
+`renamed=1`, 27 slots and their history loaded. Full native 4,562 passed. `ENGINE_STORAGE.md` describes the run-once
+store and undo on the card; `FIXED_MEMORY_ENGINE.md` and README updated.
+
+**2026-11-11 — E4.6e pressure; DEC-254 / E4.6 complete (branch `feature/engine-per-slot-history`).** Low content memory
+makes card-held undo steps cold (never forgotten, one each 50 ms); a loading slot's own steps go cold at boot. With
+E4.6b–d: each run written once to `store2.bin`, 99 undo steps per slot (hot in PSRAM, cold on the card), undo into cold
+steps fetched in ≤ 4-sector grains. Native 4,561 passed; device `e1533cf2…` clean. Not merged into
+`feature/engine-sets-browser`; the board runs this branch.
+
+**2026-11-11 — E4.6d undo into cold steps (branch `feature/engine-per-slot-history`).** An undo past a slot's hot steps
+fetches the cold one from the card in ≤ 4-sector grains while the slot plays, then switches as an undo; more presses
+reach deeper, switched once. Native 4,559 passed; device: four fetches on T2 S3, each in place within one poll, worst
+persistence grain 337 µs. Next: E4.6e (boot loads hot states only; rows pressure).
+
+**2026-11-11 — E4.6c cold undo states (branch `feature/engine-per-slot-history`).** A full hot table demotes the oldest
+saved undo step to a cold tier (PSRAM descriptors + each copy's cold record on the card) instead of forgetting it; a
+slot keeps 99 states and forgets only its own oldest; the UNDO level counts cold steps; undo into a cold step is E4.6d.
+Native 4,555 passed; device: `demoted=1`, `evicted_undo=0`, levels unchanged over a reboot. RAM1 last bank: 1,316 B.
+
+**2026-11-11 — DEC-254 approved; E4.6b the run-once store (branch `feature/engine-per-slot-history`).** `store2.bin`:
+each run written once as its own record, per-slot A / B state records, a 1 GiB run area reclaimed at boot; the DEC-253
+`store.bin` migrated (read only, left on the card). Native 4,551 passed; device: 27 slots migrated and reloaded, a take
+saved while playing wrote its 2 runs only, the worst persistence grain 94 µs. Next: E4.6c per-slot depth 99.
+
 **2026-11-11 — E9.8b-3b run-once recommendation after owner clarification (design only).** Owner favors option 2
 and clarifies that rebuilding development storage is acceptable and no migration is required. Recommendation
 changes to the run-once representation of DEC-254 — per-slot card-backed history directly; whole-slot A/B was

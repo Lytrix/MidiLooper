@@ -228,6 +228,14 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
+  /// DEC-254 (E4.6d): a fetched cold state arrived on `slot` (see `SlotTransport::fetched`).
+  Result fetched(uint8_t slot, ManifestId floor, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
+    Emit buf[Tracks * T];
+    uint8_t n;
+    const Result r = x_->fetched(slot, floor, clock, buf, Tracks * T, n);
+    out_->route(buf, n, nowUs, usPerTick);
+    return r;
+  }
   Result redo(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     uint8_t n;

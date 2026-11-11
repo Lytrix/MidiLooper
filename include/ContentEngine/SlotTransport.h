@@ -247,6 +247,15 @@ class SlotTransport {
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
   }
+  /// DEC-254 (E4.6d): a fetch arrived — the slot steps down to its oldest hot state (the fetched one) if it is still at
+  /// `floor`, and its playing tracks follow, as on an undo.
+  Result fetched(uint8_t slot, ManifestId floor, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
+    emitted = 0;
+    if (slot == audSlot_) return Result::Busy;
+    if (!history_->toOldest(slot, floor)) return Result::NoChange;
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
   Result redo(uint8_t slot, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
     if (slot == audSlot_) return Result::Busy;

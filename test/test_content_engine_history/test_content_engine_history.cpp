@@ -605,6 +605,105 @@ void test_random_sequences_match_the_reference_model_production() {
   randomAgainstReference(gH, 64, 99, 60000, 99);
 }
 
+
+// ---- DEC-254 (E4.6c): the cold tier ----------------------------------------------------------------------------------
+struct FakeCold : ColdSink {
+  uint8_t n[64] = {};
+  bool accept = true;
+  uint32_t demotes = 0;
+  ManifestId last = kNoManifest;
+  bool demote(uint8_t s, ManifestId m) override {
+    if (!accept) return false;
+    ++n[s];
+    ++demotes;
+    last = m;
+    return true;
+  }
+  uint8_t coldCount(uint8_t s) const override { return n[s]; }
+  void dropOldestCold(uint8_t s) override {
+    if (n[s] != 0) --n[s];
+  }
+  void clearCold(uint8_t s) override { n[s] = 0; }
+  uint8_t fetchSlot = 0xFF;
+  uint32_t fetches = 0;
+  void requestFetch(uint8_t s) override {
+    fetchSlot = s;
+    ++fetches;
+  }
+};
+
+// A full table demotes the oldest undo step instead of forgetting it: the slot's UNDO level is unchanged; undo stops at
+// the oldest hot state (the fetch is E4.6d). Refused (not on the card), it is forgotten as before.
+void test_a_full_table_demotes_the_oldest_step_cold() {
+  setup();
+  FakeCold cold;
+  gH.attachCold(&cold);
+  ManifestId first = kNoManifest;
+  for (uint8_t i = 0; i < 60; ++i) {
+    const ManifestId m = take(0);
+    if (i == 0) first = m;
+    gH.commit(0, m);
+  }
+  for (uint8_t i = 0; i < 39; ++i) gH.commit(1, take(1));
+  TEST_ASSERT_EQUAL_UINT8(99, gH.heldStates());
+  const uint8_t depth0 = gH.undoDepth(0);
+  TEST_ASSERT_EQUAL_UINT8(60, depth0);  // 59 steps down to the first take, and the empty slot below it
+  gH.commit(1, take(1));
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().demoted);
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().evictedUndo);
+  TEST_ASSERT_EQUAL_UINT16(first, cold.last);  // slot 0's oldest
+  TEST_ASSERT_EQUAL_UINT8(1, cold.n[0]);
+  TEST_ASSERT_EQUAL_UINT8(depth0, gH.undoDepth(0));  // kept: one hot step fewer, one cold more
+  // Not on the card: forgotten, as before the cold tier (and the slot's floor rises).
+  cold.accept = false;
+  gH.commit(1, take(1));
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().demoted);
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().evictedUndo);
+  TEST_ASSERT_EQUAL_UINT8(depth0 - 2, gH.undoDepth(0));  // that step, and the empty slot below (the floor rule)
+  cold.accept = true;
+  for (uint8_t i = 0; i < 57; ++i) TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_FALSE(gH.undo(0));  // the oldest hot state: the cold one below waits for E4.6d
+  TEST_ASSERT_EQUAL_UINT32(1, gH.stats().undoAtCold);
+  TEST_ASSERT_TRUE(gH.undoDepth(0) >= 1);  // the cold step still counted
+  gH.clearSlot(0);
+  TEST_ASSERT_EQUAL_UINT8(0, cold.n[0]);  // clearing a slot clears its cold states too
+}
+
+// Per-slot depth: a slot keeps 99 states, hot and cold; its 100th forgets its own oldest — no other slot loses a step.
+void test_a_slot_keeps_99_and_forgets_only_its_own() {
+  setup();
+  FakeCold cold;
+  gH.attachCold(&cold);
+  gH.commit(5, take(5));
+  gH.commit(5, take(5));
+  const uint8_t other = gH.undoDepth(5);
+  for (uint16_t i = 0; i < 140; ++i) {
+    gH.commit(0, take(0));
+    drainReclaim();
+  }
+  TEST_ASSERT_EQUAL_UINT8(other, gH.undoDepth(5));  // the quiet slot kept both its steps
+  TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(5));
+  TEST_ASSERT_TRUE(gH.stats().slotDepth > 0);
+  TEST_ASSERT_EQUAL_UINT8(98, gH.undoDepth(0));  // 99 states: 98 steps below the current (no empty slot left)
+  TEST_ASSERT_TRUE(cold.n[0] > 0);
+  TEST_ASSERT_EQUAL_UINT32(0, gH.stats().evictedUndo);  // nothing forgotten for room in the table
+}
+
+// Undo stops at the oldest hot state when a cold one lies below — never jumps over it to the empty slot.
+void test_undo_stops_above_a_cold_state() {
+  setup();
+  FakeCold cold;
+  gH.attachCold(&cold);
+  for (uint8_t i = 0; i < 3; ++i) gH.commit(0, take(0));
+  for (uint8_t i = 0; i < 96; ++i) gH.commit(1, take(1));
+  gH.commit(1, take(1));  // full: slot 0's oldest goes cold
+  TEST_ASSERT_EQUAL_UINT8(1, cold.n[0]);
+  TEST_ASSERT_EQUAL_UINT8(3, gH.undoDepth(0));  // two hot steps down, the cold one, the empty slot
+  TEST_ASSERT_TRUE(gH.undo(0));
+  TEST_ASSERT_FALSE(gH.undo(0));
+  TEST_ASSERT_NOT_EQUAL(kNoManifest, gH.current(0));  // still the oldest hot state, not the empty slot
+}
+
 void test_no_heap_after_init() {
   setup();
   gTrap = true;
@@ -637,6 +736,9 @@ int main(int, char**) {
   RUN_TEST(test_session_on_empty_slot_keeps_empty_reachable);
   RUN_TEST(test_random_sequences_match_the_reference_model_small);
   RUN_TEST(test_random_sequences_match_the_reference_model_production);
+  RUN_TEST(test_a_full_table_demotes_the_oldest_step_cold);
+  RUN_TEST(test_a_slot_keeps_99_and_forgets_only_its_own);
+  RUN_TEST(test_undo_stops_above_a_cold_state);
   RUN_TEST(test_no_heap_after_init);
   return UNITY_END();
 }

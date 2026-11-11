@@ -175,17 +175,23 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7198896u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+constexpr size_t kPsramBudget = 7592760u;  // DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
+                                           // aside until the target); DEC-254 (E4.6c): + 347,648 B — the cold tier (64 x 99 cold state
+                                           // descriptors, 8,192 run-reference chunks, an 8,192-record directory);
+                                           // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),
+                                           // each run's record sector / serial / save state, the save FIFO state;
+                                           // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
                                            // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
                                            // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
                                            // run lists and source list; DEC-290: + 224 B the request's template table and label
-constexpr size_t kRam2Budget = 160072u;  // measured (DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 160096u;  // measured (DEC-254 E4.6e: + 8 B History's pressure counter; E4.6c: + 16 B History's cold sink and counters; DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
-static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u,
+static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 448u,
               "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
-              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap (ARM)");
+              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
+              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding) (ARM)");
 #endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
               "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");
@@ -218,6 +224,8 @@ class EngineRoot {
     if (!r_->index.init(p_->pool, r_->runs)) return false;  // the index partition leaves the free stack first
     r_->reservations.init(p_->pool, r_->runs, kLedgerFixedReservePages, Config::kPreviewPages);
     r_->history.init(r_->manifests, r_->runs);
+    pressureFloor_ = Config::kContentQuotaPages / 8;  // DEC-254 (E4.6e)
+    pressureUs_ = 0;
     r_->ids.init(1);
     r_->writer.init(p_->pool, r_->runs, r_->reservations, r_->ids);
     r_->editWriter.init(p_->pool, r_->runs, r_->manifests, r_->reservations, r_->history, p_->editLog);
@@ -296,6 +304,17 @@ class EngineRoot {
       if (!persistLive_ && (p_->persistence.pending() || libraryWorking()) &&
           r_->scheduler.submit(JobSpec{JobClass::Persistence, nowUs, kPersistGrains, &persistStep, this}, id))
         persistLive_ = true;
+      uint8_t fs;
+      ManifestId floor;
+      if (p_->persistence.takeFetch(fs, floor))  // DEC-254 (E4.6d): a fetched undo, applied as an undo
+        r_->control.fetched(fs, floor, clock, nowUs, usPerTick);
+      // DEC-254 (E4.6e): the content pool short — the oldest card-held undo step leaves PSRAM (at most one each
+      // `kPressureUs`, so the reclaim of its pages is seen before the next).
+      if (p_->persistence.storeReady() && !p_->persistence.booting() &&
+          r_->reservations.contentFreePages() < pressureFloor_ && nowUs - pressureUs_ >= kPressureUs) {
+        pressureUs_ = nowUs;
+        r_->history.demoteOldest();
+      }
     }
     uint8_t slot;
     if (r_->noteEdit.takePublished(slot)) {
@@ -360,9 +379,12 @@ class EngineRoot {
     p_->persistence.init(card, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
                          p_->persistScratch[0], p_->persistScratch[1], p_->persistScratch[2], v1Layout_);
     p_->persistence.probe();
+    r_->history.attachCold(&p_->persistence);  // DEC-254 (E4.6c): demoted states go to the cold tier
     p_->setLoad.bind(card, p_->libraryWriter, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
                      p_->libraryScratch, &clearSet, this);
   }
+  /// DEC-254 (E4.6e): below this many free content pages the oldest card-held undo step leaves PSRAM (tests set it).
+  void setPressureFloor(uint32_t pages) { pressureFloor_ = pages; }
   /// Tests: the `MidiEvent` layout V1 files were written with (the Teensy's by default).
   void setV1Layout(MidiEventLayout l) { v1Layout_ = l; }
   /// The owner approved saving on the device (owner 2026-11-05: once, remembered by the folder).
@@ -866,6 +888,9 @@ class EngineRoot {
   uint8_t stagedPlaying_ = 0;
   CardIo* card_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
+  static constexpr uint32_t kPressureUs = 50000;
+  uint32_t pressureFloor_ = Config::kContentQuotaPages / 8;  // DEC-254 (E4.6e): ~26,000 rows of headroom
+  uint32_t pressureUs_ = 0;
   static constexpr uint32_t kPersistGrains = 2000;
   uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
   bool previewShown_ = false;                              // plan §6.2 fix 2: the preview roll shows

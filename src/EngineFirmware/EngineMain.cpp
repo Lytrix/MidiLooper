@@ -945,7 +945,7 @@ void applyLoaded(const library::BlobHeader& b) {
     if (b.surface[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(b.surface[1 + t] % 8));
 }
 /// A load's or return's end, reported once.
-void serviceLoad() {
+FLASHMEM __attribute__((noinline)) void serviceLoad() {  // DEC-254: from flash (RAM1 room)
   // The clock stopped while a live load waited for its switch point: it switches now.
   if (!gClock.running() && gEngine.setLoad().waiting()) gEngine.switchNow(gLastTick, micros(), gClock.usPerTick());
   const uint8_t gapped = gEngine.switchedTracks(), staged = gEngine.stagedTracks();
@@ -1034,7 +1034,7 @@ void serviceLoad() {
   reportLibrary(verb);
 }
 /// The browser (slice 3): kept current while closed, and what it asks carried out.
-void serviceBrowser(uint32_t nowUs) {
+FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC-254: from flash (RAM1 room)
   if (!gBrowserReady) return;
   library::CheckpointHeader cp{};
   const bool hasCheckpoint = gEngine.library().checkpoint(cp);
@@ -1123,7 +1123,7 @@ void serviceWorking(uint32_t nowUs) {
   Serial.printf("#ENGINE,working,begin,set=%u,base=%lu\n", gSet, static_cast<unsigned long>(gBase));
 }
 /// A library job's end, reported once.
-void serviceLibrary() {
+FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the library's card steps from flash (RAM1 room)
   const ProductionLibrary::Status st = gEngine.library().status();
   if (st == gLibraryWas) return;
   gLibraryWas = st;
@@ -1209,6 +1209,8 @@ uint32_t gPutBytes = 0, gPutCrc = 0;
 bool groovePath(const char* p) {
   return p != nullptr && std::strncmp(p, "/GROOVES/", 9) == 0 && std::strstr(p, "..") == nullptr && std::strlen(p) < 120;
 }
+uint32_t gClassGrainMaxUs[5] = {};  // DEC-254: the worst grain of each job class (hard, transition, display, persistence,
+                                   // background), reset by `!ENGINE take`
 // E9.8b-3b (undo-depth sizing): undo-history births since boot — counted per minute (the busiest kept) and by what made
 // each one (a run the slot's previous state did not have: its kind; none: a state with fewer runs, e.g. a clear).
 // Diagnostics only: one compare a main-loop pass, a scan of the 99 entries per birth. `!ENGINE history-cost`.
@@ -1343,7 +1345,7 @@ void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
 
-void command(char* line, uint32_t nowUs) {
+FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  // DEC-254: serial commands from flash (RAM1 room)
   const uint32_t us = gClock.usPerTick();
   if (std::strcmp(line, "!STOP_STATUS") == 0) {
     Serial.printf("#STOP_STATUS,state=%s\n", gClock.running() ? "RUNNING" : "STOPPED");
@@ -1393,8 +1395,11 @@ void command(char* line, uint32_t nowUs) {
   } else if (std::strcmp(verb, "overdub") == 0) {
     c.selectTrack(static_cast<uint8_t>(a));
     report(verb, static_cast<uint8_t>(c.startOverdub(static_cast<uint8_t>(a), gLastTick)));
-  } else if (std::strcmp(verb, "end") == 0) {  // end T: a take ends at the bar
-    report(verb, static_cast<uint8_t>(c.queueStop(static_cast<uint8_t>(a), gLastTick)));
+  } else if (std::strcmp(verb, "end") == 0) {  // end T: as REC (`Surface::endTake`) — a Record take at the bar, an overdub at once
+    const auto& x = gEngine.transport();
+    const bool overdub = x.mode() == ProductionTransport::Mode::Overdubbing && x.writingTrack() == a;
+    report(verb, static_cast<uint8_t>(overdub ? c.stopNow(gLastTick, nowUs, us)
+                                              : c.queueStop(static_cast<uint8_t>(a), gLastTick)));
   } else if (std::strcmp(verb, "undo") == 0) {
     report(verb, static_cast<uint8_t>(c.undo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
   } else if (std::strcmp(verb, "redo") == 0) {
@@ -1592,6 +1597,35 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(ct.exists), static_cast<unsigned long>(ct.openRead),
                   static_cast<unsigned long>(ct.sectorRead), static_cast<unsigned long>(ct.sectorWrite),
                   static_cast<unsigned long>(ct.store), gEngine.persistence().stats().store);
+    Serial.printf("#ENGINE,grain_worst,hard=%lu,transition=%lu,display=%lu,persistence=%lu,background=%lu\n",
+                  static_cast<unsigned long>(gClassGrainMaxUs[0]), static_cast<unsigned long>(gClassGrainMaxUs[1]),
+                  static_cast<unsigned long>(gClassGrainMaxUs[2]), static_cast<unsigned long>(gClassGrainMaxUs[3]),
+                  static_cast<unsigned long>(gClassGrainMaxUs[4]));
+    for (uint32_t& m : gClassGrainMaxUs) m = 0;
+    {  // DEC-254 (E4.6b): the run-once store
+      const auto& ps = gEngine.persistence().stats();
+      const auto& hs = gEngine.history().stats();
+      Serial.printf("#ENGINE,cold,states=%u,demoted=%lu,pressure=%lu,content_free=%lu,slot_depth=%lu,undo_at_cold=%lu,"
+                    "loaded=%lu,bad=%lu,restarts=%lu\n",
+                    gEngine.persistence().coldTier().total(), static_cast<unsigned long>(hs.demoted),
+                    static_cast<unsigned long>(hs.pressureDemoted),
+                    static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
+                    static_cast<unsigned long>(hs.slotDepth), static_cast<unsigned long>(hs.undoAtCold),
+                    static_cast<unsigned long>(ps.coldLoaded), static_cast<unsigned long>(ps.coldBad),
+                    static_cast<unsigned long>(ps.coldRestarts));
+      Serial.printf("#ENGINE,fetch,fetches=%lu,states=%lu,sectors=%lu,refused=%lu,cancelled=%lu,busy=%lu,active=%u\n",
+                    static_cast<unsigned long>(ps.fetches), static_cast<unsigned long>(ps.fetchedStates),
+                    static_cast<unsigned long>(ps.fetchSectors), static_cast<unsigned long>(ps.fetchRefused),
+                    static_cast<unsigned long>(ps.fetchCancelled), static_cast<unsigned long>(ps.fetchBusy),
+                    gEngine.persistence().fetching() ? 1u : 0u);
+      Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
+                    "migrated_slots=%lu,renamed=%lu,clusters=%lu\n",
+                    static_cast<unsigned long>(ps.runsWritten), static_cast<unsigned long>(ps.runSectors),
+                    static_cast<unsigned long>(ps.runsKept), static_cast<unsigned long>(ps.storeFull),
+                    static_cast<unsigned long>(ps.badRun), static_cast<unsigned long>(ps.migratedSlots),
+                    static_cast<unsigned long>(ps.storeRenamed),
+                    static_cast<unsigned long>(gEngine.persistence().runAreaClusters()));
+    }
     Serial.printf("#ENGINE,card_write,next=%lu,jump=%lu,not_ready=%lu,stops=%lu\n",
                   static_cast<unsigned long>(ct.nextWrite), static_cast<unsigned long>(ct.jumpWrite),
                   static_cast<unsigned long>(ct.notReady), static_cast<unsigned long>(ct.stops));
@@ -1645,6 +1679,10 @@ void command(char* line, uint32_t nowUs) {
       const uint8_t n = u + r;
       ++spread[n == 0 ? 0 : n == 1 ? 1 : n == 2 ? 2 : n <= 4 ? 3 : n <= 8 ? 4 : n <= 16 ? 5 : 6];
     }
+    Serial.println();
+    Serial.print("#ENGINE,history_cold");  // DEC-254 (E4.6c): slot:cold steps, where any
+    for (uint8_t s = 0; s < ContentEngine::Config::kSlotCount; ++s)
+      if (h.coldCount(s) != 0) Serial.printf(",%u:%u", s, h.coldCount(s));
     Serial.println();
     Serial.printf("#ENGINE,history_spread,populated=%u,steps_0=%u,steps_1=%u,steps_2=%u,steps_3_4=%u,steps_5_8=%u,"
                   "steps_9_16=%u,steps_17_up=%u\n",
@@ -1982,6 +2020,11 @@ bool timedGrain() {
   const uint8_t phase = gEngine.setLoad().phase() >= 4 ? 2 : gEngine.setLoad().phase() >= 2 ? 1 : 0;
   const uint32_t t = micros();
   const bool ran = gEngine.runGrain(t);
+  if (ran) {  // DEC-254's timing gate: each job class's worst single grain
+    const uint32_t d = micros() - t;
+    const uint8_t c = static_cast<uint8_t>(gEngine.scheduler().lastClass());
+    if (c < 5 && d > gClassGrainMaxUs[c]) gClassGrainMaxUs[c] = d;
+  }
   if (ran && working) {
     const uint32_t d = micros() - t;
     if (d > gLoadGrainMaxUs) gLoadGrainMaxUs = d;
@@ -2024,7 +2067,7 @@ extern "C" FLASHMEM void startup_early_hook(void) {
 
 extern "C" FLASHMEM void startup_middle_hook(void) { phase(kPhaseClocks); }
 
-void setup() {
+FLASHMEM void setup() {  // DEC-254: once at boot, from flash (RAM1 room)
   phase(kPhaseSetup);
   gResetCause = SRC_SRSR;
   SRC_SRSR = gResetCause;  // write-one-to-clear: the next boot reports its own cause

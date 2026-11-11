@@ -14758,9 +14758,9 @@ Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.
 **Owner:** `ContentEngine::History` (per-slot depth, hot / cold state, fetch); `ContentEngine::Persistence` (the card's
 run and state records). OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) E4.6.
 Builds on DEC-252 (one bounded content engine) and DEC-253 (the store).
-**Status:** Deferred by owner (2026-11-06) — kept as a proposed future extension, not rejected. No implementation,
-no storage-format migration under DEC-254 until the fixed-memory engine and the A / B persistence are
-device-qualified; then the owner reassesses from history-pressure diagnostics (below) whether useful undo is lost.
+**Status:** **Approved by owner 2026-11-11** ("ok implement this a new branch"; the run-once store chosen over
+extending the slot copies: "I choose DEC-254's run-once store"). Deferred 2026-11-06 until then. Built in stages on
+`feature/engine-per-slot-history`: E4.6b done (below); E4.6c–e follow.
 
 ### Reassessment
 
@@ -14795,6 +14795,64 @@ device-qualified; then the owner reassesses from history-pressure diagnostics (b
 - **Without the card** (no card, or saving not approved): today's behaviour, the shared 99 in PSRAM.
 - **Boot** loads each slot's current state (and its hot steps); deeper states are listed from their state records,
   not loaded. The full 99 steps survive a reboot.
+
+### E4.6b — the run-once store (2026-11-11)
+
+Built as `docs/Plans/e46b_run_once_store.md`: `store2.bin` — two state-record copies a slot (the slot stream without
+its rows; each directory entry names its run record) and a 1 GiB run area of run records (header "MLR1" written last,
+the rows' CRC-32), 8-sector clusters; `SaveJob` / `LoadJob` unchanged behind a splitting sink and a record source;
+`RunId` → (record, serial); the cluster map rebuilt at boot from both copies of every slot (reclaim at boot); the
+DEC-253 `store.bin` read once to migrate (left on the card). Native: run-once, a damaged record by name, reclaim,
+migration (3 mutations caught); full native 4,551 passed. Device (`953d7297…` / `dea5111b…`, `crash=0`, `BOOT,load,ok`):
+29 slots loaded from `store.bin`, 27 with history migrated (235 runs, 948 sectors, 0 failed); after a reboot the set
+loaded from `store2.bin` (the same 273 clusters, the same history); a take saved during playback wrote its 2 runs
+only, an overdub's save its new runs only. **Timing:** the worst persistence grain 94 µs (the gate: no worse than
+today's worst pass, ~0.9 ms); the boot load's grains reach 31 ms (32 sectors a grain, before playback) — E4.6d's fetch
+must read in smaller grains. RAM1: the serial command handler moved to flash (13,248 B free).
+
+### E4.6c — per-slot depth, hot and cold states (2026-11-11)
+
+Built as `docs/Plans/e46c_cold_states.md`: a full hot table **demotes** the oldest undo step (a slot's oldest hot state
+whose runs are on the card) to the cold tier instead of forgetting it; a slot keeps at most 99 states, hot and cold,
+and forgets only its own oldest; the UNDO level counts cold steps; undo stops at the oldest hot state above a cold one
+until the fetch (E4.6d). Cold states live in PSRAM (`ColdTier.h`, + 347,648 B) and on the card in each copy's cold
+record (the run area's reserved last region, written before the copy's header). Native: 3 history tests, the cold
+round trip; 3 mutations caught; full native 4,555. Device (`9faa6e4a…`, `crash=0`): a take and an overdub past the full
+table — `demoted=1`, `evicted_undo=0` (only an old redo branch dropped, as designed), the worst persistence grain
+83 µs; after a reboot every slot's UNDO / REDO level unchanged. RAM1: `setup()` and the library service from flash
+(1,316 B left in the last bank).
+
+### E4.6d — the fetch (2026-11-11)
+
+Built as `docs/Plans/e46d_fetch.md`: an undo at a slot's oldest hot state with cold states below asks a fetch; the
+slot keeps playing; presses meanwhile reach deeper and only the final target is switched to (owner). Runs in PSRAM are
+reused, the others admitted and read from their records in grains of at most four sectors (header and rows' CRC
+checked); the fetched states are promoted (`History::promote`, room made on other slots only) and switched to as an
+undo (`SlotTransport::fetched`) if the slot is still where the presses were made. A damaged record refuses by name; a
+clear or set load cancels; a commit meanwhile keeps the states without switching. Eviction now judges the undo / redo
+side by position. Native: 5 fetch tests, 3 mutations caught; full native 4,559. Device (`4a3e4f71…`, `crash=0`): T2 S3
+(4 cold steps) undone past its hot states — each fetch in place within one 0.4–0.6 s serial poll, 0–2 sectors read, the
+worst persistence grain 337 µs (a sector read); the slot redone to its top afterwards. RAM1: the set-load and browser
+services from flash (2,068 B left in the last bank).
+
+### E4.6e — pressure and boot (2026-11-11)
+
+Below a content-pool floor (1/8 of the quota, about 26,000 rows of headroom) the oldest card-held undo step leaves
+PSRAM — `History::demoteOldest`, only ever a demotion — at most one each 50 ms so the reclaim of its pages is seen
+before the next; recording admission is unchanged. Boot loads hot states only (cold ones are descriptors, E4.6c); a
+loading slot whose own oldest step must make room makes it cold (its runs known from the load in progress), instead of
+forgetting it. Native: 2 tests, 3 mutations caught; full native 4,561. Device (`e1533cf2…`, `crash=0`): content free
+2,821 pages, no pressure demotion over 10 s idle. **E4.6 complete** (b–e) on `feature/engine-per-slot-history`.
+
+### File names (owner 2026-11-11)
+
+Owner: "rename store.bin to .bak and rename store2.bin to store.bin" (the library file unchanged). The run-once store is
+`/MidiLooper/engine/store.bin`; the DEC-253 store is kept as `store.bak` (the migration source). The boot renames
+(`Persistence::nameStores`, `CardIo::rename`): a card with `store2.bin` — `store.bin` becomes `.bak`, then `store2.bin`
+`store.bin`; a card with only the DEC-253 store under `store.bin` (shorter than the run-once store) — it becomes `.bak`
+and is migrated. Never over an existing file; nothing deleted. Native 2 tests, 2 mutations caught. Device
+(`bb0d3b0a…`, `crash=0`): `renamed=1`, `migrated_slots=0`, 27 slots and their history loaded from the renamed store; the
+boot's persistence grain with the renames 43.6 ms (once, transport stopped).
 
 ### Alternatives considered
 
