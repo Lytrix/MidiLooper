@@ -14,11 +14,11 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/MidiClass.h"
-#include "ContentEngine/SpanWindow.h"
-#include "ContentEngine/Writer.h"
+#include "ContentEngine/Content/MidiClass.h"
+#include "ContentEngine/Composition/SpanWindow.h"
+#include "ContentEngine/Content/CaptureWriter.h"
 
 using namespace ContentEngine;
 

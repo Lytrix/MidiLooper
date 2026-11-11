@@ -17,11 +17,11 @@
 #include <tuple>
 #include <vector>
 
-#include "ContentEngine/ClockOutput.h"
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Playback/ClockOutput.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/OutputPort.h"
-#include "ContentEngine/PlaybackTrack.h"
+#include "ContentEngine/Playback/MidiOutputHub.h"
+#include "ContentEngine/Playback/PlaybackTrack.h"
 
 using namespace ContentEngine;
 

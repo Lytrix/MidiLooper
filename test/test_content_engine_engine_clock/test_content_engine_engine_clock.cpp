@@ -12,7 +12,7 @@
 
 #include <vector>
 
-#include "ContentEngine/EngineClock.h"
+#include "ContentEngine/Timing/EngineClock.h"
 
 using namespace ContentEngine;
 

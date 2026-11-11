@@ -5,7 +5,7 @@
 
 #include <unity.h>
 
-#include "ContentEngine/Browser.h"
+#include "ContentEngine/ControlSurface/SetBrowser.h"
 
 using namespace ContentEngine;
 using namespace ContentEngine::library;

@@ -13,14 +13,14 @@
 #include <cstdint>
 #include <cstdio>
 
-#include "ContentEngine/CheckpointTable.h"
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/CheckpointTable.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/ReclaimJob.h"
-#include "ContentEngine/EditWriter.h"
-#include "ContentEngine/History.h"
-#include "ContentEngine/OutputPort.h"
-#include "ContentEngine/SpanWindow.h"
+#include "ContentEngine/Content/ReclaimJob.h"
+#include "ContentEngine/NoteEdit/NoteEditWriter.h"
+#include "ContentEngine/History/SlotUndoHistory.h"
+#include "ContentEngine/Playback/MidiOutputHub.h"
+#include "ContentEngine/Composition/SpanWindow.h"
 #include "ContentEngine/WorkerScheduler.h"
 
 #if defined(__IMXRT1062__)

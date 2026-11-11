@@ -17,8 +17,8 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
-#include "ContentEngine/EditIndexStore.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
+#include "ContentEngine/Composition/EditIndexStore.h"
 #include "ContentEngine/EngineCore.h"
 
 static unsigned long gHeapAllocations = 0;

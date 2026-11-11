@@ -16,10 +16,10 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/SpanWindow.h"
-#include "ContentEngine/Writer.h"
+#include "ContentEngine/Composition/SpanWindow.h"
+#include "ContentEngine/Content/CaptureWriter.h"
 #include "../test_engine_window_bound/span_window_model.h"
 
 static unsigned long gHeapAllocations = 0;

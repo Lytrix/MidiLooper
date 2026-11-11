@@ -18,7 +18,7 @@
 #include <vector>
 
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/History.h"
+#include "ContentEngine/History/SlotUndoHistory.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

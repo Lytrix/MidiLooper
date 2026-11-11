@@ -20,10 +20,10 @@
 #include <initializer_list>
 #include <new>
 
-#include "ContentEngine/HistoryCost.h"
-#include "ContentEngine/EngineClock.h"
+#include "ContentEngine/History/HistoryCost.h"
+#include "ContentEngine/Timing/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
-#include "ContentEngine/Surface.h"
+#include "ContentEngine/ControlSurface/ControlSurface.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

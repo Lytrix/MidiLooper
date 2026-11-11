@@ -9,7 +9,7 @@
 
 #include <cstring>
 
-#include "ContentEngine/Library.h"
+#include "ContentEngine/Storage/SetLibraryFormat.h"
 
 using namespace ContentEngine;
 using namespace ContentEngine::library;

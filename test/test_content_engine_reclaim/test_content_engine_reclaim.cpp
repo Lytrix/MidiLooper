@@ -14,7 +14,7 @@
 #include <new>
 
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/ReclaimJob.h"
+#include "ContentEngine/Content/ReclaimJob.h"
 #include "ContentEngine/WorkerScheduler.h"
 
 static unsigned long gHeapAllocations = 0;

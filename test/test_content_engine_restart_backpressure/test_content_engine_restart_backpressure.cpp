@@ -23,12 +23,12 @@
 #include <utility>
 #include <vector>
 
-#include "ContentEngine/CheckpointTable.h"
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/CheckpointTable.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/OutputPort.h"
-#include "ContentEngine/SpanWindow.h"
-#include "ContentEngine/TerminalScheduler.h"
+#include "ContentEngine/Playback/MidiOutputHub.h"
+#include "ContentEngine/Composition/SpanWindow.h"
+#include "ContentEngine/Playback/TerminalScheduler.h"
 
 using namespace ContentEngine;
 

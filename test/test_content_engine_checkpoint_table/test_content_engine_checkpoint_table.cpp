@@ -17,10 +17,10 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/CheckpointTable.h"
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/CheckpointTable.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/SpanWindow.h"
+#include "ContentEngine/Composition/SpanWindow.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

@@ -17,9 +17,9 @@
 #include <tuple>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/SetFile.h"
+#include "ContentEngine/Storage/SlotFile.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

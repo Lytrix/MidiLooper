@@ -11,7 +11,7 @@
 #include <cstdint>
 #include <initializer_list>
 
-#include "ContentEngine/HostTx.h"
+#include "ContentEngine/ControlSurface/UsbHostTransmitAdmission.h"
 
 using ContentEngine::hosttx::hasRoom;
 using ContentEngine::hosttx::State;

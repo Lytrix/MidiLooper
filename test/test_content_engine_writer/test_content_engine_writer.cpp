@@ -13,7 +13,7 @@
 #include <new>
 
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/Writer.h"
+#include "ContentEngine/Content/CaptureWriter.h"
 
 static unsigned long gHeapAllocations = 0;
 void* operator new(std::size_t size) {

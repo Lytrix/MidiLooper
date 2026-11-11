@@ -13,14 +13,14 @@
 #include <cstddef>
 #include <cstdint>
 
-#include "ContentEngine/CheckpointTable.h"
-#include "ContentEngine/Composer.h"
-#include "ContentEngine/EditIndexStore.h"
+#include "ContentEngine/Composition/CheckpointTable.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
+#include "ContentEngine/Composition/EditIndexStore.h"
 #include "ContentEngine/EngineConfig.h"
-#include "ContentEngine/ManifestTable.h"
-#include "ContentEngine/PagePool.h"
-#include "ContentEngine/RowReservations.h"
-#include "ContentEngine/RunTable.h"
+#include "ContentEngine/Content/ManifestTable.h"
+#include "ContentEngine/Content/PagePool.h"
+#include "ContentEngine/Content/RowReservations.h"
+#include "ContentEngine/Content/RunTable.h"
 
 namespace ContentEngine {
 

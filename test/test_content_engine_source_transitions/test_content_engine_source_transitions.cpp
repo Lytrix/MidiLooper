@@ -21,10 +21,10 @@
 #include <utility>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/PlaybackJobs.h"
-#include "ContentEngine/PlaybackTrack.h"
+#include "ContentEngine/Playback/PlaybackJobs.h"
+#include "ContentEngine/Playback/PlaybackTrack.h"
 
 using namespace ContentEngine;
 

@@ -15,7 +15,7 @@
 #include <new>
 
 #include "ContentEngine/EngineConfig.h"
-#include "ContentEngine/TerminalScheduler.h"
+#include "ContentEngine/Playback/TerminalScheduler.h"
 
 static unsigned long gHeapAllocations = 0;
 void* operator new(std::size_t size) {

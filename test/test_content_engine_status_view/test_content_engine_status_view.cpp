@@ -9,9 +9,9 @@
 
 #include <cstring>
 
-#include "ContentEngine/EngineClock.h"
+#include "ContentEngine/Timing/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
-#include "ContentEngine/StatusView.h"
+#include "ContentEngine/Display/StatusView.h"
 
 using namespace ContentEngine;
 using namespace ContentEngine::status;

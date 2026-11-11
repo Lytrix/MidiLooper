@@ -16,9 +16,9 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/PlaybackTrack.h"
+#include "ContentEngine/Playback/PlaybackTrack.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

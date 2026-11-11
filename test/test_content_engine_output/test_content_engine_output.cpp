@@ -22,8 +22,8 @@
 #include <vector>
 
 #include "ContentEngine/EngineConfig.h"
-#include "ContentEngine/OutputPort.h"
-#include "ContentEngine/TerminalScheduler.h"
+#include "ContentEngine/Playback/MidiOutputHub.h"
+#include "ContentEngine/Playback/TerminalScheduler.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;

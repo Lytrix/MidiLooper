@@ -16,11 +16,11 @@
 #include <new>
 #include <vector>
 
-#include "ContentEngine/Composer.h"
+#include "ContentEngine/Composition/SpanWindowComposer.h"
 #include "ContentEngine/EngineCore.h"
-#include "ContentEngine/History.h"
-#include "ContentEngine/SetFile.h"
-#include "ContentEngine/FitRun.h"
+#include "ContentEngine/History/SlotUndoHistory.h"
+#include "ContentEngine/Storage/SlotFile.h"
+#include "ContentEngine/Composition/FitRun.h"
 
 static unsigned long gHeapAllocations = 0;
 static bool gTrap = false;
