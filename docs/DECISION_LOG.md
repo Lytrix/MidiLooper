@@ -16951,3 +16951,85 @@ static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u 
   `DisplayManager`'s; the first-pixel brightness owner 2026-11-08 (notes touching on a pitch read as one).
 - `StatusView` (E9.8k; owner 2026-11-06, mock-up "B2 round 6"): the save dots follow the legacy
   `resolveDeferredSaveDisplayStatus`, the countdown the legacy `ticksToLaunchCountdown…`, the tempo the legacy `120.0`.
+
+### ControlSurface
+
+- `ControlSurface` (E9.8b-1; owner 2026-11-06: performance controls first, the legacy gesture map kept exactly so the
+  DROID ini stays unchanged — legacy `MidiButtonProcessor`, `BarStepButtonHandler`, `MidiLedManager` /
+  `TrackManagerMidiLedFeedback`, `handleArmedRecordPress`, `handleLoopStartFaderInput`, the extended transport's
+  QUANTIZE note 43; surface slices A–E; the sets browser slice 3; the GROOVE motor feedback E9.8b-3c). Amendments cited
+  in its comments: DEC-276 am. 2, DEC-283 am. 1 and 2, DEC-284 am. 1–3, DEC-289 am. 2, DEC-295 am. 2, 3 and 6.
+- `NoteEditSurface` (E9.8b-2; owner 2026-11-06: core NOTE_EDIT matching the legacy `ControlSurfaceManager` /
+  `EditManager` mappings, motor feedback first off as the legacy default, `NoteEditDependentFaderSnapshot`; the step
+  buttons legacy `BarStepButtonHandler::executeNoteEditAction`, surface slices D / E; the legacy mapping functions
+  `selectTickFromPitchbend`, `selectStackedNoteIndexFromPitchbend`, `lengthEditCoarsePitchbendToLoopTick`,
+  `applyLengthEndTargetRules`, `positionModeLoopTickToCoarsePitchbend`, `NOTE_SELECTION_GRACE_PERIOD`). Motor landing
+  measured on the DROID 2026-11-06: F2 written −5780 / −6940 reported −6162 / −7400.
+- `SetBrowser`: the design `docs/Plans/engine_sets_browser_proposal.md`, owner decisions 2026-11-08 / 09; DEC-279
+  amendment 2; get a loop plan § 6.1; fork lanes slice 5. `UsbHostTransmitAdmission`: the DROID stopped taking packets
+  once right after a reboot, 2026-11-08.
+- The owner reports these comments carried (date: the report), as harvested from the code:
+
+```text
+## ControlSurface.h
+  stages: E9.8i, E9.8b-1, E9.8b-2, slice 3, slice A, slice B, slice C, slice D, slice E, E9.8b-3c
+  legacy: BarStepButtonHandler, MidiButtonProcessor, MidiLedManager, a, extended, gesture, handleArmedRecordPress, handleLoopLengthPitchbend, handleLoopStartFaderInput, pins, processEncoderMovement, sendEditSessionMidi
+  owner 2026-11-06: performance controls first, the legacy gesture map kept exactly so the DROID ini stays unc
+  owner 2026-11-08: LOOP_EDIT's F4 is the coarse tempo, whole BPM, pitch bend on channel 15, and F3 the fine t
+  owner 2026-11-10
+  owner 2026-11-10: "copy will require its own minimal UI state"
+  owner 2026-11-10: the window closes after the copy; a refused paste keeps it
+  owner 2026-11-06: as legacy
+  owner 2026-11-06: a MIDI Start plays all tracks
+  owner 2026-11-10: 4; a global setting later
+  owner 2026-11-08
+  owner 2026-11-10: "at loop wrap everything is quantized"
+  owner 2026-11-10: "all notes in the stored loop must be known"; DEC-283: absolute
+  owner 2026-11-11
+  owner 2026-11-10: "long press on play/stop"
+  owner 2026-11-06: F2–F4 sent the loop-edit bank's messages in NOTE_EDIT — the DROID switches banks on a Prog
+  owner 2026-11-08: it stayed open on the track left
+  owner 2026-11-10: a range "sets it as BASE"; F1 / F2 set nothing remembered since amendment 3, but the echo
+  owner 2026-11-08: the motor holds 25 notches, and 1–8 bars over 128 steps was niggly
+  owner 2026-11-08: the notch number sent as is saturates at CC 127 past notch 0, so the patch scales it back
+  owner 2026-11-10: "a way to loop 1 bar"
+  owner 2026-11-10: "the selected bars should always stay absolute"
+  owner 2026-11-10: "switch between 2 custom loop lengths and double press resets to a full range … that would
+  owner 2026-11-08: the tap bursts were annoying and had no way back
+  owner 2026-11-10: "show all possible lengths in the popup to cycle through"; amendment 3
+  owner 2026-11-08: an Atari dialog's Cancel
+  owner 2026-11-08: the steps exploded
+  owner 2026-11-08: the whole-range fader was too shallow to set exactly
+  owner 2026-11-10: the buttons absolute everywhere
+  owner 2026-11-10: from stopped a press selects; the next start plays it ---- LEDs --------------------------
+  owner 2026-11-11: the LED stage over B_max at 300 BPM
+  owner 2026-11-11: at 512 for both, a pass at 30 overdub layers scanned twice ~260 µs; 256 + 128 keep it near
+  owner 2026-11-10: its short press is the next track
+  owner 2026-11-10: the dimmed note bars did not show
+  owner 2026-11-11: the LED stage over B_max at 300 BPM — a slot's whole state was scanned in one main-loop pa
+  owner 2026-11-11: "save B with the slot"; `closeGroove`, `writeColumns`
+## NoteEditSurface.h
+  stages: E9.8b-2, slice D, slice E, surface slice D
+  legacy: 24, BarStepButtonHandler::executeNoteEditAction, ControlSurfaceManager, NoteEditDependentFaderSnapshot, ValueOnly, default, positionModeLoopTickToCoarsePitchbend, shouldApplySelectionOnNoteIdChange
+  owner 2026-11-06: core NOTE_EDIT, matching the legacy `ControlSurfaceManager` / `EditManager` mappings; moto
+  owner 2026-11-06: F2–F4 did not move the selected note
+  owner 2026-11-08
+  owner 2026-11-08: a fader is never exact, so a step a move was too many
+  owner 2026-11-08: nothing to lengthen
+  owner 2026-11-10
+  owner 2026-11-07
+  owner 2026-11-06: legacy `NoteEditDependentFaderSnapshot`, which was off by default
+  owner 2026-11-06: F2 followed F3, its landing read as a move took the note a 16th on, and F3 was pushed
+  owner 2026-11-06
+  owner 2026-11-07: a start F3 had put past its 16th — 1.2.4.47 and on — fell back 48 ticks under F2, and F3 w
+  owner 2026-11-10: they jumped back
+  owner 2026-11-06: it stayed a 16th on, at the end
+  owner 2026-11-07: it stayed where length mode began
+  owner 2026-11-06: F3, rewritten on every F2 step, ignored a move that followed
+## SetBrowser.h
+  stages: slice 4, sets browser slice 3
+  plan: plan §6.1
+  owner 2026-11-09: saving and loading split, no return row; the dividers name the intent
+  owner 2026-11-10: a long press always exits a window; trash is destructive
+## UsbHostTransmitAdmission.h
+```

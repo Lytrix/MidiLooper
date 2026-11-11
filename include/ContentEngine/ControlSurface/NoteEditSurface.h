@@ -1,73 +1,68 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The NOTE_EDIT surface on the engine (fixed-memory-engine E9.8b-2; owner 2026-11-06: core NOTE_EDIT, matching the
-// legacy `ControlSurfaceManager` / `EditManager` mappings; motor feedback off, as the legacy default).
+// The NOTE_EDIT surface on the engine: the DROID's faders and buttons mapped onto a NOTE_EDIT session.
 //
 // * Session: `enter` selects the shown slot's notes in the detailed window as it is now — the whole loop up to 16 bars,
-//   else the 16-bar page holding the playhead; the window is frozen while editing (as legacy) — and opens the engine's
-//   NOTE_EDIT session (`NoteEditSession`) once gathered. A window with more notes than the selection holds is halved
-//   around the playhead until it fits (at least a bar). The bracket starts at the playhead and selects the note at its
-//   16th, else the closest. `leave` keeps the edits as one undo step.
-// * F1 select (channel 16 pitch bend): the 16th under the fader within the window (`selectTickFromPitchbend`), then
-//   the notes starting in that 16th, stacked by start and pitch, chosen by the position inside the step
-//   (`selectStackedNoteIndexFromPitchbend`); no note there: the bracket alone (as `SelectNavigation`). A select leaves
-//   length mode and arms the geometry faders at once. F1 acts only when it moves `kF1Deadband` or more from the value
-//   it last acted on: the DROID repeats a fader at rest and jitters by a few values, and a select at a 16th the moved
-//   note has left would drop it (as legacy `shouldApplySelectionOnNoteIdChange`; owner 2026-11-06: F2–F4 did not move
-//   the selected note).
+//   else the 16-bar page holding the playhead; the window is frozen while editing — and opens the engine's NOTE_EDIT
+//   session (`NoteEditSession`) once gathered. A window with more notes than the selection holds is halved around the
+//   playhead until it fits (at least a bar). The bracket starts at the playhead and selects the note at its 16th, else
+//   the closest. `leave` keeps the edits as one undo step.
+// * F1 select (channel 16 pitch bend): the 16th under the fader within the window, then the notes starting in that
+//   16th, stacked by start and pitch, chosen by the position inside the step; no note there: the bracket alone. A
+//   select leaves length mode and arms the geometry faders at once. F1 acts only when it moves `kF1Deadband` or more
+//   from the value it last acted on: the DROID repeats a fader at rest and jitters by a few values, and a select at a
+//   16th the moved note has left would drop it (then F2–F4 no longer move the selected note).
 // * F2 coarse (channel 14 pitch bend; acts on a movement ≥ 150 or after 1 s at rest): position — the 16th across the
-//   loop (`map`), keeping the start's offset from the reference 16th (F3's, which may lie past the 16th); length — the end across the loop
-//   (`lengthEditCoarsePitchbendToLoopTick`), at least a 16th (`applyLengthEndTargetRules`).
-// * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end
-//   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
-// * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127; owner 2026-11-08, not in
-//   legacy), 0 muting the note (`kVelocityMuted`: drawn, editable, not sent) — that press is then no short / double. Velocity mode begins with the first F4 move while held, or after
-//   `ControlSurface`'s long hold, which writes F4's motor to the velocity; on NOTELEN's release F4's motor goes back to the
-//   pitch. A long hold released without F4 moved by hand is a long press: a note is created at the bracket (owner
-//   2026-11-08).
-// * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
-//   change to the selected note is one undo step, kept when the note is deselected or NOTE_EDIT is left (as legacy;
-//   owner 2026-11-08: a fader is never exact, so a step a move was too many): a later change replaces the note's
-//   step, and one back at the note's value before it takes the step away.
+//   loop (`map`), keeping the start's offset from the reference 16th (F3's, which may lie past the 16th); length — the
+//   end across the loop, at least a 16th.
+// * F3 fine (channel 15 CC 2): position — the reference 16th's tick plus (value − 64), wrapped; length — the end anchor
+//   plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
+// * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127), 0 muting the note
+//   (`kVelocityMuted`: drawn, editable, not sent) — that press is then no short / double. Velocity mode begins with the
+//   first F4 move while held, or after `ControlSurface`'s long hold, which writes F4's motor to the velocity; on
+//   NOTELEN's release F4's motor goes back to the pitch. A long hold released without F4 moved by hand is a long press:
+//   a note is created at the bracket.
+// * The geometry faders act once a selection is 750 ms old or after an F1 move. Every change to the selected note is
+//   one undo step, kept when the note is deselected or NOTE_EDIT is left (a fader is never exact, so a step a move
+//   would be too many): a later change replaces the note's step, and one back at the note's value before it takes the
+//   step away.
 // * NOTELEN 35: short = start ↔ end (length) editing — the bracket and the reference 16th move to the note's end or
-//   start; with no note selected (an empty 16th) it creates one there instead (owner 2026-11-08: nothing to lengthen);
-//   double = delete the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts
-//   within 24 ticks of it.
-// * Step buttons 0–15 (surface slice D; legacy `BarStepButtonHandler::executeNoteEditAction`, owner 2026-11-10): the
-//   16ths of the bar holding the bracket. A press selects the step's first note in F1's stack order (start, then
-//   pitch) — a press on the step holding the selection the next one, wrapping (the cycle) — and arms the geometry
-//   faders; an empty step gets a 16th C4 (MIDI 60). A double deletes the step's selected note (its first, when the
-//   selection is elsewhere). A hold is a parameter lock (`lockBegin` / `lockEnd`): the step's note is selected while it
-//   is held, the faders act on it at once, and the release closes its changes as one undo step and brings the
-//   previous selection back. The bar buttons do nothing here (as legacy).
-// * The encoder (slice E, `nudge`): the selected note's pitch (semitones), start (ticks, wrapped), length (ticks, at
-//   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `ControlSurface` — one undo step
-//   a note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even
-//   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
-// * Copy / paste (DEC-279; `ControlSurface`'s copy mode picks the source and the targets; one undo step each): a note copied
-//   to a 16th at the same offset in it, beside what is there (`copyNote`); a bar copied over a bar of the 8-bar page
-//   holding the bracket (`copyBar`, at most `kMaxPaste` notes deleted and added). Replace (DEC-279 amendment 8): the
-//   target bar's / 16th's own notes go first; merge: they stay. Either way each pasted note then takes the overlap rule
-//   as the causing note in turn (`settleAdded`: same-pitch notes starting inside it hidden, one sounding into it ended
-//   at its start), all in the paste's one step.
+//   start; with no note selected (an empty 16th) it creates one there instead (nothing to lengthen); double = delete
+//   the selected note, or create one at the bracket (C3, velocity 80, a 32nd) when no note starts within 24 ticks of
+//   it.
+// * Step buttons 0–15: the 16ths of the bar holding the bracket. A press selects the step's first note in F1's stack
+//   order (start, then pitch) — a press on the step holding the selection the next one, wrapping (the cycle) — and arms
+//   the geometry faders; an empty step gets a 16th C4 (MIDI 60). A double deletes the step's selected note (its first,
+//   when the selection is elsewhere). A hold is a parameter lock (`lockBegin` / `lockEnd`): the step's note is selected
+//   while it is held, the faders act on it at once, and the release closes its changes as one undo step and brings the
+//   previous selection back. The bar buttons do nothing here.
+// * The encoder (`nudge`): the selected note's pitch (semitones), start (ticks, wrapped), length (ticks, at least 1, at
+//   most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `ControlSurface` — one undo step a
+//   note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even beside
+//   other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
+// * Copy / paste (`ControlSurface`'s copy mode picks the source and the targets; one undo step each): a note copied to
+//   a 16th at the same offset in it, beside what is there (`copyNote`); a bar copied over a bar of the 8-bar page
+//   holding the bracket (`copyBar`, at most `kMaxPaste` notes deleted and added). Replace: the target bar's / 16th's
+//   own notes go first; merge: they stay. Either way each pasted note then takes the overlap rule as the causing note
+//   in turn (`settleAdded`: same-pitch notes starting inside it hidden, one sounding into it ended at its start), all
+//   in the paste's one step.
 // * Undo / redo (the record button's double / triple while editing) step the session and restore its selection.
-// * Overlap (owner 2026-11-07): the selected note is the causing note (`NoteEditSession::cause`); a new selection —
-//   F1, delete, create — settles the previous one's results first (they become the notes' own state, in its last E:
-//   step); undo / redo restore the step's selection as the causing note; leaving keeps the results as published.
-// * Motor feedback (owner 2026-11-06; legacy `NoteEditDependentFaderSnapshot`, which was off by default): the DROID's
-//   motor faders follow the selection — at the session's opening and after undo, redo, delete or create all four;
-//   after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th); after NOTELEN F2 and F3. An
-//   F3 move writes nothing: F2 shows the reference 16th, which F3 offsets from (owner 2026-11-06: F2 followed F3, its
-//   landing read as a move took the note a 16th on, and F3 was pushed). A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
-//   CC 2 / 3 channel 15), then its trigger note (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released
-//   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). A fader the musician moves has its position sent back as a
-//   value alone (legacy ValueOnly): the DROID's stored start value — where its `clear` sends the motor — stays with
-//   the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4's `clear`, and those are the 16th-step LEDs 2 /
-//   3: a stale stored value sent F4 back to an old pitch whenever those LEDs changed (owner 2026-11-06). While a
-//   written fader's motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its
-//   messages are not moves, nor where it comes to rest (within `kMotorLandingPb` / `kMotorLandingCc` of the value: the
-//   DROID's motors land a few percent off); a fader value that changes nothing takes no undo step.
+// * Overlap: the selected note is the causing note (`NoteEditSession::cause`); a new selection — F1, delete, create —
+//   settles the previous one's results first (they become the notes' own state, in its last E: step); undo / redo
+//   restore the step's selection as the causing note; leaving keeps the results as published.
+// * Motor feedback: the DROID's motor faders follow the selection — at the session's opening and after undo, redo,
+//   delete or create all four; after an F1 select F2–F4; after an F2 move F3 (the start's offset in its new 16th);
+//   after NOTELEN F2 and F3. An F3 move writes nothing: F2 shows the reference 16th, which F3 offsets from (if F2
+//   followed F3, its landing, read as a move, would take the note a 16th on and push F3). A fader is written as its
+//   value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4 CC 2 / 3 channel 15), then its trigger note
+//   (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released after `kMotorGateMs`. A fader the musician moves
+//   has its position sent back as a value alone: the DROID's stored start value — where its `clear` sends the motor —
+//   stays with the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4's `clear`, and those are the 16th-step
+//   LEDs 2 / 3: a stale stored value would send F4 back to an old pitch whenever those LEDs change. While a written
+//   fader's motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its messages
+//   are not moves, nor where it comes to rest (within `kMotorLandingPb` / `kMotorLandingCc` of the value: the DROID's
+//   motors land a few percent off); a fader value that changes nothing takes no undo step.
 // No allocation; O(selection) a fader move.
 
 #pragma once
@@ -152,8 +147,8 @@ class NoteEditSurface {
   uint32_t windowTicks() const { return ticks_; }
   uint32_t loop() const { return loop_; }
   uint32_t bracket() const { return bracket_; }
-  /// The screen's EDIT count: the session's E: level (SlotUndoHistory holds the session as one state, replaced in place) less
-  /// the selected note's step, which counts once the note is deselected (as legacy; owner 2026-11-08).
+  /// The screen's EDIT count: the session's E: level (SlotUndoHistory holds the session as one state, replaced in
+  /// place) less the selected note's step, which counts once the note is deselected.
   uint8_t steps() const {
     if (!editing()) return 0;
     const uint8_t d = session().depth();
@@ -305,7 +300,7 @@ class NoteEditSurface {
     } else {
       const uint32_t total = loop_ / kSixteenth;
       const uint32_t step = arduinoMap(pb, kPbMin, kPbMax, 0, static_cast<int32_t>(total) - 1);
-      // Whole 16ths, keeping F3's offset (owner 2026-11-07: a start F3 had put past its 16th — 1.2.4.47 and on — fell
+      // Whole 16ths, keeping F3's offset (a start F3 had put past its 16th — 1.2.4.47 and on — fell
       // back 48 ticks under F2, and F3 was rewritten).
       int32_t start = static_cast<int32_t>(step * kSixteenth) + offset;
       start %= loop;
@@ -340,7 +335,7 @@ class NoteEditSurface {
     }
     commit(v);  // F2 stays: it shows the reference 16th F3 offsets from
   }
-  /// F4 while NOTELEN is held: the velocity (1–127; owner 2026-11-08, not in legacy); 0 mutes the note, keeping its
+  /// F4 while NOTELEN is held: the velocity (1–127); 0 mutes the note, keeping its
   /// velocity, and any other value unmutes it there.
   void velocity(uint8_t cc, uint32_t ms) {
     const bool travel = echo(3, cc, ms);
@@ -364,7 +359,7 @@ class NoteEditSurface {
     if (motor) drive(kMotorPitch, ms);
   }
   /// NOTELEN released: F4 is the pitch again, its motor back there. True: velocity mode ended without F4 moved by
-  /// hand (a long press: `ControlSurface` creates a note; owner 2026-11-08).
+  /// hand (a long press: `ControlSurface` creates a note).
   bool velocityDone(uint32_t ms) {
     if (!velocity_) return false;
     velocity_ = false;
@@ -389,7 +384,7 @@ class NoteEditSurface {
   void toggleLength(uint32_t ms) {
     if (!editing()) return;
     length_ = !length_;
-    armed_ = true;  // legacy: entering / leaving length mode enables the geometry faders
+    armed_ = true;  // entering / leaving length mode enables the geometry faders
     EditNote n;
     if (!selected(n)) return;
     if (length_) {
@@ -402,7 +397,7 @@ class NoteEditSurface {
     drive(kMotorCoarse | kMotorFine, ms);
   }
   /// NOTELEN short: length mode on the selected note; with none selected (an empty 16th) a note is created at the
-  /// bracket instead (owner 2026-11-08).
+  /// bracket instead.
   void lengthOrCreate(uint32_t ms) {
     EditNote n;
     if (editing() && !selected(n))
@@ -449,12 +444,12 @@ class NoteEditSurface {
       pick(static_cast<int16_t>(at));
       length_ = false;
       refStep_ = (bracket_ % loop_) / kSixteenth;  // F3's reference: the new note's 16th (a step button moved the bracket)
-      armedMs_ = ms;  // a new selection: the geometry faders wait the grace period (legacy)
+      armedMs_ = ms;  // a new selection: the geometry faders wait the grace period
       armed_ = false;
       drive(kMotorAll, ms);
     }
   }
-  // ---- Step buttons (slice D) ---------------------------------------------------------------------------------------
+  // ---- Step buttons ---------------------------------------------------------------------------------------
   /// Step `k`'s tick: that 16th of the bar holding the bracket. False: outside the window or the loop.
   bool stepTick(uint8_t k, uint32_t& tick) const {
     if (!editing() || k >= 16) return false;
@@ -520,7 +515,7 @@ class NoteEditSurface {
     const bool same = back >= 0 && back == sel_;  // the locked note was the selection: it stays where the lock left it
     pick(back);
     if (same) {
-      follow(base());  // the bracket and F3's reference 16th stay with the moved note (owner 2026-11-10: they jumped back)
+      follow(base());  // the bracket and F3's reference 16th stay with the moved note (they jumped back)
     } else {
       bracket_ = lockBracket_;
       refStep_ = lockRef_;
@@ -547,7 +542,7 @@ class NoteEditSurface {
     n = session().current(static_cast<uint16_t>(index));
     return !n.deleted;
   }
-  // ---- Copy mode's source as values (DEC-279 amendment 9: the paste may land in another slot's session) ----------
+  // ---- Copy mode's source as values (the paste may land in another slot's session) ----------
   static constexpr uint8_t kMaxCopy = 64;  // a bar copy's notes
   /// The note at `index`, its tick kept as its offset in its 16th. False: none.
   bool captureNote(int16_t index) {
@@ -603,7 +598,7 @@ class NoteEditSurface {
     paste_[del] = EditChange{0, c};
     return paste(del, 1, ms);
   }
-  /// Copy mode's clear (DEC-279 amendment 5): every note starting in [`from`, `from + ticks`) deleted, one edit step.
+  /// Copy mode's clear: every note starting in [`from`, `from + ticks`) deleted, one edit step.
   /// False: none there, too many, or refused.
   bool clearRange(uint32_t from, uint32_t ticks, uint32_t ms) {
     if (!editing()) return false;
@@ -655,20 +650,20 @@ class NoteEditSurface {
     if (del + add == 0) return false;
     return paste(del, add, ms);
   }
-  /// The encoder's push while step `k` is held (slice E): a 16th C4 there, stacked beside the notes it holds.
+  /// The encoder's push while step `k` is held: a 16th C4 there, stacked beside the notes it holds.
   void stepAdd(uint8_t k, uint32_t ms) {
     uint32_t tick;
     if (!stepTick(k, tick)) return;
     bracket_ = tick;
     create(ms, kSixteenth, true);
   }
-  /// The encoder's double push while a step is held (slice E): the selected note is deleted.
+  /// The encoder's double push while a step is held: the selected note is deleted.
   void deleteSelected(uint32_t ms) {
     EditNote n;
     if (selected(n)) deleteOrCreate(ms);
   }
 
-  // ---- The encoder (slice E) ------------------------------------------------------------------------------------
+  // ---- The encoder ------------------------------------------------------------------------------------
   enum class Nudge : uint8_t { Pitch, Move, Length, Velocity };
   /// The selected note changed by `d` (already accelerated): pitch in semitones, start / length in ticks, velocity.
   void nudge(Nudge what, int32_t d, uint32_t ms) {
@@ -721,8 +716,8 @@ class NoteEditSurface {
     state_ = State::Gathering;
     return true;
   }
-  /// Replace: the live notes starting in [`from`, `from + ticks`) as deletions in `paste_` (not `keep`); their count, or
-  /// `kMaxPaste` when they do not fit.
+  /// Replace: the live notes starting in [`from`, `from + ticks`) as deletions in `paste_` (not `keep`); their count,
+  /// or `kMaxPaste` when they do not fit.
   uint16_t collectDeletes(uint32_t from, uint32_t ticks, int16_t keep) {
     uint16_t del = 0;
     const uint16_t size = session().size();
@@ -816,8 +811,8 @@ class NoteEditSurface {
   /// True: the note changed (its step taken, replaced or taken away).
   bool commit(const EditNote& v) {
     if (v == session().current(static_cast<uint16_t>(sel_))) {
-      // A value that changes nothing takes no undo step (a fader's echo at rest): the bracket follows the note (owner
-      // 2026-11-06: it stayed a 16th on, at the end).
+      // A value that changes nothing takes no undo step (a fader's echo at rest): the bracket follows the note (else
+      // it stays a 16th on, at the end).
       why_ = Why::NoChange;
       follow(v);
       return false;
@@ -849,7 +844,7 @@ class NoteEditSurface {
     follow(v);
     return true;
   }
-  /// The bracket follows the edited note: its start, or in length mode its end (owner 2026-11-07: it stayed where
+  /// The bracket follows the edited note: its start, or in length mode its end (it stayed where
   /// length mode began).
   void follow(const EditNote& v) { bracket_ = length_ ? (v.tick + v.length) % loop_ : v.tick; }
 
@@ -865,8 +860,8 @@ class NoteEditSurface {
     bool sync = false;  // the musician moved it: its value (no trigger) is due, so the DROID's stored start value follows
   };
   static int32_t slackOf(uint8_t i) { return i < 2 ? kCoarseThreshold : 3; }  // pitch bend / CC jitter
-  /// How far from the written value a motor may come to rest (measured on the DROID 2026-11-06: F2 written −5780 /
-  /// −6940 reported −6162 / −7400, ~2.5 % of the travel).
+  /// How far from the written value a motor may come to rest (the DROID's motors land about 2.5 % of the travel
+  /// off).
   static int32_t landingOf(uint8_t i) { return i < 2 ? kMotorLandingPb : kMotorLandingCc; }
   /// Writes the faders in `mask` to the selection (the bracket alone when nothing is selected: F2 / F3).
   void drive(uint8_t mask, uint32_t ms) {
@@ -891,7 +886,7 @@ class NoteEditSurface {
     if ((mask & kMotorPitch) && note) write(3, !velocity_ ? n.pitch : isMuted(n.velocity) ? 0 : velocityOf(n.velocity), ms);
   }
   /// A fader already at `v` (its last message) is not written: no motor travel, no
-  /// window that would swallow the musician's next move (owner 2026-11-06: F3, rewritten on every F2 step, ignored a
+  /// window that would swallow the musician's next move (F3, rewritten on every F2 step, ignored a
   /// move that followed).
   void write(uint8_t i, int32_t v, uint32_t ms) {
     Motor& f = motors_[i];
@@ -930,7 +925,7 @@ class NoteEditSurface {
       }
       f.written = false;  // off the motor's path: the musician's hand
     }
-    if (editing()) f.sync = true;  // the musician's position becomes the DROID's stored start value (legacy ValueOnly)
+    if (editing()) f.sync = true;  // the musician's position becomes the DROID's stored start value
     return false;
   }
   /// F1's value for the selected note: the centre of its place in its 16th's stack (the inverse of `select`).
@@ -952,7 +947,7 @@ class NoteEditSurface {
     const int64_t pb = kPbMin + pos / static_cast<int64_t>(steps - 1);
     return static_cast<int32_t>(pb > kPbMax - 1 ? kPbMax - 1 : pb);
   }
-  /// F2 at `tick` in position mode (legacy `positionModeLoopTickToCoarsePitchbend`: the 16th plus the offset in it),
+  /// F2 at `tick` in position mode (the 16th plus the offset in it),
   /// rounded up so `coarse` maps it back into the same 16th.
   int32_t positionPb(uint32_t tick) const {
     const uint32_t steps = loop_ / kSixteenth;
@@ -995,15 +990,15 @@ class NoteEditSurface {
     return true;
   }
   uint32_t focus() const { return (static_cast<uint32_t>(sel_ + 1) << 21) | (bracket_ & 0x1FFFFFu); }
-  /// A new selection: the previous selected note's overlap results become the notes' own (sticky, DEC-030; owner
-  /// 2026-11-07), then the new one causes.
+  /// A new selection: the previous selected note's overlap results become the notes' own (sticky, DEC-030), then
+  /// the new one causes.
   void pick(int16_t s) {
     if (s != sel_) session().settle();
     sel_ = s;
     session().cause(sel_);
   }
 
-  // Legacy helpers (`ControlSurfaceColdHelpers`, Arduino `map`).
+  // Mapping helpers (Arduino `map`).
   static uint32_t arduinoMap(int32_t x, int32_t inMin, int32_t inMax, int32_t outMin, int32_t outMax) {
     const int64_t v = static_cast<int64_t>(x - inMin) * (outMax - outMin) / (inMax - inMin) + outMin;
     return v < 0 ? 0 : static_cast<uint32_t>(v);
@@ -1054,7 +1049,7 @@ class NoteEditSurface {
   EditChange paste_[kMaxPaste];
   EditNote copy_[kMaxCopy];  // copy mode's source, as values (offsets in its 16th / bar)
   uint8_t copyCount_ = 0;
-  bool lock_ = false, lockLength_ = false;  // a step held (slice D): the selection before it
+  bool lock_ = false, lockLength_ = false;  // a step held: the selection before it
   bool lockUsed_ = false;                   // ... and a change made through it
   int16_t lockSel_ = -1;
   uint32_t lockBracket_ = 0, lockRef_ = 0;

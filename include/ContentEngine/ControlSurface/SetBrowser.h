@@ -1,48 +1,47 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The sets browser's state (sets browser slice 3; design: `docs/Plans/engine_sets_browser_proposal.md`, owner decisions
-// 2026-11-08 / 09). What the screen shows and what the four buttons do; the owner of the library and the set carries
-// out what it asks (`takeRequest`) and answers `succeeded` or `failed`.
+// The sets browser's state (DEC-263, the sets browser on the DROID). What the screen shows and what the four buttons
+// do; the owner of the library and the set carries out what it asks (`takeRequest`) and answers `succeeded` or
+// `failed`.
 //
 // * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
-// * Views (owner 2026-11-09: saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`,
-//   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first, and
-//   `TRASH` last (the second way in). A set:
-//   `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash (DEC-268): `< SETS`, `EMPTY TRASH`, a
-//   `RESTORE SET/STAGE` divider, then what is in it newest first. The save popup
-//   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
-//   suggested one selected; beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`,
-//   over the view it came from.
+// * Views (saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`, `SAVE SET`, a `LOAD
+//   SET` divider (not selectable), then the working set and the other sets, newest first, and `TRASH` last (the second
+//   way in). A set: `< SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash: `< SETS`, `EMPTY
+//   TRASH`, a `RESTORE SET/STAGE` divider, then what is in it newest first. The save popup (`SAVE CURRENT`): `AS NEW
+//   SET` (Sketch 01 of the next set number), then every stage with the id it would get, the suggested one selected;
+//   beside it the working set's history from its base. A failure: what, why, `NOTHING CHANGED`, over the view it came
+//   from.
 // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
 //   says for the selected row; a double TRACK opens the trash (and from it, the sets). HOLD TRACK on a set or a stage
-//   asks to move it to the trash (DEC-268: `YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it
-//   closes the save popup and a failure, changing nothing. In the trash TRACK restores an item; `EMPTY TRASH` asks
-//   again before removing everything in it for good. Opening selects `SAVE SET`.
-// * The trash (DEC-268): trash, restore and empty-trash records are `add`ed like milestones, in card order. A trash
-//   record is an item: the milestone it names, or every shown milestone of its set before it (its stages and history
-//   together). Restoring an item shows its milestones again (and so their set); emptying removes every item for good.
-//   Records keep their place (a row's record is its card index) and every milestone counts for numbering, so no id or
-//   set number is used twice.
-// * The suggestion (slice 4, proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the
-//   base's stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed
-//   only → Building, or a provisional Take when every change was a recording begun while another track played;
-//   launches, switches, stops, mutes and solos only → Exploration. Arrangement and Final are never inferred: a base of
-//   either keeps its stage. Mixed evidence keeps the base's stage.
-// * DEC-279 amendment 2 (owner 2026-11-10: a long press always exits a window; trash is destructive): the surface
-//   closes the browser on any long press; `trashSelected` (a double TRACK) moves a stage, or with a set's last row
-//   `MOVE SET TO TRASH` the open set, to the trash at once, and `undoTrash` (a triple TRACK) brings the last one back.
-//   The trash opens from its `TRASH` row. `hold` and its confirmation remain the model's (no longer bound on the DROID).
-// * Get a loop (DEC-272; plan §6.1): a set's view has a `GET A LOOP` row; TRACK lists the set's stages (`FROM STAGE`),
-//   TRACK on one opens the picker — the stage's slots as a grid (tracks as rows, slots as columns, from its mosaic) with
-//   a column of empty-loop presets (1–16 bars) left of slot 1 — for a destination fixed on entry (the selected slot, or
-//   the slot whose long press opened it: `openPickerFromSlot`, on the working set's base stage); for an empty
-//   destination the cursor starts on the preset closest to the new-loop length (`setNewLoopBars`). Moves: NOTELEN up,
-//   PLAY/STOP down, REC left, EDIT right (`pickUp` …). TRACK on a loop asks to audition it, once heard (or previewed
-//   silently) to USE it; on a preset to USE an empty loop — over a filled destination after a confirmation. A move ends
-//   an audition; HOLD TRACK leaves it (back to the stages). The preview the panel shows is the owner's: it reads the
-//   loop under the cursor (`previewWanted`, a generation per cursor position) and answers with its generation.
+//   asks to move it to the trash (`YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it closes the
+//   save popup and a failure, changing nothing. In the trash TRACK restores an item; `EMPTY TRASH` asks again before
+//   removing everything in it for good. Opening selects `SAVE SET`.
+// * The trash: trash, restore and empty-trash records are `add`ed like milestones, in card order. A trash record is an
+//   item: the milestone it names, or every shown milestone of its set before it (its stages and history together).
+//   Restoring an item shows its milestones again (and so their set); emptying removes every item for good. Records keep
+//   their place (a row's record is its card index) and every milestone counts for numbering, so no id or set number is
+//   used twice.
+// * The suggestion (proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the base's
+//   stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed only →
+//   Building, or a provisional Take when every change was a recording begun while another track played; launches,
+//   switches, stops, mutes and solos only → Exploration. Arrangement and Final are never inferred: a base of either
+//   keeps its stage. Mixed evidence keeps the base's stage.
+// * A long press always exits a window, and trash is destructive: the surface closes the browser on any long press;
+//   `trashSelected` (a double TRACK) moves a stage, or with a set's last row `MOVE SET TO TRASH` the open set, to the
+//   trash at once, and `undoTrash` (a triple TRACK) brings the last one back. The trash opens from its `TRASH` row.
+//   `hold` and its confirmation remain the model's (not bound on the DROID).
+// * Get a loop: a set's view has a `GET A LOOP` row; TRACK lists the set's stages (`FROM STAGE`), TRACK on one opens
+//   the picker — the stage's slots as a grid (tracks as rows, slots as columns, from its mosaic) with a column of
+//   empty-loop presets (1–16 bars) left of slot 1 — for a destination fixed on entry (the selected slot, or the slot
+//   whose long press opened it: `openPickerFromSlot`, on the working set's base stage); for an empty destination the
+//   cursor starts on the preset closest to the new-loop length (`setNewLoopBars`). Moves: NOTELEN up, PLAY/STOP down,
+//   REC left, EDIT right (`pickUp` …). TRACK on a loop asks to audition it, once heard (or previewed silently) to USE
+//   it; on a preset to USE an empty loop — over a filled destination after a confirmation. A move ends an audition;
+//   HOLD TRACK leaves it (back to the stages). The preview the panel shows is the owner's: it reads the loop under the
+//   cursor (`previewWanted`, a generation per cursor position) and answers with its generation.
 // No allocation; the record array is the caller's memory (PSRAM on the device).
 
 #pragma once
@@ -64,12 +63,12 @@ class SetBrowser {
     uint16_t set;     // Working, Set, Item: the set
     uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none); Item: the trash record
   };
-  /// DEC-272, the picker: Audition (record, from, into), Use (the same: placed as one undo step), UseEmpty (bars, into),
-  /// CancelAudition, LeavePicker (any audition ended, the preview dropped).
+  /// The get-a-loop picker: Audition (record, from, into), Use (the same: placed as one undo step), UseEmpty (bars,
+  /// into), CancelAudition, LeavePicker (any audition ended, the preview dropped).
   enum class Action : uint8_t {
     None, Save, Load, Trash, Restore, Empty, Audition, Use, UseEmpty, CancelAudition, LeavePicker
   };
-  /// What the confirmation asks: a set or stage to the trash, the trash emptied, or (DEC-272) an empty loop over a
+  /// What the confirmation asks: a set or stage to the trash, the trash emptied, or an empty loop over a
   /// filled destination.
   enum class Confirm : uint8_t { ToTrash, Empty, EmptyLoop };
   struct Request {
@@ -78,9 +77,9 @@ class SetBrowser {
     uint16_t set = 0;     // Save: the set it goes into; Trash, Restore: the set
     library::Stage stage = library::Stage::Sketch;
     uint8_t stageNumber = 0;
-    uint8_t from = 0, into = 0, bars = 0;  // DEC-272: the source slot, the destination, an empty loop's bars
+    uint8_t from = 0, into = 0, bars = 0;  // the source slot, the destination, an empty loop's bars
   };
-  /// DEC-272: the preview of the loop under the cursor, as the owner reads it; the audition, as the owner runs it.
+  /// The preview of the loop under the cursor, as the owner reads it; the audition, as the owner runs it.
   enum class Preview : uint8_t { None, Reading, Ready, Failed, TooBig };
   enum class Audition : uint8_t { None, Pending, Sounding, Silent };
   static constexpr uint8_t kPresets = 5;
@@ -95,7 +94,7 @@ class SetBrowser {
     lastTrash_ = kNone;
     view_ = View::Closed;
   }
-  /// A published record, in publication order: a milestone, or a trash / restore / empty-trash record (DEC-268).
+  /// A published record, in publication order: a milestone, or a trash / restore / empty-trash record.
   /// False: the cache is full.
   bool add(const library::Record& r) {
     if (count_ >= MaxRecords) return false;
@@ -167,14 +166,14 @@ class SetBrowser {
     return static_cast<uint8_t>(high + 1);
   }
   /// A set number no milestone uses, a deleted one included, nor the working set: one past the highest (numbers are
-  /// never reused, DEC-268).
+  /// never reused).
   uint16_t newSetNumber() const {
     uint16_t high = workingSet_;
     for (uint16_t i = 0; i < count_; ++i)
       if (records_[i].set > high) high = records_[i].set;
     return static_cast<uint16_t>(high + 1);
   }
-  /// The working set a boot starts in (DEC-269), once the records are added: the one the card's header names — kept
+  /// The working set a boot starts in, once the records are added: the one the card's header names — kept
   /// with no shown milestone, its base only while that is shown in it — else the newest shown milestone's set, no base.
   struct Working {
     uint16_t set = 1;
@@ -384,7 +383,7 @@ class SetBrowser {
         return;
     }
   }
-  /// HOLD TRACK (DEC-268): on a set with stages or on a stage, asks to move it to the trash (CANCEL selected); a popup
+  /// HOLD TRACK: on a set with stages or on a stage, asks to move it to the trash (CANCEL selected); a popup
   /// closes (back to its list), a failure closes the browser; on any other row, and in the trash, nothing. Nothing
   /// changes.
   void hold() {
@@ -420,7 +419,7 @@ class SetBrowser {
     else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone)
       openConfirm(Confirm::ToTrash, r.set, kNone);
   }
-  /// A double TRACK (DEC-279 amendment 2): in a set, the selected stage — or on `MOVE SET TO TRASH` the set — to the
+  /// A double TRACK: in a set, the selected stage — or on `MOVE SET TO TRASH` the set — to the
   /// trash at once; elsewhere nothing.
   void trashSelected() {
     if (view_ != View::Set) return;
@@ -552,9 +551,9 @@ class SetBrowser {
   /// The first row shown (the list scrolls with the selection).
   uint16_t first() const { return first_; }
   static constexpr uint8_t kVisible = 5;
-  /// A set's rows before its milestones: `< SETS`, `GET A LOOP` (DEC-272) and the `LOAD STAGE` divider.
+  /// A set's rows before its milestones: `< SETS`, `GET A LOOP` and the `LOAD STAGE` divider.
   static constexpr uint16_t kSetHead = 3;
-  /// The stages to get a loop from (DEC-272): `< BACK` and the `FROM STAGE` divider, then the set's milestones.
+  /// The stages to get a loop from: `< BACK` and the `FROM STAGE` divider, then the set's milestones.
   static constexpr uint16_t kStagesHead = 2;
   /// The first milestone row of the list shown.
   uint16_t milestoneHead() const { return shownList() == View::Stages ? kStagesHead : kSetHead; }
@@ -576,7 +575,7 @@ class SetBrowser {
     return n;
   }
 
-  /// Slice 5: in the open set, whether row `i` (kSetHead: its newest milestone) lies on the newest milestone's line; whether
+  /// In the open set, whether row `i` (kSetHead: its newest milestone) lies on the newest milestone's line; whether
   /// any milestone branched off it; the row where the side joins the line (0: none).
   bool onLine(uint16_t i) const {
     const uint16_t h = milestoneHead();
@@ -589,7 +588,7 @@ class SetBrowser {
   }
   uint16_t joinRow() const { return join_ == kNone ? 0 : static_cast<uint16_t>(join_ + milestoneHead()); }
 
-  // ---- Get a loop's picker (DEC-272) ------------------------------------------------------------------------------
+  // ---- Get a loop's picker ------------------------------------------------------------------------------
   /// The destination entry 1 uses (the selected slot) and whether it holds a loop; the owner keeps it current while
   /// the browser is closed, as the working set.
   void setPickDestination(uint8_t slot, bool filled) {
@@ -600,7 +599,7 @@ class SetBrowser {
   }
   /// The new-loop length in bars (the surface's global setting): the picker starts on the preset closest to it.
   void setNewLoopBars(uint16_t bars) { newLoopBars_ = bars; }
-  /// The preset closest to the new-loop length (a tie: the longer one; DEC-272 amendment 1).
+  /// The preset closest to the new-loop length (a tie: the longer one).
   uint8_t startPreset() const {
     uint8_t best = 0;
     for (uint8_t i = 1; i < kPresets; ++i) {
@@ -668,7 +667,7 @@ class SetBrowser {
   }
   Audition audition() const { return audition_; }
   uint8_t silentWhy() const { return silentWhy_; }
-  /// The confirmation's empty loop (DEC-272): its bars.
+  /// The confirmation's empty loop: its bars.
   uint8_t confirmBars() const { return confirmBars_; }
 
   // ---- The save popup ----------------------------------------------------------------------------------------------
@@ -764,7 +763,7 @@ class SetBrowser {
     scroll();
   }
   uint16_t member(uint16_t k) const { return member_[k]; }
-  /// Slice 5, the fork lanes: the open set's line — its newest milestone and that one's parents within the set — and the
+  /// The fork lanes: the open set's line — its newest milestone and that one's parents within the set — and the
   /// side of it (milestones that branched off; drawn on a lane of their own, joined where they grew from).
   void markLine(uint16_t from = 0) {
     for (uint16_t k = 0; k < members_; ++k) line_[k] = false;
@@ -804,7 +803,7 @@ class SetBrowser {
     stageSel_ = static_cast<uint8_t>(static_cast<uint8_t>(suggested_) + 1);
     view_ = View::Popup;
   }
-  /// DEC-272: the open set's stages to get a loop from, `select` (a milestone) selected, else its newest.
+  /// The open set's stages to get a loop from, `select` (a milestone) selected, else its newest.
   void openStages(uint16_t select = kNone) {
     fillMembers(openSet_);
     markLine();
@@ -815,7 +814,7 @@ class SetBrowser {
     first_ = 0;
     scroll();
   }
-  /// DEC-272: the picker over milestone `record` (kNone: presets only) for the destination; the cursor on the 4-bar
+  /// The picker over milestone `record` (kNone: presets only) for the destination; the cursor on the 4-bar
   /// preset for an empty destination, else on the destination's own position.
   void openPicker(uint16_t record, bool fromSlot) {
     pickRecord_ = record;
@@ -906,7 +905,7 @@ class SetBrowser {
   library::Record records_[MaxRecords];
   uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
   bool line_[MaxRecords] = {};
-  // DEC-268: a milestone's trash record (kNone: none); a trash record spent (its item restored, emptied, or empty).
+  // A milestone's trash record (kNone: none); a trash record spent (its item restored, emptied, or empty).
   uint16_t trashedBy_[MaxRecords], item_[MaxRecords];
   bool gone_[MaxRecords] = {};
   uint16_t items_ = 0;
@@ -924,8 +923,8 @@ class SetBrowser {
   uint8_t stageSel_ = 0;
   library::Stage suggested_ = library::Stage::Sketch;
   Request request_{}, pending_{};
-  uint16_t lastTrash_ = kNone;  // the trash record a triple TRACK restores (DEC-279 amendment 2)
-  // DEC-272: the picker — its stage (a milestone), destination, cursor (a preset, or a track and slot), the preview
+  uint16_t lastTrash_ = kNone;  // the trash record a triple TRACK restores
+  // The picker — its stage (a milestone), destination, cursor (a preset, or a track and slot), the preview
   // generation and state, the audition.
   uint16_t pickRecord_ = kNone;
   uint8_t pickDest_ = 0, pickPreset_ = kNoPreset, pickTrack_ = 0, pickSlot_ = 0, confirmBars_ = 0, silentWhy_ = 0;
