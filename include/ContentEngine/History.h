@@ -273,6 +273,23 @@ class History {
     return n;
   }
   uint8_t heldStates() const { return count_; }
+  /// Diagnostics (undo-depth sizing, E9.8b-3b): the newest commit's slot, manifest and the state before it on that slot
+  /// (`kNoManifest`: none). False: none held.
+  bool newest(uint8_t& slot, ManifestId& manifest, ManifestId* before = nullptr) const {
+    uint32_t best = 0;
+    uint8_t at = kNone;
+    for (uint8_t i = 0; i < Depth; ++i)
+      if (entries_[i].manifest != kNoManifest && entries_[i].seq > best) {
+        best = entries_[i].seq;
+        at = i;
+      }
+    if (at == kNone) return false;
+    slot = entries_[at].slot;
+    manifest = entries_[at].manifest;
+    if (before != nullptr)
+      *before = entries_[at].older == kNone ? kNoManifest : entries_[entries_[at].older].manifest;
+    return true;
+  }
 
   /// Persistence (E8): the slot's states oldest to newest (at most `max`), the current one's index in that list (-1:
   /// the empty slot) and whether the empty slot lies below the oldest. O(states).

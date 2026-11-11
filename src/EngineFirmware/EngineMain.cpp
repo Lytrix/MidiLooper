@@ -51,6 +51,7 @@
 #include "ContentEngine/HostTx.h"
 #include "ContentEngine/Surface.h"
 #include "ContentEngine/WallClock.h"
+#include "ContentEngine/HistoryCost.h"
 #include "EngineFirmware/EngineDisplay.h"
 #include "EngineFirmware/SdCardIo.h"
 
@@ -1208,6 +1209,82 @@ uint32_t gPutBytes = 0, gPutCrc = 0;
 bool groovePath(const char* p) {
   return p != nullptr && std::strncmp(p, "/GROOVES/", 9) == 0 && std::strstr(p, "..") == nullptr && std::strlen(p) < 120;
 }
+// E9.8b-3b (undo-depth sizing): undo-history births since boot — counted per minute (the busiest kept) and by what made
+// each one (a run the slot's previous state did not have: its kind; none: a state with fewer runs, e.g. a clear).
+// Diagnostics only: one compare a main-loop pass, a scan of the 99 entries per birth. `!ENGINE history-cost`.
+namespace births {
+uint32_t seen = 0, bootMs = 0, minuteStart = 0, minuteCount = 0, busiest = 0, total = 0;
+uint32_t kinds[8] = {};  // 0 record, 1 overdub, 3 edit, 4 length (fit), 5 groove, 6 other run, 7 fewer runs
+bool armed = false;
+FLASHMEM void count(uint32_t born);
+void watch(uint32_t ms) {
+  const uint32_t c = gEngine.history().commits();
+  if (!armed) {  // the boot load's states are not births
+    seen = c;
+    bootMs = minuteStart = ms;
+    armed = true;
+    return;
+  }
+  if (ms - minuteStart >= 60000) {
+    minuteStart = ms;
+    minuteCount = 0;
+  }
+  if (c == seen) return;
+  const uint32_t born = c - seen;
+  seen = c;
+  count(born);
+}
+FLASHMEM void count(uint32_t born) {
+  total += born;
+  minuteCount += born;
+  if (minuteCount > busiest) busiest = minuteCount;
+  uint8_t slot = 0;
+  ManifestId m = kNoManifest, before = kNoManifest;
+  if (!gEngine.history().newest(slot, m, &before)) return;
+  const auto& d = gEngine.manifests().manifest(m);
+  uint8_t kind = 7;
+  for (uint8_t i = 0; i < d.runCount; ++i) {
+    bool had = false;
+    if (before != kNoManifest) {
+      const auto& b = gEngine.manifests().manifest(before);
+      for (uint8_t k = 0; k < b.runCount && !had; ++k) had = b.runs[k] == d.runs[i];
+    }
+    if (had) continue;
+    const uint8_t rk = gEngine.runs().run(d.runs[i]).kind;
+    const uint8_t mapped = rk == ContentEngine::RunKind::kFit ? 4 : rk <= 5 ? rk : 6;
+    if (kind == 7 || kind == 4) kind = mapped;  // a content run wins over the fit run beside it
+  }
+  kinds[kind] += born;
+}
+}  // namespace births
+
+FLASHMEM void reportHistoryCost() {  // E9.8b-3b: `!ENGINE history-cost`
+  const auto c = ContentEngine::historyCost(gEngine.history(), gEngine.manifests(), gEngine.runs(),
+                                              ContentEngine::Config::kSlotCount);
+  const auto& hs = gEngine.history().stats();
+  const uint32_t minutes = (millis() - births::bootMs) / 60000u;
+  Serial.printf("#ENGINE,history_cost,states=%u,currents=%u,history_runs=%u,history_rows=%lu,current_rows=%lu,"
+                "worst_slot=%d,worst_rows=%lu,row_limit=%lu,manifests_free=%u,runs_free=%u,pages_free=%u,"
+                "manifest_bytes=%u,run_bytes=%u\n",
+                c.states, c.currents, c.historyRuns, static_cast<unsigned long>(c.historyRows),
+                static_cast<unsigned long>(c.currentRows), c.worstSlot == 0xFF ? -1 : static_cast<int>(c.worstSlot),
+                static_cast<unsigned long>(c.worstRows), static_cast<unsigned long>(Config::kCommittedRowLimit),
+                gEngine.manifests().freeCount(), gEngine.runs().freeCount(), gEngine.pool().freeCount(),
+                static_cast<unsigned>(sizeof(ContentEngine::ProductionManifests::Manifest)),
+                static_cast<unsigned>(sizeof(ContentEngine::ProductionRuns::Run)));
+  Serial.printf("#ENGINE,history_births,total=%lu,minutes=%lu,busiest_minute=%lu,record=%lu,overdub=%lu,edit=%lu,"
+                "length=%lu,groove=%lu,other=%lu,fewer=%lu,evicted_undo=%lu,dropped_redo=%lu,collapsed=%lu,"
+                "undo_past_retained=%lu\n",
+                static_cast<unsigned long>(births::total), static_cast<unsigned long>(minutes),
+                static_cast<unsigned long>(births::busiest), static_cast<unsigned long>(births::kinds[0]),
+                static_cast<unsigned long>(births::kinds[1]), static_cast<unsigned long>(births::kinds[3]),
+                static_cast<unsigned long>(births::kinds[4]), static_cast<unsigned long>(births::kinds[5]),
+                static_cast<unsigned long>(births::kinds[6] + births::kinds[2]),
+                static_cast<unsigned long>(births::kinds[7]), static_cast<unsigned long>(hs.evictedUndo),
+                static_cast<unsigned long>(hs.droppedRedo), static_cast<unsigned long>(hs.collapsedWraps),
+                static_cast<unsigned long>(hs.undoPastRetained));
+}
+
 void fileCommand(const char* verb, char* arg) {
   gCard.quiesce();
   if (std::strcmp(verb, "file-open") == 0) {
@@ -1540,6 +1617,8 @@ void command(char* line, uint32_t nowUs) {
                   h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
+  } else if (std::strcmp(verb, "history-cost") == 0) {  // E9.8b-3b: undo-depth sizing (diagnostics; changes nothing)
+    reportHistoryCost();
   } else if (std::strcmp(verb, "history") == 0) {  // history pressure (E4.7, diagnostics; changes nothing)
     const auto& h = gEngine.history();
     const auto& hs = h.stats();
@@ -2072,6 +2151,7 @@ void loop() {
   serviceEncoder(millis());
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
+  if (gBootReported) births::watch(millis());   // E9.8b-3b
   stampSaves();
   serviceLibrary();
   serviceLoad();

@@ -20,6 +20,7 @@
 #include <initializer_list>
 #include <new>
 
+#include "ContentEngine/HistoryCost.h"
 #include "ContentEngine/EngineClock.h"
 #include "ContentEngine/EngineRoot.h"
 #include "ContentEngine/Surface.h"
@@ -1788,6 +1789,32 @@ void test_edit_short_is_mute_mode_long_cycles_and_a_hold_leaves() {
   TEST_ASSERT_FALSE(gS.edit().active());
 }
 
+// E9.8b-3b (undo-depth sizing): the history's cost — rows pinned only by states that are not a slot's current. A take
+// and its overdub share their runs (nothing extra); after a clear the old take's rows are the history's alone.
+void test_the_history_cost_counts_rows_only_history_keeps() {
+  recordBar({{0, 60}, {384, 64}});
+  auto c = ContentEngine::historyCost(gE.history(), gE.manifests(), gE.runs(), 64);
+  TEST_ASSERT_EQUAL_UINT16(1, c.currents);
+  TEST_ASSERT_EQUAL_UINT32(0, c.historyRows);
+  TEST_ASSERT_TRUE(c.currentRows > 0);
+  const uint32_t take = c.currentRows;
+  gE.control().clear(0, gLast, gUs, gClk.usPerTick());
+  run(gUs + 768 * kTick);
+  c = ContentEngine::historyCost(gE.history(), gE.manifests(), gE.runs(), 64);
+  TEST_ASSERT_EQUAL_UINT16(2, c.states);
+  TEST_ASSERT_EQUAL_UINT32(take, c.historyRows);  // the cleared take, kept for undo
+  TEST_ASSERT_EQUAL_UINT8(0, c.worstSlot);
+  uint8_t slot = 0xEE;
+  ManifestId m = kNoManifest;
+  TEST_ASSERT_TRUE(gE.history().newest(slot, m));
+  TEST_ASSERT_EQUAL_UINT8(0, slot);
+  TEST_ASSERT_EQUAL_UINT16(gE.history().current(0), m);
+  gE.control().undo(0, gLast, gUs, gClk.usPerTick());  // the take is current again: nothing pinned
+  run(gUs + 768 * kTick);
+  c = ContentEngine::historyCost(gE.history(), gE.manifests(), gE.runs(), 64);
+  TEST_ASSERT_EQUAL_UINT32(0, c.historyRows);
+}
+
 void test_no_heap() {
   recordBar({{96, 64}});
   gTrap = true;
@@ -2744,6 +2771,7 @@ int main(int, char**) {
   RUN_TEST(test_no_note_is_created_next_to_a_note);
   RUN_TEST(test_a_window_denser_than_the_selection_is_halved);
   RUN_TEST(test_edit_short_is_mute_mode_long_cycles_and_a_hold_leaves);
+  RUN_TEST(test_the_history_cost_counts_rows_only_history_keeps);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

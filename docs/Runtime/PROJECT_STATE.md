@@ -1,3 +1,10 @@
+**2026-11-11 — E9.8b-3b undo-depth sizing, part 1: the cost measured.** The 99 is one pool for all 64 slots. On the
+owner's set (`958a4649…`): 99 states (26 currents), the history alone pins 137 runs (60 % of the 227 in use, 285 of 512
+free) and 7,722 rows (limit 131,072); a manifest 148 B, a run 80 B. Run descriptors bind, not memory; a depth of ~200
+fits the run table, 254 would not. New: `HistoryCost.h` (+1 native test), `History::newest`, `!ENGINE history-cost`
+with birth counters (per minute, by kind). Full native 4,547 passed. Open: the owner's session for the birth rate,
+then the decision (`docs/Plans/undo_depth_sizing.md` § 5).
+
 **2026-11-11 — DEC-295 am. 4–5 and the UI / UX guide.** GROOVE: editing the column not heard is silent; ADD single
 A ↔ B, double OFF, hold cycle (OFF never cycled), PLAY/STOP's press inert; stopping a cycle no longer lets the next
 turn (published a bar ahead) switch. New `docs/Guides/ENGINE_UI_UX_GUIDE.md`: the design language (GEM windows, the
