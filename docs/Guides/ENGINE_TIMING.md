@@ -149,8 +149,14 @@ the other (about two a loop), sampled every 3 or 6:
   The worst grain is `bind`: it walks every run in one grain (binary searches into PSRAM per run, about 13 µs a run),
   about 1.2 ms at 63 runs. Composing grows less (a row 1.3 → 2.3 µs on average; a quarter of it the OVL-2/6 look-ahead
   over later passes). Ruled out by measurement: the stream selection (a tournament tree over the runs changed nothing)
-  and counting it as work (fewer rows a grain — the E5 feasibility gate then missed deadlines). **Open:** bind a state
-  in steps of a few runs a grain, then bound the per-row loops over later passes.
+  and counting it as work (fewer rows a grain — the E5 feasibility gate then missed deadlines).
+- **Bind in steps (2026-11-11, `4192837b…`).** `Composer::bindStart` / `bindMore` bind 12 runs a grain
+  (`kRunsPerStep`), and a resume's seek runs in the same steps (`resumeSeekMore`); the cold start, the checkpoint
+  sweep, the tile builder and NOTE_EDIT's gather use them (a small source still binds in the grain that starts it).
+  The same 30-overdub stress, worst grain per class at 30 layers: `transition` 686 → **455 µs**, flat from 18 layers
+  (444 / 449 / 455); `display` 632 → 508 µs; `hard` 542 → 482 µs; `background` 673 → 645 µs. 30 of 30 overdubs, no
+  hang. **Open:** `hard` and `background` still grow (about 13 µs a layer), from composing itself — the per-row loops
+  over later passes (`laterPassStartsWhileSounding`, `laterPassSounding`); g would be reached at about 45–50 layers.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).

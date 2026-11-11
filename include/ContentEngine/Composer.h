@@ -107,6 +107,8 @@ class Composer {
     lease_ = IndexLease{};
     indexResult_ = IndexResult::NotNeeded;
     count_ = 0;
+    binding_ = false;  // the composers live in PSRAM regions set up here, not constructed
+    bindRun_ = seekRun_ = 0;
     loop_ = 0;
     windowStart_ = 0;
     windowEnd_ = 0;
@@ -189,6 +191,7 @@ class Composer {
   void end() {
     if (index_ != nullptr) index_->release(lease_);
     lease_ = IndexLease{};
+    binding_ = false;  // a bind left unfinished is abandoned
   }
   IndexResult indexResult() const { return indexResult_; }
   IndexStore* indexStore() const { return index_; }
@@ -252,8 +255,17 @@ class Composer {
   /// restores the checkpoint's state, `resumeSeek` positions every stream cursor. Nothing composes in between.
   bool resumeBind(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity,
                   const Checkpoint& cp) {
-    if (!cp.valid || cp.identity != identity || cp.loopLength != loopLength || cp.runCount != count) return false;
+    if (!resumable(cp, count, loopLength, identity)) return false;
     if (!bind(source, count, loopLength, identity, false)) return false;
+    resumeApply(cp);
+    return true;
+  }
+  /// The checkpoint fits this source (identity, loop length, run count).
+  static bool resumable(const Checkpoint& cp, uint8_t count, uint32_t loopLength, uint32_t identity) {
+    return cp.valid && cp.identity == identity && cp.loopLength == loopLength && cp.runCount == count;
+  }
+  /// After a bind of the same source (`bindStart(..., false)` + `bindMore` Done): the checkpoint's carried state.
+  void resumeApply(const Checkpoint& cp) {
     for (uint8_t i = 0; i < cp.activeCount; ++i) active_[cp.active[i].pitch][cp.active[i].run] = cp.active[i].count;
     openCount_ = cp.openCount;
     for (uint8_t i = 0; i < cp.openCount; ++i)
@@ -262,11 +274,19 @@ class Composer {
                       (cp.open[i].channel & 0x40) != 0};
     windowStart_ = cp.position;
     cycle_ = cp.cycle;
-    return true;
   }
+  /// Runs a `bindMore` / `resumeSeekMore` call takes in the grain jobs (owner 2026-11-11: ~23 µs a run at 30 layers).
+  static constexpr uint8_t kRunsPerStep = 12;
   void resumeSeek() {
+    seekRun_ = 0;
+    resumeSeekMore(0xFF);
+  }
+  /// `resumeSeek` in steps of `runs` runs (start with `seekRun_ = 0` via `resumeSeekStart`). True when every cursor is set.
+  void resumeSeekStart() { seekRun_ = 0; }
+  bool resumeSeekMore(uint8_t runs) {
     const uint32_t p = windowStart_;
-    for (uint8_t r = 0; r < count_; ++r) {
+    for (; seekRun_ < count_ && runs-- > 0; ++seekRun_) {
+      const uint8_t r = seekRun_;
       cursor_[r] = firstRowAtOrAfter(r, p);
       if (cursor_[r] < hideEnd_[r]) cursor_[r] = hideEnd_[r];
       if (cursor_[r] > wrapStart_[r]) cursor_[r] = wrapStart_[r];
@@ -276,6 +296,7 @@ class Composer {
       band2Cursor_[r] = b2 < band2Start_[r] ? band2Start_[r] : b2;
       refreshHeads(r);
     }
+    return seekRun_ >= count_;
   }
 
   /// Renumbers the current cycle (window `cycleBase`) without changing the carried state. Valid for steady state,
@@ -379,7 +400,11 @@ class Composer {
   /// `begin` from tick 0 (`fromStart`: cursors, heads and the wrap-held occluders set here), or the source binding
   /// alone for `resume`, which seeks the cursors and restores the occluders from its checkpoint. The tick-0 onset
   /// order comes from the source and is needed at every later cycle start, so both paths set it.
-  bool bind(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool fromStart) {
+  /// `bind` in steps (owner 2026-11-11: at 300 BPM with 30 overdub layers it took 711 µs in one grain — about 13 µs a
+  /// run): `bindStart` the source, then `bindMore` until Done — `runs` runs a call, the index acquired with the last.
+ public:
+  enum class BindStep : uint8_t { Running, Done, Failed };
+  void bindStart(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool fromStart) {
     end();
     count_ = count > MaxRuns ? MaxRuns : count;
     loop_ = loopLength;
@@ -390,18 +415,27 @@ class Composer {
     wrapReach_ = 0;
     fitRun_ = kNoRun;
     fitRows_ = 0;
-    for (uint8_t r = 0; r < count_; ++r)
+    for (uint8_t r = 0; r < count_; ++r) {
+      src_[r] = source[r];
       if (runs_->run(source[r].run).kind == RunKind::kFit) {
         fitRun_ = source[r].run;
         fitRows_ = source[r].rowLimit;
       }
-    for (uint8_t r = 0; r < count_; ++r) {
-      src_[r] = source[r];
+    }
+    bindRun_ = 0;
+    bindFromStart_ = fromStart;
+    identity_ = identity;  // its windows are not composed before `bindMore` is Done
+    binding_ = true;
+  }
+  BindStep bindMore(uint8_t runs) {
+    if (!binding_) return BindStep::Failed;
+    for (; bindRun_ < count_ && runs-- > 0; ++bindRun_) {
+      const uint8_t r = bindRun_;
       edit_[r] = runs_->run(src_[r].run).kind == RunKind::kEdit;
       if (runs_->run(src_[r].run).kind == RunKind::kFit) {  // lookups only: every stream empty
         filtered_[r] = false;
         wrapStart_[r] = band2Start_[r] = hideEnd_[r] = src_[r].rowLimit;
-        if (fromStart) {
+        if (bindFromStart_) {
           cursor_[r] = wrapCursor_[r] = band2Cursor_[r] = src_[r].rowLimit;
           refreshHeads(r);
         }
@@ -420,14 +454,14 @@ class Composer {
         if (reach > wrapReach_) wrapReach_ = reach;
       }
       hideEnd_[r] = edit_[r] ? leadingHideRows(r) : 0;
-      if (fromStart) {
+      if (bindFromStart_) {
         cursor_[r] = hideEnd_[r];
         wrapCursor_[r] = wrapStart_[r];
         band2Cursor_[r] = band2Start_[r];
         refreshHeads(r);
       }
       if (edit_[r]) continue;  // EDIT-1: an edit run is not counted as a source occluder
-      if (fromStart) {
+      if (bindFromStart_) {
         for (uint32_t i = wrapStart_[r]; i < src_[r].rowLimit; ++i) {  // wrap-held source notes sound at tick 0
           const PassEvent& e = row(r, i);
           if (cls(e) == 0 && wraps(r, e) && active_[e.data1 & 0x7F][r] < 0xFF) ++active_[e.data1 & 0x7F][r];
@@ -436,8 +470,10 @@ class Composer {
       for (uint32_t i = hideEnd_[r]; i < wrapStart_[r] && row(r, i).tick == 0; ++i)  // later passes at tick 0, per pitch
         if (cls(row(r, i)) == 1) zeroOnsetLast_[row(r, i).data1 & 0x7F] = static_cast<int8_t>(r);
     }
+    if (bindRun_ < count_) return BindStep::Running;
+    binding_ = false;
     if (index_ != nullptr) {
-      indexResult_ = index_->acquire(identity, source, count_, lease_);
+      indexResult_ = index_->acquire(identity_, src_, count_, lease_);
     } else {
       indexResult_ = IndexResult::NotNeeded;
       for (uint8_t r = 0; r < count_; ++r)
@@ -445,14 +481,19 @@ class Composer {
     }
     if (indexResult_ != IndexResult::Ready && indexResult_ != IndexResult::NotNeeded) {
       count_ = 0;
-      return false;
+      return BindStep::Failed;
     }
     openCount_ = 0;
     windowStart_ = 0;
     windowOpen_ = false;
     cycle_ = 0;
-    identity_ = identity;
-    return true;
+    return BindStep::Done;
+  }
+  bool binding() const { return binding_; }
+ private:
+  bool bind(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool fromStart) {
+    bindStart(source, count, loopLength, identity, fromStart);
+    return bindMore(0xFF) == BindStep::Done;
   }
 
   /// Head key of a stream: position << 2 | class (DEC-244 order: position, then class), or kNoHead when exhausted.
@@ -754,6 +795,8 @@ class Composer {
   uint32_t nextTick_[MaxRuns];    // tick of the main-stream row after the head (kNoHead: none)
   uint32_t hideEnd_[MaxRuns];     // first row after an edit run's leading hide rows (0 for other runs)
   uint8_t count_;
+  uint8_t bindRun_ = 0, seekRun_ = 0;  // `bindMore` / `resumeSeekMore`: the next run
+  bool bindFromStart_ = false, binding_ = false;
   bool edit_[MaxRuns];
   bool filtered_[MaxRuns];  // DEC-257: the fit run filters this run's rows past the loop end
   RunId fitRun_ = kNoRun;   // the state's fit run, or kNoRun

@@ -290,6 +290,7 @@ class CheckpointSweep {
     unusable_ = 0;
     periodic_ = false;
     composing_ = false;
+    bindStarted_ = false;
     source_.open(manifests, runs, composer, manifest);
     identity_ = source_.identity();
     loop_ = source_.loopLength();
@@ -312,7 +313,12 @@ class CheckpointSweep {
         return status_ = Status::Refused;
       }
       if (!source_.prepared()) return status_;
-      if (!composer_->begin(source_.source(), source_.count(), loop_, identity_)) {
+      if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
+      bindStarted_ = true;
+      const auto b = composer_->bindMore(Composer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      if (b == Composer::BindStep::Running) return status_;
+      bindStarted_ = false;
+      if (b == Composer::BindStep::Failed) {
         releaseSource();
         return status_ = Status::Refused;
       }
@@ -387,6 +393,7 @@ class CheckpointSweep {
   }
 
   Composer* composer_ = nullptr;
+  bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
   Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
@@ -422,6 +429,7 @@ class ColdStart {
     grains_ = 0;
     warmup_ = false;
     composing_ = false;
+    bindStarted_ = false;
     seeking_ = false;
     source_.open(manifests, runs, composer, manifest);
     return status_ = Status::Running;
@@ -431,11 +439,19 @@ class ColdStart {
   Status step(Window& scratch, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     ++grains_;
-    if (seeking_) {  // the second resume grain
-      composer_->resumeSeek();
+    if (seeking_) {  // the resume's cursors, `Composer::kRunsPerStep` runs a grain
+      if (!composer_->resumeSeekMore(Composer::kRunsPerStep)) return status_;
       seeking_ = false;
       composing_ = true;
       settle();
+      return status_;
+    }
+    if (bindStarted_) {  // the source, `Composer::kRunsPerStep` runs a grain (owner 2026-11-11)
+      const auto b = composer_->bindMore(Composer::kRunsPerStep);
+      if (b == Composer::BindStep::Running) return status_;
+      bindStarted_ = false;
+      if (b == Composer::BindStep::Failed) return refuse();
+      bound();
       return status_;
     }
     if (!composing_) {
@@ -475,27 +491,41 @@ class ColdStart {
   uint32_t grains() const { return grains_; }
 
  private:
-  /// Index Ready: resume from the nearest usable checkpoint, else warm up from the loop start.
+  /// Index Ready: resume from the nearest usable checkpoint, else warm up from the loop start. The bind runs in steps
+  /// (`step`); `bound` follows.
   void begin() {
     fromCheckpoint_ = false;
-    if (const auto* cp = table_->nearest(slot_, source_.identity(), target_)) {
-      fromCheckpoint_ = true;
-      if (!composer_->resumeBind(source_.source(), source_.count(), source_.loopLength(), source_.identity(), *cp)) {
-        refuse();
+    const auto* cp = table_->nearest(slot_, source_.identity(), target_);
+    if (cp != nullptr && !Composer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
+      refuse();
+      return;
+    }
+    fromCheckpoint_ = cp != nullptr;
+    cpPosition_ = cp != nullptr ? cp->position : 0;
+    composer_->bindStart(source_.source(), source_.count(), source_.loopLength(), source_.identity(), cp == nullptr);
+    const auto b = composer_->bindMore(Composer::kRunsPerStep);  // the first step in this grain: a small source binds at once
+    if (b == Composer::BindStep::Running) bindStarted_ = true;
+    else if (b == Composer::BindStep::Failed) refuse();
+    else bound();
+  }
+  /// The bind is done: the checkpoint's state and a seek (resume), or cycle 0 from the loop start (warm-up).
+  void bound() {
+    if (fromCheckpoint_) {
+      const auto* cp = table_->nearest(slot_, source_.identity(), target_);
+      if (cp == nullptr || cp->position != cpPosition_ ||
+          !Composer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
+        refuse();  // the table changed during the bind
         return;
       }
+      composer_->resumeApply(*cp);
       at_ = cp->position;
       source_.dropIndexLease();
-      seeking_ = true;  // cursors are positioned on the next grain
+      composer_->resumeSeekStart();
+      seeking_ = true;  // cursors are positioned on the next grains
       return;
-    } else {
-      if (!composer_->begin(source_.source(), source_.count(), source_.loopLength(), source_.identity())) {
-        refuse();
-        return;
-      }
-      warmup_ = warm_;  // cycle 0 from the loop start, then replay to the position
-      at_ = 0;
     }
+    warmup_ = warm_;  // cycle 0 from the loop start, then replay to the position
+    at_ = 0;
     source_.dropIndexLease();
     composing_ = true;
     settle();
@@ -511,11 +541,12 @@ class ColdStart {
   }
 
   Composer* composer_ = nullptr;
+  bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
   const Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool warmup_ = false, composing_ = false, seeking_ = false, fromCheckpoint_ = false, warm_ = true;
-  uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0;
+  uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0, cpPosition_ = 0;
   Status status_ = Status::Idle;
 };
 

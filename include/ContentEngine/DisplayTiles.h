@@ -180,6 +180,7 @@ class TileSweep {
     window_ = windowTicks;
     bar_ = barTicks;
     composing_ = false;
+    bindStarted_ = false;
     cycle_ = 0;
     openCount_ = 0;
     currentBar_ = 0;
@@ -205,7 +206,12 @@ class TileSweep {
       const IndexResult r = source_.prepare(kIndexGrain);
       if (r == IndexResult::CapacityExceeded) return stop(Status::Refused);
       if (!source_.prepared()) return status_;
-      if (!composer_->begin(source_.source(), source_.count(), loop_, identity_)) return stop(Status::Refused);
+      if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
+      bindStarted_ = true;
+      const auto b = composer_->bindMore(Composer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      if (b == Composer::BindStep::Running) return status_;
+      bindStarted_ = false;
+      if (b == Composer::BindStep::Failed) return stop(Status::Refused);
       source_.dropIndexLease();
       composing_ = true;
       deferred_ = (composer_->wrapReach() + bar_ - 1) / bar_;  // bars the wrap reach touches: published from cycle 1
@@ -361,6 +367,7 @@ class TileSweep {
   }
 
   Composer* composer_ = nullptr;
+  bool bindStarted_ = false;  // a stepped bind under way (this job's)
   Store* store_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;

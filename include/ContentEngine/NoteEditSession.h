@@ -79,6 +79,7 @@ class NoteEditSession {
     loop_ = lease_.loopLength();
     count_ = 0;
     phase_ = Phase::Index;
+    bindStarted_ = false;
     return status_ = Gather::Running;
   }
   bool gatherPending() const { return status_ == Gather::Running; }
@@ -90,7 +91,12 @@ class NoteEditSession {
         const IndexResult r = lease_.prepare(units);
         if (r == IndexResult::CapacityExceeded) return finish(Gather::Refused);
         if (!lease_.prepared()) return true;
-        if (!comp_->begin(lease_.source(), lease_.count(), loop_, lease_.identity())) return finish(Gather::Refused);
+        if (!bindStarted_) comp_->bindStart(lease_.source(), lease_.count(), loop_, lease_.identity(), true);
+        bindStarted_ = true;
+        const auto b = comp_->bindMore(Composer::kRunsPerStep);  // in steps
+        if (b == Composer::BindStep::Running) return true;
+        bindStarted_ = false;
+        if (b == Composer::BindStep::Failed) return finish(Gather::Refused);
         lease_.dropIndexLease();
         phase_ = Phase::Compose;
         return true;
@@ -311,6 +317,7 @@ class NoteEditSession {
   Manifests* manifests_ = nullptr;
   HistoryT* history_ = nullptr;
   Composer* comp_ = nullptr;
+  bool bindStarted_ = false;  // a stepped bind under way (this gather's)
   Window* win_ = nullptr;
   Writer* writer_ = nullptr;
   EditNote* notes_ = nullptr;

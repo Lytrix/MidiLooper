@@ -168,6 +168,30 @@ void tearDown() {}
 // 384 source notes sounding at once (3 passes x 16 channels x 8 stacked, three pitches), spanning windows 0..2, plus a
 // fourth pass whose note on pass 0's pitch shortens pass 0's sounding notes inside window 1. 16 are sent; the stream equals the
 // reference with the same admission; every window stays inside the bound.
+// Owner 2026-11-11 (at 300 BPM a 30-layer slot's bind took 711 us in one grain): a source binds in steps of
+// `kRunsPerStep` runs, and the stepped bind composes exactly what the one-shot bind does.
+void test_a_source_binds_in_steps_of_runs() {
+  SourceRun many[30];
+  for (uint32_t k = 0; k < 30; ++k) {
+    const RunId r = recordPass({{1, static_cast<uint8_t>(40 + k), 10 + 100 * k, 50 + 100 * k}}, kLoop);
+    many[k] = {r, gRuns.run(r).rowCount};
+  }
+  TEST_ASSERT_TRUE(gC.begin(many, 30, kLoop, 7));  // one shot
+  TEST_ASSERT_TRUE(gC.composeNext(gWin, kLoop));
+  const uint16_t want = gWin.count;
+  TEST_ASSERT_EQUAL_UINT16(30, want);  // one entry a note
+  gC.bindStart(many, 30, kLoop, 8, true);
+  uint8_t steps = 0;
+  TestComposer::BindStep b;
+  do {
+    b = gC.bindMore(TestComposer::kRunsPerStep);
+    ++steps;
+  } while (b == TestComposer::BindStep::Running);
+  TEST_ASSERT_EQUAL(TestComposer::BindStep::Done, b);
+  TEST_ASSERT_EQUAL_UINT8(3, steps);  // 30 runs, 12 a step
+  TEST_ASSERT_TRUE(gC.composeNext(gWin, kLoop));
+  TEST_ASSERT_EQUAL_UINT16(want, gWin.count);
+}
 void test_384_source_16_output_across_windows() {
   std::vector<NoteSpec> passes[4];
   for (uint8_t r = 0; r < 3; ++r)
@@ -340,6 +364,7 @@ void test_same_note_id_in_two_runs_ends_each_from_its_own_run() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_384_source_16_output_across_windows);
+  RUN_TEST(test_a_source_binds_in_steps_of_runs);
   RUN_TEST(test_live_held_note_closed_live_then_recorded_end_next_cycle);
   RUN_TEST(test_revision_switch_closes_uncarried_and_never_closes_unsent);
   RUN_TEST(test_instance_identity_includes_run);
