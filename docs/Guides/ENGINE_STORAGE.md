@@ -77,7 +77,7 @@ plus the slot's small state record. The run area's space map is rebuilt at boot 
 (`ClusterMap`); a run no copy lists any more is free again from that boot on.
 
 **Grains.** A save is cut into grains of one sector (each started only when the card is ready, never waited for); the
-worst persistence grain measured while playing is under 0.4 ms. A load of an older undo step from the card (below)
+worst persistence grain measured while playing is under 0.4 ms (all engine timing: [ENGINE_TIMING.md](ENGINE_TIMING.md)). A load of an older undo step from the card (below)
 reads at most four sectors a grain.
 
 **File names (owner 2026-11-11).** The run-once store is `store.bin`; the DEC-253 store is kept as `store.bak`. The

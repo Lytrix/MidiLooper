@@ -84,7 +84,7 @@ The accepted architecture is [DEC-252 — fixed pages, immutable runs and versio
 
 Current constants in [EngineConfig.h](../../include/ContentEngine/EngineConfig.h): 64 slots, one writer, 131,072 committed rows, 16 simultaneously sounding output notes per track, a 512-note edit selection, a 99-entry hot history table shared across slots (including current states), and 99 undo steps per slot, hot and cold together (`kSlotDepth`). These are distinct limits: output polyphony does not limit stored notes. Undo is per slot (see [undo per slot](#undo-per-slot)); steps that do not fit the hot table are kept on the card ([DEC-254 — undo history per slot, every step on the card](../DECISION_LOG.md#dec-254--undo-history-per-slot-recent-steps-in-psram-every-step-on-the-card)).
 
-These constants are admission/storage limits, not proof that every maximum-density workload meets timing. OpenSpec tasks retain the remaining measurement and qualification gates.
+These constants are admission/storage limits, not proof that every maximum-density workload meets timing. OpenSpec tasks retain the remaining measurement and qualification gates. The timing budgets and device measurements are collected in [ENGINE_TIMING.md](ENGINE_TIMING.md).
 
 ## Hangs, the watchdog and boot diagnostics
 

@@ -1,0 +1,97 @@
+# Engine timing: budgets, measurements and how to read them
+
+One place for the fixed-memory engine's timing: the clock it runs on, the budget each kind of work has, what was
+measured on the device, and the serial lines that show it. Authority stays where each figure was decided — the
+OpenSpec design ([`fixed-memory-engine/design.md`](../../openspec/changes/fixed-memory-engine/design.md), § E5, E5.2,
+E5.8) and the `DEC-###` entries in [`DECISION_LOG.md`](../DECISION_LOG.md); this guide collects them and does not
+override them. When a figure here and its source disagree, the source wins; update this page.
+
+**Not the engine:** the S7.5a continuity envelope (rows L1.1–L1.11: `DIAG,midi_gap`, `envelope_instr`, `late_route`,
+`env_dist`, `win_gap`; [`DECLARED-LIMITS.md`](../../openspec/changes/runtime-working-set-ownership/evidence/2026-10-11-s75a-continuity-envelope/DECLARED-LIMITS.md))
+belongs to the legacy runtime. The engine firmware prints none of those rows; its instruments are below.
+
+## The clock
+
+| Figure | Value | Source |
+|---|---|---|
+| Resolution | 192 ticks a quarter note; a MIDI clock pulse is 8 ticks | `EngineClock.h` |
+| A tick | 2,604 µs at 120 BPM; 1,041.67 µs at 300 BPM (the fastest case every budget is checked at) | — |
+| A window | 1,536 ticks (2 bars of 4/4): the unit a track's playback is composed in, ahead of time | `EngineRoot.h` `kWindowTicks` |
+| Checkpoint spacing | 4 windows (8 bars) | `kCheckpointSpacing` |
+| External clock | a missing pulse is a timeout after 500 ms (`#ENGINE,clock,timeout_age_us`); a gap over 200 ms between pulses is recorded (`#ENGINE,gap`) | `EngineMain.cpp` `realtime` |
+| Watchdog | 4 s without a main-loop pass resets the board; the next boot reports where it hung | DEC-266 — hardware watchdog, `!ENGINE boot` |
+
+## The main loop and its budget
+
+Each main-loop pass reads input, advances ticks, sends due MIDI, runs **one worker grain**, then the surface, LEDs and
+screen. Playback is never composed inside a tick: it is composed a window ahead by worker jobs, so the tick path only
+plays what is already composed.
+
+| Budget | Value | Meaning | Source |
+|---|---|---|---|
+| **g — one worker grain** | **810 µs** | every background step (compose, sweep, cold start, save, load, fetch) is cut so one grain stays under it | E5.8, `kGrainUs` |
+| Scheduler | hard jobs earliest-deadline-first; a soft grain only when every hard job keeps its slack; display ≥ 1 grain in 4 and persistence ≥ 1 in 16 while pending | E5.2, `WorkerScheduler.h` |
+| Feasibility | at 50 % worker share, eight tracks of the adversarial clustered case (100 grains a window) miss no deadline; spread case C1 = 8 × 47 × 0.81 ms = 305 ms per 1.6 s | E5.8 |
+| Record / launch lead | a window's composition under load: ≤ 100 grains of 810 µs at ≥ 1 grain in 2 ≈ 160 ms (≈ 160 ticks at 300 BPM), doubled | design § E9.1b — handoff without a gap |
+| Card work while playing | no worse than the worst main-loop pass, about **0.9 ms** — the precision budget, not a hard deadline | DEC-254 |
+
+The scheduler decision itself costs 4.7 µs worst with 32 jobs.
+
+## Measured grains (device)
+
+Compose and playback (E5.8, bench image `59c8a6f8…`, production memory placement):
+
+| Grain | Worst | Average |
+|---|---|---|
+| compose, 128 row units, spread | 719 µs | 581 µs |
+| compose, 128 row units, clustered | **785–800 µs** (sets g) | 562 µs |
+| sweep step | 684 µs | 583 µs |
+| cold-start step | 664 µs | 574 µs |
+| compose seek / `begin` | 681 / 420 µs | 451 / 410 µs |
+| checkpoint resume (bind / seek) | 408 / 697 µs | 402 / 686 µs |
+| checkpoint capture | 68 µs | 67 µs |
+| edit index build, 256 units | 398 µs | 191 µs |
+
+Card and undo history (DEC-254; production firmware, while playing):
+
+| Work | Worst measured | Bound by |
+|---|---|---|
+| autosave grain (one sector; run records and state records) | 94 µs (E4.6b), 83 µs with a demotion (E4.6c) | one sector a grain, started only when the card is ready |
+| fetch of a cold undo step | 337 µs (E4.6d) | at most 4 sectors a grain |
+| pressure demotion | — (no I/O) | at most one each 50 ms |
+| milestone save while playing | 239 µs | DEC-258 |
+| card read figures | stream 23 µs a sector; 0.24–0.75 ms to start a stream; 8 sectors ≤ 0.18 ms; a scattered sector ~0.35 ms (worst 0.9 ms) | `!ENGINE readbench` (DEC-254 stage 1) |
+
+Allowed only with the transport stopped (boot, file creation): the boot load reads 32 sectors a grain (up to 31 ms); the
+boot's one-time store rename took 43.6 ms; preallocating the library is file-system work of seconds. File-system calls
+take 4–8 ms each (E9.8g), which is why nothing on the playing path uses them.
+
+## Output
+
+| Figure | Value | Source |
+|---|---|---|
+| DIN throughput | one 3-byte message per 960 µs (31,250 baud) | CE-C1 |
+| Sounding notes | 16 per track per port; NoteOffs owed by the sounding table, sent first once due | CE-C1, `EngineConfig.h` |
+| Lateness | NoteOn and NoteOff lateness measured separately (`maxNoteOnLateMicros` / `maxNoteOffLateMicros`) in the native suites; no device lateness row yet | design § regression metrics |
+
+## Reading it on the device
+
+`!ENGINE take` prints the worst values since the last `take`, then resets them:
+
+| Line | Fields |
+|---|---|
+| `#ENGINE,stages` | worst µs per main-loop stage: `input`, `serial`, `ticks`, `jobs`, `grains`, `send`, `surface`, `leds`, `screen` |
+| `#ENGINE,take,pass_max_us=…` | the worst whole main-loop pass; `pulses`, `timeouts`, `us_per_tick` |
+| `#ENGINE,grain_worst` | the worst grain per job class: `hard`, `transition`, `display`, `persistence`, `background` |
+| `#ENGINE,gap` | each clock gap over 200 ms: when, how long, passes and USB traffic in it |
+| `#ENGINE,card` / `card_write` | worst card operation times; streamed vs. jumped writes, waits avoided |
+| `#ENGINE,cold` / `fetch` / `runstore` | the undo history on the card (DEC-254) |
+
+Idle baseline (`bb0d3b0a…`, transport stopped, 2026-11-11): pass 221 µs; stages serial 169, screen 151, jobs 18,
+surface 15 µs; every grain class 0. A measurement while playing is the gate for any change to the playing path: compare
+`pass_max_us` and `grain_worst` with and without the change on the same set.
+
+## When a figure changes
+
+A new worst grain above g, a new kind of work on the playing path, or a card operation that can wait: re-measure
+on the device, update the source (design or `DEC-###`) and then this page.

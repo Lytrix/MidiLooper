@@ -132,6 +132,7 @@ Historical plans and domain journals elsewhere remain searchable; open them only
 - [Authority/Architecture/ExecutionBounds.md](Authority/Architecture/ExecutionBounds.md) — display resolve/draw bound class (DEC-043)
 - [Guides/control-surface/Display.md](Guides/control-surface/Display.md)
 - [Guides/ENGINE_UI_UX_GUIDE.md](Guides/ENGINE_UI_UX_GUIDE.md) — the engine's screen, windows, hints, button roles and the mockup-first workflow
+- [Guides/ENGINE_TIMING.md](Guides/ENGINE_TIMING.md) — the engine's timing budgets (g = 810 µs grain), device measurements and the `!ENGINE take` timing rows
 - [Authority/ARCHITECTURE_RULES.md](Authority/ARCHITECTURE_RULES.md) — DisplayManager ownership
 - `DisplayManager` for draw entry points
 
