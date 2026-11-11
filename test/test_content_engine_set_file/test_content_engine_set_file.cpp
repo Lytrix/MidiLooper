@@ -40,9 +40,9 @@ using namespace ContentEngine;
 using Pool = PagePool<2048 + 576, 64>;
 using Runs = RunTable<32, Pool>;
 using Manifests = ManifestTable<16, 8>;
-using Hist = History<Manifests, Runs, 4, 20>;
+using Hist = SlotUndoHistory<Manifests, Runs, 4, 20>;
 using Res = RowReservations<Pool, Runs>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 
 struct MemoryFile {  // the SD file stand-in

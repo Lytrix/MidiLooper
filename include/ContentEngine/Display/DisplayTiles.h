@@ -163,7 +163,7 @@ class TileStore {
   uint32_t wanted_[Slots];
 };
 
-template <typename Composer, typename Window, typename Manifests, typename Runs, typename Store>
+template <typename SpanWindowComposer, typename Window, typename Manifests, typename Runs, typename Store>
 class TileSweep {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Superseded, Refused };
@@ -171,7 +171,7 @@ class TileSweep {
   static constexpr uint8_t kMaxOpen = 64;  // notes open while a bar is built (composer tracks 48 effective instances)
 
   /// Pins `manifest` and sweeps it into `slot`'s tiles (span tiles too when the slot has detail tiles).
-  Status start(Composer& composer, Store& store, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
+  Status start(SpanWindowComposer& composer, Store& store, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
                uint32_t windowTicks, uint32_t barTicks) {
     cancel();
     composer_ = &composer;
@@ -208,10 +208,10 @@ class TileSweep {
       if (!source_.prepared()) return status_;
       if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
       bindStarted_ = true;
-      const auto b = composer_->bindMore(Composer::kRunsPerStep);  // in steps (owner 2026-11-11)
-      if (b == Composer::BindStep::Running) return status_;
+      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
-      if (b == Composer::BindStep::Failed) return stop(Status::Refused);
+      if (b == SpanWindowComposer::BindStep::Failed) return stop(Status::Refused);
       source_.dropIndexLease();
       composing_ = true;
       deferred_ = (composer_->wrapReach() + bar_ - 1) / bar_;  // bars the wrap reach touches: published from cycle 1
@@ -366,10 +366,10 @@ class TileSweep {
     return status_ = s;
   }
 
-  Composer* composer_ = nullptr;
+  SpanWindowComposer* composer_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this job's)
   Store* store_ = nullptr;
-  SourceLease<Composer, Manifests, Runs> source_;
+  SourceLease<SpanWindowComposer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool composing_ = false, dense_ = false;
   uint32_t identity_ = 0, window_ = 0, bar_ = 0, loop_ = 0, cycle_ = 0, currentBar_ = 0, bars_ = 0, overflow_ = 0,
@@ -511,15 +511,15 @@ class LiveOverlay {
 /// composer and scratch window. A slot's newest request replaces its older one (and supersedes a running sweep for the
 /// slot). The focused slot's request is started first, then the others in request order. Each running sweep is a
 /// display-class job, so it gets at least one grain in four while display work is pending.
-template <typename Composer, typename Window, typename Manifests, typename Runs, typename Store, typename Scheduler,
+template <typename SpanWindowComposer, typename Window, typename Manifests, typename Runs, typename Store, typename Scheduler,
           uint8_t Workers = 2, uint8_t Slots = 64>
 class DisplayJobs {
  public:
-  using Sweep = TileSweep<Composer, Window, Manifests, Runs, Store>;
+  using Sweep = TileSweep<SpanWindowComposer, Window, Manifests, Runs, Store>;
   static constexpr uint32_t kRowsPerGrain = 128;
   static constexpr uint32_t kDeclaredGrains = 4000;  // one loop and the wrap-reach bars of a W-sized slot
 
-  void init(Composer* const* composers, Window* const* scratch, Store& store, Manifests& manifests, Runs& runs,
+  void init(SpanWindowComposer* const* composers, Window* const* scratch, Store& store, Manifests& manifests, Runs& runs,
             Scheduler& scheduler, uint32_t windowTicks, uint32_t barTicks) {
     for (uint8_t i = 0; i < Workers; ++i) worker_[i] = Worker{composers[i], scratch[i], this, {}, false, 0xFF, kNoManifest};
     store_ = &store;
@@ -611,7 +611,7 @@ class DisplayJobs {
 
  private:
   struct Worker {
-    Composer* composer;
+    SpanWindowComposer* composer;
     Window* scratch;
     DisplayJobs* owner;
     Sweep sweep;

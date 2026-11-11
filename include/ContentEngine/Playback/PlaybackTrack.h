@@ -29,10 +29,10 @@
 
 namespace ContentEngine {
 
-template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs, uint16_t T>
+template <typename SpanWindowComposer, typename Table, typename Window, typename Manifests, typename Runs, uint16_t T>
 class PlaybackTrack {
  public:
-  using Cold = ColdStart<Composer, Table, Window, Manifests, Runs>;
+  using Cold = ColdStart<SpanWindowComposer, Table, Window, Manifests, Runs>;
   using Player = WindowPlayer<T>;
   using Emit = typename Player::Emit;
   static constexpr uint8_t kNone = 0xFF;
@@ -61,7 +61,7 @@ class PlaybackTrack {
     uint32_t editJoins;         // NOTE_EDIT publishes joined inside the playing window
   };
 
-  void init(Composer& a, Composer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
+  void init(SpanWindowComposer& a, SpanWindowComposer& b, Window* buffers[3], const Table& table, Manifests& manifests, Runs& runs,
             Player& player, uint32_t windowTicks) {
     comp_[0] = &a;
     comp_[1] = &b;
@@ -340,7 +340,7 @@ class PlaybackTrack {
       }
       return true;
     }
-    Composer& c = *comp_[transComp_];
+    SpanWindowComposer& c = *comp_[transComp_];
     Window& w = *buf_[trans_].w;
     if (!c.windowOpen() && !c.openWindow(w, window_)) {
       c.nextCycle();  // the loop wrap is its own grain (as `composeSteady`)
@@ -428,7 +428,7 @@ class PlaybackTrack {
       next_ = freeBuffer();
       buf_[next_].state = State::Filling;
     }
-    Composer& c = *comp_[steady_];
+    SpanWindowComposer& c = *comp_[steady_];
     Window& w = *buf_[next_].w;
     if (!c.windowOpen() && !c.openWindow(w, window_)) {
       c.nextCycle();  // the loop wrap is its own grain (owner 2026-11-11: O(runs) — 179 µs at 30 layers, with a full
@@ -704,7 +704,7 @@ class PlaybackTrack {
     return n;
   }
 
-  Composer* comp_[2];
+  SpanWindowComposer* comp_[2];
   Cold cold_[2];
   Buffer buf_[3];
   const Table* table_ = nullptr;

@@ -39,10 +39,10 @@ using namespace ContentEngine;
 using Pool = PagePool<256, 64>;
 using Runs = RunTable<16, Pool>;
 using Manifests = ManifestTable<8, 8>;
-using Hist = History<Manifests, Runs, 4, 20>;
+using Hist = SlotUndoHistory<Manifests, Runs, 4, 20>;
 using Res = RowReservations<Pool, Runs>;
 using Import = ResolvedImport<Pool, Runs, Manifests, Hist, /*held*/ 8>;
-using DisplayComposer = Composer<Pool, Runs, 64, 48>;  // every stored note (the check is of storage, not output)
+using DisplayComposer = SpanWindowComposer<Pool, Runs, 64, 48>;  // every stored note (the check is of storage, not output)
 using Window = SpanWindow<3072>;
 
 constexpr uint32_t kLoop = 768 * 4;

@@ -52,7 +52,7 @@ enum class WriterResult : uint8_t {
 };
 
 template <typename Pool, typename Runs>
-class Writer {
+class CaptureWriter {
  public:
   using Reservations = RowReservations<Pool, Runs>;
   /// The row reservations (a resize's fit run reserves through them, DEC-257).

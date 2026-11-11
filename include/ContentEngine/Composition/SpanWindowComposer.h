@@ -74,7 +74,7 @@ namespace ContentEngine {
 /// 12 KiB — serves both, and no effective note is refused up to the lent list's size.
 template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
           typename IndexStore = EditIndexStore<Pool, Runs>>
-class Composer {
+class SpanWindowComposer {
  public:
   static constexpr uint32_t kHideLookahead = 8;  // OVL-6 with OVL-2: a later start within [on, on + 8] hides
 

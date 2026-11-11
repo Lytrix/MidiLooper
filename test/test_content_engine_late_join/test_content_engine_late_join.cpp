@@ -27,7 +27,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<1024, 64>;
 using Runs = RunTable<32, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Table = CheckpointTable<TestComposer::Checkpoint, 2, 8>;
 using Manifests = ManifestTable<16, 8>;
@@ -366,7 +366,7 @@ void test_a_launch_ends_what_sounded_at_its_commit() {
 }
 
 void test_din_and_usb_diverge_when_din_cannot_admit_the_late_note() {
-  using Hub = OutputHub<>;
+  using Hub = MidiOutputHub<>;
   using Out = ClockOutput<Hub, Emit, 1, kT, 3>;
   static Hub hub;
   static Out out;

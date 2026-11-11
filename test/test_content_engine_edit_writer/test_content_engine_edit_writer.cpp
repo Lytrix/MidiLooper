@@ -4,7 +4,7 @@
 // fixed-memory-engine E4.5: the NOTE_EDIT edit writer (owner decision 2026-11-05: hear each edit; the session rewrites
 // one edit run). Every apply / undo / redo reserves a fresh edit run at acceptance (refused by name only when content is
 // full), the rebuild writes it in grains (hides, then replacements in tick order, noteIds kept) and publishes base runs
-// + edit run as the session's one History state. E: steps live in the writer's log (99, oldest forgotten). Leaving keeps
+// + edit run as the session's one SlotUndoHistory state. E: steps live in the writer's log (99, oldest forgotten). Leaving keeps
 // one U: step; abandon returns to the start. Effective content is checked by composing the slot's current manifest
 // with the production composer and edit index, and a random sequence is checked against a reference model.
 
@@ -40,10 +40,10 @@ using namespace ContentEngine;
 using Pool = PagePool<1024, 64>;  // 576 pages are the edit-index partition
 using Runs = RunTable<64, Pool>;
 using Manifests = ManifestTable<64, 63>;
-using Hist = History<Manifests, Runs, 8, 20>;
+using Hist = SlotUndoHistory<Manifests, Runs, 8, 20>;
 using Res = RowReservations<Pool, Runs>;
-using Writer = EditWriter<Pool, Runs, Manifests, Hist, /*selection*/ 16, /*steps*/ 99, /*log*/ 64>;
-using TestComposer = Composer<Pool, Runs>;
+using CaptureWriter = NoteEditWriter<Pool, Runs, Manifests, Hist, /*selection*/ 16, /*steps*/ 99, /*log*/ 64>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 
 static Pool gPool;
 static Runs gRuns;
@@ -53,7 +53,7 @@ static Res gRes;
 static EditIndexStore<Pool, Runs> gIndex;
 static TestComposer gC;
 static SpanWindow<3072> gWin;
-static Writer gW;
+static CaptureWriter gW;
 static EditChange gLog[64];
 
 constexpr uint32_t kLoop = 768 * 8;
@@ -527,7 +527,7 @@ void test_settle_keeps_the_results_and_edited_notes_are_targets() {
   cur[5].length = 40;
   expectHeard(cur);
   // Another selection without settling: A's results go (a rebuild, no edit), and come back with A.
-  gW.cause(Writer::kNoCause);
+  gW.cause(CaptureWriter::kNoCause);
   finish();
   cur[5].length = gBase[5].length;
   expectHeard(cur);
@@ -657,9 +657,9 @@ void test_no_heap_and_production_size() {
   gW.leave();
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
-  using Production = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, History<ProductionManifests, ProductionRuns>>;
+  using Production = NoteEditWriter<ProductionPool, ProductionRuns, ProductionManifests, SlotUndoHistory<ProductionManifests, ProductionRuns>>;
   char line[80];
-  snprintf(line, sizeof line, "production EditWriter %u B", static_cast<unsigned>(sizeof(Production)));
+  snprintf(line, sizeof line, "production NoteEditWriter %u B", static_cast<unsigned>(sizeof(Production)));
   TEST_MESSAGE(line);
   TEST_ASSERT_TRUE(sizeof(Production) <= 65536u);
 }

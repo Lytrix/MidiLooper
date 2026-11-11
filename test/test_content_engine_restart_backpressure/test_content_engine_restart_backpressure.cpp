@@ -5,7 +5,7 @@
 // they are not proof that DIN, USB device or USB host transmitted a note. Physical sounding-note ownership stays with
 // the terminal scheduler (per track) and the output hub (per destination).
 //
-// Rig: composer -> WindowPlayer / TerminalScheduler<16> -> OutputHub with a backpressured DIN port (40 ms per message)
+// Rig: composer -> WindowPlayer / TerminalScheduler<16> -> MidiOutputHub with a backpressured DIN port (40 ms per message)
 // and a USB port, both receiving every note under one key. Scenario: play manifest M1; at a mid-loop window boundary
 // cold-start M2 (undo / slot switch) from its swept checkpoint; at a later boundary adopt revision M3 the same way;
 // then stop. On every port's wire: each transmitted NoteOn gets exactly one later NoteOff, no NoteOff is sent for a
@@ -34,14 +34,14 @@ using namespace ContentEngine;
 
 using Pool = PagePool<2048, 64>;
 using Runs = RunTable<64, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Manifests = ManifestTable<16, 8>;
 using Table = CheckpointTable<TestComposer::Checkpoint, 2, 8>;
 using Sweep = CheckpointSweep<TestComposer, Table, Window, Manifests, Runs>;
 using Cold = ColdStart<TestComposer, Table, Window, Manifests, Runs>;
 using Player = WindowPlayer<16>;
-using Hub = OutputHub<128, 2>;
+using Hub = MidiOutputHub<128, 2>;
 
 static Pool gPool;
 static Runs gRuns;

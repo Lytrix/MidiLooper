@@ -6,7 +6,7 @@
 // 2026-11-09: "the first note played twice"). On the device the doubles were the slot's own content: a take stopped
 // after the bar line keeps the notes played after it, which come back at the loop start (E9.8i) on top of its first
 // notes. The launch path itself plays each note once; these cases keep it so.
-// Surface slice C (a step or bar button, `TrackControl::queueSeek`): the playing slot restarts at a loop position at the
+// ControlSurface slice C (a step or bar button, `TrackControl::queueSeek`): the playing slot restarts at a loop position at the
 // next launch step — inside a window (a late join: the note sounding there starts at the join), on a window boundary,
 // and with few grains a tick — each note once, at its own position from then on.
 

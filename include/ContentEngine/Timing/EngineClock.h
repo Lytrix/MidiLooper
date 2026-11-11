@@ -66,7 +66,7 @@ class EngineClock {
     internalUsPerTick_ = static_cast<uint32_t>(6000000000ull / (static_cast<uint64_t>(bpmX100) * kTicksPerQuarter));
   }
 
-  // ---- Surface (internal) -----------------------------------------------------------------------------------------
+  // ---- ControlSurface (internal) -----------------------------------------------------------------------------------------
   void start(uint32_t nowUs) {
     if (external_) return;
     running_ = true;

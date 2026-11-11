@@ -14,12 +14,12 @@
 //    surface's LED feedback (as the legacy firmware, which never sends playback there) — the host driver's
 //    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop. Every host send is
 //    admitted first (`hostSend`, `HostTx.h`): dropped when both transmit buffers are full, and the LED stage waits.
-// 5. The control surface (E9.8b-1, `Surface`): the DROID control plane (channels 13–16, never recorded nor thru) as
+// 5. The control surface (E9.8b-1, `ControlSurface`): the DROID control plane (channels 13–16, never recorded nor thru) as
 //    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
 //    a millisecond (the DROID host's gap); the DROID's fader bank (Program Change 1 / 0 on channel 16, every port) follows
 //    NOTE_EDIT, so its faders send the note-edit messages (E9.8k). Serial commands (`!ENGINE ...`, `!STOP_STATUS`,
 //    `!REBOOT`) remain.
-// 6. The screen (E9.8c, `EngineDisplay`): a frame every 33 ms when the previous DMA transfer is done; each track shows
+// 6. The screen (E9.8c, `OledScreen`): a frame every 33 ms when the previous DMA transfer is done; each track shows
 //    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note (start, pitch, velocity,
 //    length in the status band, E9.8k).
 // Breadcrumbs (`CrashReport.breadcrumb`, kept across a warm reset): the main-loop stage and the last tick, printed at
@@ -63,9 +63,9 @@ EXTMEM EnginePsram gPsram;
 DMAMEM EngineRam2 gRam2;
 EngineRoot gEngine;
 EngineClock gClock;
-EngineFirmware::SdCardIo gCard;
-EngineFirmware::EngineDisplay gDisplay;
-Surface<EngineRoot> gSurface;
+Teensy::SdCardIo gCard;
+Teensy::OledScreen gDisplay;
+ControlSurface<EngineRoot> gSurface;
 uint32_t gLastLedUs = 0;
 constexpr uint32_t kLedGapUs = 1000;  // the DROID USB host drops packets closer than ~1 ms (legacy MIN_PACKET_GAP)
 USBHost gHost;
@@ -231,7 +231,7 @@ void realtime(uint8_t status, uint32_t nowUs) {
 bool gTrace = false;  // `!ENGINE trace 1`: every control-plane message and what the edit surface did with it
 
 void channelMessage(uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
-  if (Surface<EngineRoot>::controlPlane(status)) {  // the DROID's: never recorded, never thru
+  if (ControlSurface<EngineRoot>::controlPlane(status)) {  // the DROID's: never recorded, never thru
     gSurface.input(status, d1, d2, millis());
     if (gTrace) {
       const auto& ed = gSurface.edit();
@@ -1048,7 +1048,7 @@ FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC
     a.explore = now.explore != at.explore;
     gBrowser.setActivity(a);
   }
-  EngineFirmware::BrowserInfo info;
+  Teensy::BrowserInfo info;
   info.tz = gTzOffset;
   info.now = wallTime();
   info.pickSquares = gPickSquares;
@@ -1395,7 +1395,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
   } else if (std::strcmp(verb, "overdub") == 0) {
     c.selectTrack(static_cast<uint8_t>(a));
     report(verb, static_cast<uint8_t>(c.startOverdub(static_cast<uint8_t>(a), gLastTick)));
-  } else if (std::strcmp(verb, "end") == 0) {  // end T: as REC (`Surface::endTake`) — a Record take at the bar, an overdub at once
+  } else if (std::strcmp(verb, "end") == 0) {  // end T: as REC (`ControlSurface::endTake`) — a Record take at the bar, an overdub at once
     const auto& x = gEngine.transport();
     const bool overdub = x.mode() == ProductionTransport::Mode::Overdubbing && x.writingTrack() == a;
     report(verb, static_cast<uint8_t>(overdub ? c.stopNow(gLastTick, nowUs, us)
@@ -1828,18 +1828,18 @@ void selectFirstSlots() {
 
 /// The DROID's fader bank (Program Change, channel 16) on every port, as the LEDs.
 void sendBank(uint8_t program) {
-  const uint8_t status = static_cast<uint8_t>(0xC0 | Surface<EngineRoot>::kProgramChannel);
+  const uint8_t status = static_cast<uint8_t>(0xC0 | ControlSurface<EngineRoot>::kProgramChannel);
   sendDin(status, program, 0);
-  usbMIDI.sendProgramChange(program, Surface<EngineRoot>::kProgramChannel + 1, 0);
+  usbMIDI.sendProgramChange(program, ControlSurface<EngineRoot>::kProgramChannel + 1, 0);
   usbMIDI.send_now();
   gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
-  hostSend(0xC0, program, 0, Surface<EngineRoot>::kProgramChannel + 1);
+  hostSend(0xC0, program, 0, ControlSurface<EngineRoot>::kProgramChannel + 1);
 }
 
 /// A motor-fader message (NOTE_EDIT feedback) on every port, as the LEDs.
-void sendMotor(const EditSurface<EngineRoot>::MotorMsg& m) {
+void sendMotor(const NoteEditSurface<EngineRoot>::MotorMsg& m) {
   sendDin(m.status, m.d1, m.d2);
   const uint8_t type = m.status & 0xF0, channel = static_cast<uint8_t>((m.status & 0x0F) + 1);
   usbMIDI.send(type, m.d1, m.d2, channel, 0);
@@ -1851,14 +1851,14 @@ void sendMotor(const EditSurface<EngineRoot>::MotorMsg& m) {
 }
 
 void sendLed(uint8_t note, uint8_t velocity) {
-  const uint8_t status = static_cast<uint8_t>((velocity != 0 ? 0x90 : 0x80) | Surface<EngineRoot>::kLedChannel);
+  const uint8_t status = static_cast<uint8_t>((velocity != 0 ? 0x90 : 0x80) | ControlSurface<EngineRoot>::kLedChannel);
   sendDin(status, note, velocity);
-  usbMIDI.send(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1, 0);
+  usbMIDI.send(status & 0xF0, note, velocity, ControlSurface<EngineRoot>::kLedChannel + 1, 0);
   usbMIDI.send_now();
   gLastUsbTxUs = micros();
   ++gUsbOut;
   ++gOutThisPass;
-  hostSend(status & 0xF0, note, velocity, Surface<EngineRoot>::kLedChannel + 1);
+  hostSend(status & 0xF0, note, velocity, ControlSurface<EngineRoot>::kLedChannel + 1);
 }
 
 // ---- Breadcrumbs and the watchdog -----------------------------------------------------------------------------------
@@ -2206,14 +2206,14 @@ void loop() {
   crumb(kLeds);
   uint8_t bank;
   if (gSurface.bank(bank)) sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
-  EditSurface<EngineRoot>::MotorMsg motor;
+  NoteEditSurface<EngineRoot>::MotorMsg motor;
   if (gSurface.motor(millis(), motor)) sendMotor(motor);  // the DROID's motor faders follow the selection
   if (micros() - gLastLedUs >= kLedGapUs) {
     if (!hostTxRoom()) ++gHostDeferred;  // the DROID is not taking packets: the surface keeps its LEDs until it does
     else if (gSurface.leds(gLastTick, millis(), sendLed, 1) != 0) gLastLedUs = micros();
   }
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t), gSurface.shownQueuedPosition(t));
-  EngineFirmware::EditView ev;
+  Teensy::EditView ev;
   const auto& ed = gSurface.edit();
   ev.copy = static_cast<uint8_t>(gSurface.copyMode());  // DEC-279 amendment 1: copy mode's window
   ev.copySlot = gSurface.copySourceSlot();
@@ -2228,7 +2228,7 @@ void loop() {
       ev.barKnown = known;
     }
   }
-  ev.copyLeft = static_cast<uint16_t>(gSurface.copyMsLeft(millis()) * 1000 / Surface<EngineRoot>::kCopyIdleMs);
+  ev.copyLeft = static_cast<uint16_t>(gSurface.copyMsLeft(millis()) * 1000 / ControlSurface<EngineRoot>::kCopyIdleMs);
   ev.loop = gSurface.loopEdit();
   ev.loopTicks = gSurface.pendingLoopTicks();
   ev.loopStart = gSurface.loopStart();
@@ -2266,7 +2266,7 @@ void loop() {
     ev.steps = ed.steps();
     ev.velocity = ed.velocityMode();
     ev.encoder = static_cast<int8_t>(gSurface.encoderOption());
-    if (gSurface.copyMode() == Surface<EngineRoot>::Copy::Note && ed.copyCount() == 1) ev.copyPitch = ed.copied(0).pitch;
+    if (gSurface.copyMode() == ControlSurface<EngineRoot>::Copy::Note && ed.copyCount() == 1) ev.copyPitch = ed.copied(0).pitch;
     EditNote n;
     if (ed.selected(n)) {
       ev.note = true;

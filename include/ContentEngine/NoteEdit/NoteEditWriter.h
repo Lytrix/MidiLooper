@@ -4,17 +4,17 @@
 // The NOTE_EDIT edit writer (fixed-memory-engine E4.5; owner decision 2026-11-05: hear each edit, rewrite one run).
 //
 // * Session: `begin` admits a selection of at most `MaxSelection` notes of the slot's current manifest (their noteId
-//   and geometry) and opens the History NOTE_EDIT session, which protects that manifest as the restore point.
+//   and geometry) and opens the SlotUndoHistory NOTE_EDIT session, which protects that manifest as the restore point.
 // * Edits: `apply` changes the geometry of selected notes (tick, length, pitch, velocity, channel) or deletes them,
 //   each note at most once per step. It is one E: step. The E: steps live in this writer's log (at most `MaxSteps`,
-//   the oldest forgotten when full; entries in caller-placed storage), not in History: each step records the values
+//   the oldest forgotten when full; entries in caller-placed storage), not in SlotUndoHistory: each step records the values
 //   it replaced, and undo / redo swap them back.
 // * Audible at once: every apply / undo / redo is new input. At acceptance it reserves the rows of a fresh edit run
 //   (CE-A1: refused by name, nothing changed, only when content is full). Acceptance is O(changes of the action): the
 //   edited / live note counts are kept incrementally. The rebuild job (`step`) then works in bounded units — gather
 //   (an edited note's HideNote row), heapify and extract (one sift each), write (one replacement row; tick order,
 //   NoteOff before NoteOn at a tick, noteIds kept, DEC-245 lineage) — seals the run, publishes base runs + edit run as
-//   a new manifest, and makes it the session's one History state (the previous one is released to reclaim). With no
+//   a new manifest, and makes it the session's one SlotUndoHistory state (the previous one is released to reclaim). With no
 //   note edited the session state is removed and the slot plays its start. A newer action supersedes a running
 //   rebuild (its reservation is forgiven, its run reclaimed).
 // * Create (E9.8b-2, the legacy NOTELEN double press on an empty bracket): `create` adds a note to the session as one
@@ -80,7 +80,7 @@ enum class EditResult : uint8_t {
 template <typename Pool, typename Runs, typename Manifests, typename HistoryT,
           uint16_t MaxSelection = Config::kEditSelection, uint8_t MaxSteps = Config::kEditSteps,
           uint16_t MaxLogEntries = Config::kEditLogEntries>
-class EditWriter {
+class NoteEditWriter {
  public:
   using Reservations = RowReservations<Pool, Runs>;
   static_assert(MaxLogEntries >= MaxSelection, "one step may change the whole selection");

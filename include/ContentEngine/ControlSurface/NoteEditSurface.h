@@ -23,7 +23,7 @@
 //   anchor plus (value − 64) clamped to ±48 and to the loop, at least a 16th.
 // * F4 pitch (channel 15 CC 3): the value; while NOTELEN is held, the velocity (1–127; owner 2026-11-08, not in
 //   legacy), 0 muting the note (`kVelocityMuted`: drawn, editable, not sent) — that press is then no short / double. Velocity mode begins with the first F4 move while held, or after
-//   `Surface`'s long hold, which writes F4's motor to the velocity; on NOTELEN's release F4's motor goes back to the
+//   `ControlSurface`'s long hold, which writes F4's motor to the velocity; on NOTELEN's release F4's motor goes back to the
 //   pitch. A long hold released without F4 moved by hand is a long press: a note is created at the bracket (owner
 //   2026-11-08).
 // * The geometry faders act once a selection is 750 ms old (`NOTE_SELECTION_GRACE_PERIOD`) or after an F1 move. Every
@@ -42,10 +42,10 @@
 //   is held, the faders act on it at once, and the release closes its changes as one undo step and brings the
 //   previous selection back. The bar buttons do nothing here (as legacy).
 // * The encoder (slice E, `nudge`): the selected note's pitch (semitones), start (ticks, wrapped), length (ticks, at
-//   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `Surface` — one undo step
+//   least 1, at most the loop) or velocity (1–127, a mute kept) by the turn — accelerated by `ControlSurface` — one undo step
 //   a note as the faders; the faders showing it follow. While a step is held its push adds a 16th C4 there even
 //   beside other notes (`stepAdd`), its double push deletes the selected note (`deleteSelected`).
-// * Copy / paste (DEC-279; `Surface`'s copy mode picks the source and the targets; one undo step each): a note copied
+// * Copy / paste (DEC-279; `ControlSurface`'s copy mode picks the source and the targets; one undo step each): a note copied
 //   to a 16th at the same offset in it, beside what is there (`copyNote`); a bar copied over a bar of the 8-bar page
 //   holding the bracket (`copyBar`, at most `kMaxPaste` notes deleted and added). Replace (DEC-279 amendment 8): the
 //   target bar's / 16th's own notes go first; merge: they stay. Either way each pasted note then takes the overlap rule
@@ -79,7 +79,7 @@
 namespace ContentEngine {
 
 template <typename Engine>
-class EditSurface {
+class NoteEditSurface {
  public:
   static constexpr uint32_t kSixteenth = 48, kBar = 768, kWindowBars = 16;
   static constexpr int32_t kPbMin = -8192, kPbMax = 8192;
@@ -152,7 +152,7 @@ class EditSurface {
   uint32_t windowTicks() const { return ticks_; }
   uint32_t loop() const { return loop_; }
   uint32_t bracket() const { return bracket_; }
-  /// The screen's EDIT count: the session's E: level (History holds the session as one state, replaced in place) less
+  /// The screen's EDIT count: the session's E: level (SlotUndoHistory holds the session as one state, replaced in place) less
   /// the selected note's step, which counts once the note is deselected (as legacy; owner 2026-11-08).
   uint8_t steps() const {
     if (!editing()) return 0;
@@ -364,7 +364,7 @@ class EditSurface {
     if (motor) drive(kMotorPitch, ms);
   }
   /// NOTELEN released: F4 is the pitch again, its motor back there. True: velocity mode ended without F4 moved by
-  /// hand (a long press: `Surface` creates a note; owner 2026-11-08).
+  /// hand (a long press: `ControlSurface` creates a note; owner 2026-11-08).
   bool velocityDone(uint32_t ms) {
     if (!velocity_) return false;
     velocity_ = false;

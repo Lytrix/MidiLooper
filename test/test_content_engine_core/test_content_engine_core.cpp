@@ -375,7 +375,7 @@ void test_reservations_closing_runs_and_stop_at_exhaustion() {
 void test_reservations_random_interleaving() {
   initSmall(/*fixedReserve*/ 6);
   const unsigned long heapBefore = gHeapAllocations;
-  struct Writer {
+  struct CaptureWriter {
     RunId runs[3];   // [0] active, [1..2] closing
     uint8_t runCount;
     RunId committed[SmallRuns::kRunCount];  // sealed runs of the current take (content until the take is dropped)
@@ -384,7 +384,7 @@ void test_reservations_random_interleaving() {
   uint32_t refusals = 0, owedWrites = 0, accepted = 0;
   gSeed = 0xC0FFEEu;
   for (uint32_t step = 0; step < 200000; ++step) {
-    Writer& w = writers[rnd() % 3];
+    CaptureWriter& w = writers[rnd() % 3];
     const uint32_t op = rnd() % 100;
     if (w.runCount == 0) {
       const RunId r = gRuns.allocate(0, 0);

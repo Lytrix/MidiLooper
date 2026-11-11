@@ -21,7 +21,7 @@ using namespace ContentEngine;
 using Pool = PagePool<256, 64>;
 using Runs = RunTable<16, Pool>;
 using Store = EditIndexStore<Pool, Runs, 2, 64>;
-using Playback = Composer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, Store>;
+using Playback = SpanWindowComposer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, Store>;
 using Extraction = Playback;  // the same type, `extractAll` (DEC-287: one code copy)
 using Window = SpanWindow<512>;
 

@@ -38,8 +38,8 @@ using namespace ContentEngine;
 using Pool = PagePool<512, 8>;
 using Runs = RunTable<160, Pool, 4, 4>;
 using Manifests = ManifestTable<160, 4>;
-using ProdHistory = History<Manifests, Runs>;               // 64 slots, depth 99
-using SmallHistory = History<Manifests, Runs, 8, 20>;       // eviction reached quickly
+using ProdHistory = SlotUndoHistory<Manifests, Runs>;               // 64 slots, depth 99
+using SmallHistory = SlotUndoHistory<Manifests, Runs, 8, 20>;       // eviction reached quickly
 
 static Pool gPool;
 static Runs gRuns;
@@ -716,7 +716,7 @@ void test_no_heap_after_init() {
   }
   gTrap = false;
   TEST_ASSERT_EQUAL_UINT32(0, gHeapAllocations - before);
-  TEST_ASSERT_TRUE(sizeof(History<ProductionManifests, ProductionRuns>) <= 2048u);
+  TEST_ASSERT_TRUE(sizeof(SlotUndoHistory<ProductionManifests, ProductionRuns>) <= 2048u);
 }
 
 int main(int, char**) {

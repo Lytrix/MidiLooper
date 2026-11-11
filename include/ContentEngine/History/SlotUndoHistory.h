@@ -57,7 +57,7 @@ struct ColdSink {
 enum class SessionKind : uint8_t { Overdub = 0, Edit = 1 };
 
 template <typename Manifests, typename Runs, uint8_t Slots = Config::kSlotCount, uint8_t Depth = Config::kHistoryDepth>
-class History {
+class SlotUndoHistory {
  public:
   static constexpr uint8_t kNone = 0xFF;
   static constexpr uint8_t kDepth = Depth;
@@ -183,7 +183,7 @@ class History {
   }
 
   /// NOTE_EDIT (E4.5): the open session of `kind` has one state, replaced in place as edits are rebuilt. `manifest`
-  /// becomes it (History takes the reference; a replaced manifest is released); `kNoManifest` removes it, so the slot is
+  /// becomes it (SlotUndoHistory takes the reference; a replaced manifest is released); `kNoManifest` removes it, so the slot is
   /// back at the session start. False when no session of `kind` is open.
   bool setSessionState(SessionKind kind, ManifestId manifest) {
     const Session& x = sessions_[static_cast<uint8_t>(kind)];
@@ -207,7 +207,7 @@ class History {
   }
 
   /// A take's completion (E9.1): the slot's state holding `old` holds `fresh` instead, in place (no step, no redo
-  /// dropped). History takes the caller's reference to `fresh` and releases `old`. False (nothing changes) when no state
+  /// dropped). SlotUndoHistory takes the caller's reference to `fresh` and releases `old`. False (nothing changes) when no state
   /// of the slot holds `old`. O(slot states).
   bool replaceState(uint8_t slot, ManifestId old, ManifestId fresh) {
     if (slot >= Slots || fresh == kNoManifest) return false;
@@ -220,7 +220,7 @@ class History {
     return false;
   }
 
-  /// Makes `manifest` the slot's new current state. History takes over the caller's reference.
+  /// Makes `manifest` the slot's new current state. SlotUndoHistory takes over the caller's reference.
   HistoryCommit commit(uint8_t slot, ManifestId manifest) {
     if (slot >= Slots || manifest == kNoManifest) return HistoryCommit::Refused;
     dropRedo(slot);
@@ -286,7 +286,7 @@ class History {
   }
 
   /// E4.6d: a fetched cold state as the slot's oldest hot state (a fresh commit number: the table makes room on other
-  /// slots first — never on this one, whose order would break). History takes the caller's reference. False: no room.
+  /// slots first — never on this one, whose order would break). SlotUndoHistory takes the caller's reference. False: no room.
   bool promote(uint8_t slot, ManifestId manifest) {
     if (slot >= Slots || manifest == kNoManifest) return false;
     if (count_ == Depth && !evictOldest(slot)) return false;
@@ -374,7 +374,7 @@ class History {
     emptyBelow = s.emptyBelow;
     return n;
   }
-  /// Load (E8): rebuilds an empty slot's chain from saved states (oldest to newest; History takes their references),
+  /// Load (E8): rebuilds an empty slot's chain from saved states (oldest to newest; SlotUndoHistory takes their references),
   /// then steps back to the saved current state and floor. Commits follow the ordinary rules (the shared 99 may
   /// forget older steps elsewhere). False when the slot is not empty or the input is inconsistent.
   bool restoreSlot(uint8_t slot, const ManifestId* states, uint8_t n, int16_t currentIndex, bool emptyBelow) {

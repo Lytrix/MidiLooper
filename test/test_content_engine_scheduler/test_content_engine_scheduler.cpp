@@ -210,7 +210,7 @@ void test_infeasible_load_reports_missed_deadlines() {
 
 using Pool = PagePool<2048, 64>;
 using Runs = RunTable<64, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Manifests = ManifestTable<16, 8>;
 using Table = CheckpointTable<TestComposer::Checkpoint, 4, 8>;

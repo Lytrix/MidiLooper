@@ -25,7 +25,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<256, 64>;
 using Runs = RunTable<16, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Table = CheckpointTable<TestComposer::Checkpoint, 2, 8>;
 using Manifests = ManifestTable<8, 8>;

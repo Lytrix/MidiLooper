@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Gestures and live input of the content engine (fixed-memory-engine E9.4; owner 2026-11-05: one sounding slot per
-// track, layering and jam later, Clear undoable). Surface actions (buttons, MIDI controls) call these; the legacy
+// track, layering and jam later, Clear undoable). ControlSurface actions (buttons, MIDI controls) call these; the legacy
 // semantics they keep (TrackManager capture queue, slot state machine, transport):
 //
 // * Timing: a gesture at Clock tick `clock` takes effect before that tick is played; input at `clock` arrives after
@@ -152,7 +152,7 @@ class TrackControl {
     if (x_->contentOf(slot) != kNoManifest && x_->writingTrack() != t) x_->launch(t, slot);  // composes from now on
     return Result::Ok;
   }
-  /// Surface slice C (a step or bar button; legacy `queueBarPlaybackStart`): the playing slot restarts at loop position
+  /// ControlSurface slice C (a step or bar button; legacy `queueBarPlaybackStart`): the playing slot restarts at loop position
   /// `position` (taken modulo its loop) at the next launch step, a queued switch replaced. Refused while the track is
   /// not playing (NoChange), takes (Busy) or plays nothing (Empty).
   Result queueSeek(uint8_t t, uint32_t position, uint32_t clock) {

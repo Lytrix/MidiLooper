@@ -36,7 +36,7 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
-using S = Surface<EngineRoot>;
+using S = ControlSurface<EngineRoot>;
 
 static EnginePsram gPsram;
 static EngineRam2 gRam2;

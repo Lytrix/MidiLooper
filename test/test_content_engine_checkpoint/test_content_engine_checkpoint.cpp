@@ -36,7 +36,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<2048, 64>;
 using Runs = RunTable<32, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 
 static Pool gPool;

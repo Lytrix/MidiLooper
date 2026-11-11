@@ -25,7 +25,7 @@ using namespace ContentEngine;
 using Pool = PagePool<96, 8>;
 using Runs = RunTable<24, Pool, 4, 4>;
 using Res = RowReservations<Pool, Runs>;
-using TestWriter = Writer<Pool, Runs>;
+using TestWriter = CaptureWriter<Pool, Runs>;
 constexpr uint16_t kT = Config::kMaxSoundingPerTrack;
 using Player = WindowPlayer<kT>;
 
@@ -97,7 +97,7 @@ void test_composer_limits_continuous_per_tick() {
   using CRuns = RunTable<8, CPool>;
   static CPool pool;
   static CRuns runs;
-  static Composer<CPool, CRuns> comp;
+  static SpanWindowComposer<CPool, CRuns> comp;
   static SpanWindow<512> win;
   pool.init();
   runs.init();

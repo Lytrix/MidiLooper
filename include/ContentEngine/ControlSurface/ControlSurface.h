@@ -6,7 +6,7 @@
 //
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
-// 60–67; NOTE_EDIT (E9.8b-2, `EditSurface`): edit mode 38 (DEC-291: short: the track buttons' select / mute mode;
+// 60–67; NOTE_EDIT (E9.8b-2, `NoteEditSurface`): edit mode 38 (DEC-291: short: the track buttons' select / mute mode;
 // long: NOTE_EDIT on the shown slot ↔ LOOP_EDIT, from performance LOOP_EDIT when the slot is empty; held 1.5 s:
 // leave; owner 2026-11-08 / 2026-11-10; LOOP_EDIT's F4 is the coarse tempo,
 // whole BPM, pitch bend on channel 15, and F3 the fine tempo, 0.1 BPM from its centre, CC 100 on channel 16; F2 the
@@ -57,7 +57,7 @@
 //     edit, the browser or a popup): on the press, the selected track's playing slot restarts at that position at the
 //     next launch step (`TrackControl::queueSeek`; a queued switch replaced) — a 16th of the bar playing, a bar of the
 //     8-bar page playing, modulo the loop (as legacy). A stopped or taking track ignores them. In NOTE_EDIT (slice D)
-//     the step buttons are the 16ths of the bracket's bar (`EditSurface`): short = select / cycle (an empty step: a
+//     the step buttons are the 16ths of the bracket's bar (`NoteEditSurface`): short = select / cycle (an empty step: a
 //     16th C4), double = delete, held `kLockMs` = the parameter lock until the release (no gesture then); their LEDs
 //     show that bar's notes and the bracket's step. In LOOP_EDIT (DEC-280, owner 2026-11-10) a bar or a step held and
 //     another of its kind pressed, either way round, makes the range between them the loop (a double press: that bar or
@@ -78,7 +78,7 @@
 // * Copy mode (DEC-279 amendment 1, owner 2026-11-10: "copy will require its own minimal UI state"): a slot held
 //   `kCopyHoldMs` — or in NOTE_EDIT a bar button, or a step whose lock changed nothing — starts it (the source's LED
 //   pulses, the screen shows the copy window); the source's release keeps it. A short press of another slot / bar / step
-//   pastes there (`TrackControl::copySlot`, `EditSurface::copyBar` / `copyNote`; one undo step each; its LED flashes
+//   pastes there (`TrackControl::copySlot`, `NoteEditSurface::copyBar` / `copyNote`; one undo step each; its LED flashes
 //   three times) and copy mode ends (owner 2026-11-10: the window closes after the copy; a refused paste keeps it). It
 //   also closes `kCopyIdleMs` after the source's release with nothing pasted (owner: a countdown, restarted by a track
 //   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
@@ -234,7 +234,7 @@ class PressDetector {
 };
 
 template <typename Engine>
-class Surface {
+class ControlSurface {
  public:
   // Channel 16 button notes (MidiConfig) and their detector indices.
   static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
@@ -292,7 +292,7 @@ class Surface {
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t k = 0; k < 16; ++k) press_.configure(kStep0 + k, T{300, 400, 600, 0, false});
     press_.configure(kEncoder, T{300, 400, 600, 0, false});
-    encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
+    encoderOption_ = NoteEditSurface<Engine>::Nudge::Pitch;
     encoderStep_ = 0xFF;
     encoderMs_ = 0;
     lockStep_ = 0xFF;
@@ -464,7 +464,7 @@ class Surface {
       lockStep_ = k;
       edit_.lockBegin(k, ms);
     }
-    using N = typename EditSurface<Engine>::Nudge;
+    using N = typename NoteEditSurface<Engine>::Nudge;
     int32_t accel = 1;
     if (encoderOption_ == N::Move) accel = interval < 25 ? 24 : interval < 50 ? 8 : interval < 100 ? 4 : 1;
     else if (encoderOption_ == N::Length) accel = interval < 25 ? 8 : interval < 50 ? 4 : interval < 100 ? 2 : 1;
@@ -567,7 +567,7 @@ class Surface {
                 kProgramChannel, static_cast<uint8_t>(kGrooveTrigger + f), ms);
   }
   // ---- Compare (DEC-294, DEC-295) -----------------------------------------------------------------------------------
-  static constexpr uint32_t kBarTicks = EditSurface<Engine>::kBar;
+  static constexpr uint32_t kBarTicks = NoteEditSurface<Engine>::kBar;
   /// The cycle's bars a turn: a global setting (owner: "default the cycle behaviour to 2 bars"), no control yet.
   uint8_t cycleBars() const { return cycleBars_; }
   void setCycleBars(uint8_t b) { cycleBars_ = b == 0 ? 1 : b; }
@@ -895,7 +895,7 @@ class Surface {
   /// Diagnostics: full scans of a state's rows the LEDs made (one per new state; never per bar of playback).
   uint32_t rowScans() const { return rowScans_; }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
-  typename EditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
+  typename NoteEditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
   /// Once per main-loop pass: the gestures due, at the last played tick.
   void service(uint32_t ms, uint32_t lastTick, uint32_t nowUs) {
@@ -943,7 +943,7 @@ class Surface {
     settleStart(ms);
     servicePopup(ms);
   }
-  const EditSurface<Engine>& edit() const { return edit_; }
+  const NoteEditSurface<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
   /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in ticks (0: none).
@@ -970,7 +970,7 @@ class Surface {
     return startPending_ ? pendingStart_ : e_->transport().window(shownSlot(selected())).start;
   }
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
-  bool motor(uint32_t ms, typename EditSurface<Engine>::MotorMsg& m) {
+  bool motor(uint32_t ms, typename NoteEditSurface<Engine>::MotorMsg& m) {
     if (edit_.motor(ms, m)) return true;
     if (loopPark_) parkLoopFaders(ms);
     for (uint8_t i = 0; i < loopMotorCount_; ++i) {  // the first one due, in queue order
@@ -1250,7 +1250,7 @@ class Surface {
             return;
           }
           if (p == Press::Short || p == Press::Long)
-            control().createEmpty(shownSlot(t), kNewLoopBars * EditSurface<Engine>::kBar);  // refused when filled
+            control().createEmpty(shownSlot(t), kNewLoopBars * NoteEditSurface<Engine>::kBar);  // refused when filled
           if (p == Press::Long) openPopup(shownSlot(t), kLength, nowMs_);
           return;
         }
@@ -1283,7 +1283,7 @@ class Surface {
       } else if (k != 0xFF && p == Press::Double) {
         edit_.deleteSelected(nowMs_);
       } else if (k == 0xFF && p == Press::Short) {  // the next option: pitch, move, length, velocity
-        using N = typename EditSurface<Engine>::Nudge;
+        using N = typename NoteEditSurface<Engine>::Nudge;
         encoderOption_ = static_cast<N>((static_cast<uint8_t>(encoderOption_) + 1) % 4);
       }
       return;  // long: a CC menu later
@@ -1359,7 +1359,7 @@ class Surface {
     loopMotor_[loopMotorCount_++] = LoopMotor{{status, d1, d2}, ms};
     loopMotor_[loopMotorCount_++] = LoopMotor{{static_cast<uint8_t>(0x90 | trigStatus), trigNote, 127}, ms};
     loopMotor_[loopMotorCount_++] =
-        LoopMotor{{static_cast<uint8_t>(0x80 | trigStatus), trigNote, 0}, ms + EditSurface<Engine>::kMotorGateMs};
+        LoopMotor{{static_cast<uint8_t>(0x80 | trigStatus), trigNote, 0}, ms + NoteEditSurface<Engine>::kMotorGateMs};
     loopWrittenMs_[fader] = ms;
   }
   void parkLoopFaders(uint32_t ms) {
@@ -1370,14 +1370,14 @@ class Surface {
       uint16_t wire = 0;
       if (c != kNoManifest) {
         beyondEnd(c);
-        const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth, k = frameStart_ / EditSurface<Engine>::kSixteenth;
+        const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth, k = frameStart_ / NoteEditSurface<Engine>::kSixteenth;
         if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + (steps - 1) / 2) / (steps - 1));
         parkedStart_ = static_cast<int32_t>(k);
       }
       loopWrite(0, 0xE0 | kProgramChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
                 kProgramChannel, kStartTrigger, ms);
     }
-    const uint32_t loop = c == kNoManifest ? EditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
+    const uint32_t loop = c == kNoManifest ? NoteEditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
     parkedNotch_ = static_cast<int16_t>(positionOf(loop));
     loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
     if (clock_->external()) return;
@@ -1389,7 +1389,7 @@ class Surface {
   void writeFine(uint8_t cc, uint32_t ms) {
     loopWrite(2, 0xB0 | kProgramChannel, kFineCc, cc, kTempoChannel, kFineTrigger, ms);
   }
-  bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < EditSurface<Engine>::kMotorSettleMs; }
+  bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < NoteEditSurface<Engine>::kMotorSettleMs; }
   /// LOOP_EDIT's F1 (legacy `handleLoopStartFaderInput`: pitch bend on channel 16): the loop start in the stored loop,
   /// over its 16ths (DEC-283: absolute). Applied at rest (`setWindow`), one undo step a visit; not while its motor lands.
   void startFader(int16_t pb, uint32_t ms) {
@@ -1397,7 +1397,7 @@ class Surface {
     const ManifestId c = transport().contentOf(shownSlot(selected()));
     if (c == kNoManifest) return;
     beyondEnd(c);
-    const uint32_t steps = frame_ / EditSurface<Engine>::kSixteenth;
+    const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth;
     const uint32_t k =
         steps > 1 ? (static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) + 8191) / 16383 : 0;
     // DEC-284 amendment 2 (owner 2026-11-10: a range "sets it as BASE"; F1 / F2 set nothing remembered since amendment
@@ -1406,7 +1406,7 @@ class Surface {
     if (parkedStart_ >= 0 && static_cast<int32_t>(k) - parkedStart_ <= 1 && parkedStart_ - static_cast<int32_t>(k) <= 1)
       return;
     parkedStart_ = -1;
-    pendingStart_ = k * EditSurface<Engine>::kSixteenth;
+    pendingStart_ = k * NoteEditSurface<Engine>::kSixteenth;
     startPending_ = true;
     startMs_ = ms;
   }
@@ -1433,7 +1433,7 @@ class Surface {
   static uint32_t loopAt(uint8_t i) {
     static constexpr uint16_t kFraction[5] = {48, 96, 192, 384, 576};  // ticks: 1/16 … 3/4 bar
     static constexpr uint16_t kTail[4] = {32, 64, 96, 128};            // bars
-    const uint32_t bar = EditSurface<Engine>::kBar;
+    const uint32_t bar = NoteEditSurface<Engine>::kBar;
     return i < 5 ? kFraction[i] : i < 21 ? (i - 4u) * bar : kTail[i < kLengthScaleCount ? i - 21 : 3] * bar;
   }
   static uint8_t notchOfCc(uint8_t cc) {
@@ -1501,7 +1501,7 @@ class Surface {
     if (c == kNoManifest) return;
     beyondEnd(c);
     const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-    constexpr uint32_t kBar = EditSurface<Engine>::kBar, kStep = EditSurface<Engine>::kSixteenth;
+    constexpr uint32_t kBar = NoteEditSurface<Engine>::kBar, kStep = NoteEditSurface<Engine>::kSixteenth;
     const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
     const uint32_t at = (frameStart_ + pos) % frame_;
     const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;
@@ -1679,7 +1679,7 @@ class Surface {
     if (w.bLength != 0 && start == w.bStart && loop == w.bLength) return kChoiceB;
     if (w.aLength != 0 && start == w.aStart && loop == w.aLength) return kChoiceA;
     for (uint8_t i = 3; i < kChoiceCount; ++i)
-      if (start == 0 && loop == choiceBars(i) * EditSurface<Engine>::kBar) return i;
+      if (start == 0 && loop == choiceBars(i) * NoteEditSurface<Engine>::kBar) return i;
     return kNoChoice;
   }
   /// The next choice after the popup's (`back`: the one before), a range skipped while there is none; from none, by the
@@ -1688,7 +1688,7 @@ class Surface {
     const LoopWindow w = transport().window(slot);
     uint8_t i = popupChoice_;
     if (i == kNoChoice) {  // by length: the first numbered choice above it, or the last below it
-      const uint32_t loop = loopTicks(slot), bar = EditSurface<Engine>::kBar;
+      const uint32_t loop = loopTicks(slot), bar = NoteEditSurface<Engine>::kBar;
       if (back) {
         for (uint8_t k = kChoiceCount; k-- > 3;)
           if (choiceBars(k) * bar < loop) return k;
@@ -1715,7 +1715,7 @@ class Surface {
     else if (i == kChoiceB && w.bLength != 0)
       setWindow(slot, w.bStart, w.bLength, Mark::Keep);
     else if (choiceBars(i) != 0)
-      setWindow(slot, 0, choiceBars(i) * EditSurface<Engine>::kBar, Mark::Keep);
+      setWindow(slot, 0, choiceBars(i) * NoteEditSurface<Engine>::kBar, Mark::Keep);
   }
   /// One undo step a LOOP_EDIT visit (owner 2026-11-08: the steps exploded): a later change replaces the state the
   /// visit's last one made, while that is still the slot's current. Leaving LOOP_EDIT or switching track ends it.
@@ -1963,7 +1963,7 @@ class Surface {
   Engine* e_ = nullptr;
   EngineClock* clock_ = nullptr;
   PressDetector<kButtons> press_;
-  EditSurface<Engine> edit_;
+  NoteEditSurface<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
@@ -2023,7 +2023,7 @@ class Surface {
   uint32_t sourceTapMs_ = 0;
   uint8_t flashLed_ = 0xFF, flashTrack_ = 0;  // a paste's LED (channel 15 note) flashing three times, on that track
   uint32_t flashMs_ = 0;
-  typename EditSurface<Engine>::Nudge encoderOption_ = EditSurface<Engine>::Nudge::Pitch;
+  typename NoteEditSurface<Engine>::Nudge encoderOption_ = NoteEditSurface<Engine>::Nudge::Pitch;
   uint8_t encoderStep_ = 0xFF;  // the step held when the encoder was pushed (0xFF: none)
   uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)
   /// Starts copy mode from a held source, ends it on a long press of any other button, a source lock that changed its
@@ -2151,7 +2151,7 @@ class Surface {
     targetTaps_ = 0;
     pasteMode_ = PasteMode::Ask;
     pending_ = Pending{};
-    noteBar_ = edit_.bracket() / EditSurface<Engine>::kBar * EditSurface<Engine>::kBar;  // the steps' bar
+    noteBar_ = edit_.bracket() / NoteEditSurface<Engine>::kBar * NoteEditSurface<Engine>::kBar;  // the steps' bar
   }
   void endCopy() {
     copy_ = Copy::None;
@@ -2218,10 +2218,10 @@ class Surface {
   /// The paste onto bar / step `button`: replacing what is there, or merged with it. Refused: copy mode stays.
   void pasteTo(uint8_t button, bool merge, uint32_t ms) {
     const bool bar = copy_ == Copy::Bar;
-    const uint32_t at = bar ? edit_.barStart(button) : noteBar_ + button * EditSurface<Engine>::kSixteenth;
+    const uint32_t at = bar ? edit_.barStart(button) : noteBar_ + button * NoteEditSurface<Engine>::kSixteenth;
     const uint8_t led = static_cast<uint8_t>(bar ? 40 + button : button);
     if (at >= edit_.loop()) {  // past the loop's end: the loop grows to that bar's end, the paste follows (owner)
-      const uint32_t loop = (at / EditSurface<Engine>::kBar + 1) * EditSurface<Engine>::kBar;
+      const uint32_t loop = (at / NoteEditSurface<Engine>::kBar + 1) * NoteEditSurface<Engine>::kBar;
       const uint8_t slot = edit_.slot(), t = static_cast<uint8_t>(slot / kSlotsPerTrack);
       edit_.leave();
       if (control().resize(slot, loop, tick_, us_, us()) != X::Result::Ok) {
@@ -2262,13 +2262,13 @@ class Surface {
     } else if (edit_.slot() != copyEditSlot_) {  // another slot's session: the source is not here
       return;
     } else if (copy_ == Copy::Bar) {
-      if (edit_.clearRange(copyBar_, EditSurface<Engine>::kBar, ms))
+      if (edit_.clearRange(copyBar_, NoteEditSurface<Engine>::kBar, ms))
         flash(static_cast<uint8_t>(40 + copyButton_), selected(), ms);
     } else if (copy_ == Copy::Note) {
       EditNote n;
       if (edit_.noteAt(copyNote_, n)) {
-        const uint32_t step = n.tick / EditSurface<Engine>::kSixteenth * EditSurface<Engine>::kSixteenth;
-        if (edit_.clearRange(step, EditSurface<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
+        const uint32_t step = n.tick / NoteEditSurface<Engine>::kSixteenth * NoteEditSurface<Engine>::kSixteenth;
+        if (edit_.clearRange(step, NoteEditSurface<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
       }
     }
   }
@@ -2457,7 +2457,7 @@ class Surface {
   bool loopEdit_ = false;    // LOOP_EDIT (owner 2026-11-08): the edit button's other mode
   ProductionBrowser* browser_ = nullptr;  // the sets browser (slice 3)
   struct LoopMotor {
-    typename EditSurface<Engine>::MotorMsg m;
+    typename NoteEditSurface<Engine>::MotorMsg m;
     uint32_t at;  // due
   };
   static constexpr uint8_t kLoopMotorQueue = 12;  // four faders, three messages each

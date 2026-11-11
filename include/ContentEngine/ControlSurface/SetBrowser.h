@@ -55,7 +55,7 @@
 namespace ContentEngine {
 
 template <uint16_t MaxRecords = library::kIndexRecords>
-class Browser {
+class SetBrowser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed, Stages, Picker };
   enum class RowKind : uint8_t { Close, Save, Divider, Working, Set, Back, Milestone, Empty, Item, Trash, GetLoop, TrashSet };
@@ -938,6 +938,6 @@ class Browser {
   char failWhat_[kText] = {}, failWhy_[kText] = {};
 };
 
-using ProductionBrowser = Browser<>;
+using ProductionBrowser = SetBrowser<>;
 
 }  // namespace ContentEngine

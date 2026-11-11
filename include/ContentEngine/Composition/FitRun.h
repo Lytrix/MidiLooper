@@ -10,7 +10,7 @@
 // lookup naming a RunId pointed at nothing (or another run) after a load and a note past the end came back. `build`'s
 // `content` is in the state's order, the fit run listed after it:
 // * filter (`kFitFilterStatus`, noteId 0): the run has rows at or past the loop end that are not NoteOffs of notes
-//   crossing it — NoteOns or controllers past the end, NoteOffs of notes starting there. `Composer` then reads that
+//   crossing it — NoteOns or controllers past the end, NoteOffs of notes starting there. `SpanWindowComposer` then reads that
 //   run's rows at or past the end only as NoteOffs of its cross notes.
 // * cross (`kFitCrossStatus`, `seq` the NoteOff's tick): a note of a filtered run that starts before the end and ends at
 //   or past it — it wraps, its NoteOff `tick − loop` into the next cycle.

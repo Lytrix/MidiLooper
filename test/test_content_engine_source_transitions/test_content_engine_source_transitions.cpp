@@ -30,7 +30,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<4096, 64>;  // 576 pages are the edit-index partition
 using Runs = RunTable<64, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Window = SpanWindow<3072>;
 using Table = CheckpointTable<TestComposer::Checkpoint, 8, 8>;
 using Manifests = ManifestTable<32, 8>;

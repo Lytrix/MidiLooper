@@ -33,7 +33,7 @@ using Pool = PagePool<96, 8>;
 using Runs = RunTable<24, Pool, 4, 4>;
 using Manifests = ManifestTable<16, 8>;
 using Res = RowReservations<Pool, Runs>;
-using TestWriter = Writer<Pool, Runs>;
+using TestWriter = CaptureWriter<Pool, Runs>;
 
 static Pool gPool;
 static Runs gRuns;

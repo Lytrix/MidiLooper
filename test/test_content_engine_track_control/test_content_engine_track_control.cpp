@@ -275,7 +275,7 @@ void test_transport_stop_silences_and_start_plays_from_position_0() {
   const uint32_t stopped = gClock;
   run(stopped + 3000);
   TEST_ASSERT_FALSE(C().recordQueued(0));
-  // History moves on a stopped track's slot do not start it.
+  // SlotUndoHistory moves on a stopped track's slot do not start it.
   TEST_ASSERT_EQUAL(R::Ok, C().clear(0, gClock, us(gClock), kUsPerTick));
   TEST_ASSERT_EQUAL(R::Ok, C().undo(0, gClock, us(gClock), kUsPerTick));
   run(gClock + 2000);

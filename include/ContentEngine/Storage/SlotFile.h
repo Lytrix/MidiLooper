@@ -263,7 +263,7 @@ class LoadJob {
   /// DEC-261: a switch's staged content): the slot's history is left as it is; only the file's current state is kept,
   /// as a manifest the caller owns (`detachedState`, one reference), and the other states are released. `adoptCurrent`
   /// (DEC-261): that staged state — the same content, already playing — becomes the slot's current state instead of a
-  /// new manifest (History takes a reference of its own), so the track playing it continues untouched.
+  /// new manifest (SlotUndoHistory takes a reference of its own), so the track playing it continues untouched.
   Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
                uint8_t slot, Source& source, uint8_t* scratch, bool detached = false,
                ManifestId adoptCurrent = kNoManifest) {
@@ -317,7 +317,7 @@ class LoadJob {
           const uint32_t rows = get32(d + 4);
           run_[i] = runs_->allocate(slot_, d[0]);
           rows_[i] = rows;
-          // Writer-class admission: every row of the file is reserved before any is read.
+          // CaptureWriter-class admission: every row of the file is reserved before any is read.
           if (res_->reserve(run_[i], rows) != Admission::Ok) {
             runCount_ = static_cast<uint16_t>(i + 1);
             return fail(Status::DeniedCapacity);

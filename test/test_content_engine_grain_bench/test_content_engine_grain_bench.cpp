@@ -56,8 +56,8 @@ BENCH_RAM2 static TestComposer gComp;
 BENCH_RAM2 static Table gTable;
 static Sweep gSweep;
 static Cold gCold;
-using Hist = History<Manifests, Runs>;
-using Edits = EditWriter<Pool, Runs, Manifests, Hist>;
+using Hist = SlotUndoHistory<Manifests, Runs>;
+using Edits = NoteEditWriter<Pool, Runs, Manifests, Hist>;
 BENCH_RAM2 static Hist gHist;
 BENCH_RAM2 static ProductionReservations gRes;
 BENCH_RAM2 static Edits gEdits;
@@ -67,7 +67,7 @@ BENCH_RAM2 static EditChange gChanges[Config::kEditSelection];  // an action is 
 using TickPlayer = WindowPlayer<Config::kMaxSoundingPerTrack>;
 BENCH_RAM2 static TerminalScheduler<Config::kMaxSoundingPerTrack> gTickSched;
 BENCH_RAM2 static TickPlayer gTickPlayer;
-BENCH_RAM2 static OutputHub<> gHub;
+BENCH_RAM2 static MidiOutputHub<> gHub;
 
 constexpr uint32_t kLoop = 768 * 8, kWinTicks = 1536;
 constexpr uint8_t kPasses = 59;            // + 1 edit run = 60 committed runs
@@ -197,7 +197,7 @@ static void tickPath(TickLoad load, const char* name) {
   gHub.configure(1, kUsbMessageMicros);
   gHub.configure(2, kUsbMessageMicros);
   TickPlayer::Emit out[255];
-  OutputHub<>::Sent sent[32];
+  MidiOutputHub<>::Sent sent[32];
   Stat tick;
   uint32_t maxRows = 0, maxEmits = 0, rowsAtWorst = 0, totalRows = 0;
   uint64_t totalCycles = 0;

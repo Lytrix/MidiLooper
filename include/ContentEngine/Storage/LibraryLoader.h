@@ -429,7 +429,7 @@ class StateReader {
 template <typename Card, typename Pool, typename Runs, typename Manifests, typename HistoryT, uint8_t Slots>
 class SetLoad {
  public:
-  using Writer = LibraryWriter<Card, Pool, Runs, Manifests, HistoryT, Slots>;
+  using CaptureWriter = LibraryWriter<Card, Pool, Runs, Manifests, HistoryT, Slots>;
   using Reader = BlobReader<Card, Pool, Runs, Manifests, HistoryT, Slots>;
   using Reservations = RowReservations<Pool, Runs>;
   enum class Kind : uint8_t { Load, Return, Get };
@@ -440,7 +440,7 @@ class SetLoad {
   /// Resets the tracks, then clears every slot's history (`HistoryT::clearSlot`); false: refused, nothing cleared.
   using ClearFn = bool (*)(void* ctx);
 
-  void bind(Card& card, Writer& writer, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history,
+  void bind(Card& card, CaptureWriter& writer, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history,
             Reservations& res, NoteIdSource& ids, uint8_t* scratch, ClearFn clear, void* ctx) {
     card_ = &card;
     writer_ = &writer;
@@ -460,15 +460,15 @@ class SetLoad {
   /// `atSwitch` (a live load, DEC-260): after the checkpoint the load waits for `release` — the switch point — before
   /// anything is cleared. `stageTracks` (bit t, DEC-261): for each, the milestone's selected slot of that track is
   /// staged first — its current state loaded beside the playing set (`staged`), for a switch without a gap.
-  Result beginLoad(uint16_t index, typename Writer::Checkpoint c, bool atSwitch = false, uint8_t stageTracks = 0) {
+  Result beginLoad(uint16_t index, typename CaptureWriter::Checkpoint c, bool atSwitch = false, uint8_t stageTracks = 0) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
     if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
     c.loaded = record_.sequence;
-    const typename Writer::Result r =
+    const typename CaptureWriter::Result r =
         writer_->beginCheckpoint(*pool_, *runs_, *manifests_, *history_, ids_->peek(), c, scratch_);
-    if (r == Writer::Result::TooLarge) return Result::TooLarge;
-    if (r != Writer::Result::Ok) return Result::Busy;
+    if (r == CaptureWriter::Result::TooLarge) return Result::TooLarge;
+    if (r != CaptureWriter::Result::Ok) return Result::Busy;
     kind_ = Kind::Load;
     phase_ = Phase::Checkpoint;
     hold_ = atSwitch;
@@ -513,9 +513,9 @@ class SetLoad {
     if (status_ != Status::Running) return status_;
     switch (phase_) {
       case Phase::Checkpoint: {
-        const typename Writer::Status st = writer_->step();
-        if (st == Writer::Status::Running) return status_;
-        if (st != Writer::Status::Done || !writer_->checkpoint(checkpoint_)) return status_ = Status::Unchanged;
+        const typename CaptureWriter::Status st = writer_->step();
+        if (st == CaptureWriter::Status::Running) return status_;
+        if (st != CaptureWriter::Status::Done || !writer_->checkpoint(checkpoint_)) return status_ = Status::Unchanged;
         phase_ = stageTracks_ != 0 ? Phase::Stage : Phase::Clear;
         return status_;
       }
@@ -666,7 +666,7 @@ class SetLoad {
 
 
   Card* card_ = nullptr;
-  Writer* writer_ = nullptr;
+  CaptureWriter* writer_ = nullptr;
   Pool* pool_ = nullptr;
   Runs* runs_ = nullptr;
   Manifests* manifests_ = nullptr;

@@ -86,10 +86,10 @@ static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
 
 /// Composition (E3.3): 18 compose cursors (16 playback + 2 display) at <= 12 KiB each (221,184 B budget); the edit-hide
 /// index is shared per manifest identity, one store of 18 slots (each cursor pins at most one), not per cursor.
-using ProductionComposer = Composer<ProductionPool, ProductionRuns>;
+using ProductionComposer = SpanWindowComposer<ProductionPool, ProductionRuns>;
 using ProductionEditIndex = EditIndexStore<ProductionPool, ProductionRuns>;
 constexpr uint8_t kComposeCursors = 18;
-// 12 KiB + 16 B (owner 2026-11-11): the mask of pitches whose occluder row was raised (`Composer::dirty_`), so a bind
+// 12 KiB + 16 B (owner 2026-11-11): the mask of pitches whose occluder row was raised (`SpanWindowComposer::dirty_`), so a bind
 // clears and a checkpoint scans only those rows.
 static_assert(sizeof(ProductionComposer) <= 12304u, "a compose cursor stays within its 12 KiB + 16 B budget");
 static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221472u, "compose cursors fit the 221,472 B budget");

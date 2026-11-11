@@ -53,8 +53,8 @@ constexpr uint32_t kCheckpointSpacing = 4 * kWindowTicks;  // 8 bars (plan § 7.
 constexpr uint32_t kGrainUs = 810;                   // measured worst grain g (E5.8)
 
 using ProductionWindow = SpanWindow<Config::kWindowEntries>;
-using ProductionHistory = History<ProductionManifests, ProductionRuns>;
-using ProductionWriter = Writer<ProductionPool, ProductionRuns>;
+using ProductionHistory = SlotUndoHistory<ProductionManifests, ProductionRuns>;
+using ProductionWriter = CaptureWriter<ProductionPool, ProductionRuns>;
 using ProductionTerminals = TerminalScheduler<Config::kMaxSoundingPerTrack>;
 using ProductionPlayer = WindowPlayer<Config::kMaxSoundingPerTrack>;
 using ProductionTrack = PlaybackTrack<ProductionComposer, ProductionCheckpoints, ProductionWindow, ProductionManifests,
@@ -69,9 +69,9 @@ using ProductionTransport = SlotTransport<ProductionPool, ProductionRuns, Produc
 // Plan §6.2 fix 2: one tile slot past the 64 working-set slots is the get-a-loop preview's (`kPreviewSlot`).
 using ProductionTiles = TileStore<Config::kSlotCount + 1>;
 using ProductionOverlay = LiveOverlay<>;
-using ProductionEditWriter = EditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
-using ProductionHub = OutputHub<>;
-using ProductionDisplayComposer = Composer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
+using ProductionEditWriter = NoteEditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
+using ProductionHub = MidiOutputHub<>;
+using ProductionDisplayComposer = SpanWindowComposer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
 // DEC-287: the groove builder — the extraction composer (DEC-286: 128 voices, 128 open), its window, its row buffer.
 using ProductionExtraction = ProductionComposer;  // one code copy: `extractAll` sets its limits (DEC-287)
 constexpr uint16_t kGrooveWindowEntries = 1024;
@@ -184,7 +184,7 @@ constexpr size_t kPsramBudget = 7593224u;  // owner 2026-11-11: + 8 B the groove
                                            // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
                                            // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
                                            // run lists and source list; DEC-290: + 224 B the request's template table and label
-constexpr size_t kRam2Budget = 160232u;  // measured (owner 2026-11-11: + 136 B the jobs. stepped-bind flags and the composers. bind state; DEC-254 E4.6e: + 8 B History's pressure counter; E4.6c: + 16 B History's cold sink and counters; DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+constexpr size_t kRam2Budget = 160232u;  // measured (owner 2026-11-11: + 136 B the jobs. stepped-bind flags and the composers. bind state; DEC-254 E4.6e: + 8 B SlotUndoHistory's pressure counter; E4.6c: + 16 B SlotUndoHistory's cold sink and counters; DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
@@ -805,7 +805,7 @@ class EngineRoot {
   }
   /// After a live load: the tracks that switched seamlessly play their slots' current states already (the load adopted
   /// the staged states); one whose slot's state is another follows it. If the load did not replace the set as asked,
-  /// they stop and resume with the gapped tracks. The staged references go back (History holds its own).
+  /// they stop and resume with the gapped tracks. The staged references go back (SlotUndoHistory holds its own).
   void endStaged(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     const bool loaded = p_->setLoad.status() == ProductionSetLoad::Status::Done;
     for (uint8_t t = 0; t < kTrackCount; ++t) {

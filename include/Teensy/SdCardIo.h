@@ -19,7 +19,7 @@
 
 #include "ContentEngine/Storage/Persistence.h"
 
-namespace EngineFirmware {
+namespace Teensy {
 
 class SdCardIo : public ContentEngine::CardIo {
  public:
@@ -214,6 +214,6 @@ class SdCardIo : public ContentEngine::CardIo {
   bool ready_ = false;
 };
 
-}  // namespace EngineFirmware
+}  // namespace Teensy
 
 #endif  // ENGINE_FIRMWARE

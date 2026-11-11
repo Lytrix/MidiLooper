@@ -9,7 +9,7 @@
 
 using namespace ContentEngine;
 using namespace ContentEngine::library;
-using B = Browser<64>;
+using B = SetBrowser<64>;
 
 static B gB;
 static uint32_t gSeq = 0;

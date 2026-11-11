@@ -41,9 +41,9 @@ using Pool = PagePool<1024, 64>;
 using Runs = RunTable<32, Pool>;
 using Manifests = ManifestTable<16, 8>;
 using Res = RowReservations<Pool, Runs>;
-using W = Writer<Pool, Runs>;
+using W = CaptureWriter<Pool, Runs>;
 using TestWindow = SpanWindow<3072>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Player = WindowPlayer<Config::kMaxSoundingPerTrack>;
 
 static Pool gPool;

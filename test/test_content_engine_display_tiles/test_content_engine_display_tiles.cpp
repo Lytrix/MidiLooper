@@ -38,7 +38,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<256, 64>;
 using Runs = RunTable<16, Pool>;
-using DisplayComposer = Composer<Pool, Runs, 64, 48>;  // every effective note selected (no OUT-POLY on the display)
+using DisplayComposer = SpanWindowComposer<Pool, Runs, 64, 48>;  // every effective note selected (no OUT-POLY on the display)
 using Window = SpanWindow<3072>;
 using Manifests = ManifestTable<8, 8>;
 using Store = TileStore</*slots*/ 4, /*bars*/ 8, /*detail*/ 2, /*spares*/ 4>;

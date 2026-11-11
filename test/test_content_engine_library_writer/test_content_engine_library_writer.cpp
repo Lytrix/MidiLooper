@@ -40,7 +40,7 @@ using namespace ContentEngine::library;
 using Pool = PagePool<2048 + 576, 64>;
 using Runs = RunTable<32, Pool>;
 using Manifests = ManifestTable<16, 8>;
-using Hist = History<Manifests, Runs, 4, 20>;
+using Hist = SlotUndoHistory<Manifests, Runs, 4, 20>;
 
 /// The card: the library's sectors kept sparsely; writes fail (tearing the sector) after `failAfter`; `writes` counts them.
 struct FakeCard {

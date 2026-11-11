@@ -30,7 +30,7 @@
 //   note edits discarded and named: `v1EditedMask`); a loop-start-shifted or empty V1 slot is skipped and named
 //   (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved once approved; V1 files are
 //   never written.
-// * Surface state (owner 2026-11-06, E9.8): the selected track and each track's selected slot, as `kStateBytes` bytes
+// * ControlSurface state (owner 2026-11-06, E9.8): the selected track and each track's selected slot, as `kStateBytes` bytes
 //   from the surface (`setSurfaceState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
 //   persistence grain — into the store's state sectors ("MLS2", sequence, the state packed in 27 bits, a check word;
 //   before the store: `surface.mls`, read once); read at boot (`restoredSurfaceState`), none valid meaning none.
@@ -354,7 +354,7 @@ class Persistence : public ColdSink {
     return false;
   }
 
-  // ---- Surface state ----------------------------------------------------------------------------------------------------
+  // ---- ControlSurface state ----------------------------------------------------------------------------------------------------
   /// The surface's state now (`kStateBytes`); saved once settled and approved.
   void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
     const uint32_t packed = pack(s);

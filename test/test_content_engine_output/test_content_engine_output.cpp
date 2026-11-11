@@ -40,7 +40,7 @@ void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
 
-using Hub = OutputHub<>;  // 128 shared logical notes, 3 ports (64 ordered, 16 essential reserve, 256 lanes each)
+using Hub = MidiOutputHub<>;  // 128 shared logical notes, 3 ports (64 ordered, 16 essential reserve, 256 lanes each)
 using Port = Hub::Port;
 static Hub gHub;
 static Port gPort;  // DIN
@@ -260,7 +260,7 @@ void test_ports_are_independent() {
   TEST_ASSERT_EQUAL(1, gUsb.transmit(0, buf, 64));
   TEST_ASSERT_EQUAL_UINT32(0, buf[0].micros);
   char line[80];
-  std::snprintf(line, sizeof line, "OutputHub<> fixed size: %u B for 3 ports and 128 shared notes",
+  std::snprintf(line, sizeof line, "MidiOutputHub<> fixed size: %u B for 3 ports and 128 shared notes",
                 static_cast<unsigned>(sizeof(Hub)));
   TEST_MESSAGE(line);
 }

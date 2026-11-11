@@ -43,7 +43,7 @@
 //   longer than the loop. From the second cycle they sound just before each downbeat.
 // * Live occupancy (E6.2f): an accepted overdub NoteOn occupies its pitch on the writing track; its NoteOff, or Stop's
 //   closures, release it.
-// * Undo / Redo: History moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
+// * Undo / Redo: SlotUndoHistory moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
 //   selects the new current, or stops when the slot is empty.
 // * E9.4 (owner 2026-11-05: one sounding slot per track; Clear is undoable):
 //   - Clear commits an empty state (a manifest with no runs): the slot is empty for every gesture (`contentOf`), its
@@ -71,7 +71,7 @@ namespace ContentEngine {
 template <typename Pool, typename Runs, typename Manifests, typename HistoryT, typename Track, uint8_t Tracks>
 class SlotTransport {
  public:
-  using WriterT = Writer<Pool, Runs>;
+  using WriterT = CaptureWriter<Pool, Runs>;
   using Emit = typename Track::Emit;
   static constexpr uint8_t kNoSlot = 0xFF;
   /// The provisional source is taken at least this long before the wrap: the time one window has to compose under load

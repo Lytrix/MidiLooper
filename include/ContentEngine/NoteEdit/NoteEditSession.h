@@ -5,7 +5,7 @@
 // writer (E4.5).
 //
 // * Selection (`request`): the notes the musician sees in a range — those starting in [from, to) within a pitch range,
-//   as the piano roll shows them (every effective note: `Composer` with T = 48, the display cursor) — with
+//   as the piano roll shows them (every effective note: `SpanWindowComposer` with T = 48, the display cursor) — with
 //   their **stored** geometry: the note's own NoteOn and NoteOff rows in the run that holds its current instance (an
 //   edit run's replacement after earlier edits). Effective lengths are not stored: overlap results are derived at
 //   composition (EDIT-1), so the edited note drives and the others adapt, as in the legacy NOTE_EDIT. A note hidden
@@ -31,8 +31,8 @@
 
 namespace ContentEngine {
 
-template <typename Pool, typename Runs, typename Manifests, typename HistoryT, typename Composer, typename Window,
-          typename Writer, uint16_t MaxSelection = Config::kEditSelection, uint8_t Steps = Config::kEditSteps>
+template <typename Pool, typename Runs, typename Manifests, typename HistoryT, typename SpanWindowComposer, typename Window,
+          typename CaptureWriter, uint16_t MaxSelection = Config::kEditSelection, uint8_t Steps = Config::kEditSteps>
 class NoteEditSession {
  public:
   enum class Gather : uint8_t { Idle, Running, Done, Refused, TooMany };
@@ -43,8 +43,8 @@ class NoteEditSession {
   };
 
   /// `notes` / `runs`: caller-placed storage for `MaxSelection` gathered notes and their runs.
-  void init(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Composer& composer, Window& scratch,
-            Writer& writer, EditNote* notes, uint16_t* noteRuns, uint32_t windowTicks) {
+  void init(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, SpanWindowComposer& composer, Window& scratch,
+            CaptureWriter& writer, EditNote* notes, uint16_t* noteRuns, uint32_t windowTicks) {
     pool_ = &pool;
     runs_ = &runs;
     manifests_ = &manifests;
@@ -93,10 +93,10 @@ class NoteEditSession {
         if (!lease_.prepared()) return true;
         if (!bindStarted_) comp_->bindStart(lease_.source(), lease_.count(), loop_, lease_.identity(), true);
         bindStarted_ = true;
-        const auto b = comp_->bindMore(Composer::kRunsPerStep);  // in steps
-        if (b == Composer::BindStep::Running) return true;
+        const auto b = comp_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps
+        if (b == SpanWindowComposer::BindStep::Running) return true;
         bindStarted_ = false;
-        if (b == Composer::BindStep::Failed) return finish(Gather::Refused);
+        if (b == SpanWindowComposer::BindStep::Failed) return finish(Gather::Refused);
         lease_.dropIndexLease();
         phase_ = Phase::Compose;
         return true;
@@ -140,7 +140,7 @@ class NoteEditSession {
     }
     return r;
   }
-  /// Copy / paste: `n` changes and `m` new notes (`changes[n .. n + m)`) as one E: step (`EditWriter::applyAdding`).
+  /// Copy / paste: `n` changes and `m` new notes (`changes[n .. n + m)`) as one E: step (`NoteEditWriter::applyAdding`).
   EditResult applyAdding(EditChange* changes, uint16_t n, uint16_t m, uint32_t focus, uint16_t& first) {
     const EditResult r = writer_->applyAdding(changes, n, m, first);
     if (r == EditResult::Ok) {
@@ -173,7 +173,7 @@ class NoteEditSession {
   /// The selected note (selection index; < 0: none): the overlap results' causing note. Its results follow it live;
   /// `settle` first keeps the previous selected note's (owner 2026-11-07, DEC-030 sticky).
   void cause(int32_t index) {
-    writer_->cause(index < 0 ? Writer::kNoCause : static_cast<uint16_t>(index));
+    writer_->cause(index < 0 ? CaptureWriter::kNoCause : static_cast<uint16_t>(index));
     if (writer_->building()) building_ = true;
   }
   void settle() { writer_->settle(); }
@@ -219,7 +219,7 @@ class NoteEditSession {
   }
 
   enum class Phase : uint8_t { Idle, Index, Compose, Lookup };
-  using Lease = SourceLease<Composer, Manifests, Runs>;
+  using Lease = SourceLease<SpanWindowComposer, Manifests, Runs>;
 
   uint8_t index(uint8_t depth) const {
     return static_cast<uint8_t>((writer_->stats().forgotSteps - forgotBase_ + depth) % (Steps + 1u));
@@ -316,10 +316,10 @@ class NoteEditSession {
   Runs* runs_ = nullptr;
   Manifests* manifests_ = nullptr;
   HistoryT* history_ = nullptr;
-  Composer* comp_ = nullptr;
+  SpanWindowComposer* comp_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this gather's)
   Window* win_ = nullptr;
-  Writer* writer_ = nullptr;
+  CaptureWriter* writer_ = nullptr;
   EditNote* notes_ = nullptr;
   uint16_t* noteRuns_ = nullptr;
   uint32_t window_ = 0, loop_ = 0;

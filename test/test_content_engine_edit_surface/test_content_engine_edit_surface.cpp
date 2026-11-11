@@ -39,7 +39,7 @@ void operator delete(void* p, std::size_t) noexcept { std::free(p); }
 void operator delete[](void* p, std::size_t) noexcept { std::free(p); }
 
 using namespace ContentEngine;
-using S = Surface<EngineRoot>;
+using S = ControlSurface<EngineRoot>;
 
 static EnginePsram gPsram;
 static EngineRam2 gRam2;
@@ -48,7 +48,7 @@ static EngineClock gClk;
 static S gS;
 static uint32_t gUs = 0, gLast = 0;
 static constexpr uint32_t kTick = 2604, kBarUs = 768 * kTick;
-static constexpr uint32_t kSettle = 520;  // ms: past EditSurface's kMotorSettleMs (500)
+static constexpr uint32_t kSettle = 520;  // ms: past NoteEditSurface's kMotorSettleMs (500)
 
 // Live notes played into a take: positions in µs.
 struct Live {
@@ -166,7 +166,7 @@ static void enterEdit() {
 }
 /// Past the motor faders' echo window after a write (NOTE_EDIT feedback): a value equal to a just-written one is the
 /// fader's echo, not a move.
-static void settle() { ms(EditSurface<EngineRoot>::kMotorSettleMs + 10); }
+static void settle() { ms(NoteEditSurface<EngineRoot>::kMotorSettleMs + 10); }
 static EditNote sel() {
   EditNote n{};
   TEST_ASSERT_TRUE(gS.edit().selected(n));
@@ -352,7 +352,7 @@ void test_the_droid_fader_bank_follows_note_edit() {
 // Motor feedback (owner 2026-11-06): the DROID's motor faders follow the selection — a value, then its trigger note,
 // released after the gate; F1 / F2 / F3 / F4 = pitch bend 16, pitch bend 14, CC 2 / CC 3 on 15; trigger notes 0 on 16 /
 // 14, 1 / 2 on 15. A fader's echo of a written value changes nothing.
-using Motor = EditSurface<EngineRoot>::MotorMsg;
+using Motor = NoteEditSurface<EngineRoot>::MotorMsg;
 struct Sent {
   uint32_t ms;
   Motor m;
@@ -421,7 +421,7 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_NOT_NULL(on);
   TEST_ASSERT_NOT_NULL(off);
   TEST_ASSERT_TRUE(fine->ms <= on->ms);
-  TEST_ASSERT_TRUE(off->ms - on->ms >= EditSurface<EngineRoot>::kMotorGateMs);
+  TEST_ASSERT_TRUE(off->ms - on->ms >= NoteEditSurface<EngineRoot>::kMotorGateMs);
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9F, 0));  // F1's trigger (channel 16 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9D, 0));  // F2's (channel 14 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9E, 2));  // F4's (channel 15 note 2)
@@ -1060,7 +1060,7 @@ static void turn(int32_t d, uint32_t gapMs = 200) {
   ms(1);
 }
 void test_the_encoder_cycles_its_options_and_nudges_the_note() {
-  using N = EditSurface<EngineRoot>::Nudge;
+  using N = NoteEditSurface<EngineRoot>::Nudge;
   recordBar({{96, 64}, {384, 67}});
   enterEdit();
   settle();
@@ -1142,7 +1142,7 @@ void test_the_encoder_with_a_step_held() {
   ms(450);
   TEST_ASSERT_FALSE(gS.edit().locked());
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the previous selection, no press of the step
-  TEST_ASSERT_EQUAL(EditSurface<EngineRoot>::Nudge::Pitch, gS.encoderOption());  // the pushes did not cycle
+  TEST_ASSERT_EQUAL(NoteEditSurface<EngineRoot>::Nudge::Pitch, gS.encoderOption());  // the pushes did not cycle
 }
 
 // A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor

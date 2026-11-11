@@ -3,7 +3,7 @@
 //
 // Physical MIDI output (fixed-memory-engine CE-C1, memory-ownership correction 2026-11-04).
 //
-// One `OutputHub` owns the output state of all destinations (DIN, USB device, USB host); fixed memory, no allocation.
+// One `MidiOutputHub` owns the output state of all destinations (DIN, USB device, USB host); fixed memory, no allocation.
 //   * Logical notes are shared: one table sized tracks x 16 (`Notes`), not ports x tracks x 16. A note routed to
 //     several ports keeps one identity with a 2-bit state per port (queued / playing / off pending), so each port sends
 //     and terminates it independently.
@@ -46,7 +46,7 @@ enum class OutClass : uint8_t { NoteOff, NoteOn, Essential, Parameter, Continuou
 
 template <uint16_t Notes = 128, uint8_t Ports = 3, uint16_t Ordered = 64, uint16_t EssentialReserve = 16,
           uint16_t Lanes = 256>
-class OutputHub {
+class MidiOutputHub {
   static_assert(Ports <= 4, "per-port note state is 2 bits in one byte");
 
  public:
@@ -75,10 +75,10 @@ class OutputHub {
   /// A per-destination view with the single-port API.
   class Port {
    public:
-    using Sent = typename OutputHub::Sent;
-    using Counters = typename OutputHub::Counters;
+    using Sent = typename MidiOutputHub::Sent;
+    using Counters = typename MidiOutputHub::Counters;
     Port() = default;
-    Port(OutputHub* hub, uint8_t p) : hub_(hub), p_(p) {}
+    Port(MidiOutputHub* hub, uint8_t p) : hub_(hub), p_(p) {}
     bool canAdmitNoteOn() const { return hub_->canAdmitNoteOn(p_); }
     PortResult noteOn(uint32_t now, uint8_t status, uint8_t pitch, uint8_t vel, uint32_t key,
                       uint32_t endMicros = kNoEndMicros) {
@@ -95,7 +95,7 @@ class OutputHub {
     bool check() const { return hub_->check(); }
 
    private:
-    OutputHub* hub_ = nullptr;
+    MidiOutputHub* hub_ = nullptr;
     uint8_t p_ = 0;
   };
 

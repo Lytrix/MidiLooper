@@ -63,9 +63,9 @@
 /// the non-inline functions placed there.
 #define DISPLAY_COLD __attribute__((section(".flashmem.display")))
 
-namespace EngineFirmware {
+namespace Teensy {
 
-/// What NOTE_EDIT shows (from the surface's `EditSurface`).
+/// What NOTE_EDIT shows (from the surface's `NoteEditSurface`).
 struct EditView {
   bool active = false, ready = false;  // a session gathering / open
   uint8_t slot = 0xFF;
@@ -113,7 +113,7 @@ struct BrowserInfo {
   bool pickSquares = false;  // DEC-272: the picker's empty slots as dim squares, else dots (owner: compare on the device)
 };
 
-class EngineDisplay {
+class OledScreen {
  public:
   static constexpr uint32_t kFrameMs = 33;
   static constexpr int16_t kX0 = 22, kX1 = 255, kRollY0 = 0, kRollY1 = 45;
@@ -272,7 +272,7 @@ class EngineDisplay {
     toastUntil_ = nowMs + ms;
   }
 
-  /// The slot a track's piano roll shows (`Surface::shown`): a queued switch's slot (`queued`: its playhead parked at
+  /// The slot a track's piano roll shows (`ControlSurface::shown`): a queued switch's slot (`queued`: its playhead parked at
   /// the launch point, flashing, until the switch — legacy), else the playing one, else the selected one.
   /// `queuedPos`: where the queued switch starts (a step or bar button's restart, slice C; 0: the loop start).
   void show(uint8_t track, uint8_t slot, bool queued = false, uint32_t queuedPos = 0) {
@@ -485,9 +485,9 @@ class EngineDisplay {
   // ---- The sets browser (owner 2026-11-09: a window over the performance screen, as the length popup; time down the
   // list — year and month sticky on the top row, the day once, the time — on a spine gapped between months; saving and
   // loading split; the save popup as the history with every stage beside it) ----------------------------------------
-  using Browser = ContentEngine::ProductionBrowser;
-  using Row = Browser::Row;
-  using RowKind = Browser::RowKind;
+  using SetBrowser = ContentEngine::ProductionBrowser;
+  using Row = SetBrowser::Row;
+  using RowKind = SetBrowser::RowKind;
   using Record = ContentEngine::library::Record;
   // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. Owner
   // 2026-11-09: the day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
@@ -498,7 +498,7 @@ class EngineDisplay {
   static void idText(const Record& r, char* out, size_t n) {
     snprintf(out, n, "%c%02u", ContentEngine::library::stageLetter(r.stage), r.stageNumber);
   }
-  static int16_t rowY(const Browser& b, uint16_t i) { return static_cast<int16_t>(kRow0 + (i - b.first()) * kPitch); }
+  static int16_t rowY(const SetBrowser& b, uint16_t i) { return static_cast<int16_t>(kRow0 + (i - b.first()) * kPitch); }
   /// A GEM window: a dim drop shadow, black, a frame, a hatched title bar with the title in its own black box.
   void window(int16_t x0, int16_t y0, int16_t x1, int16_t y1, const char* title) {
     oled_.gfx.draw_rect_filled(fb(), x0 + 3, y0 + 3, x1 + 3, y1 + 3, 2);
@@ -558,34 +558,34 @@ class EngineDisplay {
     return r.kind == RowKind::Milestone || r.kind == RowKind::Set || r.kind == RowKind::Working ||
                    r.kind == RowKind::Item
                ? r.record
-               : Browser::kNone;
+               : SetBrowser::kNone;
   }
   ContentEngine::wallclock::Local when(const Record& m) const {
     return ContentEngine::wallclock::local(m.wallTime, browserInfo_.tz);
   }
-  DISPLAY_COLD void drawBrowser(const Browser& b, ContentEngine::EngineRoot& e) {
+  DISPLAY_COLD void drawBrowser(const SetBrowser& b, ContentEngine::EngineRoot& e) {
     engine_ = &e;
-    if (b.view() == Browser::View::Popup) {
+    if (b.view() == SetBrowser::View::Popup) {
       drawSavePopup(b);
       return;
     }
-    if (b.picking() || (b.view() == Browser::View::Failed && b.listView() == Browser::View::Picker)) {
+    if (b.picking() || (b.view() == SetBrowser::View::Failed && b.listView() == SetBrowser::View::Picker)) {
       drawPicker(b, e);
       return;
     }
-    const bool confirming = b.view() == Browser::View::Confirm;
+    const bool confirming = b.view() == SetBrowser::View::Confirm;
     char title[24];
-    if (b.shownView() == Browser::View::Set) snprintf(title, sizeof title, "SET %u", b.openSetNumber());
-    else if (b.shownView() == Browser::View::Stages) snprintf(title, sizeof title, "GET A LOOP  SET %u", b.openSetNumber());
-    else if (b.shownView() == Browser::View::Bin) snprintf(title, sizeof title, "TRASH");
+    if (b.shownView() == SetBrowser::View::Set) snprintf(title, sizeof title, "SET %u", b.openSetNumber());
+    else if (b.shownView() == SetBrowser::View::Stages) snprintf(title, sizeof title, "GET A LOOP  SET %u", b.openSetNumber());
+    else if (b.shownView() == SetBrowser::View::Bin) snprintf(title, sizeof title, "TRASH");
     else snprintf(title, sizeof title, "SETS");
     window(kWX0, kWY0, kWX1, kWY1, title);
     for (int16_t y = kWY0 + 10; y < kWY1; ++y) px(kDiv, y, kRuleLevel);
     drawSpine(b);
     const uint16_t n = b.rowCount();
-    for (uint16_t i = b.first(); i < n && i < b.first() + Browser::kVisible; ++i) drawRow(b, i);
+    for (uint16_t i = b.first(); i < n && i < b.first() + SetBrowser::kVisible; ++i) drawRow(b, i);
     char h[48];
-    if (b.view() == Browser::View::Failed) {
+    if (b.view() == SetBrowser::View::Failed) {
       label(b.failWhat(), kDetailX, 14, 15);
       label(b.failWhy(), kDetailX, 24, 9);
       label(b.failChanged() ? "SET NOT AS IT WAS" : "NOTHING CHANGED", kDetailX, 32, 9);
@@ -593,22 +593,22 @@ class EngineDisplay {
     } else {
       drawDetail(b, b.row(b.selected()), h, sizeof h);
     }
-    if (b.view() == Browser::View::Failed) {
+    if (b.view() == SetBrowser::View::Failed) {
       hint(h);
     } else {  // owner 2026-11-09: one line — the moves, the actions, and the trash on the right
       char line[64];
       snprintf(line, sizeof line, "%s%s", kMoves, h);
       hint(line);
-      drawTrashCorner(b.lastTrash() != Browser::kNone);
+      drawTrashCorner(b.lastTrash() != SetBrowser::kNone);
     }
     if (confirming) drawConfirm(b);
   }
   /// DEC-268: the target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
   /// its stage) and when it was saved — or `EMPTY THE TRASH?`, for good — over the list; YES and CANCEL, the selected
   /// one inverted.
-  DISPLAY_COLD void drawConfirm(const Browser& b) {
+  DISPLAY_COLD void drawConfirm(const SetBrowser& b) {
     constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
-    if (b.confirmKind() == Browser::Confirm::EmptyLoop) {  // DEC-272: an empty loop over a filled slot, centred
+    if (b.confirmKind() == SetBrowser::Confirm::EmptyLoop) {  // DEC-272: an empty loop over a filled slot, centred
       window(x0, y0, x1, y1, "EMPTY LOOP");
       char a[32], c[32];
       const uint8_t d = b.pickDestination();
@@ -620,17 +620,17 @@ class EngineDisplay {
       drawButtons(b, x0, x1, kButtonY);
       return;
     }
-    const bool empty = b.confirmKind() == Browser::Confirm::Empty;
+    const bool empty = b.confirmKind() == SetBrowser::Confirm::Empty;
     window(x0, y0, x1, y1, empty ? "EMPTY TRASH" : "TRASH");
     char q[32], line[32], stamp[24];
-    uint16_t rec = Browser::kNone;
+    uint16_t rec = SetBrowser::kNone;
     if (empty) {
       uint16_t stages = 0;
       for (uint16_t k = 0; k < b.itemCount(); ++k) stages = static_cast<uint16_t>(stages + b.itemSize(b.item(k)));
       snprintf(q, sizeof q, "EMPTY THE TRASH?");
       snprintf(line, sizeof line, "%u ITEM%s, %u STAGE%s", b.itemCount(), b.itemCount() == 1 ? "" : "S", stages,
                stages == 1 ? "" : "S");
-    } else if (b.confirmRecord() != Browser::kNone) {
+    } else if (b.confirmRecord() != SetBrowser::kNone) {
       rec = b.confirmRecord();
       char id[8];
       idText(b.record(rec), id, sizeof id);
@@ -645,15 +645,15 @@ class EngineDisplay {
     label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 22), 11);
     if (empty) {
       label("REMOVED FOR GOOD", static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
-    } else if (rec != Browser::kNone) {
+    } else if (rec != SetBrowser::kNone) {
       ContentEngine::wallclock::formatStamp(b.record(rec).wallTime, browserInfo_.tz, stamp, sizeof stamp);
-      snprintf(line, sizeof line, b.confirmRecord() != Browser::kNone ? "SAVED %s" : "LATEST %s", stamp);
+      snprintf(line, sizeof line, b.confirmRecord() != SetBrowser::kNone ? "SAVED %s" : "LATEST %s", stamp);
       label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
     }
     drawButtons(b, x0, x1, kButtonY);
   }
   /// YES and CANCEL, the selected one inverted, and the confirmation's line.
-  DISPLAY_COLD void drawButtons(const Browser& b, int16_t x0, int16_t x1, int16_t buttonY) {
+  DISPLAY_COLD void drawButtons(const SetBrowser& b, int16_t x0, int16_t x1, int16_t buttonY) {
     const char* const kButtons[2] = {"YES", "CANCEL"};
     for (uint8_t k = 0; k < 2; ++k) {
       const int16_t bx = static_cast<int16_t>(k == 0 ? x0 + 24 : x1 - 50), bw = 30;
@@ -675,10 +675,10 @@ class EngineDisplay {
   static constexpr int16_t kCell = 4, kPitchX = 6, kPitchY = 5;
   static constexpr int16_t kPanelX0 = 141, kPanelX1 = 225, kPanelY0 = 21, kPanelY1 = 44;
   // DEC-287: the browser's drawing runs from flash (RAM1 is assigned in 32 KiB banks; the groove builder took a bank's edge).
-  DISPLAY_COLD void drawPicker(const Browser& b, ContentEngine::EngineRoot& e) {
+  DISPLAY_COLD void drawPicker(const SetBrowser& b, ContentEngine::EngineRoot& e) {
     char title[32], a[32], c[24];
     const uint16_t rec = b.pickRecord();
-    if (rec != Browser::kNone) {
+    if (rec != SetBrowser::kNone) {
       char id[8];
       idText(b.record(rec), id, sizeof id);
       snprintf(title, sizeof title, "LOOPS  SET %u  %s", b.record(rec).set, id);
@@ -688,7 +688,7 @@ class EngineDisplay {
     window(kWX0, kWY0, kWX1, kWY1, title);
     for (int16_t y = kWY0 + 10; y < kWY1; ++y) px(kDiv, y, kRuleLevel);
     const uint8_t preset = b.pickPreset();
-    for (uint8_t i = 0; i < Browser::kPresets; ++i) {  // the empty-loop presets: dotted, unlike a loop
+    for (uint8_t i = 0; i < SetBrowser::kPresets; ++i) {  // the empty-loop presets: dotted, unlike a loop
       const int16_t x = kPresetX, y = static_cast<int16_t>(kGridY + i * kPresetPitch);
       const bool on = preset == i;
       if (on) {
@@ -703,7 +703,7 @@ class EngineDisplay {
           px(static_cast<int16_t>(x + kPresetW - 1), yy, 6);
         }
       }
-      snprintf(a, sizeof a, "%u", Browser::kPresetBars[i]);
+      snprintf(a, sizeof a, "%u", SetBrowser::kPresetBars[i]);
       clabel(a, static_cast<int16_t>(x + kPresetW / 2), static_cast<int16_t>(y + 1), on ? 0 : 9);
     }
     static const uint8_t kLevel[4] = {0, 7, 11, 15};
@@ -718,7 +718,7 @@ class EngineDisplay {
         else
           px(static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), 3);
       }
-    if (preset == Browser::kNoPreset) {  // the cursor: a hollow bright box
+    if (preset == SetBrowser::kNoPreset) {  // the cursor: a hollow bright box
       const int16_t x = static_cast<int16_t>(kGridX + b.pickSlotIndex() * kPitchX), y = static_cast<int16_t>(kGridY + b.pickTrack() * kPitchY);
       oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + kCell - 1), static_cast<int16_t>(y + kCell - 1), 0);
       hline(static_cast<int16_t>(x - 1), static_cast<int16_t>(x + kCell), static_cast<int16_t>(y - 1), 15);
@@ -729,7 +729,7 @@ class EngineDisplay {
       }
       snprintf(a, sizeof a, "SLOT %u-%u", b.pickTrack() + 1, b.pickSlotIndex() + 1);
     } else {
-      snprintf(a, sizeof a, "EMPTY %u", Browser::kPresetBars[preset]);
+      snprintf(a, sizeof a, "EMPTY %u", SetBrowser::kPresetBars[preset]);
     }
     rlabel(a, 133, kGridY, 13);
     const uint8_t d = b.pickDestination();
@@ -737,24 +737,24 @@ class EngineDisplay {
     label(a, kPanelX0, kGridY, 11);
     // The panel: an empty loop, the loop's roll, or what the read is doing; the audition beneath.
     const auto au = b.audition();
-    bool use = au == Browser::Audition::Sounding || au == Browser::Audition::Silent;
-    if (preset != Browser::kNoPreset) {
+    bool use = au == SetBrowser::Audition::Sounding || au == SetBrowser::Audition::Silent;
+    if (preset != SetBrowser::kNoPreset) {
       panelBox();
       clabel("EMPTY LOOP", (kPanelX0 + kPanelX1) / 2, 26, 15);
-      snprintf(a, sizeof a, "%u BAR%s", Browser::kPresetBars[preset], Browser::kPresetBars[preset] == 1 ? "" : "S");
+      snprintf(a, sizeof a, "%u BAR%s", SetBrowser::kPresetBars[preset], SetBrowser::kPresetBars[preset] == 1 ? "" : "S");
       clabel(a, (kPanelX0 + kPanelX1) / 2, 35, 9);
       label("AN EMPTY LOOP", kPanelX0, 49, 11);
       use = true;
     } else if (b.pickLevel(b.pickSource()) == 0) {
       panelBox();
       clabel("NO LOOP HERE", (kPanelX0 + kPanelX1) / 2, 30, 6);
-    } else if (b.preview() == Browser::Preview::Ready) {
-      drawPreviewRoll(e, b.previewBars(), au == Browser::Audition::Silent);
+    } else if (b.preview() == SetBrowser::Preview::Ready) {
+      drawPreviewRoll(e, b.previewBars(), au == SetBrowser::Audition::Silent);
       snprintf(c, sizeof c, "%u BAR%s", b.previewBars(), b.previewBars() == 1 ? "" : "S");
-      if (au == Browser::Audition::Sounding) {
+      if (au == SetBrowser::Audition::Sounding) {
         label("AUDITION", kPanelX0, 49, 15);
         rlabel(c, kPanelX1, 49, 9);
-      } else if (au == Browser::Audition::Silent) {
+      } else if (au == SetBrowser::Audition::Silent) {
         label("PREVIEW ONLY", kPanelX0, 49, 11);
         rlabel(silentText(b.silentWhy(), a, sizeof a), kPanelX1, 49, 6);
       } else {
@@ -763,14 +763,14 @@ class EngineDisplay {
     } else {
       panelBox();
       const auto pv = b.preview();
-      clabel(pv == Browser::Preview::Failed   ? "READ FAILED"
-             : pv == Browser::Preview::TooBig ? "TOO BIG TO PREVIEW"
+      clabel(pv == SetBrowser::Preview::Failed   ? "READ FAILED"
+             : pv == SetBrowser::Preview::TooBig ? "TOO BIG TO PREVIEW"
                                               : "READING...",
              (kPanelX0 + kPanelX1) / 2, 30, 7);
       label("? BARS", kPanelX0, 49, 6);
     }
     char h[64];
-    if (b.view() == Browser::View::Failed) {
+    if (b.view() == SetBrowser::View::Failed) {
       fillRect(kPanelX0 - 1, kPanelY0 - 1, kPanelX1 + 1, 55, 0);
       label(b.failWhat(), kPanelX0, 22, 15);
       label(b.failWhy(), kPanelX0, 30, 9);
@@ -780,7 +780,7 @@ class EngineDisplay {
     }
     snprintf(h, sizeof h, "[LEN]{ [PLY]} [REC]< [EDT]>  [TRK] %s  HOLD EXIT", use ? "USE" : "AUDITION");
     hint(h);
-    if (b.view() == Browser::View::Confirm) drawConfirm(b);
+    if (b.view() == SetBrowser::View::Confirm) drawConfirm(b);
   }
   void panelBox() {
     hline(kPanelX0 - 1, kPanelX1 + 1, kPanelY0 - 1, 4);
@@ -827,18 +827,18 @@ class EngineDisplay {
         }
   }
   /// The spine: a line down the dated rows (sets, stages), broken between months.
-  DISPLAY_COLD void drawSpine(const Browser& b) {
-    const uint16_t n = b.rowCount(), last = static_cast<uint16_t>(b.first() + Browser::kVisible);
+  DISPLAY_COLD void drawSpine(const SetBrowser& b) {
+    const uint16_t n = b.rowCount(), last = static_cast<uint16_t>(b.first() + SetBrowser::kVisible);
     int16_t top = -1;
     ContentEngine::wallclock::Local prev{};
     bool havePrev = false;
     for (uint16_t i = b.first(); i < n && i < last; ++i) {
       const uint16_t rec = recordOf(b.row(i));
       const int16_t y = rowY(b, i);
-      if (rec == Browser::kNone || !ContentEngine::wallclock::valid(b.record(rec).wallTime)) continue;
+      if (rec == SetBrowser::kNone || !ContentEngine::wallclock::valid(b.record(rec).wallTime)) continue;
       const auto l = when(b.record(rec));
       if (top < 0) {
-        top = i == b.first() && i > 0 && recordOf(b.row(static_cast<uint16_t>(i - 1))) != Browser::kNone
+        top = i == b.first() && i > 0 && recordOf(b.row(static_cast<uint16_t>(i - 1))) != SetBrowser::kNone
                   ? static_cast<int16_t>(kWY0 + 10)
                   : static_cast<int16_t>(y + 2);
       } else if (havePrev && (l.month != prev.month || l.year != prev.year)) {  // a month ends: a gap
@@ -853,15 +853,15 @@ class EngineDisplay {
       for (int16_t yy = top; yy <= bottom; ++yy) px(kSpineX, yy, 6);
     }
   }
-  DISPLAY_COLD void drawRow(const Browser& b, uint16_t i) {
+  DISPLAY_COLD void drawRow(const SetBrowser& b, uint16_t i) {
     const Row r = b.row(i);
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
     if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
-      const Browser::View list = b.shownView();
-      const char* what = list == Browser::View::Bin      ? "RESTORE SET/STAGE"
-                         : list == Browser::View::Set    ? "LOAD STAGE"
-                         : list == Browser::View::Stages ? "FROM STAGE"
+      const SetBrowser::View list = b.shownView();
+      const char* what = list == SetBrowser::View::Bin      ? "RESTORE SET/STAGE"
+                         : list == SetBrowser::View::Set    ? "LOAD STAGE"
+                         : list == SetBrowser::View::Stages ? "FROM STAGE"
                                                          : "LOAD SET";
       label(what, kYearX, y, 7);  // a heading, dimmer than any row
       hline(static_cast<int16_t>(kYearX + strlen(what) * 4 + 3), kDiv - 4, static_cast<int16_t>(y + 2), 6);
@@ -881,21 +881,21 @@ class EngineDisplay {
       }
       case RowKind::Save: label("SAVE SET", kYearX, y, on ? 15 : 11); return;
       case RowKind::Back:
-        label(b.shownView() == Browser::View::Stages ? "< BACK" : "< SETS", kYearX, y, on ? 15 : 11);
+        label(b.shownView() == SetBrowser::View::Stages ? "< BACK" : "< SETS", kYearX, y, on ? 15 : 11);
         return;
       case RowKind::GetLoop: label("GET A LOOP", kYearX, y, on ? 15 : 11); return;
       case RowKind::TrashSet: label("MOVE SET TO TRASH", kYearX, y, on ? 15 : 11); return;
       default: break;
     }
     const uint16_t rec = recordOf(r);
-    const bool dated = rec != Browser::kNone && ContentEngine::wallclock::valid(b.record(rec).wallTime);
+    const bool dated = rec != SetBrowser::kNone && ContentEngine::wallclock::valid(b.record(rec).wallTime);
     if (dated) {
       const auto l = when(b.record(rec));
       // Year and month on the top row (sticky) and where a month starts; the day once per day.
       bool newMonth = true, newDay = true;
       for (uint16_t j = i; j > b.first();) {  // the nearest dated row above it on screen (one without a time is passed)
         const uint16_t above = recordOf(b.row(--j));
-        if (above == Browser::kNone) break;
+        if (above == SetBrowser::kNone) break;
         if (!ContentEngine::wallclock::valid(b.record(above).wallTime)) continue;
         const auto a = when(b.record(above));
         newMonth = a.month != l.month || a.year != l.year;
@@ -935,12 +935,12 @@ class EngineDisplay {
     } else if (r.kind == RowKind::Item && b.record(rec).parent != 0) {  // a stage in the trash: its set and id
       const uint16_t m = b.find(b.record(rec).parent);
       char id[8] = "?";
-      if (m != Browser::kNone) idText(b.record(m), id, sizeof id);
+      if (m != SetBrowser::kNone) idText(b.record(m), id, sizeof id);
       snprintf(text, sizeof text, "SET %u %s", r.set, id);
     } else {
       snprintf(text, sizeof text, "SET %u", r.set);
     }
-    if (rec != Browser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
+    if (rec != SetBrowser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
       ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
       if (strcmp(note, "--:--") == 0) note[0] = 0;
     }
@@ -957,7 +957,7 @@ class EngineDisplay {
     if (line3 != nullptr) label(line3, kDetailX, 50, kDimText);
     drawMosaic(m);
   }
-  DISPLAY_COLD void drawDetail(const Browser& b, const Row& r, char* h, size_t n) {
+  DISPLAY_COLD void drawDetail(const SetBrowser& b, const Row& r, char* h, size_t n) {
     char a[32], c[32];
     switch (r.kind) {
       case RowKind::Close:
@@ -969,7 +969,7 @@ class EngineDisplay {
         label("SAVE", kDetailX, kMosaicY, 15, 2);
         label("CURRENT", kDetailX, 30, 11);
         const uint16_t base = b.find(b.baseSequence());
-        if (base != Browser::kNone) {
+        if (base != SetBrowser::kNone) {
           char id[8];
           idText(b.record(base), id, sizeof id);
           snprintf(c, sizeof c, "FROM %s", id);
@@ -983,7 +983,7 @@ class EngineDisplay {
         return;
       }
       case RowKind::Back:
-        if (b.shownView() == Browser::View::Stages) {
+        if (b.shownView() == SetBrowser::View::Stages) {
           snprintf(a, sizeof a, "SET %u", b.openSetNumber());
           label(a, kDetailX, kMosaicY, 15, 2);
           label("BACK TO THE SET", kDetailX, 30, 9);
@@ -1047,12 +1047,12 @@ class EngineDisplay {
         if (t.parent == 0) snprintf(a, sizeof a, "%u STAGE%s", size, size == 1 ? "" : "S");
         else snprintf(a, sizeof a, "SET %u", r.set);
         snprintf(c, sizeof c, "TRASHED %s", at);
-        if (newest != Browser::kNone) drawMilestone(b.record(newest), a, c);
+        if (newest != SetBrowser::kNone) drawMilestone(b.record(newest), a, c);
         if (t.parent == 0) {
           snprintf(h, n, "[TRK] RESTORE SET %u", r.set);
         } else {
           char id[8] = "";
-          if (newest != Browser::kNone) idText(b.record(newest), id, sizeof id);
+          if (newest != SetBrowser::kNone) idText(b.record(newest), id, sizeof id);
           snprintf(h, n, "[TRK] RESTORE STAGE %s", id);
         }
         return;
@@ -1060,7 +1060,7 @@ class EngineDisplay {
       case RowKind::Working:
       case RowKind::Set:
         snprintf(h, n, "[TRK] OPEN");
-        if (r.record == Browser::kNone) {
+        if (r.record == SetBrowser::kNone) {
           snprintf(h, n, "[TRK] OPEN");
           snprintf(a, sizeof a, "SET %u", r.set);
           label(a, kDetailX, kMosaicY, 15, 2);
@@ -1073,14 +1073,14 @@ class EngineDisplay {
         return;
       case RowKind::Milestone: {
         const auto& m = b.record(r.record);
-        const uint16_t parent = m.parent != 0 ? b.find(m.parent) : Browser::kNone;
+        const uint16_t parent = m.parent != 0 ? b.find(m.parent) : SetBrowser::kNone;
         char id[8];
-        if (parent != Browser::kNone) {
+        if (parent != SetBrowser::kNone) {
           idText(b.record(parent), id, sizeof id);
           snprintf(a, sizeof a, "FROM %s", id);
         }
-        drawMilestone(m, parent != Browser::kNone ? a : nullptr, nullptr);
-        if (b.shownView() == Browser::View::Stages) snprintf(h, n, "[TRK] SELECT STAGE");
+        drawMilestone(m, parent != SetBrowser::kNone ? a : nullptr, nullptr);
+        if (b.shownView() == SetBrowser::View::Stages) snprintf(h, n, "[TRK] SELECT STAGE");
         else snprintf(h, n, "[TRK] LOAD  2* [TRK] TRASH");
         return;
       }
@@ -1122,7 +1122,7 @@ class EngineDisplay {
   /// SAVE CURRENT (owner 2026-11-09): left, AS NEW SET on a lane of its own, then the new node on the working set's
   /// history (newest first, the base's line on the main lane); right, every stage with the id it would get, the chosen
   /// one bright and wired to the new node, `<` on the suggested one.
-  DISPLAY_COLD void drawSavePopup(const Browser& b) {
+  DISPLAY_COLD void drawSavePopup(const SetBrowser& b) {
     window(kWX0, kWY0, kWX1, kWY1, "SAVE CURRENT");
     const uint8_t sel = b.popupSelected();
     constexpr int16_t kMain = kWX0 + 30, kSide = kWX0 + 20, kLabel = kWX0 + 40, kNewY = 13, kHeadY = 24;
@@ -1141,7 +1141,7 @@ class EngineDisplay {
     }
     // The history: up to four rows around the base, newest first.
     const uint16_t count = b.historyCount(), base = b.historyBase();
-    const uint16_t from = base != Browser::kNone && base > 1 ? static_cast<uint16_t>(base - 1) : 0;
+    const uint16_t from = base != SetBrowser::kNone && base > 1 ? static_cast<uint16_t>(base - 1) : 0;
     int16_t lineTop = -1, lineBottom = -1, sideTop = -1, sideBottom = -1;
     for (uint16_t k = from; k < count && k < from + 4; ++k) {
       const int16_t y = static_cast<int16_t>(kHeadY + 8 + (k - from) * 7);
@@ -1168,7 +1168,7 @@ class EngineDisplay {
       hline(kSide, kMain, static_cast<int16_t>(sideBottom + 4 < kWY1 ? sideBottom + 4 : kWY1 - 1), 6);
     }
     // The new node and the stages.
-    for (uint8_t k = 0; k < Browser::kStages; ++k) {
+    for (uint8_t k = 0; k < SetBrowser::kStages; ++k) {
       const auto stage = static_cast<ContentEngine::library::Stage>(k);
       const int16_t y = static_cast<int16_t>(12 + k * 7);
       const bool on = sel == k + 1;
@@ -1799,7 +1799,7 @@ class EngineDisplay {
       steps = h.sessionDepth(ContentEngine::SessionKind::Overdub);
     } else if (info.slot != kNone && h.sessionSlot(ContentEngine::SessionKind::Edit) == info.slot) {
       undoLabel = "EDIT";
-      steps = edit_.steps;  // History holds the session as one state: the session counts its steps
+      steps = edit_.steps;  // SlotUndoHistory holds the session as one state: the session counts its steps
     }
     const bool session = undoLabel[0] != 'U';
     label(undoLabel, ux, kLabY, session ? 12 : 5);
@@ -1868,6 +1868,6 @@ class EngineDisplay {
   uint8_t clock_ = 0x91, phase_ = 0xE2;  // the library's boot values
 };
 
-}  // namespace EngineFirmware
+}  // namespace Teensy
 
 #endif  // ENGINE_FIRMWARE

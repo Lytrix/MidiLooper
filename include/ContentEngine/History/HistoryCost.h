@@ -25,8 +25,8 @@ struct HistoryCostReport {
   uint32_t worstRows = 0;
 };
 
-template <typename History, typename Manifests, typename Runs>
-CE_COLD HistoryCostReport historyCost(const History& h, const Manifests& m, const Runs& r, uint8_t slots) {
+template <typename SlotUndoHistory, typename Manifests, typename Runs>
+CE_COLD HistoryCostReport historyCost(const SlotUndoHistory& h, const Manifests& m, const Runs& r, uint8_t slots) {
   constexpr uint16_t kRunBits = Runs::kRunCount;
   uint8_t current[(kRunBits + 7) / 8] = {}, counted[(kRunBits + 7) / 8] = {};
   const auto has = [](const uint8_t* b, RunId id) { return (b[id / 8] >> (id % 8)) & 1u; };
@@ -42,11 +42,11 @@ CE_COLD HistoryCostReport historyCost(const History& h, const Manifests& m, cons
         out.currentRows += r.run(d.runs[i]).rowCount;
       }
   }
-  ManifestId chain[History::kDepth];
+  ManifestId chain[SlotUndoHistory::kDepth];
   for (uint8_t s = 0; s < slots; ++s) {
     int16_t cur = -1;
     bool below = false;
-    const uint8_t n = h.chain(s, chain, History::kDepth, cur, below);
+    const uint8_t n = h.chain(s, chain, SlotUndoHistory::kDepth, cur, below);
     out.states = static_cast<uint16_t>(out.states + n);
     if (cur >= 0) ++out.currents;
     uint32_t slotRows = 0;

@@ -184,12 +184,12 @@ bool sameState(const Checkpoint& a, const Checkpoint& b) {
 /// A worker job's hold on its source manifest (E5): the manifest pin, the run list with sealed row limits, and the
 /// edit-index build in grains before any composition (a composer's `begin` then finds the index Ready and never builds
 /// inside a grain). `close` releases everything the job holds; the composer releases its own index lease in `end`.
-template <typename Composer, typename Manifests, typename Runs>
+template <typename SpanWindowComposer, typename Manifests, typename Runs>
 class SourceLease {
  public:
-  using Store = typename std::remove_pointer<decltype(std::declval<Composer&>().indexStore())>::type;
+  using Store = typename std::remove_pointer<decltype(std::declval<SpanWindowComposer&>().indexStore())>::type;
 
-  void open(Manifests& manifests, Runs& runs, Composer& composer, ManifestId manifest) {
+  void open(Manifests& manifests, Runs& runs, SpanWindowComposer& composer, ManifestId manifest) {
     close();
     manifests_ = &manifests;
     runs_ = &runs;
@@ -265,18 +265,18 @@ class SourceLease {
 /// playback. `periodic()` (when Done) reports that the composition is periodic from cycle 1, so every published
 /// checkpoint equals uninterrupted playback in any later cycle. It holds whenever no effective instance overflowed the composer's open table (Q-OUT-2 proof,
 /// design.md); convergence (equal state at one position implies equal state from there on) ends the sweep early.
-template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs>
+template <typename SpanWindowComposer, typename Table, typename Window, typename Manifests, typename Runs>
 class CheckpointSweep {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Superseded, Refused };
   static constexpr uint32_t kIndexGrain = 256;  // index units per grain (plan § 7.1)
-  using Checkpoint = typename Composer::Checkpoint;
+  using Checkpoint = typename SpanWindowComposer::Checkpoint;
   using State = typename Table::EntryState;
 
   /// Pins `manifest` and takes a checkpoint set for it (CheckpointTable::beginSweep). The first grains build the manifest's edit index (if it
   /// has edit runs and it is not resident); composition begins once it is Ready. Refused (source released) when the
   /// index does not fit.
-  Status start(Composer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
+  Status start(SpanWindowComposer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
                uint32_t windowTicks, uint32_t spacing) {
     if (status_ == Status::Running) cancel();
     composer_ = &composer;
@@ -316,10 +316,10 @@ class CheckpointSweep {
       if (!source_.prepared()) return status_;
       if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
       bindStarted_ = true;
-      const auto b = composer_->bindMore(Composer::kRunsPerStep);  // in steps (owner 2026-11-11)
-      if (b == Composer::BindStep::Running) return status_;
+      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
-      if (b == Composer::BindStep::Failed) {
+      if (b == SpanWindowComposer::BindStep::Failed) {
         releaseSource();
         return status_ = Status::Refused;
       }
@@ -398,11 +398,11 @@ class CheckpointSweep {
     table_->endSweep(slot_, identity_);  // the set (if still ours) may be replaced by least-recently-used from now on
   }
 
-  Composer* composer_ = nullptr;
+  SpanWindowComposer* composer_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
   bool wrapNext_ = false;     // the loop wrap (`nextCycle`) is due on the next grain
   Table* table_ = nullptr;
-  SourceLease<Composer, Manifests, Runs> source_;
+  SourceLease<SpanWindowComposer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool composing_ = false, periodic_ = false;
   uint32_t identity_ = 0, window_ = 0, loop_ = 0, position_ = 0, cycle_ = 0, windows_ = 0, grains_ = 0, unusable_ = 0;
@@ -414,7 +414,7 @@ class CheckpointSweep {
 /// bounded reconstruction path) and replays, one grain per `step`, until the next `composeNext` yields the window at
 /// `position`. The track keeps playing its previous source meanwhile. On `Done` the composer and the pin pass to the
 /// caller (a compose cursor pins its manifest), who calls `release` when the cursor ends; `cancel` releases at once.
-template <typename Composer, typename Table, typename Window, typename Manifests, typename Runs>
+template <typename SpanWindowComposer, typename Table, typename Window, typename Manifests, typename Runs>
 class ColdStart {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Refused, Cancelled };
@@ -422,7 +422,7 @@ class ColdStart {
 
   /// `warmUp` false (E9.1b, a Record prefix: nothing crosses its loop end yet): with no checkpoint, compose from the
   /// loop start in cycle `cycle` without replaying cycle 0 first.
-  Status start(Composer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
+  Status start(SpanWindowComposer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
                ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks, bool warmUp = true) {
     cancel();
     warm_ = warmUp;
@@ -455,18 +455,18 @@ class ColdStart {
       settle();
       return status_;
     }
-    if (seeking_) {  // the resume's cursors, `Composer::kRunsPerStep` runs a grain
-      if (!composer_->resumeSeekMore(Composer::kRunsPerStep)) return status_;
+    if (seeking_) {  // the resume's cursors, `SpanWindowComposer::kRunsPerStep` runs a grain
+      if (!composer_->resumeSeekMore(SpanWindowComposer::kRunsPerStep)) return status_;
       seeking_ = false;
       composing_ = true;
       settle();
       return status_;
     }
-    if (bindStarted_) {  // the source, `Composer::kRunsPerStep` runs a grain (owner 2026-11-11)
-      const auto b = composer_->bindMore(Composer::kRunsPerStep);
-      if (b == Composer::BindStep::Running) return status_;
+    if (bindStarted_) {  // the source, `SpanWindowComposer::kRunsPerStep` runs a grain (owner 2026-11-11)
+      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);
+      if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
-      if (b == Composer::BindStep::Failed) return refuse();
+      if (b == SpanWindowComposer::BindStep::Failed) return refuse();
       bound();
       return status_;
     }
@@ -512,16 +512,16 @@ class ColdStart {
   void begin() {
     fromCheckpoint_ = false;
     const auto* cp = table_->nearest(slot_, source_.identity(), target_);
-    if (cp != nullptr && !Composer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
+    if (cp != nullptr && !SpanWindowComposer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
       refuse();
       return;
     }
     fromCheckpoint_ = cp != nullptr;
     cpPosition_ = cp != nullptr ? cp->position : 0;
     composer_->bindStart(source_.source(), source_.count(), source_.loopLength(), source_.identity(), cp == nullptr);
-    const auto b = composer_->bindMore(Composer::kRunsPerStep);  // the first step in this grain: a small source binds at once
-    if (b == Composer::BindStep::Running) bindStarted_ = true;
-    else if (b == Composer::BindStep::Failed) refuse();
+    const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // the first step in this grain: a small source binds at once
+    if (b == SpanWindowComposer::BindStep::Running) bindStarted_ = true;
+    else if (b == SpanWindowComposer::BindStep::Failed) refuse();
     else bound();
   }
   /// The bind is done: the checkpoint's state and a seek (resume), or cycle 0 from the loop start (warm-up).
@@ -529,7 +529,7 @@ class ColdStart {
     if (fromCheckpoint_) {
       const auto* cp = table_->nearest(slot_, source_.identity(), target_);
       if (cp == nullptr || cp->position != cpPosition_ ||
-          !Composer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
+          !SpanWindowComposer::resumable(*cp, source_.count(), source_.loopLength(), source_.identity())) {
         refuse();  // the table changed during the bind
         return;
       }
@@ -556,11 +556,11 @@ class ColdStart {
     return status_ = Status::Refused;
   }
 
-  Composer* composer_ = nullptr;
+  SpanWindowComposer* composer_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
   bool wrapNext_ = false;     // the loop wrap (`nextCycle`) is due on the next grain
   const Table* table_ = nullptr;
-  SourceLease<Composer, Manifests, Runs> source_;
+  SourceLease<SpanWindowComposer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
   bool warmup_ = false, composing_ = false, seeking_ = false, fromCheckpoint_ = false, warm_ = true;
   uint32_t target_ = 0, cycle_ = 0, window_ = 0, at_ = 0, replayed_ = 0, grains_ = 0, cpPosition_ = 0;

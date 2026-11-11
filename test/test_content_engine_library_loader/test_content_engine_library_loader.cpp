@@ -39,7 +39,7 @@ using namespace ContentEngine::library;
 using Pool = PagePool<2048 + 576, 64>;
 using Runs = RunTable<36, Pool, Config::kInlinePagesPerRun, 8, /*preview runs*/ 4>;
 using Manifests = ManifestTable<16, 8>;
-using Hist = History<Manifests, Runs, 4, 20>;
+using Hist = SlotUndoHistory<Manifests, Runs, 4, 20>;
 
 /// The card: the library's sectors kept sparsely; writes fail (tearing the sector) after `failAfter`; `writes` counts them.
 struct FakeCard {
@@ -384,7 +384,7 @@ void test_staging_loads_the_selected_slot_beside_the_set() {
   TEST_ASSERT_TRUE(setNow()[2] == atMilestone[2]);
   const uint16_t free = gManifests.freeCount();
   gL.releaseStaged();
-  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());  // History holds it now
+  TEST_ASSERT_EQUAL_UINT16(free, gManifests.freeCount());  // SlotUndoHistory holds it now
   TEST_ASSERT_TRUE(gManifests.manifest(staged).live);
 }
 

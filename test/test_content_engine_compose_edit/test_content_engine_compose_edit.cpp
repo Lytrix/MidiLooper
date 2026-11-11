@@ -36,7 +36,7 @@ using namespace ContentEngine;
 
 using Pool = PagePool<1024, 64>;  // 576 pages are the edit-index partition
 using Runs = RunTable<32, Pool>;
-using TestComposer = Composer<Pool, Runs>;
+using TestComposer = SpanWindowComposer<Pool, Runs>;
 using Player = WindowPlayer<Config::kMaxSoundingPerTrack>;
 
 static Pool gPool;
@@ -204,7 +204,7 @@ void test_manifest_without_edit_run_plays_original() {
 void test_hide_capacity_refused_at_begin() {
   using SmallIndex = EditIndexStore<Pool, Runs, /*slots*/ 2, /*capacity*/ 4>;
   static SmallIndex index;
-  static Composer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, SmallIndex> small;
+  static SpanWindowComposer<Pool, Runs, 64, Config::kMaxSoundingPerTrack, SmallIndex> small;
   index.init(gPool, gRuns);
   small.init(gPool, gRuns, &index);
   const RunId r = makeRun(RunKind::kEdit, {1, 2, 3, 4, 5}, {});
