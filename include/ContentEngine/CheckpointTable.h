@@ -291,6 +291,7 @@ class CheckpointSweep {
     periodic_ = false;
     composing_ = false;
     bindStarted_ = false;
+    wrapNext_ = false;
     source_.open(manifests, runs, composer, manifest);
     identity_ = source_.identity();
     loop_ = source_.loopLength();
@@ -326,6 +327,11 @@ class CheckpointSweep {
       composing_ = true;
       return status_;
     }
+    if (wrapNext_) {
+      composer_->nextCycle();
+      wrapNext_ = false;
+      return status_;
+    }
     if (!composer_->windowOpen()) composer_->openWindow(w, window_);
     if (!composer_->composeRows(w, maxRows)) return status_;
     ++windows_;
@@ -337,7 +343,7 @@ class CheckpointSweep {
       if (cycle_ == 0) {  // end of cycle 0: its selections were made without carried-in instances, so provisional
         cycle_ = 1;
         table_->store(slot_, identity_, cp, State::Provisional);
-        composer_->nextCycle();
+        wrapNext_ = true;  // the loop wrap is the next grain (owner 2026-11-11: O(runs))
         return status_;
       }
       // A whole steady cycle 1 without convergence: its end is the steady position-0 state (Q-OUT-2 proof).
@@ -394,6 +400,7 @@ class CheckpointSweep {
 
   Composer* composer_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
+  bool wrapNext_ = false;     // the loop wrap (`nextCycle`) is due on the next grain
   Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;
@@ -430,6 +437,7 @@ class ColdStart {
     warmup_ = false;
     composing_ = false;
     bindStarted_ = false;
+    wrapNext_ = false;
     seeking_ = false;
     source_.open(manifests, runs, composer, manifest);
     return status_ = Status::Running;
@@ -439,6 +447,14 @@ class ColdStart {
   Status step(Window& scratch, uint32_t maxRows) {
     if (status_ != Status::Running) return status_;
     ++grains_;
+    if (wrapNext_) {  // the end of the warm-up's cycle 0
+      composer_->nextCycle();
+      wrapNext_ = false;
+      warmup_ = false;
+      at_ = 0;
+      settle();
+      return status_;
+    }
     if (seeking_) {  // the resume's cursors, `Composer::kRunsPerStep` runs a grain
       if (!composer_->resumeSeekMore(Composer::kRunsPerStep)) return status_;
       seeking_ = false;
@@ -463,9 +479,9 @@ class ColdStart {
     if (!composer_->composeRows(scratch, maxRows)) return status_;
     ++replayed_;
     if (warmup_) {
-      if (composer_->windowOpen() || !composer_->nextCycle()) return status_;  // still in cycle 0
-      warmup_ = false;
-      at_ = 0;
+      if (!composer_->cycleDone()) return status_;  // still in cycle 0
+      wrapNext_ = true;  // the loop wrap is the next grain (owner 2026-11-11: O(runs))
+      return status_;
     } else {
       at_ += window_;
     }
@@ -542,6 +558,7 @@ class ColdStart {
 
   Composer* composer_ = nullptr;
   bool bindStarted_ = false;  // a stepped bind under way (this job's, not the composer's)
+  bool wrapNext_ = false;     // the loop wrap (`nextCycle`) is due on the next grain
   const Table* table_ = nullptr;
   SourceLease<Composer, Manifests, Runs> source_;
   uint8_t slot_ = 0;

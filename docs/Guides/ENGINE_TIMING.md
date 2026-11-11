@@ -175,6 +175,16 @@ the other (about two a loop), sampled every 3 or 6:
   (at the take 343 → 46 µs), `display` 511, `hard` 517–525 µs (unchanged, within spread). 30 of 30 overdubs, no hang.
   **Open:** `hard` and `display` still grow (about 14 µs a layer: composing, plus ~177 µs unattributed in a playback
   grain); g at about 50 layers.
+- **The loop wrap as its own grain (2026-11-11, `c1a031d1…`).** The playback grain's unattributed part was
+  `Composer::nextCycle` (54 → 179 µs from 10 to 30 layers: every run's cursors and three stream heads re-read), run
+  in the same grain as a full compose. The wrap now ends its grain — in steady playback, a transition, the checkpoint
+  sweep and the cold start's warm-up — and composing resumes on the next one (one more grain a loop cycle).
+  `test_the_loop_wrap_is_a_grain_of_its_own` (a mutation caught). Same stress, worst grain at 30 layers: `hard`
+  517–525 → **454 µs**, `display` 489, `background` 390, `transition` 373 µs. 30 of 30 overdubs, no hang.
+
+  **Where it stands:** the worst grain at 30 layers went 713 → 489 µs this day (stepped bind, dirty-pitch mask, wrap
+  grain). What still grows is composing itself, about 12 µs a layer in `hard` and `display` (a row 1.3 → 2.2 µs):
+  extrapolated, g = 810 µs is near 55–60 layers, close to a state's 63-run ceiling.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).

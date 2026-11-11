@@ -343,8 +343,8 @@ class PlaybackTrack {
     Composer& c = *comp_[transComp_];
     Window& w = *buf_[trans_].w;
     if (!c.windowOpen() && !c.openWindow(w, window_)) {
-      c.nextCycle();
-      c.openWindow(w, window_);
+      c.nextCycle();  // the loop wrap is its own grain (as `composeSteady`)
+      return true;
     }
     if (c.composeRows(w, maxRows)) {
       if (w.cycleBase + w.start < transTarget_) {
@@ -431,8 +431,8 @@ class PlaybackTrack {
     Composer& c = *comp_[steady_];
     Window& w = *buf_[next_].w;
     if (!c.windowOpen() && !c.openWindow(w, window_)) {
-      c.nextCycle();
-      c.openWindow(w, window_);
+      c.nextCycle();  // the loop wrap is its own grain (owner 2026-11-11: O(runs) — 179 µs at 30 layers, with a full
+      return;         // compose after it in the same grain)
     }
     if (c.composeRows(w, maxRows)) {
       if (w.cycleBase + w.start < steadyTarget_) {

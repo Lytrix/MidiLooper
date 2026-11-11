@@ -168,6 +168,30 @@ static void workAll() {
   for (uint32_t g = 0; gTrack.work(128); ++g) TEST_ASSERT_TRUE(g < 10000);
 }
 
+// Owner 2026-11-11 (at 300 BPM the loop wrap — every run's cursors and heads reset, O(runs) — ran in the same grain as a
+// full compose: 179 us at 30 layers on top): the wrap is a grain of its own, composing nothing.
+void test_the_loop_wrap_is_a_grain_of_its_own() {
+  Emit buf[64];
+  gTrack.select(0, gSrcA, kLoop - 1);
+  workAll();
+  uint32_t wraps = 0;
+  for (uint32_t t = kLoop; t < 4 * kLoop; ++t) {
+    for (uint32_t g = 0; g < 10000; ++g) {
+      const bool doneA = gA.cycleDone(), doneB = gB.cycleDone();
+      if (!gTrack.work(128)) break;
+      for (const auto* c : {&gA, &gB}) {
+        const bool was = c == &gA ? doneA : doneB;
+        if (!was || c->cycleDone()) continue;  // no wrap in this grain
+        ++wraps;
+        TEST_ASSERT_FALSE(c->windowOpen());                // the wrap grain opened no window ...
+        TEST_ASSERT_EQUAL_UINT32(0, c->windowStart());     // ... and composed none
+      }
+    }
+    gTrack.tick(t, buf, 64);
+  }
+  TEST_ASSERT_TRUE(wraps >= 2);
+}
+
 // A at the start of cycle 1, B selected mid-window: B from the next boundary, both on time.
 void test_switch_on_time() {
   const uint32_t t0 = kLoop, sel = kLoop + 3 * kWin + 100, b = kLoop + 4 * kWin;
@@ -286,6 +310,7 @@ void test_no_heap_while_playing() {
 int main(int, char**) {
   UNITY_BEGIN();
   RUN_TEST(test_switch_on_time);
+  RUN_TEST(test_the_loop_wrap_is_a_grain_of_its_own);
   RUN_TEST(test_late_switch_keeps_the_old_source);
   RUN_TEST(test_underrun_then_start);
   RUN_TEST(test_steady_underrun_recovers);

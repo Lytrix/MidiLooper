@@ -313,6 +313,9 @@ class Composer {
   void rebaseCycle(uint32_t cycle) { cycle_ = cycle; }
 
   /// Continues into the next loop cycle with every carried state (open instances, source counters).
+  uint32_t windowStart() const { return windowStart_; }
+  /// The cycle's last window is composed: `nextCycle` may run.
+  bool cycleDone() const { return windowStart_ >= loop_ && !windowOpen_; }
   bool nextCycle() {
     if (windowStart_ < loop_ || windowOpen_) return false;
     ++cycle_;
