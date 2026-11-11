@@ -315,11 +315,8 @@ class CheckpointSweep {
         return status_ = Status::Refused;
       }
       if (!source_.prepared()) return status_;
-      if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
-      bindStarted_ = true;
-      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (DEC-297, deep-overdub timing)
-      if (b == SpanWindowComposer::BindStep::Running) return status_;
-      bindStarted_ = false;
+      const auto b = composer_->bindStep(source_.source(), source_.count(), loop_, identity_, bindStarted_);
+      if (b == SpanWindowComposer::BindStep::Running) return status_;  // in steps (DEC-297, deep-overdub timing)
       if (b == SpanWindowComposer::BindStep::Failed) {
         releaseSource();
         return status_ = Status::Refused;

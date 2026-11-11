@@ -89,11 +89,8 @@ class NoteEditSession {
         const IndexResult r = lease_.prepare(units);
         if (r == IndexResult::CapacityExceeded) return finish(Gather::Refused);
         if (!lease_.prepared()) return true;
-        if (!bindStarted_) comp_->bindStart(lease_.source(), lease_.count(), loop_, lease_.identity(), true);
-        bindStarted_ = true;
-        const auto b = comp_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps
-        if (b == SpanWindowComposer::BindStep::Running) return true;
-        bindStarted_ = false;
+        const auto b = comp_->bindStep(lease_.source(), lease_.count(), loop_, lease_.identity(), bindStarted_);
+        if (b == SpanWindowComposer::BindStep::Running) return true;  // in steps
         if (b == SpanWindowComposer::BindStep::Failed) return finish(Gather::Refused);
         lease_.dropIndexLease();
         phase_ = Phase::Compose;

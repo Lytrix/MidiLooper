@@ -206,11 +206,8 @@ class TileSweep {
       const IndexResult r = source_.prepare(kIndexGrain);
       if (r == IndexResult::CapacityExceeded) return stop(Status::Refused);
       if (!source_.prepared()) return status_;
-      if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
-      bindStarted_ = true;
-      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps
-      if (b == SpanWindowComposer::BindStep::Running) return status_;
-      bindStarted_ = false;
+      const auto b = composer_->bindStep(source_.source(), source_.count(), loop_, identity_, bindStarted_);
+      if (b == SpanWindowComposer::BindStep::Running) return status_;  // in steps
       if (b == SpanWindowComposer::BindStep::Failed) return stop(Status::Refused);
       source_.dropIndexLease();
       composing_ = true;

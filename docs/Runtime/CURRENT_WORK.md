@@ -1,5 +1,9 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-12 — code hygiene stage C (owner: "Yes, stage C").** On `feature/delete-legacy`: DRY extractions in
+`SlotTransport` and the composer's `bindStep`; `TempoMapping.h` removed. Device-checked (`64d1dce9…`). Open: stage D
+— the six files over 1,000 lines; the merge into `feature/engine-sets-browser` waits for the owner.
+
 **2026-11-12 — code hygiene stage B (owner: "yes implement as such").** On `feature/delete-legacy`: one commit per
 area folder, comment-only and byte-identical; folder `AGENTS.md` notes; DEC-297 (deep-overdub timing) and DEC-298
 (comment history, moved). Open: stage C — DRY (`SlotTransport` resize / rotate / setColumns tail), stage D — the six

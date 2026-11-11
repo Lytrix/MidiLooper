@@ -282,13 +282,11 @@ class SlotTransport {
   /// Clear (undoable): an empty state on top of the slot's history; its playing tracks stop.
   Result clear(uint8_t slot, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     if (contentOf(slot) == kNoManifest) return Result::NoChange;
     const ManifestId empty = manifests_->create(slot, ++revision_, 0, nullptr, 0, *runs_);
     if (empty == kNoManifest) return Result::DeniedManifest;
-    history_->commit(slot, empty);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    return commitState(slot, kNoManifest, empty, 0, clock, out, max, emitted);
   }
 
   /// Get a loop: state `m` — made for this slot elsewhere (a saved stage's slot, read in), one reference,
@@ -296,7 +294,7 @@ class SlotTransport {
   /// the slot is written: nothing taken, `m` stays the caller's.
   Result place(uint8_t slot, ManifestId m, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     if (history_->commit(slot, m) == HistoryCommit::Refused) return Result::NoChange;
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
@@ -309,7 +307,7 @@ class SlotTransport {
   Result copySlot(uint8_t src, uint8_t dst, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
     if (src == dst) return Result::NoChange;
-    if ((mode_ != Mode::Idle && wSlot_ == dst) || dst == audSlot_) return Result::Busy;
+    if (slotBusy(dst)) return Result::Busy;
     const ManifestId base = contentOf(src);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
@@ -331,9 +329,7 @@ class SlotTransport {
     }
     for (uint8_t i = 0; i < n; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
     if (result != Result::Ok) return result;
-    history_->commit(dst, m);
-    emitted = selectSlot(dst, clock, false, out, max);
-    return Result::Ok;
+    return commitState(dst, kNoManifest, m, 0, clock, out, max, emitted);
   }
 
   // ---- Get a loop's audition ---------------------------------------------------------------------------------------
@@ -385,32 +381,24 @@ class SlotTransport {
   /// auditioned.
   Result emptyLoop(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     if (loop == 0) return Result::NoChange;
-    const RunId r = runs_->allocate(slot, RunKind::kRecord);
-    if (r == kNoRun) return Result::DeniedRun;
-    runs_->seal(r);
-    const ManifestId m = manifests_->create(slot, ++revision_, loop, &r, 1, *runs_);
-    runs_->release(r);  // the manifest holds it
-    if (m == kNoManifest) return Result::DeniedManifest;
-    history_->commit(slot, m);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    ManifestId m;
+    const Result r = emptyState(slot, loop, m);
+    if (r != Result::Ok) return r;
+    return commitState(slot, kNoManifest, m, 0, clock, out, max, emitted);
   }
 
   /// An empty loop (a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
   /// and loop `loop` ticks, on top of the slot's history (undoable). A slot holds content while its state lists a run,
   /// so the loop plays, is edited and saved like a recorded one. Only on an empty slot.
   Result createEmpty(uint8_t slot, uint32_t loop) {
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     if (contentOf(slot) != kNoManifest) return Result::DeniedSlot;
     if (loop == 0) return Result::NoChange;
-    const RunId r = runs_->allocate(slot, RunKind::kRecord);
-    if (r == kNoRun) return Result::DeniedRun;
-    runs_->seal(r);
-    const ManifestId m = manifests_->create(slot, ++revision_, loop, &r, 1, *runs_);
-    runs_->release(r);  // the manifest holds it
-    if (m == kNoManifest) return Result::DeniedManifest;
+    ManifestId m;
+    const Result r = emptyState(slot, loop, m);
+    if (r != Result::Ok) return r;
     history_->commit(slot, m);
     return Result::Ok;
   }
@@ -424,36 +412,21 @@ class SlotTransport {
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
                 uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
     if (loop == 0 || loop == b.loopLengthTicks) return Result::NoChange;
     RunId list[Manifests::kMaxRuns];
-    uint8_t n = 0;
-    for (uint8_t i = 0; i < b.runCount; ++i)
-      if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
+    uint8_t n = contentRuns(b, list);
     // The start kept, the frame at least the new loop.
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
     if (w.frame < loop) w.frame = loop;
     mark(w, marks);
-    RunId fit = kNoRun;
-    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
-    if (f == FitResult::DeniedRun) return Result::DeniedRun;
-    if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
-    if (fit != kNoRun) {
-      if (n == Manifests::kMaxRuns) {
-        runs_->release(fit);
-        return Result::Refused;
-      }
-      list[n++] = fit;
-    }
-    const ManifestId m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
-    if (fit != kNoRun) runs_->release(fit);  // the manifest holds it
-    if (m == kNoManifest) return Result::DeniedManifest;
-    adopt(slot, base, m, replace);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    ManifestId m;
+    const Result r = fittedState(slot, list, n, loop, w, m);
+    if (r != Result::Ok) return r;
+    return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
 
   /// The GROOVE window's columns, saved with the slot: a new state with the same content and loop,
@@ -462,7 +435,7 @@ class SlotTransport {
   CE_COLD Result setColumns(uint8_t slot, uint32_t columnA, uint32_t columnB, uint8_t heard, uint32_t clock, Emit* out,
                             uint8_t max, uint8_t& emitted, uint32_t replace = 0) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
@@ -473,26 +446,11 @@ class SlotTransport {
     w.columnB = columnB;
     w.heard = heard;
     RunId list[Manifests::kMaxRuns];
-    uint8_t n = 0;
-    for (uint8_t i = 0; i < b.runCount; ++i)
-      if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
-    RunId fit = kNoRun;
-    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
-    if (f == FitResult::DeniedRun) return Result::DeniedRun;
-    if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
-    if (fit != kNoRun) {
-      if (n == Manifests::kMaxRuns) {
-        runs_->release(fit);
-        return Result::Refused;
-      }
-      list[n++] = fit;
-    }
-    const ManifestId m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
-    if (fit != kNoRun) runs_->release(fit);  // the manifest holds it
-    if (m == kNoManifest) return Result::DeniedManifest;
-    adopt(slot, base, m, replace);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    uint8_t n = contentRuns(b, list);
+    ManifestId m;
+    const Result r = fittedState(slot, list, n, loop, w, m);
+    if (r != Result::Ok) return r;
+    return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
 
   static void mark(LoopWindow& w, const LoopWindow* marks) {
@@ -512,7 +470,7 @@ class SlotTransport {
   /// its removal). NoChange: no groove to remove; Busy: the slot is written or auditioned; Refused: too big at once.
   template <typename Builder>
   CE_COLD Result grooveStart(Builder& gb, uint8_t slot, const GrooveRequest& q) {
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
@@ -542,7 +500,7 @@ class SlotTransport {
     emitted = 0;
     if (gb.state() != Builder::State::Ready) return Result::NoChange;
     const uint8_t slot = gb.slot();
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;  // later
+    if (slotBusy(slot)) return Result::Busy;  // later
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest || manifests_->manifest(base).identity != gb.base()) {
       gb.cancel();  // stale: the slot changed while it was built
@@ -565,28 +523,15 @@ class SlotTransport {
     for (uint8_t i = 0; i < gb.prefixCount(); ++i) list[ln++] = gb.prefixRun(i);
     if (gb.groovePass() != kNoRun) list[ln++] = gb.groovePass();
     for (uint8_t i = 0; i < gb.afterCount(); ++i) list[ln++] = gb.afterRun(i);
-    RunId fit = kNoRun;
-    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, ln, loop, fit, w,
-                                   file ? &rq.table : nullptr, file ? rq.label : nullptr);
-    Result result = Result::Ok;
-    if (f == FitResult::DeniedRun) result = Result::DeniedRun;
-    else if (f != FitResult::Ok && f != FitResult::None) result = Result::Refused;
-    else if (fit != kNoRun && ln == Manifests::kMaxRuns) result = Result::Refused;
-    else if (fit != kNoRun) list[ln++] = fit;
-    ManifestId m = kNoManifest;
-    if (result == Result::Ok) {
-      m = manifests_->create(slot, ++revision_, loop, list, ln, *runs_);
-      if (m == kNoManifest) result = Result::DeniedManifest;
-    }
-    if (fit != kNoRun) runs_->release(fit);
+    ManifestId m;
+    const Result result =
+        fittedState(slot, list, ln, loop, w, m, file ? &rq.table : nullptr, file ? rq.label : nullptr);
     if (result != Result::Ok) {
       gb.cancel();
       return result;
     }
     gb.published();  // the manifest holds G now
-    adopt(slot, base, m, replace);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
 
   /// The slot's play window in its stored notes (start 0 and the frame 0 without content).
@@ -604,7 +549,7 @@ class SlotTransport {
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
                 uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
-    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
@@ -627,25 +572,12 @@ class SlotTransport {
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     w.start = (w.start + shift) % w.frame;
     mark(w, marks);
-    RunId fit = kNoRun;
-    if (result == Result::Ok) {
-      const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
-      if (f == FitResult::DeniedRun) result = Result::DeniedRun;
-      else if (f != FitResult::Ok && f != FitResult::None) result = Result::Refused;
-      else if (fit != kNoRun && n == Manifests::kMaxRuns) result = Result::Refused;
-      else if (fit != kNoRun) list[n++] = fit;
-    }
+    const uint8_t rotated = n;
     ManifestId m = kNoManifest;
-    if (result == Result::Ok) {
-      m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
-      if (m == kNoManifest) result = Result::DeniedManifest;
-    }
-    for (uint8_t i = 0; i < n; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
-    if (fit != kNoRun && (n == 0 || list[n - 1] != fit)) runs_->release(fit);
+    if (result == Result::Ok) result = fittedState(slot, list, n, loop, w, m);
+    for (uint8_t i = 0; i < rotated; ++i) runs_->release(list[i]);  // the manifest holds them, or nothing does
     if (result != Result::Ok) return result;
-    adopt(slot, base, m, replace);
-    emitted = selectSlot(slot, clock, false, out, max);
-    return Result::Ok;
+    return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
   /// `m` becomes the slot's state: in place of `base` when that is the state with identity `replace`, else a step.
   void adopt(uint8_t slot, ManifestId base, ManifestId m, uint32_t replace) {
@@ -752,6 +684,53 @@ class SlotTransport {
   const Stats& stats() const { return stats_; }
 
  private:
+  /// `m` adopted on the slot (`adopt`; `base` read only with a `replace`); the tracks playing the slot follow from
+  /// `clock`.
+  Result commitState(uint8_t slot, ManifestId base, ManifestId m, uint32_t replace, uint32_t clock, Emit* out,
+                     uint8_t max, uint8_t& emitted) {
+    adopt(slot, base, m, replace);
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+  /// A gesture that writes a state is refused while the slot is being written or auditioned.
+  bool slotBusy(uint8_t slot) const { return (mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_; }
+  /// The runs of state `b` other than its fit run, in order, into `list`; their count.
+  uint8_t contentRuns(const typename Manifests::Manifest& b, RunId* list) const {
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < b.runCount; ++i)
+      if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
+    return n;
+  }
+  /// A new state for `slot` listing `list[0..n)` and, when the loop needs one, a fit run built for window `w` (appended
+  /// to `list`, `n` counting it). Ok: `m` holds the runs; otherwise nothing is created and the fit run is released.
+  Result fittedState(uint8_t slot, RunId* list, uint8_t& n, uint32_t loop, const LoopWindow& w, ManifestId& m,
+                     const groove::Table* table = nullptr, const char* label = nullptr) {
+    m = kNoManifest;
+    RunId fit = kNoRun;
+    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w, table, label);
+    if (f == FitResult::DeniedRun) return Result::DeniedRun;
+    if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
+    if (fit != kNoRun) {
+      if (n == Manifests::kMaxRuns) {
+        runs_->release(fit);
+        return Result::Refused;
+      }
+      list[n++] = fit;
+    }
+    m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
+    if (fit != kNoRun) runs_->release(fit);  // the manifest holds it, or nothing does
+    return m == kNoManifest ? Result::DeniedManifest : Result::Ok;
+  }
+  /// A state of one sealed run without rows at loop `loop`: an empty loop that holds content.
+  Result emptyState(uint8_t slot, uint32_t loop, ManifestId& m) {
+    m = kNoManifest;
+    const RunId r = runs_->allocate(slot, RunKind::kRecord);
+    if (r == kNoRun) return Result::DeniedRun;
+    runs_->seal(r);
+    m = manifests_->create(slot, ++revision_, loop, &r, 1, *runs_);
+    runs_->release(r);  // the manifest holds it
+    return m == kNoManifest ? Result::DeniedManifest : Result::Ok;
+  }
   uint32_t local(uint8_t track, uint32_t clock) const { return clock - origin_[track]; }
   /// A gesture's switch tick on `track` (as `selectSlot`): the next boundary, `clock` itself when not played yet.
   uint32_t gestureTick(uint8_t track, uint32_t clock) const {

@@ -14,7 +14,7 @@ History behind these lines: DEC-298 (comment history, moved) § Composition in t
 - Selection never changes whether an instance is effective or when it ends, so a loop repeats identically from the
   first steady cycle. A checkpoint is the composer's whole state: resuming equals composing through.
 - A grain is bounded: `composeRows` counts merged rows plus look-ahead reads; a bind runs `kRunsPerStep` runs a
-  grain (`bindStart` / `bindMore`); a resume seeks in the same steps; the loop wrap (`nextCycle`, O(runs)) ends its
+  grain (`bindStep`, one call a grain); a resume seeks in the same steps; the loop wrap (`nextCycle`, O(runs)) ends its
   grain and composing resumes on the next.
 - The composers live in PSRAM and are not constructed: `init` sets every field, and each job keeps its own
   "bind started" flag (`bindStarted_`), never a flag on the shared composer.

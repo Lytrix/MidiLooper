@@ -444,6 +444,16 @@ class SpanWindowComposer {
     identity_ = identity;  // its windows are not composed before `bindMore` is Done
     binding_ = true;
   }
+  /// One grain of a job binding a source from tick 0 in steps of `kRunsPerStep` runs. `started` is the job's own
+  /// flag (the composer is shared and not constructed): set on the first call, cleared when the bind ends. Running:
+  /// call again on the next grain.
+  BindStep bindStep(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool& started) {
+    if (!started) bindStart(source, count, loopLength, identity, true);
+    started = true;
+    const BindStep b = bindMore(kRunsPerStep);
+    if (b != BindStep::Running) started = false;
+    return b;
+  }
   BindStep bindMore(uint8_t runs) {
     if (!binding_) return BindStep::Failed;
     for (; bindRun_ < count_ && runs-- > 0; ++bindRun_) {

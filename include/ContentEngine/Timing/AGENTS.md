@@ -5,7 +5,7 @@ History behind these lines: DEC-298 (comment history, moved) § Timing in the de
 
 ## Owns
 - `EngineClock`: which tick is due (internal tempo or external MIDI clock). `WallClock`: RTC dates for saves and
-  milestones. `TempoMapping`: fader ↔ BPM conversions.
+  milestones.
 
 ## Invariants
 - Tick numbers only rise and a running clock never skips one; a late clock catches up `kCatchUp` ticks a pass.

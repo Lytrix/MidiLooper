@@ -1,3 +1,14 @@
+**2026-11-12 — code hygiene stage C: repeated code extracted (branch `feature/delete-legacy`).** `SlotTransport`:
+the busy guard (9 copies → `slotBusy`), the content-run list (`contentRuns`), the fit-run-and-state tail of resize,
+setColumns, grooveFinish and rotate (`fittedState`), the commit-and-select step (`commitState`, 6 users) and the empty
+loop state (`emptyState`); the stepped-bind grain of the checkpoint sweep, the tile sweep and the NOTE_EDIT gather
+(`SpanWindowComposer::bindStep`); the unused `TempoMapping.h` removed. `SlotTransport.h` 1,072 → 1,049 lines. Native
+544 passed; D1 gates unchanged (RAM1 locals 45,600 B). Device `64d1dce9…`: boot clean, slots loaded; a groove applied
+and undone on slot 0 (the groove pass and fit run published through `fittedState`); the 300 BPM 30-overdub stress
+30 of 30, worst grain 496 µs, non-engine 893 µs, slot 14 undone after. Left as is: the screen's window frame and the
+length popup draw the same frame with a different title box (merging changes pixels). Next: stage D (split the six
+files over 1,000 lines).
+
 **2026-11-12 — code hygiene stage B: comment history moved out of the code (branch `feature/delete-legacy`).** Owner:
 comments overloaded with DEC numbers confuse a normal reader; the rationale must move, not vanish; failed attempts
 must stay learning points. Rules: CODE_HYGIENE.md § 4 (where it goes: the code keeps timeless rules, each area folder

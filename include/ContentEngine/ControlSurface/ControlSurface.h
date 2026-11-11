@@ -103,7 +103,6 @@
 #include "ContentEngine/ControlSurface/SetBrowser.h"
 #include "ContentEngine/ControlSurface/NoteEditSurface.h"
 #include "ContentEngine/Timing/EngineClock.h"
-#include "ContentEngine/Timing/TempoMapping.h"
 
 namespace ContentEngine {
 

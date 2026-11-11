@@ -24,6 +24,9 @@ History behind these lines: DEC-298 (comment history, moved) § Playback in the 
 - A started instance always gets its NoteOff; nothing is sent into the past; at most T = 16 sound per track.
 - The loop wrap (`nextCycle`) is a grain of its own (DEC-297).
 
+- A gesture that writes a state goes through `slotBusy`, `fittedState` (content runs + a fit run → a new state) and
+  `commitState` (adopt, then the slot's playing tracks follow): a new gesture reuses them rather than a copy.
+
 ## Traps
 - `!ENGINE end` must end an overdub at once, as REC does (`stopNow`); ending it at the bar leaves the writer busy and
   the next overdub is refused (`Busy`). A Record take still ends at the bar. DEC-297 (deep-overdub timing).
