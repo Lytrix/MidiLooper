@@ -1616,10 +1616,11 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                     static_cast<unsigned long>(ps.fetchCancelled), static_cast<unsigned long>(ps.fetchBusy),
                     gEngine.persistence().fetching() ? 1u : 0u);
       Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
-                    "migrated_slots=%lu,clusters=%lu\n",
+                    "migrated_slots=%lu,renamed=%lu,clusters=%lu\n",
                     static_cast<unsigned long>(ps.runsWritten), static_cast<unsigned long>(ps.runSectors),
                     static_cast<unsigned long>(ps.runsKept), static_cast<unsigned long>(ps.storeFull),
                     static_cast<unsigned long>(ps.badRun), static_cast<unsigned long>(ps.migratedSlots),
+                    static_cast<unsigned long>(ps.storeRenamed),
                     static_cast<unsigned long>(gEngine.persistence().runAreaClusters()));
     }
     Serial.printf("#ENGINE,card_write,next=%lu,jump=%lu,not_ready=%lu,stops=%lu\n",

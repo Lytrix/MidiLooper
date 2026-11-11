@@ -14844,6 +14844,16 @@ loading slot whose own oldest step must make room makes it cold (its runs known 
 forgetting it. Native: 2 tests, 3 mutations caught; full native 4,561. Device (`e1533cf2…`, `crash=0`): content free
 2,821 pages, no pressure demotion over 10 s idle. **E4.6 complete** (b–e) on `feature/engine-per-slot-history`.
 
+### File names (owner 2026-11-11)
+
+Owner: "rename store.bin to .bak and rename store2.bin to store.bin" (the library file unchanged). The run-once store is
+`/MidiLooper/engine/store.bin`; the DEC-253 store is kept as `store.bak` (the migration source). The boot renames
+(`Persistence::nameStores`, `CardIo::rename`): a card with `store2.bin` — `store.bin` becomes `.bak`, then `store2.bin`
+`store.bin`; a card with only the DEC-253 store under `store.bin` (shorter than the run-once store) — it becomes `.bak`
+and is migrated. Never over an existing file; nothing deleted. Native 2 tests, 2 mutations caught. Device
+(`bb0d3b0a…`, `crash=0`): `renamed=1`, `migrated_slots=0`, 27 slots and their history loaded from the renamed store; the
+boot's persistence grain with the renames 43.6 ms (once, transport stopped).
+
 ### Alternatives considered
 
 | Alternative | Why not |

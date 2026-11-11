@@ -175,7 +175,7 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7592752u;  // DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
+constexpr size_t kPsramBudget = 7592760u;  // DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
                                            // aside until the target); DEC-254 (E4.6c): + 347,648 B — the cold tier (64 x 99 cold state
                                            // descriptors, 8,192 run-reference chunks, an 8,192-record directory);
                                            // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),
@@ -188,10 +188,10 @@ constexpr size_t kRam2Budget = 160096u;  // measured (DEC-254 E4.6e: + 8 B Histo
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
-static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 440u,
+static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 448u,
               "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
               "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
-              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B) (ARM)");
+              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding) (ARM)");
 #endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
               "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");

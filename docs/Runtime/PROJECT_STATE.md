@@ -1,3 +1,9 @@
+**2026-11-11 — store file names (owner); storage and undo docs (branch `feature/engine-per-slot-history`).** The
+run-once store is now `/MidiLooper/engine/store.bin`, the DEC-253 store kept as `store.bak` (boot renames once,
+`Persistence::nameStores`; never over a file, nothing deleted); `library.bin` unchanged. Device `bb0d3b0a…`: `crash=0`,
+`renamed=1`, 27 slots and their history loaded. Full native 4,562 passed. `ENGINE_STORAGE.md` describes the run-once
+store and undo on the card; `FIXED_MEMORY_ENGINE.md` and README updated.
+
 **2026-11-11 — E4.6e pressure; DEC-254 / E4.6 complete (branch `feature/engine-per-slot-history`).** Low content memory
 makes card-held undo steps cold (never forgotten, one each 50 ms); a loading slot's own steps go cold at boot. With
 E4.6b–d: each run written once to `store2.bin`, 99 undo steps per slot (hot in PSRAM, cold on the card), undo into cold

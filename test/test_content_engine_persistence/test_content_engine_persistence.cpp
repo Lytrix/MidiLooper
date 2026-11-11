@@ -57,7 +57,7 @@ struct FakeCard : CardIo {
   uint32_t readAt = 0;
   Sector sectors[kSectors];
   int sectorCount = 0;
-  bool storeExists = false, storeOpen = false;
+  bool storeOpen = false;
   bool libraryExists = false, libraryOpen = false;  // DEC-258: its sectors kept apart from the store's
   static constexpr uint32_t kLibraryAt = 0x40000000u;
   uint32_t storeSectors = 0;
@@ -81,7 +81,8 @@ struct FakeCard : CardIo {
     dirCount = 0;
     reading = -1;
     sectorCount = 0;
-    storeExists = storeOpen = oldExists = false;
+    storeOpen = false;
+    atBin = atBak = atTwo = kNoFile;
     storeAt = 0;
     libraryExists = libraryOpen = false;
     storeSectors = 0;
@@ -109,6 +110,7 @@ struct FakeCard : CardIo {
     stepReads = 0;
   }
   bool exists(const char* p) override {
+    if (const uint8_t* at = named(p)) return *at != kNoFile;
     for (int i = 0; i < dirCount; ++i)
       if (std::strcmp(dirs[i], p) == 0) return true;
     return find(p) >= 0;
@@ -130,21 +132,49 @@ struct FakeCard : CardIo {
     return true;
   }
   void closeRead() override { reading = -1; }
-  // DEC-254: the run-once store ("store2.bin") at sector 0 of the fake; the DEC-253 store ("store.bin", read to
-  // migrate) at `kOldAt` — each opened as the one store, as the SD adapter does.
+  // DEC-254: the run-once store's sectors at 0 of the fake, the DEC-253 store's (read to migrate) at `kOldAt` — each
+  // opened as the one store, as the SD adapter does. Three names (`store.bin`, `store.bak`, the interim `store2.bin`)
+  // each hold one of them or nothing; renames move them (owner 2026-11-11).
   static constexpr uint32_t kOldAt = 0x20000000u;
-  bool oldExists = false;
+  static constexpr uint32_t kOldSectors = ProductionPersistence::kOldStoreSectors;  // shorter than the run-once store
+  enum : uint8_t { kNoFile, kNewStore, kOldStore };
+  uint8_t atBin = kNoFile, atBak = kNoFile, atTwo = kNoFile;
+  uint32_t renames = 0;
   uint32_t storeAt = 0;
+  uint8_t* named(const char* p) {
+    if (std::strcmp(p, "/MidiLooper/engine/store.bin") == 0) return &atBin;
+    if (std::strcmp(p, "/MidiLooper/engine/store.bak") == 0) return &atBak;
+    if (std::strcmp(p, "/MidiLooper/engine/store2.bin") == 0) return &atTwo;
+    return nullptr;
+  }
+  bool storeExists() const { return atBin == kNewStore || atBak == kNewStore || atTwo == kNewStore; }
+  bool rename(const char* from, const char* to) override {
+    uint8_t *a = named(from), *b = named(to);
+    TEST_ASSERT_NOT_NULL(a);
+    TEST_ASSERT_NOT_NULL(b);
+    if (*a == kNoFile || *b != kNoFile) return false;
+    *b = *a;
+    *a = kNoFile;
+    ++renames;
+    return true;
+  }
+  uint32_t fileSectors(const char* p) override {
+    uint8_t* a = named(p);
+    return a == nullptr || *a == kNoFile ? 0 : *a == kOldStore ? kOldSectors : ProductionPersistence::kStoreSectors;
+  }
   bool openStore(const char* p, uint32_t n, bool create, bool& created) override {
     created = false;
-    const bool old = std::strcmp(p, "/MidiLooper/engine/store.bin") == 0;
-    if (!old) TEST_ASSERT_EQUAL_STRING("/MidiLooper/engine/store2.bin", p);
-    bool& exists = old ? oldExists : storeExists;
-    if (!exists) {
+    uint8_t* at = named(p);
+    TEST_ASSERT_NOT_NULL(at);
+    TEST_ASSERT_TRUE(at != &atTwo);  // the interim name is never opened
+    if (*at == kNoFile) {
       if (!create) return false;
-      exists = created = true;  // a new file over old card data: whatever the sectors held stays
+      *at = kNewStore;
+      created = true;  // a new file over old card data: whatever the sectors held stays
       ++writes;
     }
+    const bool old = *at == kOldStore;
+    if (n > (old ? kOldSectors : ProductionPersistence::kStoreSectors)) return false;  // too short (SD: not contiguous)
     storeOpen = true;
     storeSectors = n;
     storeAt = old ? kOldAt : 0;
@@ -315,10 +345,10 @@ void test_nothing_is_written_before_approval() {
   record(gA, 0, 0, 60);
   run(gA, gClock + 3 * kSettleTicks);
   TEST_ASSERT_EQUAL_UINT32(0, gCard.writes);  // not even the folder
-  TEST_ASSERT_FALSE(gCard.storeExists);
+  TEST_ASSERT_FALSE(gCard.storeExists());
   TEST_ASSERT_TRUE(gA.approveSaving());
   TEST_ASSERT_TRUE(gCard.exists(ProductionPersistence::kFolder));
-  TEST_ASSERT_TRUE(gCard.storeExists && gA.persistence().storeReady());  // created with the approval
+  TEST_ASSERT_TRUE(gCard.storeExists() && gA.persistence().storeReady());  // created with the approval
   run(gA, gClock + kSettleTicks + 50);
   TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().saves);
   TEST_ASSERT_EQUAL_INT(0, laterCopy(0));        // the first save: copy A
@@ -594,7 +624,8 @@ void test_a_new_store_never_loads_stale_sectors() {
   record(gA, 0, 0, 60);
   run(gA, gClock + kSettleTicks + 100);
   TEST_ASSERT_EQUAL_INT(0, laterCopy(0));
-  gCard.storeExists = gCard.storeOpen = false;  // the file deleted: its sectors keep their bytes
+  gCard.atBin = gCard.kNoFile;
+  gCard.storeOpen = false;  // the file deleted: its sectors keep their bytes
   bootB();  // approved (the folder): a new store
   TEST_ASSERT_TRUE(gB.persistence().storeReady());
   TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loads);
@@ -997,6 +1028,31 @@ struct OldStoreSink {
     return true;
   }
 };
+void test_the_interim_store_is_renamed_at_boot() {  // owner 2026-11-11: store.bin -> .bak, store2.bin -> store.bin
+  gA.approveSaving();
+  record(gA, 0, 3, 60);
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().saves);
+  gCard.atTwo = gCard.atBin;  // the E4.6b card: the run-once store as `store2.bin`, the DEC-253 store as `store.bin`
+  gCard.atBin = FakeCard::kOldStore;
+  bootB();
+  TEST_ASSERT_TRUE(gCard.atBin == FakeCard::kNewStore);
+  TEST_ASSERT_TRUE(gCard.atBak == FakeCard::kOldStore);
+  TEST_ASSERT_TRUE(gCard.atTwo == FakeCard::kNoFile);
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().storeRenamed);
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().loads);  // the slot, from the run-once store
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().migratedSlots);
+  TEST_ASSERT_EQUAL_UINT32(gA.manifests().manifest(gA.history().current(3)).loopLengthTicks,
+                           gB.manifests().manifest(gB.history().current(3)).loopLengthTicks);
+  const uint32_t renames = gCard.renames;
+  TEST_ASSERT_TRUE(gA.init(gPsramA, gRam2A, 2000));  // the next boot: nothing to rename
+  gA.attachCard(gCard);
+  gA.startBootLoad();
+  run(gA, gClock + 30);
+  TEST_ASSERT_EQUAL_UINT32(renames, gCard.renames);
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().loads);
+}
+
 void test_the_dec253_store_is_migrated() {
   record(gA, 0, 0, 60);  // not approved: nothing on the card yet
   record(gA, 1, 9, 72);
@@ -1026,11 +1082,13 @@ void test_the_dec253_store_is_migrated() {
     for (int k = 0; k < 4; ++k) h[16 + k] = static_cast<uint8_t>(check >> (8 * k));
     gCard.writeAbs(base, h);
   }
-  gCard.oldExists = true;
+  gCard.atBin = FakeCard::kOldStore;  // a DEC-253 card: the old store under `store.bin`
   gCard.makeDir(ProductionPersistence::kFolder);  // approved before (the DEC-253 firmware saved)
   bootB();
   TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().loads);
-  TEST_ASSERT_TRUE(gCard.storeExists);  // the run-once store, created at the boot
+  TEST_ASSERT_TRUE(gCard.atBin == FakeCard::kNewStore);  // the run-once store, created at the boot as `store.bin`
+  TEST_ASSERT_TRUE(gCard.atBak == FakeCard::kOldStore);  // the DEC-253 store kept as `store.bak`
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().storeRenamed);
   run(gB, gClock + kSettleTicks + 200);
   TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().migratedSlots);
   TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().saves);
@@ -1310,6 +1368,7 @@ int main(int, char**) {
   RUN_TEST(test_a_damaged_run_record_fails_by_name);
   RUN_TEST(test_a_run_no_copy_lists_is_reclaimed_at_boot);
   RUN_TEST(test_the_dec253_store_is_migrated);
+  RUN_TEST(test_the_interim_store_is_renamed_at_boot);
   RUN_TEST(test_cold_states_survive_a_reboot);
   RUN_TEST(test_undo_fetches_the_cold_state_below);
   RUN_TEST(test_a_damaged_record_refuses_the_fetch);

@@ -46,6 +46,19 @@ class SdCardIo : public ContentEngine::CardIo {
     worst(t_.exists, t);
     return e;
   }
+  bool rename(const char* from, const char* to) override {  // boot only (DEC-254: the store's names)
+    quiesce();
+    return ready_ && SD.exists(from) && !SD.exists(to) && SD.sdfs.rename(from, to);
+  }
+  uint32_t fileSectors(const char* path) override {
+    quiesce();
+    if (!ready_) return 0;
+    FsFile f = SD.sdfs.open(path, O_RDONLY);
+    if (!f) return 0;
+    const uint64_t n = f.fileSize() / 512u;
+    f.close();
+    return n > 0xFFFFFFFFu ? 0xFFFFFFFFu : static_cast<uint32_t>(n);
+  }
   bool makeDir(const char* path) override {
     quiesce();
     return ready_ && SD.mkdir(path);

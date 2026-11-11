@@ -92,6 +92,17 @@ struct CardIo {
     (void)i;
     return true;
   }
+  /// Renames a file (false: not done — the target exists, the source is missing, or no card). Boot only (DEC-254: the
+  /// store's names); the default renames nothing.
+  virtual bool rename(const char* from, const char* to) {
+    (void)from, (void)to;
+    return false;
+  }
+  /// A file's size in whole sectors (0: missing). The default: missing.
+  virtual uint32_t fileSectors(const char* path) {
+    (void)path;
+    return 0;
+  }
   virtual ~CardIo() = default;
 };
 
@@ -108,9 +119,12 @@ class Persistence : public ColdSink {
   // DEC-254 (E4.6b): the run-once store. Sectors 0–1 the surface state; per slot two state-record copies of
   // `kCopySectors` (a header sector, then the slot stream without its rows: header, directory with each run's record
   // sector, states, CRC); then the run area (`RunStore.h`): each run once, as its own record.
-  static constexpr const char* kStoreFile = "/MidiLooper/engine/store2.bin";
+  static constexpr const char* kStoreFile = "/MidiLooper/engine/store.bin";
   // The DEC-253 store (whole slot copies): read once at boot to migrate into the run-once store, never written again.
-  static constexpr const char* kOldStoreFile = "/MidiLooper/engine/store.bin";
+  // Kept as `store.bak` (owner 2026-11-11: "rename store.bin to .bak and rename store2.bin to store.bin").
+  static constexpr const char* kOldStoreFile = "/MidiLooper/engine/store.bak";
+  // The run-once store's first name (E4.6b): renamed to `kStoreFile` at the next boot (`nameStores`).
+  static constexpr const char* kInterimStoreFile = "/MidiLooper/engine/store2.bin";
   // The largest slot file: one slot may hold every content row (the pool is shared), each run once, every state.
   static constexpr uint32_t kMaxFileBytes = 24 + Config::kRunCount * 8u + Config::kContentRows * kSetFileRowBytes +
                                             Config::kHistoryDepth * (9u + 2u * Config::kRunsPerManifest) + 4;
@@ -203,6 +217,7 @@ class Persistence : public ColdSink {
     uint32_t storeFull;      // saves refused: no contiguous room in the run area
     uint32_t badRun;         // run records that failed their check on load
     uint32_t migratedSlots;  // slots carried from the DEC-253 store into the run-once store
+    uint32_t storeRenamed;   // boot renames that put the run-once store at `store.bin` (`nameStores`)
     // DEC-254 (E4.6c): the cold tier.
     uint32_t coldLoaded;     // cold states read at boot
     uint32_t coldBad;        // cold records that failed their check (the slot's cold states not loaded)
@@ -548,6 +563,7 @@ class Persistence : public ColdSink {
   /// data). `boot`: when the run-once store is new and the DEC-253 store is there, that one is opened instead and read
   /// (`legacy_`); the boot's slots are then written into the run-once store (`finishMigration`).
   void openStore(uint8_t* buf, bool boot) {
+    if (boot) nameStores();
     bool created = false;
     legacy_ = false;
     clusters_.clear();
@@ -567,6 +583,20 @@ class Persistence : public ColdSink {
       }
     }
     stats_.store = store_ ? 1 : 2;
+  }
+  /// At boot, before the store opens (owner 2026-11-11): the DEC-253 store becomes `store.bak` and the run-once store
+  /// `store.bin`. A card with the interim `store2.bin`: `store.bin` (the DEC-253 store) is renamed `.bak`, then
+  /// `store2.bin` takes its name. A card with only the DEC-253 store under `store.bin` (shorter than the run-once store):
+  /// it is renamed `.bak`, so the boot migrates from it. Nothing is renamed over an existing file; nothing is deleted.
+  void nameStores() {
+    if (card_->exists(kInterimStoreFile)) {
+      if (card_->exists(kStoreFile) && !card_->exists(kOldStoreFile)) card_->rename(kStoreFile, kOldStoreFile);
+      if (!card_->exists(kStoreFile) && card_->rename(kInterimStoreFile, kStoreFile)) ++stats_.storeRenamed;
+      return;
+    }
+    const uint32_t n = card_->fileSectors(kStoreFile);
+    if (n != 0 && n < kStoreSectors && !card_->exists(kOldStoreFile) && card_->rename(kStoreFile, kOldStoreFile))
+      ++stats_.storeRenamed;
   }
   /// After a boot that read the DEC-253 store: the run-once store, and every slot with a history saved into it.
   void finishMigration() {
