@@ -42,7 +42,7 @@ path and confidence when alternatives exist; do not block on vagueness.
 
 - **Firmware env:** `teensy41-capture-serial` for build and upload unless the
   user explicitly names another env in this session. Since E9.8d (2026-11-11) it builds the
-  fixed-memory engine (`src/EngineFirmware/`, `include/ContentEngine/`); the legacy runtime is gone.
+  fixed-memory engine (`src/`, `include/ContentEngine/`); the legacy runtime is gone.
   `teensy41-engine` is an alias.
 - **Upload:** after a *successful* firmware build, flashing the board is
   **pre-authorized** (owner instruction, 2026-10-30): upload and run without asking.

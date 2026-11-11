@@ -473,6 +473,36 @@ Headers live in `include/`; implementations in `src/`. Filenames describe **resp
 
 ---
 
+## Engine source layout and vocabulary (DEC-296)
+
+Since E9.8d (2026-11-11) the firmware is the fixed-memory engine only. Its code follows the PlatformIO layout —
+headers in `include/`, the one implementation file `src/main.cpp` — and groups the engine's headers by responsibility.
+A folder names an **area**, not a runtime owner; the owner of everything is `EngineRoot`.
+
+| Folder | Owns |
+|---|---|
+| `include/ContentEngine/` | `EngineRoot` (the owner), `EngineCore` (the production types), `EngineConfig`, `WorkerScheduler` |
+| `Content/` | the rows and their storage in memory: `PassEvent`, `PagePool`, `RunTable`, `ManifestTable`, `RowReservations`, `SourceRun`, `ReclaimJob`, `MidiClass`, `CaptureWriter` (takes and overdubs) |
+| `Composition/` | turning a state's runs into playable windows: `SpanWindowComposer`, `SpanWindow`, `CheckpointTable`, `FitRun`, `EditIndexStore`, `Groove`, `GroovePass` |
+| `Playback/` | playing windows and switching states: `PlaybackTrack`, `PlaybackJobs`, `TerminalScheduler`, `SlotTransport`, `TrackControl`, `ClockOutput`, `MidiOutputHub` |
+| `Timing/` | `EngineClock`, `TempoMapping`, `WallClock` |
+| `NoteEdit/` | `NoteEditSession`, `NoteEditWriter` |
+| `History/` | undo / redo per slot: `SlotUndoHistory`, `ColdTier` (steps on the card), `HistoryCost` |
+| `Storage/` | the card: `Persistence`, `RunStore`, `SlotFile`, `SetLibraryFormat`, `LibraryLoader`, `LibraryWriter`, `V1Import` |
+| `ControlSurface/` | the DROID and buttons: `ControlSurface`, `NoteEditSurface`, `SetBrowser`, `UsbHostTransmitAdmission` |
+| `Display/` | what the screen shows, platform-free: `DisplayTiles`, `PianoRollRender`, `StatusView` |
+| `include/Teensy/` | the Teensy-only adapters (Arduino libraries; not built natively): `OledScreen`, `SdCardIo` |
+
+**Engine nouns** (adopted): **run** (one recorded or derived stream of rows, written once), **manifest** / **state** (a
+slot's list of runs at one revision: one undo step), **slot** (64: 8 tracks × 8), **window** (a composed span of a
+state, 1,536 ticks), **grain** (one bounded step of background work, ≤ g), **job** (work the scheduler runs in grains),
+**checkpoint** (composer state at a window boundary), **fit run** (a state's lookups and markers: window, ranges,
+groove, columns), **hot / cold step** (an undo step in PSRAM / only on the card). Tests stay flat:
+`test/test_content_engine_<area>/` (the runner reads one level).
+
+Not renamed: `ContentEngine`, `EngineRoot`, `EngineCore`, `EngineConfig`, `EngineClock`, and the serial tokens
+`!ENGINE` / `#ENGINE` (frozen, as `#CAP`).
+
 ## Introducing new terminology
 
 Before adding a new architectural term:

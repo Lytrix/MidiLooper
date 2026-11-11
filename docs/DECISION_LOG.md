@@ -16689,3 +16689,24 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   Native: `test_the_groove_window_sets_a_groove` (open / close no step; B applied, A edited silently, stored and
   restored; a resize carries it), two mutations caught (a third equivalent). Device `32da4c93…`: open / close no step;
   a B change one step, recalled on re-entering (F4 100); undone. Owner confirmed on the DROID (2026-11-11).
+
+## DEC-296 — The engine's source layout and names (E9.8d)
+
+**Date:** 2026-11-11. **Owner:** "Why did you name it engine? … use my naming conventions … enginefirmware is too
+general as folder name"; then "do it now on feature/delete-legacy" for the proposal that keeps `ContentEngine`, groups
+its headers by responsibility and gives generic files a domain.
+
+**Decision:** the firmware's one implementation file is `src/main.cpp`; the engine's headers live in
+`include/ContentEngine/` and its area folders (Content, Composition, Playback, Timing, NoteEdit, History, Storage,
+ControlSurface, Display); the Teensy-only adapters in `include/Teensy/` (`OledScreen`, `SdCardIo`; namespace `Teensy`,
+was `EngineFirmware`). Files and their types renamed: `Writer` → `CaptureWriter`, `Composer` → `SpanWindowComposer`,
+`Surface` → `ControlSurface`, `EditSurface` → `NoteEditSurface`, `History` → `SlotUndoHistory`, `Browser` →
+`SetBrowser`, `Library.h` → `SetLibraryFormat.h`, `SetFile.h` → `SlotFile.h`, `HostTx.h` →
+`UsbHostTransmitAdmission.h`, `OutputPort.h` / `OutputHub` → `MidiOutputHub`, `EditWriter` → `NoteEditWriter`,
+`EngineDisplay` → `OledScreen`. Kept: `ContentEngine`, `EngineRoot`, `EngineCore`, `EngineConfig`, `EngineClock`, the
+`!ENGINE` / `#ENGINE` serial tokens. The vocabulary is registered in `NAMING.md` § Engine source layout and vocabulary.
+The renames ride the legacy retirement (NAMING.md § Migration policy: a retirement or extraction is the vehicle).
+
+**Evidence:** moves and includes byte-identical (`eaed506c…`); the type renames change only the linker's veneer
+order (sizes identical); native 544 passed.
+

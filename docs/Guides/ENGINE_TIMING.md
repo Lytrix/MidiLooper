@@ -18,7 +18,7 @@ belongs to the legacy runtime. The engine firmware prints none of those rows; it
 | A tick | 2,604 µs at 120 BPM; 1,041.67 µs at 300 BPM (the fastest case every budget is checked at) | — |
 | A window | 1,536 ticks (2 bars of 4/4): the unit a track's playback is composed in, ahead of time | `EngineRoot.h` `kWindowTicks` |
 | Checkpoint spacing | 4 windows (8 bars) | `kCheckpointSpacing` |
-| External clock | a missing pulse is a timeout after 500 ms (`#ENGINE,clock,timeout_age_us`); a gap over 200 ms between pulses is recorded (`#ENGINE,gap`) | `EngineMain.cpp` `realtime` |
+| External clock | a missing pulse is a timeout after 500 ms (`#ENGINE,clock,timeout_age_us`); a gap over 200 ms between pulses is recorded (`#ENGINE,gap`) | `main.cpp` `realtime` |
 | Watchdog | 4 s without a main-loop pass resets the board; the next boot reports where it hung | DEC-266 — hardware watchdog, `!ENGINE boot` |
 
 ## The main loop and its budget
@@ -125,7 +125,7 @@ the other (about two a loop), sampled every 3 or 6:
   (98–99) with `evicted_undo=0` (older steps went cold on the card, none forgotten); content memory flat.
 - The refused overdubs in the first two runs were the test's: the serial `!ENGINE end` ended every take at the next
   bar, so an overdub sent within that wait found the writer still busy (`Busy`). REC on the DROID ends an overdub at
-  once (`Surface::endTake`); `!ENGINE end` now does the same (a Record take still at the bar), and all 30 were taken.
+  once (`ControlSurface::endTake`); `!ENGINE end` now does the same (a Record take still at the bar), and all 30 were taken.
 - **Grain cost grows with the slot's layers** (third run, worst per class after N overdubs):
 
   | Overdubs | transition | background | display | hard |
@@ -141,7 +141,7 @@ the other (about two a loop), sampled every 3 or 6:
 
   | Part | 6 layers | 30 layers |
   |---|---|---|
-  | `Composer::bind` (binding a state's runs: a cold start, a tile build, a resume) | 396 µs | **711 µs** |
+  | `SpanWindowComposer::bind` (binding a state's runs: a cold start, a tile build, a resume) | 396 µs | **711 µs** |
   | the cold-start step (holds `bind`) | 399 µs | 713 µs |
   | one compose grain (`composeRows`) | 180 µs | 432 µs |
   | a window's tiles (`consume`) / its end (`endLookahead`) | ≤ 209 µs | ≤ 209 µs / 48 µs |
@@ -150,25 +150,25 @@ the other (about two a loop), sampled every 3 or 6:
   about 1.2 ms at 63 runs. Composing grows less (a row 1.3 → 2.3 µs on average; a quarter of it the OVL-2/6 look-ahead
   over later passes). Ruled out by measurement: the stream selection (a tournament tree over the runs changed nothing)
   and counting it as work (fewer rows a grain — the E5 feasibility gate then missed deadlines).
-- **Bind in steps (2026-11-11, `4192837b…`).** `Composer::bindStart` / `bindMore` bind 12 runs a grain
+- **Bind in steps (2026-11-11, `4192837b…`).** `SpanWindowComposer::bindStart` / `bindMore` bind 12 runs a grain
   (`kRunsPerStep`), and a resume's seek runs in the same steps (`resumeSeekMore`); the cold start, the checkpoint
   sweep, the tile builder and NOTE_EDIT's gather use them (a small source still binds in the grain that starts it).
   The same 30-overdub stress, worst grain per class at 30 layers: `transition` 686 → **455 µs**, flat from 18 layers
   (444 / 449 / 455); `display` 632 → 508 µs; `hard` 542 → 482 µs; `background` 673 → 645 µs. 30 of 30 overdubs, no
   hang. **Open:** `hard` and `background` still grow (about 13 µs a layer); g would be reached at about 45–50 layers.
-- **Not the per-row average (2026-11-11).** Probes inside `Composer::process` (30 layers): a row costs 2.16 µs on
+- **Not the per-row average (2026-11-11).** Probes inside `SpanWindowComposer::process` (30 layers): a row costs 2.16 µs on
   average (1.32 at 6 layers), and the growth is almost all `laterPassStartsWhileSounding` (0.34 → 1.24 µs a NoteOn,
   walking every later pass). Per-pitch masks of the runs that start a pitch (1 KiB a composer) cut that walk, but the
   worst grains did not move (`hard` 482 → 522, `background` 645 → 664 µs, within run-to-run spread) and the bind grew
   (455 → 507 µs): reverted. The worst grain is set by something other than the average row — a grain over a dense
   cluster, or another path in the same job.
 - **The worst grains attributed (2026-11-11, temporary probes recording, per job class, the worst grain's job and its
-  parts).** At 30 layers: `transition` (the cold start) = `Composer::bindStart` **~330 µs, flat** + `bindMore` 121 µs;
+  parts).** At 30 layers: `transition` (the cold start) = `SpanWindowComposer::bindStart` **~330 µs, flat** + `bindMore` 121 µs;
   `background` (the checkpoint sweep) = the loop-end `capture` and store **355 → 435 µs, growing** + composing 210 µs;
   `display` = composing 291 + the tiles' `consume` 169 µs; `hard` = composing 355 µs + ~177 µs not in any probed part.
   `bindStart` cleared the whole 8 KiB occluder table (`active_`, 128 pitches x 64 runs) in PSRAM; `capture` scanned
   128 pitches x every run.
-- **The dirty-pitch mask (2026-11-11, `1577f716…`).** `Composer::dirty_` (16 B) marks the pitches whose occluder row
+- **The dirty-pitch mask (2026-11-11, `1577f716…`).** `SpanWindowComposer::dirty_` (16 B) marks the pitches whose occluder row
   was raised since the last bind; a bind clears only those rows and `capture` scans only those pitches, in the same
   order (a checkpoint is unchanged); `init` clears the table once (the composers are set up in PSRAM, not
   constructed). Same stress, worst grain at 30 layers: `background` 645 → **380 µs**, `transition` 455 → **351 µs**
@@ -176,7 +176,7 @@ the other (about two a loop), sampled every 3 or 6:
   **Open:** `hard` and `display` still grow (about 14 µs a layer: composing, plus ~177 µs unattributed in a playback
   grain); g at about 50 layers.
 - **The loop wrap as its own grain (2026-11-11, `c1a031d1…`).** The playback grain's unattributed part was
-  `Composer::nextCycle` (54 → 179 µs from 10 to 30 layers: every run's cursors and three stream heads re-read), run
+  `SpanWindowComposer::nextCycle` (54 → 179 µs from 10 to 30 layers: every run's cursors and three stream heads re-read), run
   in the same grain as a full compose. The wrap now ends its grain — in steady playback, a transition, the checkpoint
   sweep and the cold start's warm-up — and composing resumes on the next one (one more grain a loop cycle).
   `test_the_loop_wrap_is_a_grain_of_its_own` (a mutation caught). Same stress, worst grain at 30 layers: `hard`
@@ -189,9 +189,9 @@ the other (about two a loop), sampled every 3 or 6:
   30 layers the non-engine stretch was 1,627 µs (LEDs 553, screen 765). Attributed with temporary timers: the LED
   stage held two 512-row steps of the stored-loop scan in one pass (the LEDs' and the screen's `loopFrame`), and the
   screen's piano roll (`drawSlot`) grew 73 → 534 µs, the rest of a frame flat (track column ≤ 44, status ~105 µs).
-  Now the scan steps are 256 rows for the LEDs and 128 for the screen (`Surface::kScanRows`), and a frame is drawn over
+  Now the scan steps are 256 rows for the LEDs and 128 for the screen (`ControlSurface::kScanRows`), and a frame is drawn over
   passes — the tracks and the grid, the roll in four row bands (`drawRollBand` already drew bands), then the status
-  and the windows — and sent when complete (`EngineDisplay::drawStage`; the panel shows each frame whole, checked with
+  and the windows — and sent when complete (`OledScreen::drawStage`; the panel shows each frame whole, checked with
   `!ENGINE fbdump`). Same stress, at 30 layers: `leds` 553 → **268 µs**, `screen` 765 → **379 µs**, non-engine
   1,627 → **955 µs** of 2,000. Both still grow with the slot (~9 and ~12 µs a layer): about 1.6 ms at 63 layers.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
@@ -214,10 +214,10 @@ B_max must shrink.
 | undo into a cold step (fetch from the card) | 373 µs (persistence 335 µs) | 1,831 µs | 787 µs | no |
 
 **Cause and fix.** Timing the stage's parts (`!ENGINE take` with temporary timers) ruled out the DIN, USB device and
-USB host sends (≤ 5 µs each, the DIN buffer never full). The time was in `Surface::leds` scanning the shown slot's
+USB host sends (≤ 5 µs each, the DIN buffer never full). The time was in `ControlSurface::leds` scanning the shown slot's
 rows: the step LEDs rescanned every row of the state each time the playhead entered a bar (about 1.5 ms a bar on a
 large slot), and a new state (each take, overdub wrap or commit) was scanned in one pass (about 3 ms). Now
-(`Surface::beyondScan`, commit `8de09b60`):
+(`ControlSurface::beyondScan`, commit `8de09b60`):
 
 - the scan of a state also builds the 16ths of each of its first 64 bars, so entering a bar reads a table;
 - the LEDs and the screen advance a new state's scan by at most 512 rows a pass (`kScanRows`) and show the last state

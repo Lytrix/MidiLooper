@@ -3,7 +3,7 @@
 Status: guide (2026-11-11), for the fixed-memory engine's screen, windows and DROID controls. It collects the design
 language and the workflow decisions the owner has made so far, so new screens and windows start from them. Not
 authority: where it and a `DEC-###` in [`DECISION_LOG.md`](../DECISION_LOG.md) disagree, the decision wins, and the
-guide is corrected. Code: `src/EngineFirmware/EngineDisplay.h` (drawing), `include/ContentEngine/Surface.h` (input,
+guide is corrected. Code: `include/Teensy/OledScreen.h` (drawing), `include/ContentEngine/ControlSurface/ControlSurface.h` (input,
 gestures, window state), `droid/midilooper_v1.ini` (the DROID patch).
 
 ## 1. Principles
@@ -26,7 +26,7 @@ gestures, window state), `droid/midilooper_v1.ini` (the DROID patch).
 - SSD1322, 256 × 64, 4-bit grey (0–15). Two fonts: the **3 × 5 label font** (`label`, 4 px a letter) for all window
   content, hints, labels; the **5 × 7 font** (`text`) only for the status band's big values.
 - The performance screen: the track list on the left, the piano roll, and the status band on the bottom rows
-  (`EngineDisplay.h` header comment): the loop's progress bar (DEC-282, DEC-283), the transport icon and position, the
+  (`OledScreen.h` header comment): the loop's progress bar (DEC-282, DEC-283), the transport icon and position, the
   save dots over the BPM.
 - A missing glyph is added to `micro()` (rows of 3 bits, bit 14 top-left), e.g. `%` (DEC-294).
 
@@ -119,16 +119,16 @@ preset, `A A A B A B A C`):
 ## 10. Faders (the DROID's motor faders)
 
 - Each window that uses the faders has its **own DROID bank**: the engine sends a Program Change on channel 16
-  (`Surface::bank`: 0 loop edit, 1 note edit, 2 groove); the patch's `[motorfader]`s use `select = _EDIT_MODE`,
+  (`ControlSurface::bank`: 0 loop edit, 1 note edit, 2 groove); the patch's `[motorfader]`s use `select = _EDIT_MODE`,
   `selectat = <bank>`.
 - Prefer **CCs** for window faders (the GROOVE bank: CC 20–23 on channel 16); pitch bend only where 14 bits are needed
   (tempo, note position).
 - Order the faders as the window's fields (F1, F2 the first column; F3, F4 the second).
 - When a bank opens the DROID **reports each fader's position**: the first CC of each fader after opening is not a
-  move (`faderSeen_`, DEC-295 am. 2). Motor writes need echo handling (NOTE_EDIT: `EditSurface` motor settle).
+  move (`faderSeen_`, DEC-295 am. 2). Motor writes need echo handling (NOTE_EDIT: `NoteEditSurface` motor settle).
 - A window's faders **follow its values on opening** (the GROOVE window, E9.8b-3c): the value on the fader's CC, then
   its `clear` trigger note (GROOVE: channel 16 notes 102–105; LOOP_EDIT: 100–101 and channel 15 notes 1–2), queued
-  in `Surface::loopWrite`; the fader's messages are not moves for `kMotorSettleMs` (`landing`). The patch's
+  in `ControlSurface::loopWrite`; the fader's messages are not moves for `kMotorSettleMs` (`landing`). The patch's
   `[motorfader]` takes `startvalue` / `clear` from a `[midiin]` on the same CCs and notes.
 
 ## 11. Workflow for UI changes
