@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Reclaim worker (fixed-memory-engine E5, plan revision 3 § 5.3 / § 7.1). Runs whose last reference was dropped wait
+// Reclaim worker. Runs whose last reference was dropped wait
 // in the run table's reclaim queue; this background job returns them to the pool in grains of `kUnitsPerGrain` units
 // (a page, or an emptied descriptor). Nothing is freed on the Clock path or inside a command.
 //

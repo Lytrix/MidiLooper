@@ -14,10 +14,10 @@
 
 namespace ContentEngine {
 
-/// A second view of one state (DEC-286, groove design § 2): a grooved state is played from its groove pass on and rebuilt
-/// from the passes before it. Each view is composed under its own identity, because the edit-hide index cache
-/// (`EditIndexStore`) is keyed by identity — one shared identity served one view's hides to the other (a deleted note
-/// came back in a probe). Manifest identities stay below `kViewIdentityBit`; the rebuild view sets it.
+/// A second view of one state (DEC-286, rebuild view identity): a grooved state is played from its groove pass on and
+/// rebuilt from the passes before it. Each view is composed under its own identity, because the edit-hide index cache
+/// (`EditIndexStore`) is keyed by identity — a shared identity would serve one view's hides to the other (a deleted
+/// note comes back). Manifest identities stay below `kViewIdentityBit`; the rebuild view sets it.
 constexpr uint32_t kViewIdentityBit = 0x80000000u;
 inline uint32_t prefixViewIdentity(uint32_t identity) { return identity | kViewIdentityBit; }
 

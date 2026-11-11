@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Which channel messages may be limited (owner decision 2026-11-05). One rule for recording, playback and the ports:
+// Which channel messages may be limited. One rule for recording, playback and the ports:
 //   * Essential: Bank Select (CC0 / CC32), Program Change, the switch controllers CC64-69 (sustain, portamento,
 //     sostenuto, soft, legato, hold 2) and channel mode CC120-127 — state a note depends on: never limited.
 //   * Parameter: RPN / NRPN selection and data entry (CC6, CC38, CC96-101) — an ordered sequence: never limited.

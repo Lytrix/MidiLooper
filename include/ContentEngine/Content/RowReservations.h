@@ -30,8 +30,8 @@ template <typename Pool, typename Runs>
 class RowReservations {
  public:
   /// `fixedReservePages`: pool pages that belong to other partitions (compaction, edit index) and are never content.
-  /// `previewPages` (plan §6.2 fix 1): the preview partition — preview runs (`Runs::isPreview`) take their pages from it
-  /// alone, and content never takes its unused pages.
+  /// `previewPages`: the preview partition — preview runs (`Runs::isPreview`) take their pages from
+  /// it alone, and content never takes its unused pages.
   void init(Pool& pool, Runs& runs, uint32_t fixedReservePages, uint32_t previewPages = 0) {
     pool_ = &pool;
     runs_ = &runs;
@@ -100,8 +100,8 @@ class RowReservations {
     outstanding_[run] = 0;
   }
 
-  /// Writes one row `run` owes (a NoteOff, a closure). Never refused while the run owes rows: invariant R guarantees the
-  /// pages. Returns false only for a caller error (nothing owed), which writes nothing.
+  /// Writes one row `run` owes (a NoteOff, a closure). Never refused while the run owes rows: invariant R guarantees
+  /// the pages. Returns false only for a caller error (nothing owed), which writes nothing.
   bool writeOwed(RunId run, const PassEvent& row) {
     if (outstanding_[run] == 0) return false;
     const uint32_t before = need(runs_->run(run), outstanding_[run]);

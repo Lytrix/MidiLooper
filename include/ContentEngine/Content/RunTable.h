@@ -5,8 +5,8 @@
 // first `kInlinePagesPerRun` page ids live in the descriptor, later ones in directory pages drawn from the same pool
 // (one directory page lists `kIdsPerDirPage` data pages). Descriptors are pooled across all slots and refcounted by the
 // manifests that list them; a released run joins the reclaim queue (release order) and returns its pages through
-// bounded `reclaim` calls, never in one call. The last `PreviewRuns` descriptors are preview runs (plan §6.2 fix 1:
-// a get-a-loop preview): handed out only by `allocatePreview`, never as content, and the pages they hold are counted
+// bounded `reclaim` calls, never in one call. The last `PreviewRuns` descriptors are preview runs (a get-a-loop
+// preview, DEC-271): handed out only by `allocatePreview`, never as content, and the pages they hold are counted
 // (`previewPages`) as they are appended and as reclaim returns them, so the reservation ledger keeps them in their own
 // partition.
 
@@ -84,7 +84,7 @@ class RunTable {
   /// O(1). A new run in `Writing` state with one reference (its writer). `kNoRun` when the table is full; the
   /// reservation ledger reserves descriptors before an interaction is accepted, so a writer never sees that.
   RunId allocate(uint8_t slot, uint8_t kind) { return take(freeHead_, freeCount_, slot, kind); }
-  /// A preview run (plan §6.2 fix 1), as `allocate`; `kNoRun` when every preview descriptor is in use.
+  /// A preview run, as `allocate`; `kNoRun` when every preview descriptor is in use.
   RunId allocatePreview(uint8_t slot, uint8_t kind) { return take(previewFreeHead_, previewFreeCount_, slot, kind); }
   bool isPreview(RunId id) const { return id >= kContentRuns && id < RunCount; }
   /// Pages the preview runs hold now (data + directory), reclaimed ones no longer.
@@ -182,8 +182,9 @@ class RunTable {
     return true;
   }
 
-  /// Reclaims at most `maxUnits` units from the queue, oldest release first. A unit is one page returned to `pool` (data
-  /// pages from the end, then directory pages) or one emptied descriptor freed. Returns the units used. O(maxUnits).
+  /// Reclaims at most `maxUnits` units from the queue, oldest release first. A unit is one page returned to `pool`
+  /// (data pages from the end, then directory pages) or one emptied descriptor freed. Returns the units used.
+  /// O(maxUnits).
   uint32_t reclaim(Pool& pool, uint32_t maxUnits) {
     uint32_t used = 0;
     while (used < maxUnits && reclaimHead_ != kNoRun) {

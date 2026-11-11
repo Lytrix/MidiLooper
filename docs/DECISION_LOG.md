@@ -16792,3 +16792,19 @@ comment-only and keeps the image byte-identical.
   the 14-bit pitchbend (1–300 BPM at 0.1), DEC-108 item 7 revised. The CC mapping was to be retired by that slice; on
   2026-11-12 no engine file or test includes `TempoMapping.h` (a candidate for removal in the cleanup's dead-code
   stage).
+
+### Content
+
+- `CaptureWriter` (fixed-memory-engine E2, DEC-252): a run never spans more than one loop cycle since E3 slice 3;
+  closing runs follow DEC-250 (late companions belong to the originating record) and revision order DEC-069 (owed
+  commit). The continuous-controller limit (`Limited`) and `MidiClass`'s essential / parameter / continuous split are
+  the owner's decision of 2026-11-05 (no entry of their own). `hideRun` is the E9.8i amendment (owner 2026-11-09: a
+  late Stop's repeated notes), DEC-262.
+- `ManifestTable`'s view identity (DEC-286, groove design § 2): a shared identity served one view's hides to the
+  other — a deleted note came back in a probe.
+- `PassEvent`: layer 1 of DEC-245; the muted bit is the owner's decision of 2026-11-08 (DEC-255); fit-run rows
+  DEC-257, the window row DEC-283, the A / B ranges DEC-284 amendment 3, the groove row DEC-287, the template and
+  label rows the groove-file work (referenced in code as DEC-290; recorded under DEC-289's slice 5 groundwork), the
+  columns row the owner's "save B with the slot" (2026-11-11, DEC-295 amendment 6).
+- `ReclaimJob`: fixed-memory-engine E5, plan revision 3 § 5.3 / § 7.1. The preview partition in `RunTable` and
+  `RowReservations` is the get-a-loop plan's § 6.2 fix 1.

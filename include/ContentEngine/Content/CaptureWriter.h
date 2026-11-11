@@ -1,17 +1,17 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The fixed-page writer of one Record / overdub take (fixed-memory-engine E2, DEC-252).
+// The fixed-page writer of one Record / overdub take (DEC-252, bounded content engine).
 //
 // * NoteOn: one row now and its NoteOff reserved in the same run (CE-A1). Refused only here, at the first row of a new
 //   note: open-note cap (128), or capacity.
 // * NoteOff: pairs with the most recent open NoteOn on its (channel, pitch) lane (PAIR-1, LIFO) and is written into the
 //   run that owes it. Never refused while the note is open: its row is reserved.
-// * Wrap: the active run commits and a new run starts, always: a run never spans more than one loop cycle (E3 slice 3).
+// * Wrap: the active run commits and a new run starts, always: a run never spans more than one loop cycle.
 //   With no open notes the old run seals at once; with open notes it becomes a closing run that accepts only its own
-//   NoteOffs and seals when the last one arrives (DEC-250 late companions belong to the originating record). Several
+//   NoteOffs and seals when the last one arrives (late companions belong to the originating record). Several
 //   runs may be closing at once (each holds at least one open note, so at most 128); revision order is the manifest's
-//   concern (DEC-069 owed commit), not the storage layout's. No descriptor for the next run: FinalInterval; the
+//   concern (its owed commit), not the storage layout's. No descriptor for the next run: FinalInterval; the
 //   following wrap ends the take.
 // * Stop: a generated closure (flagged in `origin`) for every open note, into its own run, then every run seals.
 //   Nothing it needs can be refused.
@@ -46,7 +46,7 @@ enum class WriterResult : uint8_t {
   DeniedOpenNotes,  // 128 notes already open
   DeniedCapacity,   // the row and what it owes do not fit
   Unmatched,        // NoteOff with no open note on its lane: nothing written
-  Limited,          // a continuous controller beyond the per-tick limit: nothing written (owner 2026-11-05)
+  Limited,          // a continuous controller beyond the per-tick limit: nothing written (MidiClass.h)
   FinalInterval,    // wrap without a descriptor for the next run: the next wrap ends the take
   Stopped,          // the wrap ended a FinalInterval take
 };
@@ -55,7 +55,7 @@ template <typename Pool, typename Runs>
 class CaptureWriter {
  public:
   using Reservations = RowReservations<Pool, Runs>;
-  /// The row reservations (a resize's fit run reserves through them, DEC-257).
+  /// The row reservations (a resize's fit run reserves through them).
   Reservations& reservations() { return *res_; }
   static constexpr uint16_t kMaxOpen = Config::kMaxOpenNotesPerWriter;
   static constexpr uint8_t kMaxClosing = Config::kMaxOpenNotesPerWriter;  // each closing run owes >= 1 NoteOff
@@ -92,8 +92,8 @@ class CaptureWriter {
   /// `loopLength` (0 when not yet known, e.g. a Record take) marks NoteOffs of notes held a full loop (Q-LEN-1).
   /// Each run stores ticks relative to its own start (`startTick`, then each wrap tick), so a run's main rows are loop
   /// positions and a held note's NoteOff lands at `loop + position` in its originating run.
-  /// A sealed Edit run of HideNote rows hiding the notes `ids` (E9.8i amendment, owner 2026-11-09: a late Stop's
-  /// repeated notes); the caller lists it after the run it hides in and holds the writer's reference. kNoRun: refused
+  /// A sealed Edit run of HideNote rows hiding the notes `ids` (a late Stop's repeated notes, DEC-262 late-Stop
+  /// hide); the caller lists it after the run it hides in and holds the writer's reference. kNoRun: refused
   /// (a run is being written, no run left, or no capacity) — nothing taken.
   RunId hideRun(uint8_t slot, const uint32_t* ids, uint8_t n) {
     if (state_ == State::Writing || n == 0) return kNoRun;
