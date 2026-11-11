@@ -215,7 +215,7 @@ class EngineRoot {
 
   /// `blockUs`: B_max, the longest non-engine block of the main loop (plan § 7.4). False when a fixed partition does
   /// not fit (the edit index's pages): a build error in practice.
-  bool init(EnginePsram& psram, EngineRam2& ram2, uint32_t blockUs) {
+  CE_COLD __attribute__((noinline)) bool init(EnginePsram& psram, EngineRam2& ram2, uint32_t blockUs) {  // boot only: in flash
     p_ = &psram;
     r_ = &ram2;
     p_->pool.init();

@@ -136,8 +136,21 @@ the other (about two a loop), sampled every 3 or 6:
 
   About 12 µs more a layer: a grain's work is counted in rows, but each row costs more as the composer merges more
   runs. Extrapolated, g = 810 µs is reached at about 40 layers on one slot, while a state may hold 63 runs (60
-  committed). **Open:** count the run merge as work (or merge older overdub layers) before slots that deep are used;
-  the non-engine stretch follows the same trend (1,664 µs at 31 steps).
+  committed); the non-engine stretch follows the same trend (1,664 µs at 31 steps).
+- **Where the growth is** (2026-11-11, temporary cycle-counter probes, the same stress; worst single call):
+
+  | Part | 6 layers | 30 layers |
+  |---|---|---|
+  | `Composer::bind` (binding a state's runs: a cold start, a tile build, a resume) | 396 µs | **711 µs** |
+  | the cold-start step (holds `bind`) | 399 µs | 713 µs |
+  | one compose grain (`composeRows`) | 180 µs | 432 µs |
+  | a window's tiles (`consume`) / its end (`endLookahead`) | ≤ 209 µs | ≤ 209 µs / 48 µs |
+
+  The worst grain is `bind`: it walks every run in one grain (binary searches into PSRAM per run, about 13 µs a run),
+  about 1.2 ms at 63 runs. Composing grows less (a row 1.3 → 2.3 µs on average; a quarter of it the OVL-2/6 look-ahead
+  over later passes). Ruled out by measurement: the stream selection (a tournament tree over the runs changed nothing)
+  and counting it as work (fewer rows a grain — the E5 feasibility gate then missed deadlines). **Open:** bind a state
+  in steps of a few runs a grain, then bound the per-row loops over later passes.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).
