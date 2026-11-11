@@ -14807,8 +14807,9 @@ device-qualified; then the owner reassesses from history-pressure diagnostics (b
 
 ### Risks and rollback
 
-- Deep undo is no longer instant (bounded by the fetch; measured above). An owner decision is open on how a second
-  undo press during a fetch behaves (proposed: it queues, so three presses step back three states).
+- Deep undo is no longer instant (bounded by the fetch; measured above). **Owner answer (2026-11-11):** a second undo
+  (or redo) press during a fetch skips the one loading — the fetch in flight is dropped and a new one starts for the
+  newly requested state (the target one step further), so only the final target is fetched and switched to.
 - More card writes: each run is written once when committed (today's autosave writes whole slots).
 - Power loss: run records are written before the state record that lists them; the state record is A / B with a
   sequence (DEC-253's pattern), so a cut leaves the previous list whole.
