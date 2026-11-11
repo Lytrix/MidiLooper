@@ -373,6 +373,66 @@ void test_bars_with_notes_outside_the_loop_light_dim() {
   TEST_ASSERT_TRUE(gLed[41] >= 48);  // the loop's bars above them
 }
 
+// Owner 2026-11-11 (the LED stage over B_max at 300 BPM): playing across bars, the step LEDs show each bar's 16ths
+// without scanning the state's rows again — one scan per new state, none when the playhead enters a bar.
+void test_step_leds_follow_the_bars_without_a_row_scan() {
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(gUs + kBarUs);
+  tap(S::kSlotBase + 0);
+  ms(400);
+  untilRecording(3 * kBarUs);
+  const uint32_t start = gUs;
+  run(start + 4 * kBarUs - 300 * kTick, {{start + 2 * kTick, start + 20 * kTick, 60},                  // bar 1: 16th 1
+                                         {start + kBarUs + 98 * kTick, start + kBarUs + 120 * kTick, 61},  // bar 2: 16th 3
+                                         {start + 2 * kBarUs + 194 * kTick, start + 2 * kBarUs + 210 * kTick, 62},
+                                         {start + 3 * kBarUs + 290 * kTick, start + 3 * kBarUs + 300 * kTick, 63}});
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(gUs + kBarUs);
+  TEST_ASSERT_EQUAL_UINT32(4 * 768, X().loopLength(X().contentOf(0)));
+  until(8 * kBarUs, [] { return X().playing(0) && (gLast - X().origin(0)) % (4 * 768) < 100; });
+  const uint32_t scans = gS.rowScans();
+  for (uint8_t bar = 0; bar < 4; ++bar) {
+    until(2 * kBarUs, [bar] { return (gLast - X().origin(0)) % (4 * 768) / 768 == bar; });
+    run(gUs + 200 * kTick);  // inside the bar
+    for (uint8_t k = 0; k < 16; ++k)
+      TEST_ASSERT_EQUAL_UINT8(k == 2 * bar ? 64 : 0, gLed[k]);  // the bar's note: 16th 2 x bar
+  }
+  TEST_ASSERT_EQUAL_UINT32(scans, gS.rowScans());  // no scan as the playhead entered the bars
+}
+// Owner 2026-11-11 (the LED stage over B_max at 300 BPM): a new state of a large slot is scanned for the LEDs and the
+// screen in steps of `kScanRows` rows a pass, not in one pass; until it is done they show the last state scanned.
+void test_a_large_state_is_scanned_in_steps() {
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(gUs + kBarUs);
+  tap(S::kSlotBase + 0);
+  ms(400);
+  untilRecording(3 * kBarUs);
+  const uint32_t start = gUs;
+  for (uint32_t k = 0; k < 400; ++k) {  // 800 rows: more than one step
+    const uint8_t pitch = static_cast<uint8_t>(48 + k % 24);
+    run(start + (2 + 7 * k) * kTick);
+    gE.inputNoteOn(gLast, 0x90, pitch, 100, gUs, gClk.usPerTick());
+    run(start + (5 + 7 * k) * kTick);
+    gE.inputNoteOff(gLast, 0x80, pitch, gUs);
+  }
+  run(start + 4 * kBarUs - 100 * kTick);
+  tap(S::kSlotBase + 0);
+  ms(400);
+  run(gUs + kBarUs);
+  const ManifestId before = X().contentOf(0);
+  TEST_ASSERT_TRUE(before != kNoManifest);
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 2 * 768, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_TRUE(X().contentOf(0) != before);  // a new state: the same 800 rows
+  const uint32_t scans = gS.rowScans();
+  const auto led = [](uint8_t n, uint8_t v) { gLed[n] = v; };
+  gS.leds(gLast, gUs / 1000, led, 8);
+  TEST_ASSERT_EQUAL_UINT32(scans, gS.rowScans());  // one pass: part of the rows only
+  for (uint8_t i = 0; i < 3; ++i) gS.leds(gLast, gUs / 1000, led, 8);
+  TEST_ASSERT_EQUAL_UINT32(scans + 1, gS.rowScans());  // a few passes: done, once
+}
 // DEC-283 amendment 1 (owner 2026-11-10: the button LEDs absolute): a loop shortened to bars 2..3 of a 4-bar stored loop
 // lights its bars where they are stored — bar 1 and 4 outside it (dim with notes) — and a bar button names a stored bar.
 void test_buttons_are_absolute_in_performance() {
@@ -1087,6 +1147,8 @@ int main(int, char**) {
   RUN_TEST(test_slot_double_press_launches_at_the_next_launch_step);
   RUN_TEST(test_step_and_bar_buttons_restart_the_playing_slot_there);
   RUN_TEST(test_buttons_are_absolute_in_performance);
+  RUN_TEST(test_step_leds_follow_the_bars_without_a_row_scan);
+  RUN_TEST(test_a_large_state_is_scanned_in_steps);
   RUN_TEST(test_bars_with_notes_outside_the_loop_light_dim);
   RUN_TEST(test_copy_mode_copies_slots_across_tracks);
   RUN_TEST(test_copy_mode_counts_down_and_a_double_press_clears_the_source);

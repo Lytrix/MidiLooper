@@ -102,17 +102,38 @@ assumes that stretch is at most **B_max = 2,000 µs** (`kBlockUs`).
 | Phase | Worst grain (class) | `leds` stage | `screen` | Other non-engine | Within budget |
 |---|---|---|---|---|---|
 | playback | 194 µs (hard) | 12 µs | 180 µs | ≤ 160 µs | yes |
-| a take (record) | 365 µs (display) | **3,643 µs** | 806 µs | ≤ 280 µs | **no** — over B_max |
-| two overdubs | 425 µs (background) | **4,124–4,419 µs** | 803–815 µs | ≤ 290 µs | **no** — over B_max |
+| a take (record) | 365 µs (display) | **3,643 µs** | 806 µs | ≤ 280 µs | **no** — over B_max (fixed below) |
+| two overdubs | 425 µs (background) | **4,124–4,419 µs** | 803–815 µs | ≤ 290 µs | **no** — over B_max (fixed below) |
 | the 6 s after each take / overdub (their saves) | 223 µs | 1,695–1,801 µs | 772–814 µs | ≤ 160 µs | grains yes; non-engine about 2.6 ms, over B_max |
 | undo into a cold step (fetch from the card) | 373 µs (persistence 335 µs) | 1,831 µs | 787 µs | ≤ 180 µs | grains yes; non-engine over B_max |
 | redo + saves, playback after, stop | ≤ 369 µs | ≤ 18 µs | ≤ 177 µs | ≤ 160 µs | yes |
 
-**Findings.** Every grain class stays under g = 810 µs, and the card work (saves under 100 µs, the fetch 335 µs) under its
-0.9 ms budget; no clock gap. The budget that does not hold is B_max: the `leds` stage (DROID bank / motor messages,
-LED updates over the USB host port, and the screen's per-track state) blocks for up to 4.4 ms while a take or
-overdub runs and about 1.8 ms after it, with the screen stage near 0.8 ms beside it — up to about four ticks of
-lateness at 300 BPM. Not caused by the card or the undo history (plain playback: 12 µs); open for investigation.
+**Findings (first run).** Every grain class stays under g = 810 µs, and the card work (saves under 100 µs, the fetch
+335 µs) under its 0.9 ms budget; no clock gap. The budget that did not hold was B_max: the `leds` stage blocked for up
+to 4.4 ms while a take or overdub ran and about 1.8 ms after it.
+
+**Cause and fix (same day).** Timing the stage's parts (`!ENGINE take` with temporary timers) ruled out the DIN, USB
+device and USB host sends (≤ 5 µs each, the DIN buffer never full). The time was in `Surface::leds` scanning the shown
+slot's rows: the step LEDs rescanned every row of the state each time the playhead entered a bar (about 1.5 ms per
+bar on a large slot), and a new state (each take, overdub wrap or commit) was scanned in one pass (about 3 ms). Now
+(`Surface::beyondScan`):
+
+- the scan of a state also builds the 16ths of each of its first 64 bars, so entering a bar reads a table;
+- the LEDs and the screen advance a new state's scan by at most 512 rows a pass (`kScanRows`) and show the last state
+  scanned until it is done (a few passes); gestures still finish it at once, so their values are exact.
+
+Re-measured (`c23ede89…`, same set, 300 BPM):
+
+| Phase | `leds` stage before → after | `screen` | Worst pass |
+|---|---|---|---|
+| playback | 1,500 µs → **10 µs** | 812–835 µs | 881 µs (under one tick) |
+| overdub | 3,650–4,100 µs → **652–688 µs** | 872–910 µs | 1,910–2,625 µs (up to 8 grains a pass, ticks played between them) |
+| after an overdub (its save) | 1,540–1,630 µs → **10 µs** | 816–836 µs | 874–886 µs |
+
+The non-engine stretch is now at most about 1.65 ms (LEDs 688 + screen 910 + the rest ≤ 60 µs), within B_max. The
+screen stage (about 0.8–0.9 ms while playing) is now the largest non-engine part. Tests:
+`test_step_leds_follow_the_bars_without_a_row_scan`, `test_a_large_state_is_scanned_in_steps` (each caught by a
+mutation). A step LED of a bar past the 64th still scans that state's rows (loops longer than 64 bars).
 
 ## When a figure changes
 

@@ -322,6 +322,7 @@ class Surface {
     startMs_ = pendingStart_ = 0;
     startPending_ = false;
     beyondIdentity_ = stepsIdentity_ = 0;  // the scans' caches: identities restart with the engine
+    scan_ = Scan{};
   }
   /// The DROID control plane: channels 13–16 are the surface's, never recorded nor thru.
   static bool controlPlane(uint8_t status) { return (status & 0xF0) < 0xF0 && (status & 0x0F) >= 12; }
@@ -813,12 +814,14 @@ class Surface {
     if (slot >= Config::kSlotCount) return false;
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return false;
-    beyondEnd(c);
+    beyondScan(c, kScanRows);  // the screen: in steps (the last state scanned until this one is done)
     scale = frame_;
     start = frameStart_;
     known = absEnd_;
     return true;
   }
+  /// Diagnostics: full scans of a state's rows the LEDs made (one per new state; never per bar of playback).
+  uint32_t rowScans() const { return rowScans_; }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
   typename EditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
@@ -1861,7 +1864,7 @@ class Surface {
     }
     // Notes kept past the loop's end (a shortening; DEC-281): their bars, and the last bar's 16ths, dim.
     if (m != kNoManifest) {
-      beyondEnd(m);
+      beyondScan(m, kScanRows);  // the LEDs: in steps
       for (uint8_t i = static_cast<uint8_t>(bars); i < 8; ++i)
         if ((beyondBars_ >> i) & 1u) want[40 + i] = kBeyondLed;
       if (bar == loop / kBar && loop % kBar != 0)
@@ -1890,6 +1893,7 @@ class Surface {
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
   uint16_t rangeSteps_ = 0, rangeBars_ = 0;   // LOOP_EDIT: the step / bar buttons held (DEC-280)
   uint32_t beyondIdentity_ = 0;                // the state `beyondEnd` last scanned
+  uint32_t rowScans_ = 0;                      // full scans of a state's rows for the LEDs (`rowScans`)
   uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
   uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
   uint32_t storedEnd_ = 0;                     // ... the end of its stored notes (ticks; DEC-282 amendment 1)
@@ -1898,6 +1902,20 @@ class Surface {
   uint64_t absBars_ = 0;                       // ... the stored loop's bars holding a NoteOn
   uint32_t stepsIdentity_ = 0, stepsBar_ = 0;  // `absSteps`: the state and stored bar last scanned
   uint16_t steps_ = 0;                         // ... its 16ths holding a NoteOn
+  // The stored loop's first 64 bars: each one's 16ths holding a NoteOn, built by `beyondEnd`'s scan, so the step LEDs
+  // need no row scan when the playhead enters a bar (owner 2026-11-11: the LED stage over B_max at 300 BPM).
+  uint16_t barSteps_[64] = {};
+  // `beyondScan`'s state between passes: the state it scans, where it is, and the values it builds (published at its end).
+  struct Scan {
+    uint32_t identity = 0, loop = 0, run = 0, row = 0, storedEnd = 0, frame = 0, frameStart = 0, absEnd = 0;
+    uint64_t beyondBars = 0, absBars = 0;
+    uint16_t beyondSteps = 0;
+    uint16_t barSteps[64] = {};
+    uint8_t phase = 0, played = 0;  // phase 0: none, 1: the stored reach, 2: the bars from the stored loop's start
+    bool fit = false;
+  };
+  Scan scan_;
+  static constexpr uint32_t kScanRows = 512;  // rows a pass for the LEDs and the screen
   uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint8_t rangeTapNote_ = 0xFF;                // ... the last one pressed alone, and when (a double: one bar / 16th)
   uint32_t rangeTapMs_ = 0;
@@ -2216,53 +2234,81 @@ class Surface {
   // DEC-283 amendment 2 (owner 2026-11-10: the dimmed note bars did not show): stored notes outside the loop at the
   // level an empty bar had (visible on the DROID; 8 and 20 were not), the loop's bars above it.
   static constexpr uint8_t kBeyondLed = 32, kLoopEmptyLed = 48, kLoopNotesLed = 96;
-  void beyondEnd(ManifestId m) {
+  /// The stored loop of state `m` (DEC-281, DEC-283): its notes past the loop's end, its frame and the bars and 16ths
+  /// holding notes — scanned to the end now (gestures need the exact values).
+  void beyondEnd(ManifestId m) { beyondScan(m, 0xFFFFFFFFu); }
+  /// The same in steps of at most `budget` rows (owner 2026-11-11: the LED stage over B_max at 300 BPM — a slot's whole
+  /// state was scanned in one main-loop pass whenever it changed). The LEDs and the screen advance it each pass and show
+  /// the last state scanned until the new one is done; a scan restarts when its state changes. True: `m`'s values are in.
+  bool beyondScan(ManifestId m, uint32_t budget) {
     const auto& d = e_->manifests().manifest(m);
-    if (d.identity == beyondIdentity_) return;
-    beyondIdentity_ = d.identity;
-    beyondBars_ = 0;
-    beyondSteps_ = 0;
-    storedEnd_ = 0;
-    bool fit = false;
-    for (uint8_t i = 0; i < d.runCount; ++i) fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
-    const uint8_t played = playedFrom(d);
-    const uint32_t loop = d.loopLengthTicks, endBar = loop / kBar;
-    for (uint8_t i = 0; i < d.runCount; ++i) {
-      const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit || i < played) continue;  // DEC-287: a groove pass's sources are not played
-      for (uint32_t r = 0; r < run.rowCount; ++r) {
-        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
-        const uint8_t type = e.status & 0xF0;
-        if (type == 0x90 && e.data2 != 0 && e.tick + 1 > storedEnd_)  // the stored notes' reach (a NoteOff may wrap)
-          storedEnd_ = e.tick + 1;
-        if (!fit || run.kind == RunKind::kEdit) continue;
-        if (type != 0x90 || e.data2 == 0 || e.tick < loop) continue;
-        const uint32_t b = e.tick / kBar;
-        if (b < 64) beyondBars_ |= 1ull << b;
-        if (b == endBar) beyondSteps_ = static_cast<uint16_t>(beyondSteps_ | (1u << ((e.tick % kBar) / kSixteenth)));
-      }
+    if (d.identity == beyondIdentity_) return true;
+    Scan& w = scan_;
+    if (w.phase == 0 || w.identity != d.identity) {  // a new state: start over
+      w = Scan{};
+      w.identity = d.identity;
+      w.phase = 1;
+      for (uint8_t i = 0; i < d.runCount; ++i) w.fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
+      w.played = playedFrom(d);
+      w.loop = d.loopLengthTicks;
     }
-    // DEC-283: the stored loop — the window's frame, at least the stored notes' reach in whole bars — and its notes'
-    // bars counted from its start.
-    const LoopWindow w = windowOf(e_->runs(), e_->pool(), d.runs, d.runCount, loop);
-    const uint32_t stored = (storedEnd_ + kBar - 1) / kBar * kBar;
-    frame_ = w.frame > stored ? w.frame : stored;
-    if (frame_ == 0) frame_ = kBar;
-    frameStart_ = w.start % frame_;
-    absBars_ = 0;
-    absEnd_ = 0;
-    for (uint8_t i = 0; i < d.runCount; ++i) {
-      const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit || i < played) continue;  // DEC-287: a groove pass's sources are not played
-      for (uint32_t r = 0; r < run.rowCount; ++r) {
-        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
+    const uint32_t endBar = w.loop / kBar;
+    while (w.phase != 0) {
+      if (w.run >= d.runCount) {
+        if (w.phase == 1) {  // DEC-283: the stored loop — the window's frame, at least the stored notes' reach in whole bars
+          const LoopWindow lw = windowOf(e_->runs(), e_->pool(), d.runs, d.runCount, w.loop);
+          const uint32_t stored = (w.storedEnd + kBar - 1) / kBar * kBar;
+          w.frame = lw.frame > stored ? lw.frame : stored;
+          if (w.frame == 0) w.frame = kBar;
+          w.frameStart = lw.start % w.frame;
+          w.phase = 2;
+          w.run = 0;
+          w.row = 0;
+          continue;
+        }
+        beyondIdentity_ = w.identity;  // done: the new values at once
+        beyondBars_ = w.beyondBars;
+        beyondSteps_ = w.beyondSteps;
+        storedEnd_ = w.storedEnd;
+        frame_ = w.frame;
+        frameStart_ = w.frameStart;
+        absBars_ = w.absBars;
+        absEnd_ = w.absEnd > w.frame ? w.frame : w.absEnd;
+        for (uint8_t k = 0; k < 64; ++k) barSteps_[k] = w.barSteps[k];
+        ++rowScans_;
+        w.phase = 0;
+        return true;
+      }
+      const auto& run = e_->runs().run(d.runs[w.run]);
+      if (run.kind == RunKind::kFit || w.run < w.played) {  // DEC-287: a groove pass's sources are not played
+        ++w.run;
+        w.row = 0;
+        continue;
+      }
+      for (; w.row < run.rowCount; ++w.row) {
+        if (budget == 0) return false;
+        --budget;
+        const PassEvent& e = e_->runs().rowAt(d.runs[w.run], w.row, e_->pool());
         if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
-        const uint32_t a = (e.tick + frameStart_) % frame_;
-        if (a / kBar < 64) absBars_ |= 1ull << (a / kBar);
-        if ((a / kBar + 1) * kBar > absEnd_) absEnd_ = (a / kBar + 1) * kBar;
+        if (w.phase == 1) {
+          if (e.tick + 1 > w.storedEnd) w.storedEnd = e.tick + 1;  // the stored notes' reach (a NoteOff may wrap)
+          if (!w.fit || run.kind == RunKind::kEdit || e.tick < w.loop) continue;
+          const uint32_t bb = e.tick / kBar;
+          if (bb < 64) w.beyondBars |= 1ull << bb;
+          if (bb == endBar) w.beyondSteps = static_cast<uint16_t>(w.beyondSteps | (1u << ((e.tick % kBar) / kSixteenth)));
+        } else {
+          const uint32_t at = (e.tick + w.frameStart) % w.frame, bar = at / kBar;
+          if (bar < 64) {
+            w.absBars |= 1ull << bar;
+            w.barSteps[bar] = static_cast<uint16_t>(w.barSteps[bar] | (1u << ((at % kBar) / kSixteenth)));
+          }
+          if ((bar + 1) * kBar > w.absEnd) w.absEnd = (bar + 1) * kBar;
+        }
       }
+      ++w.run;
+      w.row = 0;
     }
-    if (absEnd_ > frame_) absEnd_ = frame_;
+    return true;
   }
   /// The first played run of state `d` (DEC-287): the groove pass when there is one (the runs before it are its
   /// sources, not played), else 0.
@@ -2276,10 +2322,11 @@ class Surface {
   /// The 16ths of stored bar `bar` (DEC-283: counted from the stored loop's start) holding a NoteOn, for state `m`.
   uint16_t absSteps(ManifestId m, uint32_t bar) {
     const auto& d = e_->manifests().manifest(m);
-    beyondEnd(m);
+    if (bar < 64) return barSteps_[bar];  // built with the scan (`loopEditLeds` advanced it)
     if (d.identity == stepsIdentity_ && bar == stepsBar_) return steps_;
     stepsIdentity_ = d.identity;
     stepsBar_ = bar;
+    ++rowScans_;
     steps_ = 0;
     const uint8_t played = playedFrom(d);
     for (uint8_t i = 0; i < d.runCount; ++i) {
@@ -2298,7 +2345,7 @@ class Surface {
   /// stored loop's 8-bar page holding the playhead (stopped: the loop's start) and the 16ths of its bar — in the loop lit
   /// (notes brighter), outside it dark, its notes there dim; the playhead full.
   void loopEditLeds(ManifestId m, uint32_t loop, uint32_t pos, bool moving, uint8_t* want) {
-    beyondEnd(m);
+    beyondScan(m, kScanRows);  // the LEDs: in steps
     const uint32_t frame = frame_, start = frameStart_;
     const uint32_t at = (start + (moving ? pos % loop : 0)) % frame;
     const auto in = [&](uint32_t a) { return (a + frame - start) % frame < loop; };

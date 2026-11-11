@@ -1,3 +1,11 @@
+**2026-11-11 — the LED stage within B_max at 300 BPM (branch `feature/engine-per-slot-history`).** A 300 BPM device
+check found `Surface::leds` blocking 1.5 ms a bar and up to 4.4 ms during overdubs (B_max 2,000 µs): the shown slot's
+rows were rescanned on every bar and on every new state. Now the scan builds every bar's 16ths once and the LEDs and
+screen advance a new state's scan 512 rows a pass (`Surface::beyondScan`); re-measured `c23ede89…`: LEDs 10 µs in
+playback, ≤ 688 µs during overdubs. Details in `docs/Guides/ENGINE_TIMING.md`. Seen twice during the runs: USB serial
+stopped answering after the gate's transport stop (the known USB wedge; a PROGRAM press recovered it once) — for the
+hang investigation. Slot 11 keeps two test overdubs (owner: keep them).
+
 **2026-11-11 — store file names (owner); storage and undo docs (branch `feature/engine-per-slot-history`).** The
 run-once store is now `/MidiLooper/engine/store.bin`, the DEC-253 store kept as `store.bak` (boot renames once,
 `Persistence::nameStores`; never over a file, nothing deleted); `library.bin` unchanged. Device `bb0d3b0a…`: `crash=0`,
