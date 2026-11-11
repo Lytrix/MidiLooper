@@ -96,6 +96,11 @@ path and confidence when alternatives exist; do not block on vagueness.
 - **Naming:** [`docs/Authority/NAMING.md`](docs/Authority/NAMING.md) is canonical
   — reuse `pass`, `Capture`, `editPass`, `NoteEditSession`, slot, overdub, jam,
   `JamAction`, HITL baseline. Action + scope naming.
+- **Code hygiene:** comments say what the code cannot (intent, invariants, why) and carry no
+  history; decision references are sparse (`DEC-### (short name)`); files over 1,000 lines and
+  functions over 60 are reviewed; DRY and SOLID as adapted in
+  [`docs/Authority/CODE_HYGIENE.md`](docs/Authority/CODE_HYGIENE.md). Report:
+  `scripts/code_hygiene_report.py`.
 - **Prose:** refer to functions by name; line numbers are for navigation and
   citations only. In every chat mention, pair stage/task/gate/decision IDs with a
   short name, including repeats and link labels: **S2b — boot/load admission**,

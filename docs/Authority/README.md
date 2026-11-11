@@ -38,6 +38,7 @@ Code                       ← implementation; cannot silently redefine architec
 | **Guides** | How shipped behavior works today | Authority over OpenSpec specs or architecture |
 | **Historical plans** | Design context, handoffs, exports | Treated as normative or override for architecture |
 | **Code** | Current implementation | Silent source of truth when docs disagree |
+| *(code hygiene)* | [CODE_HYGIENE.md](CODE_HYGIENE.md): how code is written — comments, size thresholds, DRY / SOLID — under the layers above | Used to change behaviour, ownership or bounds |
 
 ---
 
