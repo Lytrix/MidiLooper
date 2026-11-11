@@ -1,3 +1,8 @@
+**2026-11-11 — E4.6c cold undo states (branch `feature/engine-per-slot-history`).** A full hot table demotes the oldest
+saved undo step to a cold tier (PSRAM descriptors + each copy's cold record on the card) instead of forgetting it; a
+slot keeps 99 states and forgets only its own oldest; the UNDO level counts cold steps; undo into a cold step is E4.6d.
+Native 4,555 passed; device: `demoted=1`, `evicted_undo=0`, levels unchanged over a reboot. RAM1 last bank: 1,316 B.
+
 **2026-11-11 — DEC-254 approved; E4.6b the run-once store (branch `feature/engine-per-slot-history`).** `store2.bin`:
 each run written once as its own record, per-slot A / B state records, a 1 GiB run area reclaimed at boot; the DEC-253
 `store.bin` migrated (read only, left on the card). Native 4,551 passed; device: 27 slots migrated and reloaded, a take

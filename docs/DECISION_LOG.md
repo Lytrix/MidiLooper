@@ -14810,6 +14810,18 @@ only, an overdub's save its new runs only. **Timing:** the worst persistence gra
 today's worst pass, ~0.9 ms); the boot load's grains reach 31 ms (32 sectors a grain, before playback) — E4.6d's fetch
 must read in smaller grains. RAM1: the serial command handler moved to flash (13,248 B free).
 
+### E4.6c — per-slot depth, hot and cold states (2026-11-11)
+
+Built as `docs/Plans/e46c_cold_states.md`: a full hot table **demotes** the oldest undo step (a slot's oldest hot state
+whose runs are on the card) to the cold tier instead of forgetting it; a slot keeps at most 99 states, hot and cold,
+and forgets only its own oldest; the UNDO level counts cold steps; undo stops at the oldest hot state above a cold one
+until the fetch (E4.6d). Cold states live in PSRAM (`ColdTier.h`, + 347,648 B) and on the card in each copy's cold
+record (the run area's reserved last region, written before the copy's header). Native: 3 history tests, the cold
+round trip; 3 mutations caught; full native 4,555. Device (`9faa6e4a…`, `crash=0`): a take and an overdub past the full
+table — `demoted=1`, `evicted_undo=0` (only an old redo branch dropped, as designed), the worst persistence grain
+83 µs; after a reboot every slot's UNDO / REDO level unchanged. RAM1: `setup()` and the library service from flash
+(1,316 B left in the last bank).
+
 ### Alternatives considered
 
 | Alternative | Why not |

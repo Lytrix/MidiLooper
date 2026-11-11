@@ -35,3 +35,14 @@ hot chain only (cold steps are not in a saved stage).
 
 Many steps on one slot past the hot table (the owner's busy slots), a reboot: the slot's UNDO level keeps its depth,
 no other slot lost steps; `!ENGINE history` reports demoted / cold counts; timing as E4.6b.
+
+## Evidence (2026-11-11)
+
+- Native: `test_a_full_table_demotes_the_oldest_step_cold`, `test_a_slot_keeps_99_and_forgets_only_its_own`,
+  `test_undo_stops_above_a_cold_state`, `test_cold_states_survive_a_reboot`; mutations (no demotion, cold not read back,
+  no cold floor) each caught. Full native 4,555.
+- Device `9faa6e4a…`: boot clean (cluster map 2,067 = runs + the reserved cold region); a take and an overdub with the
+  table full → `demoted=1`, `evicted_undo=0`, persistence's worst grain 83 µs; after a reboot every slot's UNDO / REDO
+  level unchanged (the demoted state came back hot: its slot was not saved since, and the table had room).
+- Note: one busy slot alone never demotes — its 99 and the table's 99 are reached together, so it forgets its own
+  oldest (per-slot depth); demotion is for several slots sharing the table.
