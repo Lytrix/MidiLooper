@@ -112,7 +112,7 @@
 #include "ContentEngine/Browser.h"
 #include "ContentEngine/EditSurface.h"
 #include "ContentEngine/EngineClock.h"
-#include "Utils/TempoMapping.h"
+#include "ContentEngine/TempoMapping.h"
 
 namespace ContentEngine {
 
