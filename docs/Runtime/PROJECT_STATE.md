@@ -1,3 +1,10 @@
+**2026-11-11 — E9.8d: the legacy runtime removed (branch `feature/delete-legacy`).** The firmware is the engine only:
+`teensy41-capture-serial` builds it (17 legacy envs gone), 150 legacy test suites and every legacy source / header
+deleted (src/ and include/ hold the engine; the image byte-identical through the deletions), the D1 build gates met
+(RAM1 locals 12,832 → 45,600 B by moving libc formatting and the demangler to FLASH; snprintf kept in ITCM for the
+status line). Native 544 passed (the engine suites); device `eaed506c…` boot clean, the 300 BPM stress unchanged.
+Legacy scripts, guides and rules kept and marked historical (AGENTS.md, the context map). Not merged yet.
+
 **2026-11-11 — DEC-295 am. 6: the GROOVE window's B saved with the slot (`feature/engine-sets-browser`).** Owner, after
 E9.8b-3c: re-entering, the faders 3 and 4 copied 1 and 2 (B was always a copy of A). A, B and the column heard are now a
 fit-run row of the slot's state, written with a build or, for a visit that changed them silently, at closing; opening

@@ -41,7 +41,9 @@ path and confidence when alternatives exist; do not block on vagueness.
 ## Non-negotiables
 
 - **Firmware env:** `teensy41-capture-serial` for build and upload unless the
-  user explicitly names another env in this session.
+  user explicitly names another env in this session. Since E9.8d (2026-11-11) it builds the
+  fixed-memory engine (`src/EngineFirmware/`, `include/ContentEngine/`); the legacy runtime is gone.
+  `teensy41-engine` is an alias.
 - **Upload:** after a *successful* firmware build, flashing the board is
   **pre-authorized** (owner instruction, 2026-10-30): upload and run without asking.
   Never upload after a failed build or when the user asked build-only. Record the
@@ -71,12 +73,18 @@ path and confidence when alternatives exist; do not block on vagueness.
   unless it is the deliberate RED of the current slice. If PlatformIO's project
   lock serializes the commands, build first, then start native before flashing.
   Detailed order and caveats: [`.cursor/rules/Testing-Workflow.mdc`](.cursor/rules/Testing-Workflow.mdc).
-- **HITL:** a firmware change observable over serial needs a **registered or
+- **Legacy-only (E9.8d, 2026-11-11):** the HITL rules below, step 8 above, the
+  `#CAP` Tier-A tooling under `scripts/`, and the guides and `.cursor` rules that
+  describe Track / Loop / LoopEventStore owners apply to the **removed legacy
+  runtime**; they are kept as history. Engine device checks use the `!ENGINE`
+  serial commands and the gates in
+  [`docs/Guides/ENGINE_TIMING.md`](docs/Guides/ENGINE_TIMING.md).
+- **HITL (legacy):** a firmware change observable over serial needs a **registered or
   reused stimulus** (`scripts/hitl/stimuli/`). List before adding:
   `.venv/bin/python scripts/host_midi_hitl.py stimulus list`. Never edit a
   canonical stimulus to chase a new condition; create a temporary variant, and
   promote to a new `STIM-…-02` only when the user accepts it as the reproducer.
-- **HITL entry points:** run the authoritative entry point (baseline preset, or
+- **HITL entry points (legacy):** run the authoritative entry point (baseline preset, or
   the `scripts/hitl_stop_interruption.py` wrapper); **never** execute a captured
   `command.json`. Managed runs are bounded by `HITL_MANAGED_RUN_TIMEOUT_S`
   (default 360 s). Recipe and evidence expectations:

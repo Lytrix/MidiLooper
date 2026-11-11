@@ -1,5 +1,9 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-11 — E9.8d legacy removal (owner: "continue with removing the legacy code"; a new branch; legacy tooling and
+docs kept as history).** On `feature/delete-legacy`: envs, legacy tests, legacy sources and headers removed in stages;
+the D1 build gates met. Evidence: `fixed-memory-engine` tasks E9.8d. E9.8b-3a (MIDI groove import) parked by the owner.
+
 **2026-11-11 — engine timing under deep overdubs (owner-directed: "split bind", "yes, continue", "LEDs and screen").**
 On `feature/engine-sets-browser`: bounded the grains and main-loop stages that grew with a slot's overdub layers at 300
 BPM — stepped bind and resume seek, a dirty-pitch mask for the occluder table, the loop wrap as its own grain, smaller

@@ -1,3 +1,7 @@
+> **Legacy runtime removed (E9.8d, 2026-11-11):** the firmware is the fixed-memory engine only. Guides, plans and
+> `.cursor` rules about the legacy owners (Track, Loop, LoopEventStore, the playback views, HITL `#CAP` capture) are
+> historical; use them only for the musical rules the engine kept (DEC disposition, plan § 12.2).
+
 > **Engine routing (2026-11-08):** for fixed-memory engine work, first read [FIXED_MEMORY_ENGINE.md](Guides/FIXED_MEMORY_ENGINE.md), the active [fixed-memory engine tasks](../openspec/changes/fixed-memory-engine/tasks.md), and the applicable scope in [CURRENT_WORK](Runtime/CURRENT_WORK.md). Source entry points are `src/EngineFirmware/EngineMain.cpp`, `EngineDisplay.h`, and `include/ContentEngine/`. The domain-to-manager mappings below describe the retained legacy runtime; they are not the engine ownership map. Browser work follows its separately declared current scope.
 
 # Agent context map
