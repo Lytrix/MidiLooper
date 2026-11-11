@@ -2452,9 +2452,9 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveDots());
   EXPECT_ALL(positions(true, 60, 768), 130);
-  tap(S::kPlayStopNote);  // OFF → A
+  tap(S::kLengthNote);  // ADD: OFF → A
   ms(450);
-  tap(S::kPlayStopNote);  // A → B: heard
+  tap(S::kLengthNote);  // A → B: heard
   ms(450);
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
@@ -2556,8 +2556,8 @@ void test_auto_grooves_an_overdub() {
 }
 
 // DEC-294 / DEC-295 (owner: "audition no groove, previous groove, new groove"): A (the groove when the window opened)
-// and B (a copy), both edited; PLAY/STOP steps OFF → A → B, its double cycles A / B two bars each from bar lines, a
-// short press keeps the one playing; TRK is AUTO Q; applying keeps what plays, one undo step.
+// and B (a copy), both edited; ADD (am. 5) single A ↔ B, double OFF, hold cycles A / B two bars each from bar lines,
+// a single press while cycling keeps the one playing; TRK is AUTO Q; holding PLAY/STOP applies what plays, one step.
 void test_the_groove_window_compares_a_b_and_off() {
   recordBar({{130, 60}});
   ContentEngine::groove::Settings a;
@@ -2576,32 +2576,37 @@ void test_the_groove_window_compares_a_b_and_off() {
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
   EXPECT_ALL(positions(true, 60, 768), 137);
-  tap(S::kPlayStopNote);  // PLAY/STOP: A → B, 144
+  tap(S::kLengthNote);  // ADD (DEC-295 am. 5): A → B, 144
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
-  tap(S::kPlayStopNote);  // B → OFF
+  dbl(S::kLengthNote);  // double: OFF
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   EXPECT_ALL(positions(true, 60, 768), 130);
-  tap(S::kPlayStopNote);  // OFF → A
+  tap(S::kLengthNote);  // single from OFF: A (A ↔ B only, no OFF in the stepping)
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
   EXPECT_ALL(positions(true, 60, 768), 137);
-  TEST_ASSERT_TRUE(gS.grooveOpen());
-  TEST_ASSERT_TRUE(gClk.running());  // PLAY/STOP in the window: no stop
-  // TRK: AUTO Q (the slot's), kept with what plays — not a track switch; NOTELEN does nothing here.
-  TEST_ASSERT_FALSE(gS.grooveAuto());
   tap(S::kLengthNote);
-  ms(400);
+  ms(450);
+  tap(S::kLengthNote);
+  ms(450);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);  // A → B → A
+  tap(S::kPlayStopNote);  // PLAY/STOP's press: nothing in the window (its hold applies), no stop
+  ms(450);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_TRUE(gClk.running());
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  // TRK: AUTO Q (the slot's), kept with what plays — not a track switch.
   TEST_ASSERT_FALSE(gS.grooveAuto());
   tap(S::kTrackSwitchNote);
   ms(400);
   TEST_ASSERT_TRUE(gS.grooveAuto());
   TEST_ASSERT_EQUAL_UINT8(0, gE.control().selectedTrack());
-  // Double: the cycle — A, B two bars each from the next bar line, each turn on its bar line.
-  dbl(S::kPlayStopNote);
-  ms(450);
+  // ADD held: the cycle — A, B two bars each from the next bar line, each turn on its bar line.
+  tap(S::kLengthNote, 700);
+  ms(50);
   TEST_ASSERT_TRUE(gS.cycling());
   const uint32_t from = gHeardCount;
   // DEC-295 am. 3: each turn is built a bar ahead — published while its bar line is still ahead, switched on it; the
@@ -2639,8 +2644,8 @@ void test_the_groove_window_compares_a_b_and_off() {
     }
   }
   TEST_ASSERT_TRUE(runs >= 3);
-  // Short while cycling: keep the one playing; a long press applies it — the visit one undo step.
-  tap(S::kPlayStopNote);
+  // ADD while cycling: keep the one playing; a long press of PLAY/STOP applies it — the visit one undo step.
+  tap(S::kLengthNote);
   ms(450);
   TEST_ASSERT_FALSE(gS.cycling());
   const S::Heard kept = gS.grooveHeard();

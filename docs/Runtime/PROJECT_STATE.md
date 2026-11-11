@@ -1,3 +1,10 @@
+**2026-11-11 — DEC-295 am. 4–5 and the UI / UX guide.** GROOVE: editing the column not heard is silent; ADD single
+A ↔ B, double OFF, hold cycle (OFF never cycled), PLAY/STOP's press inert; stopping a cycle no longer lets the next
+turn (published a bar ahead) switch. New `docs/Guides/ENGINE_UI_UX_GUIDE.md`: the design language (GEM windows, the
+hint row, brightness, button roles — TRK enter, ADD value / compare —, save dots, loop bar, the A / B pattern, fader
+banks) and the mockup-first workflow; linked from `AGENT_CONTEXT_MAP` (Display). Full native 4,546 passed; device
+`b3c417fc…`, `504ea882…` (`crash=0`).
+
 **2026-11-11 — DEC-295 amendments 2–3: the GROOVE window's DROID bank and its cycle countdown.** The window has its own
 fader bank (program 2, selectat 2, CC 20–23 on ch16: F1/F2 A's groove/amount, F3/F4 B's; the DROID's position report
 on opening is not a move). Builds show as the save dots; while cycling each column has the main screen's loop bar;

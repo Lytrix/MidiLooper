@@ -577,11 +577,13 @@ class Surface {
     cycling_ = false;
     if (grooveAt_ != 0 && e_->grooveState() != Engine::Groove::State::Idle) e_->grooveCancel();  // a later turn's
     grooveAt_ = 0;
+    if (grooveToHear_) playHeard(heard_);  // the next turn already published for its bar line: replaced by this one
   }
-  /// PLAY/STOP in the window (DEC-295): short steps OFF → A → B (cycling: keeps the one playing), double the cycle on /
-  /// off — A and B taking turns of `cycleBars` bars from the next bar line.
+  /// ADD (NOTELEN) in the window (DEC-295 am. 5, as NOTELEN's ranges in performance: single A ↔ B, double FULL):
+  /// single A ↔ B (from OFF: A; cycling: keeps the one playing), double OFF (and stops a cycle), hold the cycle on / off
+  /// — A and B taking turns of `cycleBars` bars from the next bar line.
   void grooveCompare(Press p) {
-    if (p == Press::Double) {
+    if (p == Press::Long) {
       if (cycling_) {
         stopCycle();
       } else {
@@ -591,13 +593,19 @@ class Surface {
       }
       return;
     }
-    if (p != Press::Short) return;
-    if (cycling_) {
-      stopCycle();
+    if (p == Press::Double) {
+      if (cycling_) stopCycle();
+      heard_ = Heard::Off;
+    } else if (p == Press::Short) {
+      if (cycling_) {
+        stopCycle();
+        return;
+      }
+      heard_ = heard_ == Heard::A ? Heard::B : Heard::A;
+    } else {
       return;
     }
-    heard_ = heard_ == Heard::Off ? Heard::A : heard_ == Heard::A ? Heard::B : Heard::Off;
-    groovePending_ = false;  // the values stay; what plays is the one stepped to
+    groovePending_ = false;  // the values stay; what plays is the one chosen
     playHeard(heard_);
   }
   /// The cycle's next turn built a bar ahead (DEC-295 am. 3: time for a long loop's build) and switched in on its bar
@@ -1092,17 +1100,18 @@ class Surface {
       browse(b, p);  // a long press of any button closes it
       return;
     }
-    if (groove_ && p == Press::Long) {  // the GROOVE window (DEC-289): a long press of any button closes it
-      closeGroove();
-      return;
-    }
-    if (groove_ && (b == kPlayStop || b == kTransport)) {  // DEC-295: PLAY/STOP compares OFF / A / B, its double cycles
+    if (groove_ && b == kLength) {  // DEC-295 am. 5: ADD compares — single A ↔ B, double OFF, hold the cycle
       grooveCompare(p);
       return;
     }
-    if (groove_ && (b == kRecord || b == kEditMode || b == kLength || b == kTrackSwitch)) {  // the load / save window's
+    if (groove_ && p == Press::Long) {  // the GROOVE window (DEC-289): a long press of any other button applies
+      closeGroove();
+      return;
+    }
+    if (groove_ && (b == kPlayStop || b == kTransport)) return;  // PLAY/STOP: its hold (note 43) applies; no stop
+    if (groove_ && (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window's
       if (p == Press::Short && b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q (DEC-295 am. 1)
-      else if (p == Press::Short && b != kLength) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
+      else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
       return;
     }
     if (popup_ && p == Press::Long && b != popupButton_) {  // a long press of another button closes the popup, kept

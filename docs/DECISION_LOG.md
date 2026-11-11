@@ -16607,4 +16607,16 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   (144), then changes the heard B (the dots run); the compare test changes B while A plays (still 137), then PLAY/STOP
   → B 144. Full native 4,546 passed. Device image `b3c417fc…` (`crash=0`, uploaded without a press — the Teensy Loader's
   Auto had been off): on T8 S8 B scrolled to LAID BACK while A played — no build, no undo step.
+- **Amendment 5 (owner 2026-11-11: "if I want to manually a/b I don't want to have off in the cycle … one button being
+  the 'enter' button on all windows … ADD? Then use double press to set it to off like undo and a single press to
+  cycle manually between A/B and long hold to auto cycle"):** ADD (NOTELEN) compares — single A ↔ B (from OFF: A;
+  cycling: keeps the one playing), double OFF, hold the cycle on / off — as NOTELEN's ranges in performance (single
+  A ↔ B, double FULL). PLAY/STOP's short press does nothing in the window (its hold applies). The enter key across
+  windows stays TRK (the load / save window's confirm; here AUTO Q). Hints `[REC]{ [EDT]}  [ADD] A/B  2*OFF  HOLD
+  CYCLE` (cycling: `[ADD] KEEP  2*OFF  HOLD STOP`). Fix found by the moved test: stopping a cycle in the bar before a
+  turn change still switched — that turn had been published a bar ahead (am. 3); stopping now re-publishes the one
+  kept. The UI / UX rules so far are collected in `docs/Guides/ENGINE_UI_UX_GUIDE.md`. Native: the window tests use
+  ADD (single from OFF → A, A → B → A, double OFF, PLAY/STOP's press inert, hold cycles, single keeps). Full native
+  4,546 passed. Device image `504ea882…` (`crash=0`): T8 S8 — ADD → B with the dots, double → OFF, hold →
+  cycling with A's bar, ADD → kept A; the visit undone (and a step wrongly undone on slot 10 by the check, redone).
 

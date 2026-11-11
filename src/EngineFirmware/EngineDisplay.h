@@ -1342,8 +1342,8 @@ class EngineDisplay {
         px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by - 2), 12), px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by + 2), 12);
       }
     }
-    hint(edit_.grooveCycling ? "[REC]{ [EDT]}  [PLY] KEEP  2*[PLY] STOP CYCLE"
-                             : "[REC]{ [EDT]}  [PLY] OFF/A/B  2*[PLY] CYCLE");
+    hint(edit_.grooveCycling ? "[REC]{ [EDT]}  [ADD] KEEP  2*OFF  HOLD STOP"  // DEC-295 am. 5: ADD's three
+                             : "[REC]{ [EDT]}  [ADD] A/B  2*OFF  HOLD CYCLE");
     hintLabel("HOLD [PLY] APPLY", static_cast<int16_t>(256 - 16 * 4), kHintY);
   }
 
