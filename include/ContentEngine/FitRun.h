@@ -50,6 +50,10 @@ struct LoopWindow {
   uint32_t groove = 0;  // DEC-287: the packed groove setting of the state's groove pass (0: none)
   uint32_t grooveShape = 0;  // DEC-290: a file template's shape (steps | step << 16; 0: a built-in)
   RunId tableRun = kNoRun;   // DEC-290: the fit run holding its template and label rows (copied into a rebuilt one)
+  // The GROOVE window's columns (owner 2026-11-11, `kFitColumnsStatus`): A's and B's packed settings and the column
+  // heard (1 OFF, 2 A, 3 B); heard 0: none stored.
+  uint32_t columnA = 0, columnB = 0;
+  uint8_t heard = 0;
 };
 /// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
 /// loop.
@@ -110,6 +114,10 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
         w.grooveShape = e.noteId == 1 ? 0 : e.noteId;
       } else if (e.status == kFitTemplateStatus) {
         w.tableRun = list[i];
+      } else if (e.status == kFitColumnsStatus) {
+        w.columnA = e.seq;
+        w.columnB = e.noteId;
+        w.heard = e.data1;
       }
     }
   }
@@ -209,8 +217,9 @@ class FitBuilder {
     const bool fileTemplate = grooved && window.grooveShape != 0 && (table != nullptr || window.tableRun != kNoRun);
     const uint16_t steps = static_cast<uint16_t>(window.grooveShape & 0xFFFF);
     const uint32_t templateRows = fileTemplate ? (steps + 4u) / 5u + 2u : 0u;
-    const uint32_t marks =
-        (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u) + (grooved ? 1u : 0u) + templateRows;
+    const bool columns = window.heard != 0;
+    const uint32_t marks = (windowed ? 1u : 0u) + (rangeA ? 1u : 0u) + (rangeB ? 1u : 0u) + (grooved ? 1u : 0u) +
+                           templateRows + (columns ? 1u : 0u);
     if (count_ == 0 && marks == 0) return FitResult::None;
     const RunId run = runs.allocate(slot, RunKind::kFit);
     if (run == kNoRun) return FitResult::DeniedRun;
@@ -274,6 +283,15 @@ class FitBuilder {
         e.origin = row;
         res.writeOwed(run, e);
       }
+    }
+    if (columns) {  // the GROOVE window's columns (owner 2026-11-11): the last row (statuses in order)
+      PassEvent e{};
+      e.tick = 0xFFFFFFFFu;
+      e.status = kFitColumnsStatus;
+      e.seq = window.columnA;
+      e.noteId = window.columnB;
+      e.data1 = window.heard;
+      res.writeOwed(run, e);
     }
     runs.seal(run);
     fit = run;

@@ -212,6 +212,15 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
+  /// The GROOVE window's columns, stored with the slot (owner 2026-11-11; `SlotTransport::setColumns`).
+  Result setColumns(uint8_t slot, uint32_t columnA, uint32_t columnB, uint8_t heard, uint32_t clock, uint32_t nowUs,
+                    uint32_t usPerTick, uint32_t replace = 0) {
+    Emit buf[Tracks * T];
+    uint8_t n;
+    const Result r = x_->setColumns(slot, columnA, columnB, heard, clock, buf, Tracks * T, n, replace);
+    out_->route(buf, n, nowUs, usPerTick);
+    return r;
+  }
   /// Loop length (DEC-257): a play window over the slot's content.
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0,
                 const LoopWindow* marks = nullptr) {

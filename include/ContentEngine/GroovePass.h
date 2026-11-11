@@ -45,6 +45,9 @@ struct GrooveRequest {
   char label[21] = {};  // a file template's name, stored with it
   uint32_t frame = 0, start = 0;
   uint32_t scopeStart = 0, scopeLength = 0;  // used for scope A / B
+  // The GROOVE window's columns, stored with the state (owner 2026-11-11; heard 0: not from the window, the base's kept).
+  uint32_t columnA = 0, columnB = 0;
+  uint8_t heard = 0;
 };
 
 template <typename Pool, typename Runs, typename Res, typename Index, typename Extraction, uint16_t WindowCap,

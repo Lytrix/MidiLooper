@@ -2498,6 +2498,13 @@ void test_the_groove_faders_follow_a_and_b_on_opening() {
 void test_the_groove_window_sets_a_groove() {
   recordBar({{130, 60}});
   const uint8_t undo0 = gE.history().undoDepth(0);
+  tap(S::kTransportNote, 700);  // owner 2026-11-11: opening and closing alone stores nothing (no undo step)
+  ms(50);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  tap(S::kTransportNote, 700);
+  ms(50);
+  TEST_ASSERT_FALSE(gS.grooveOpen());
+  TEST_ASSERT_EQUAL_UINT8(undo0, gE.history().undoDepth(0));
   tap(S::kPlayStopNote, 700);  // long: open
   ms(50);
   TEST_ASSERT_TRUE(gS.grooveOpen());
@@ -2553,8 +2560,10 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_FALSE(gS.grooveOpen());
   tap(S::kTransportNote, 700);  // opened again — by the DROID's PLAY/STOP (the transport button, DEC-289 am. 1)
   ms(50);
-  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveA().amount);  // A: the slot's groove now
-  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  // Owner 2026-11-11 ("save B with the slot"): the window as it was left — A 50 %, B 100 % and heard.
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveA().amount);
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   tap(S::kEditModeNote);  // EDIT: down — A's amount
   ms(400);
   TEST_ASSERT_EQUAL_UINT8(1, gS.grooveField());
@@ -2568,13 +2577,29 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_TRUE(gClk.running());
   gS.encoderTurn(-2, gUs / 1000);  // 10 down …
   gS.encoderTurn(-2, gUs / 1000);  // … and 10 more, before it settles: one change
-  TEST_ASSERT_EQUAL_UINT8(80, gS.grooveA().amount);
-  tap(S::kPlayStopNote, 700);  // a long press applies; the settling change is kept, and heard
+  TEST_ASSERT_EQUAL_UINT8(30, gS.grooveA().amount);  // B is heard: A's change is silent (DEC-295 am. 4) …
+  tap(S::kPlayStopNote, 700);  // a long press applies (B stays heard) and closes
   ms(50);
   TEST_ASSERT_FALSE(gS.grooveOpen());
   run(gUs + 4 * 768 * kTick);
-  TEST_ASSERT_EQUAL_UINT8(80, ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).amount);
+  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).amount);
+  // … but stored with the slot (owner 2026-11-11): A 30 %, B 100 %, B heard.
+  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnA).amount);
+  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnB).amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gE.control().window(0).heard);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));  // two visits, two steps
+  tap(S::kTransportNote, 700);  // opened again: A 30 %, B 100 % heard
+  ms(50);
+  TEST_ASSERT_EQUAL_UINT8(30, gS.grooveA().amount);
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
+  tap(S::kTransportNote, 700);  // closed: nothing changed, no step
+  ms(50);
+  TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
+  // A rebuilt fit run (a loop length change) carries the columns.
+  TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().resize(0, 2 * 768, gLast, gUs, gClk.usPerTick()));
+  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnA).amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gE.control().window(0).heard);
 }
 
 // DEC-289 amendment 2: the DROID sends PLAY/STOP as a short-press trigger (nothing while held), so the window has its

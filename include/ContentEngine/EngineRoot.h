@@ -175,7 +175,7 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7593216u;  // owner 2026-11-11: + 304 B the composers. dirty-pitch masks (19 x 16 B); owner 2026-11-11: + 152 B the cold starts. stepped bind (checkpoint position); DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
+constexpr size_t kPsramBudget = 7593224u;  // owner 2026-11-11: + 8 B the groove request.s columns; owner 2026-11-11: + 304 B the composers. dirty-pitch masks (19 x 16 B); owner 2026-11-11: + 152 B the cold starts. stepped bind (checkpoint position); DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
                                            // aside until the target); DEC-254 (E4.6c): + 347,648 B — the cold tier (64 x 99 cold state
                                            // descriptors, 8,192 run-reference chunks, an 8,192-record directory);
                                            // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),

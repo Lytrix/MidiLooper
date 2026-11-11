@@ -592,7 +592,8 @@ class Surface {
     const groove::Settings x = settingsOf(h);
     const bool file = x.tmpl == groove::kFileTemplate && x.amount != 0;
     grooveAt_ = at;
-    applyGroove(grooveWin_, x, file ? &grooveATable_ : nullptr, file ? grooveALabel_ : nullptr);
+    applyGroove(grooveWin_, x, file ? &grooveATable_ : nullptr, file ? grooveALabel_ : nullptr,
+                static_cast<uint8_t>(static_cast<uint8_t>(h) + 1));
   }
   void stopCycle() {
     heard_ = grooveHeard();  // stopped where it is: what plays stays
@@ -700,7 +701,8 @@ class Surface {
   /// one visit are one undo step. The engine's result (Ok: started).
   /// `table` / `label` (DEC-290): a groove file's template; nullptr with `kFileTemplate`: the one stored with the state.
   typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s,
-                                                 const groove::Table* table = nullptr, const char* label = nullptr) {
+                                                 const groove::Table* table = nullptr, const char* label = nullptr,
+                                                 uint8_t heard = 0) {
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return Engine::Transport::Result::Empty;
     beyondEnd(c);
@@ -725,6 +727,11 @@ class Surface {
     } else if (s.scope == groove::kRangeB) {
       q.scopeStart = w.bStart;
       q.scopeLength = w.bLength;
+    }
+    if (heard != 0) {  // from the GROOVE window: its columns stored with the state (owner 2026-11-11)
+      q.columnA = grooveA_.pack();
+      q.columnB = grooveSet_.pack();
+      q.heard = heard;
     }
     if (grooveSlot_ != slot) visitState_ = 0;  // a new visit: its first publish is a step
     grooveSlot_ = slot;
@@ -798,12 +805,42 @@ class Surface {
     }
     grooveSet_ = grooveA_;
     heard_ = packed != 0 ? Heard::A : Heard::Off;
+    restoreColumns(slot, packed);
+    openedA_ = grooveA_.pack();  // as opened: `closeGroove` stores the columns only when a visit changed them
+    openedB_ = grooveSet_.pack();
+    openedHeard_ = static_cast<uint8_t>(static_cast<uint8_t>(heard_) + 1);
     faderSeen_ = 0;
     parkGrooveFaders(nowMs_);
     cycling_ = false;
     grooveAt_ = 0;
     leaveVisit();
     groovePending_ = false;
+  }
+  /// The columns stored with the slot (owner 2026-11-11): A, B and the column heard, when the heard one is still what
+  /// the slot plays (else the slot's groove as A, as before, B kept). A column naming a file template not stored with
+  /// the slot is straight.
+  void restoreColumns(uint8_t slot, uint32_t packed) {
+    const LoopWindow w = transport().window(slot);
+    if (w.heard == 0) return;
+    groove::Settings a = groove::Settings::unpack(w.columnA), b = groove::Settings::unpack(w.columnB);
+    const auto fileless = [&](groove::Settings& g) {
+      if (g.tmpl == groove::kFileTemplate && (packed == 0 || groove::Settings::unpack(packed).tmpl != groove::kFileTemplate))
+        g.tmpl = groove::kStraight;
+    };
+    fileless(a);
+    fileless(b);
+    grooveSet_ = b;
+    const Heard h = static_cast<Heard>(w.heard - 1);
+    const groove::Settings played = groove::Settings::unpack(packed);
+    const auto plays = [&](groove::Settings g) {  // as `settingsOf` built it: the whole loop, the slot's AUTO Q
+      g.scope = groove::kFull;
+      g.autoGroove = played.autoGroove;
+      return g.pack() == packed;
+    };
+    const bool matches = h == Heard::Off ? packed == 0 || played.amount == 0 : plays(h == Heard::A ? a : b);
+    if (!matches) return;  // the slot's groove changed outside the window: A is it, B kept
+    grooveA_ = a;
+    heard_ = h;
   }
   void toggleGroove() {
     if (groove_) closeGroove();
@@ -816,7 +853,20 @@ class Surface {
     groovePending_ = false;
     groove_ = false;
     if (e_->grooveState() == Engine::Groove::State::Waiting) e_->grooveCancel();  // waiting for room: given up
+    // Owner 2026-11-11 ("save B with the slot"): the columns as left, stored with the slot — now, replacing this visit's
+    // own state, or once a build still under way is published.
+    // Only a visit that changed A, B or the column heard: opening and closing alone is no step.
+    columnsSlot_ = grooveWin_;
+    columnsA_ = grooveA_.pack();
+    columnsB_ = grooveSet_.pack();
+    columnsHeard_ = static_cast<uint8_t>(static_cast<uint8_t>(heard_) + 1);
+    columnsOwed_ = columnsA_ != openedA_ || columnsB_ != openedB_ || columnsHeard_ != openedHeard_;
+    if (columnsOwed_ && e_->grooveState() == Engine::Groove::State::Idle) writeColumns(visitState_);
     leaveVisit();
+  }
+  void writeColumns(uint32_t replace) {
+    columnsOwed_ = false;
+    control().setColumns(columnsSlot_, columnsA_, columnsB_, columnsHeard_, tick_, us_, us(), replace);
   }
 
   /// Ends the groove visit (the GROOVE window closed): the next setting is an undo step of its own.
@@ -862,6 +912,10 @@ class Surface {
         press_.heldMs(kEditMode, ms) >= kEditExitMs) {
       press_.consume(kEditMode);
       leaveEdit();
+    }
+    if (columnsOwed_ && !groove_ && e_->grooveState() == Engine::Groove::State::Idle) {  // after the visit's last build:
+      const ManifestId c = transport().contentOf(columnsSlot_);                              // folded into its state
+      writeColumns(c == kNoManifest ? 0 : e_->manifests().manifest(c).identity);
     }
     if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_, grooveAt_) ==
         Engine::Transport::Result::Ok) {
@@ -2434,7 +2488,13 @@ class Surface {
   bool grooveAuto_ = false;                      // AUTO Q, the slot's (DEC-295: the title bar's checkbox)
   uint8_t cycleBars_ = 2;                        // the cycle's bars a turn: global, 2 by default (DEC-295)
   Heard pendingCol_ = Heard::B;                  // the one a settling change is to
-  uint8_t faderSeen_ = 0;                        // the GROOVE bank's faders reported since the window opened (bit f)
+  uint8_t faderSeen_ = 0;
+  // The columns to store at closing (owner 2026-11-11: "save B with the slot"; `closeGroove`, `writeColumns`).
+  bool columnsOwed_ = false;
+  uint8_t columnsSlot_ = 0, columnsHeard_ = 0;
+  uint32_t columnsA_ = 0, columnsB_ = 0;
+  uint32_t openedA_ = 0, openedB_ = 0;
+  uint8_t openedHeard_ = 0;                        // the GROOVE bank's faders reported since the window opened (bit f)
   uint32_t cycleStart_ = 0, cycleAsked_ = 0;     // the cycle's first bar line; the turn last asked for
   uint32_t grooveAt_ = 0;                        // a turn's bar line its build waits for (0: none) — asked within the
                                                  // beat before it, so the next beat (DEC-292) is that bar line

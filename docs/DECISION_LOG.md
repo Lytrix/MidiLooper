@@ -16679,3 +16679,13 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   4,546 passed. Device image `504ea882…` (`crash=0`): T8 S8 — ADD → B with the dots, double → OFF, hold →
   cycling with A's bar, ADD → kept A; the visit undone (and a step wrongly undone on slot 10 by the check, redone).
 
+- **Amendment 6 (owner 2026-11-11: re-entering, "the faders 3 and 4 copy 1 and 2" — B was not kept; owner chose "save
+  B with the slot"):** the window's columns are stored with the slot's state — a fit-run row `kFitColumnsStatus`
+  (A's and B's packed settings, the column heard), written with a groove the window builds and, when a visit changed A,
+  B or the column heard without a build (a silent edit, DEC-295 am. 4), by `SlotTransport::setColumns` at closing (the
+  visit's own step replaced when it made one; otherwise one step). Opening and closing alone writes nothing. Opening
+  restores A, B and the column heard when the heard one is still what the slot plays (else the slot's groove as A, B
+  kept). Rebuilt fit runs carry the row; undo restores the previous columns; it is saved and loaded with the slot.
+  Native: `test_the_groove_window_sets_a_groove` (open / close no step; B applied, A edited silently, stored and
+  restored; a resize carries it), two mutations caught (a third equivalent). Device `32da4c93…`: open / close no step;
+  a B change one step, recalled on re-entering (F4 100); undone.

@@ -74,5 +74,8 @@ constexpr uint8_t kFitGrooveStatus = 0xFBu;
 /// two label rows (ten characters each: `noteId`, `seq`, `data1`, `data2`; `origin` the index).
 constexpr uint8_t kFitTemplateStatus = 0xFCu;
 constexpr uint8_t kFitLabelStatus = 0xFDu;
+/// The GROOVE window's two columns (owner 2026-11-11: "save B with the slot"), after the groove rows: `seq` A's packed
+/// settings, `noteId` B's, `data1` the column heard (1 OFF, 2 A, 3 B). Absent: B a copy of A on opening (DEC-295).
+constexpr uint8_t kFitColumnsStatus = 0xFEu;
 
 }  // namespace ContentEngine

@@ -1,3 +1,8 @@
+**2026-11-11 — DEC-295 am. 6: the GROOVE window's B saved with the slot (`feature/engine-sets-browser`).** Owner, after
+E9.8b-3c: re-entering, the faders 3 and 4 copied 1 and 2 (B was always a copy of A). A, B and the column heard are now a
+fit-run row of the slot's state, written with a build or, for a visit that changed them silently, at closing; opening
+and closing alone writes nothing. Device `32da4c93…`: no step without a change, a B change recalled on re-entering.
+
 **2026-11-11 — E9.8b-3c GROOVE motor feedback; the cycle length saved (`feature/engine-sets-browser`).** Opening the
 GROOVE window moves the DROID's faders to A's and B's values (CC 20–23 then clear notes 102–105 on channel 16), their
 travel not read as moves; `droid/midilooper_v1.ini`'s GROOVE bank now takes `startvalue` / `clear` (load the updated

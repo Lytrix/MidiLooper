@@ -457,6 +457,45 @@ class SlotTransport {
     return Result::Ok;
   }
 
+  /// The GROOVE window's columns (owner 2026-11-11: "save B with the slot"): a new state with the same content and loop,
+  /// its fit run rebuilt with A's and B's settings and the column heard. One undo step (`replace` as `resize`); tracks
+  /// playing the slot follow. NoChange: the state has these already.
+  CE_COLD Result setColumns(uint8_t slot, uint32_t columnA, uint32_t columnB, uint8_t heard, uint32_t clock, Emit* out,
+                            uint8_t max, uint8_t& emitted, uint32_t replace = 0) {
+    emitted = 0;
+    if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
+    const ManifestId base = contentOf(slot);
+    if (base == kNoManifest) return Result::Empty;
+    const auto& b = manifests_->manifest(base);
+    const uint32_t loop = b.loopLengthTicks;
+    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
+    if (w.columnA == columnA && w.columnB == columnB && w.heard == heard) return Result::NoChange;
+    w.columnA = columnA;
+    w.columnB = columnB;
+    w.heard = heard;
+    RunId list[Manifests::kMaxRuns];
+    uint8_t n = 0;
+    for (uint8_t i = 0; i < b.runCount; ++i)
+      if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
+    RunId fit = kNoRun;
+    const FitResult f = fit_.build(*pool_, *runs_, writer_->reservations(), slot, list, n, loop, fit, w);
+    if (f == FitResult::DeniedRun) return Result::DeniedRun;
+    if (f != FitResult::Ok && f != FitResult::None) return Result::Refused;
+    if (fit != kNoRun) {
+      if (n == Manifests::kMaxRuns) {
+        runs_->release(fit);
+        return Result::Refused;
+      }
+      list[n++] = fit;
+    }
+    const ManifestId m = manifests_->create(slot, ++revision_, loop, list, n, *runs_);
+    if (fit != kNoRun) runs_->release(fit);  // the manifest holds it
+    if (m == kNoManifest) return Result::DeniedManifest;
+    adopt(slot, base, m, replace);
+    emitted = selectSlot(slot, clock, false, out, max);
+    return Result::Ok;
+  }
+
   static void mark(LoopWindow& w, const LoopWindow* marks) {
     if (marks == nullptr) return;
     w.aStart = marks->aStart;
@@ -466,6 +505,9 @@ class SlotTransport {
     w.groove = marks->groove;
     w.grooveShape = marks->grooveShape;
     w.tableRun = marks->tableRun;
+    w.columnA = marks->columnA;
+    w.columnB = marks->columnB;
+    w.heard = marks->heard;
   }
   /// Groove (DEC-287, DEC-288): starts `gb`'s background build of the slot's groove pass per the prefix rule (amount 0:
   /// its removal). NoChange: no groove to remove; Busy: the slot is written or auditioned; Refused: too big at once.
@@ -514,6 +556,11 @@ class SlotTransport {
     w.groove = rq.settings.pack();
     const bool file = rq.settings.tmpl == groove::kFileTemplate && rq.settings.amount != 0;  // DEC-290
     w.grooveShape = file ? rq.table.steps | (static_cast<uint32_t>(rq.table.step) << 16) : 0;
+    if (rq.heard != 0) {  // the GROOVE window's columns (owner 2026-11-11); else the base's are kept
+      w.columnA = rq.columnA;
+      w.columnB = rq.columnB;
+      w.heard = rq.heard;
+    }
     RunId list[Manifests::kMaxRuns];
     uint8_t ln = 0;
     for (uint8_t i = 0; i < gb.prefixCount(); ++i) list[ln++] = gb.prefixRun(i);
