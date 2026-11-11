@@ -1,42 +1,40 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The engine firmware's screen (fixed-memory-engine E9.8c; layout E9.8k, owner 2026-11-06: mock-up "B2 round 6").
+// The engine firmware's screen.
 //
 // The SSD1322 (256 × 64, 4-bit) through the `SSD1322_OLED` library: one frame every `kFrameMs`, drawn into the
 // library's framebuffer and sent by DMA (the library copies the frame first, so the next one can be drawn at once).
-// The first frame after `begin` goes over blocking SPI, which arms the panel's GRAM window (the library's resync
-// path): measured 2026-11-06, the panel stayed blank when the first frame was a DMA one and drew once a blocking frame
-// had been sent.
-// Frames are written off-screen (`SSD1322_API::setPageFlip`; owner 2026-11-08): to the 64 GRAM rows not shown, the
-// display start line moved there once complete, so the panel never scans a half-written frame (the playhead tore).
+// The first frame after `begin` goes over blocking SPI, which arms the panel's GRAM window (the library's resync path):
+// the panel stays blank when the first frame is a DMA one.
+// Frames are written off-screen (`SSD1322_API::setPageFlip`): to the 64 GRAM rows not shown, the display start line
+// moved there once complete, so the panel never scans a half-written frame (the playhead tears).
 // `!ENGINE oled-flip 0` turns it off for a comparison.
 // The layout (no sidebar; every field has a fixed place and shows `-` when it has nothing to show):
 // * Left column (x 0–21): the 8 tracks' numbers. While the clock runs, each track's activity level (Cubase's activity
-//   column): the last NoteOn's velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden track.
-//   While it does not, the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A armed, P playing,
-//   S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track's solo
-//   — the selected track shows its real state); the selected track's letter pulses (1 Hz, brightness 7–13; legacy 4–10).
+//   column): the last NoteOn's velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden
+//   track. While it does not, the state letter (R recording, O overdubbing, A armed, P playing, S stopped with content
+//   in its selected slot, - its selected slot empty, M muted or hidden by another track's solo — the selected track
+//   shows its real state); the selected track's letter pulses (1 Hz, brightness 7–13).
 // * Piano roll (x 22–255, rows 0–45; four dark rows under it, no rule before the status band): the shown slot — the
-//   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4
-//   bars), the engine's tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (owner
-//   2026-11-06: too crowded; BARS and the position say where the page is).
-// * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
-//   right-aligned, no leading zeros):
-//   - the current tick: the save dots (legacy, 4 dots: dim pending, one running while writing, bright 0.8 s after a
-//     save, mid after a failure; `RO` before saving is approved) and the transport icon (stop, play, record, overdub,
-//     a pulsing record circle when armed) over the position `bar.beat.16th.tick` (the bar bright); while no dots show,
-//     the loop's progress runs in their row up to the icon. A queued slot or Record counts down to its start (`-1.3.2.24`). In NOTE_EDIT the block reads START over
-//     the selected note's start (the bracket's in length mode), all bright.
+//   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4 bars),
+//   the engine's tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (too crowded;
+//   BARS and the position say where the page is).
+// * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number right-aligned,
+//   no leading zeros):
+//   - the current tick: the save dots (4 dots: dim pending, one running while writing, bright 0.8 s after a save, mid
+//     after a failure; `RO` before saving is approved) and the transport icon (stop, play, record, overdub, a pulsing
+//     record circle when armed) over the position `bar.beat.16th.tick` (the bar bright); while no dots show, the loop's
+//     progress runs in their row up to the icon. A queued slot or Record counts down to its start (`-1.3.2.24`). In
+//     NOTE_EDIT the block reads START over the selected note's start (the bracket's in length mode), all bright.
 //   - BARS: the loop's length in bars (a first take: its bars so far).
 //   - the selection: TRACK, SLOT (1–8 within the track) and the port over its channel (`USB1 1`; `ALL` when the track
 //     plays on every port); in NOTE_EDIT, NOTE (C3 = 60), VELOCITY (`M`: muted) and LENGTH (ticks); in LOOP_EDIT, START
 //     (bar), LENGTH (bars) and BPM; their labels inverted.
 //   - UNDO (the slot's undo steps), ODUB (the open overdub's) or EDIT (the open NOTE_EDIT session's).
-//   - the tempo (legacy `120.0`) under the clock icon: dim on the internal clock; an arrow into it, bright, on an
-//     external one.
-// * NOTE_EDIT (E9.8b-2, `EditView`): the window frozen at the session's, the selected note highlighted, the bracket as a
-//   dotted line.
+//   - the tempo under the clock icon: dim on the internal clock; an arrow into it, bright, on an external one.
+// * NOTE_EDIT (`EditView`): the window frozen at the session's, the selected note highlighted, the bracket as a dotted
+//   line.
 // Reads the engine only (tiles, transport, history, output levels, persistence state): nothing here composes, allocates
 // or touches pages. Drawing a frame is a non-engine block of the main loop (part of B_max).
 
@@ -58,9 +56,9 @@
 #include "ContentEngine/Display/StatusView.h"
 #include "ContentEngine/Timing/WallClock.h"
 
-/// Cold drawing (DEC-287): the browser's screens run from flash. Their own `.flashmem.*` section — the Teensy linker sends
-/// every `.flashmem*` section to flash — because these are inline members, which may not share `FLASHMEM`'s section with
-/// the non-inline functions placed there.
+/// Cold drawing: the browser's screens run from flash. Their own `.flashmem.*` section — the Teensy linker sends every
+/// `.flashmem*` section to flash — because these are inline members, which may not share `FLASHMEM`'s section with the
+/// non-inline functions placed there.
 #define DISPLAY_COLD __attribute__((section(".flashmem.display")))
 
 namespace Teensy {
@@ -75,42 +73,42 @@ struct EditView {
   uint8_t notePitch = 0, noteVelocity = 0;
   uint8_t steps = 0;  // the session's E: level
   bool velocity = false;  // NOTELEN held: F4 is the velocity
-  int8_t encoder = -1;    // the encoder's option (slice E): 0 pitch, 1 move, 2 length, 3 velocity
-  uint8_t copy = 0;       // copy mode (DEC-279 amendment 1): 0 none, 1 a slot, 2 a bar, 3 a note
+  int8_t encoder = -1;    // the encoder's option: 0 pitch, 1 move, 2 length, 3 velocity
+  uint8_t copy = 0;       // copy mode: 0 none, 1 a slot, 2 a bar, 3 a note
   uint8_t copySlot = 0, copyBar = 0, copyPitch = 0;  // its source: the engine slot, the bar (0–7), the note's pitch
   uint16_t copyLeft = 0;  // the countdown left, of 1000 (the window's bottom line shrinks with it)
-  uint8_t copyPaste = 0;  // a bar / note paste (DEC-279 amendment 8): 0 by the press, 1 replace, 2 merge
-  uint32_t barScale = 0, barStart = 0, barKnown = 0;  // the progress bar's frame (DEC-282; 0: the plain bar)
-  bool loop = false;      // LOOP_EDIT (owner 2026-11-08)
+  uint8_t copyPaste = 0;  // a bar / note paste: 0 by the press, 1 replace, 2 merge
+  uint32_t barScale = 0, barStart = 0, barKnown = 0;  // the progress bar's frame (0: the plain bar)
+  bool loop = false;      // LOOP_EDIT
   uint32_t loopTicks = 0;  // LOOP_EDIT's F2 moved, not yet applied: the pending length (ticks)
   uint32_t loopStart = 0;  // LOOP_EDIT's F1: the start, ticks from the content LOOP_EDIT found
-  bool popup = false;      // the length popup (owner 2026-11-08)
+  bool popup = false;      // the length popup
   uint8_t popupSlot = 0;
   uint32_t popupLoop = 0;  // the length it shows (ticks)
-  uint8_t popupChoice = 0xFF;  // its selected choice (DEC-284 amendment 1: 0 BASE, 1 CUSTOM, 2–13 the lengths)
-  uint8_t popupRanges = 0;     // the remembered ranges there are (bit 0 A, bit 1 B; DEC-284 amendment 3)
-  // The GROOVE window (DEC-289): open, its slot, selected field, the settings shown, the build's state (0 idle,
+  uint8_t popupChoice = 0xFF;  // its selected choice (0 BASE, 1 CUSTOM, 2–13 the lengths)
+  uint8_t popupRanges = 0;     // the remembered ranges there are (bit 0 A, bit 1 B)
+  // The GROOVE window: open, its slot, selected field, the settings shown, the build's state (0 idle,
   // 1 waiting, 2 building, 3 ready, 4 too big, 5 failed).
   bool groove = false;
   uint8_t grooveSlot = 0, grooveField = 0, grooveTemplate = 0, grooveAmount = 0, grooveScope = 0, grooveState = 0;
-  uint8_t grooveProgress = 0xFF;  // DEC-292: percent until a change is heard (0xFF: none)
-  uint8_t grooveATemplate = 0, grooveAAmount = 0;  // DEC-295: A (both A and B edited in the window)
+  uint8_t grooveProgress = 0xFF;  // percent until a change is heard (0xFF: none)
+  uint8_t grooveATemplate = 0, grooveAAmount = 0;  // A (both A and B edited in the window)
   uint8_t grooveHeard = 2;                         // 0 OFF, 1 A, 2 B
   bool grooveCycling = false;
-  uint8_t grooveDots = 0;                          // DEC-295 am. 3: 0 none, 1 pending, 2 building, 3 heard (bright)
+  uint8_t grooveDots = 0;                          // 0 none, 1 pending, 2 building, 3 heard (bright)
   uint8_t grooveCycleBars = 2;                     // bars a turn
   uint16_t grooveTurnPos = 0;                      // the turn playing, in 1/1000
   bool grooveAuto = false;
 };
 
-/// What the sets browser shows beside its model (sets browser slice 3): the working set's save state ("SAVED 14:32"),
+/// What the sets browser shows beside its model: the working set's save state ("SAVED 14:32"),
 /// what return brings back ("TO SET 02 AS LEFT 14:57"), the time zone for dates.
 struct BrowserInfo {
   char saved[16] = {};
   char returnTo[32] = {};
   int16_t tz = 0;
   uint32_t now = 0;  // the wall time (0: not set): the timeline's right end
-  bool pickSquares = false;  // DEC-272: the picker's empty slots as dim squares, else dots (owner: compare on the device)
+  bool pickSquares = false;  // the picker's empty slots as dim squares, else dots (compare on the device)
 };
 
 class OledScreen {
@@ -119,7 +117,7 @@ class OledScreen {
   static constexpr int16_t kX0 = 22, kX1 = 255, kRollY0 = 0, kRollY1 = 45;
   static constexpr int16_t kLabY = 50, kValBase = 64;  // labels rows 50–54, values rows 57–63 (the bottom)
   static constexpr uint32_t kViewBars = 16;
-  static constexpr uint8_t kRule = 3;  // the roll's bar lines and the status band's cell dividers (owner)
+  static constexpr uint8_t kRule = 3;  // the roll's bar lines and the status band's cell dividers
 
   void begin() {
     oled_.begin();
@@ -127,7 +125,7 @@ class OledScreen {
     oled_.gfx.select_font(&Font5x7FixedMono);
     oled_.gfx.fill_buffer(oled_.api.getFrameBuffer(), 0);
     sendBlocking();  // arms the GRAM window before the first DMA frame
-    // Off-screen frames (owner 2026-11-08: the playhead tore while the panel scanned a frame being written; no tear
+    // Off-screen frames (the playhead tore while the panel scanned a frame being written; no tear
     // with them): each frame goes to the GRAM rows not shown, then the start line moves there. Both pages blank.
     oled_.api.setPageFlip(true);
     sendBlocking();
@@ -135,13 +133,13 @@ class OledScreen {
     focus_ = 0xFF;
     started_ = false;
   }
-  /// The firmware's version on the title (owner 2026-11-10: legacy showed v0.6; the engine is v0.7).
+  /// The firmware's version on the title.
   static constexpr const char* kVersion = "v0.7";
-  /// The title (owner 2026-11-10, as legacy `drawBootScreen`; the raster-bar title flickered on the panel — too much
-  /// of it lit — so a light raster: thin 1-px lines every 4 rows at grey 6–11, symmetric about it, the letters kept clear of them by a
+  /// The title (a full raster-bar title flickers on the panel — too much of it lit — so a light
+  /// raster: thin 1-px lines every 4 rows at grey 6–11, symmetric about it, the letters kept clear of them by a
   /// black pixel): `OSTINATIX` in the 5 × 7 font four times its size,
   /// centred, the version at the bottom right — from the display's start until the boot load has ended (the first
-  /// performance frame then opens on the saved selection, DEC-273).
+  /// performance frame then opens on the saved selection).
   DISPLAY_COLD void drawTitle() {
     uint8_t* f = fb();
     oled_.gfx.fill_buffer(f, 0);
@@ -151,7 +149,7 @@ class OledScreen {
     int16_t x = static_cast<int16_t>((DISPLAY_WIDTH - w) / 2);
     const int16_t top = static_cast<int16_t>((DISPLAY_HEIGHT - 7 * kScale) / 2);
     // 12 lines (rows 10–54), symmetric about the title's centre (row 32): grey 11 for the two either side of it, down
-    // to 6 at the edges (owner: 1–4 not visible; a repeating 4–9 left the lower half too dark; centred on row 28 the
+    // to 6 at the edges (1–4 not visible; a repeating 4–9 left the lower half too dark; centred on row 28 the
     // gradient sat a line high).
     const int16_t centre = static_cast<int16_t>(top + 7 * kScale / 2);
     for (int16_t y = 10; y <= 54; y = static_cast<int16_t>(y + 4)) {
@@ -205,8 +203,8 @@ class OledScreen {
                   static_cast<unsigned long>(oled_.api.dmaCompletedFrameCount()),
                   static_cast<unsigned long>(oled_.api.dmaBlockingFrameCount()));
   }
-  /// The last frame drawn as 64 lines `#FB,<row>,<256 hex digits>` (4-bit gray, two pixels a byte, high nibble first;
-  /// the legacy `!FB_DUMP` format), for `scripts/render_display_dump.py`. Diagnostics: ~17 KB on the serial port.
+  /// The last frame drawn as 64 lines `#FB,<row>,<256 hex digits>` (4-bit gray, two pixels a byte, high nibble first),
+  /// for `scripts/render_display_dump.py`. Diagnostics: ~17 KB on the serial port.
   void dump() {
     static const char kHex[] = "0123456789abcdef";
     const uint8_t* f = fb();
@@ -228,10 +226,10 @@ class OledScreen {
   }
   /// Holds the screen for `ms` (the next frame waits).
   void hold(uint32_t nowMs, uint32_t ms) { lastFrameMs_ = nowMs + ms - frameMs_; }
-  /// Panel timing (diagnostics, owner 2026-11-08: the playhead tore part of the loop — the panel scanning rows while a
-  /// frame is written): `reg` 0xB3 front clock (high nibble oscillator, low nibble divide − 1; boot 0x91) or 0xB1
-  /// phase lengths (boot 0xE2), `value` its byte, sent once the frame in flight is done; 0 leaves it. `frameMs` the
-  /// frame period (0 leaves it). Not kept over a reboot.
+  /// Panel timing (diagnostics, for a tear — the panel scanning rows while a frame is written): `reg` 0xB3 front clock
+  /// (high nibble oscillator, low nibble divide − 1; boot 0x91) or 0xB1 phase lengths (boot 0xE2), `value` its byte,
+  /// sent once the frame in flight is done; 0 leaves it. `frameMs` the frame period (0 leaves it). Not kept over a
+  /// reboot.
   /// `flip` 1 / 0: off-screen frames (`SSD1322_API::setPageFlip`), anything else leaves it.
   void tune(uint8_t clock, uint8_t phase, uint32_t frameMs, int flip = -1) {
     while (oled_.api.isDisplayTransferActive()) oled_.api.pollDisplayTransfer();
@@ -254,7 +252,7 @@ class OledScreen {
                   static_cast<unsigned long>(frameMs_), oled_.api.pageFlip());
   }
 
-  /// Any SSD1322 register (diagnostics, owner 2026-11-09: a long bar dims toward its right end): `cmd` and up to two
+  /// Any SSD1322 register (diagnostics, e.g. a long bar dimming toward its right end): `cmd` and up to two
   /// data bytes, sent once the frame in flight is done. Not kept over a reboot.
   void poke(uint8_t cmd, const uint8_t* data, uint8_t n) {
     while (oled_.api.isDisplayTransferActive()) oled_.api.pollDisplayTransfer();
@@ -263,7 +261,7 @@ class OledScreen {
     Serial.printf("#ENGINE,oled,reg=0x%02X,n=%u,d0=0x%02X,d1=0x%02X\n", cmd, n, n > 0 ? data[0] : 0, n > 1 ? data[1] : 0);
   }
 
-  /// The sets browser to draw while it is open (slice 3), and what it shows beside its model.
+  /// The sets browser to draw while it is open, and what it shows beside its model.
   void setBrowser(const ContentEngine::ProductionBrowser* b) { browser_ = b; }
   void setBrowserInfo(const BrowserInfo& info) { browserInfo_ = info; }
   /// One line over the performance screen for `ms` (rule 6: "SAVED  SET 02  T04").
@@ -272,9 +270,9 @@ class OledScreen {
     toastUntil_ = nowMs + ms;
   }
 
-  /// The slot a track's piano roll shows (`ControlSurface::shown`): a queued switch's slot (`queued`: its playhead parked at
-  /// the launch point, flashing, until the switch — legacy), else the playing one, else the selected one.
-  /// `queuedPos`: where the queued switch starts (a step or bar button's restart, slice C; 0: the loop start).
+  /// The slot a track's piano roll shows (`ControlSurface::shown`): a queued switch's slot (`queued`: its playhead
+  /// parked at the launch point, flashing, until the switch), else the playing one, else the selected one.
+  /// `queuedPos`: where the queued switch starts (a step or bar button's restart; 0: the loop start).
   void show(uint8_t track, uint8_t slot, bool queued = false, uint32_t queuedPos = 0) {
     if (track >= ContentEngine::kTrackCount) return;
     shown_[track] = slot;
@@ -288,9 +286,9 @@ class OledScreen {
                    uint32_t nowMs, const EditView& edit = EditView{}) {
     edit_ = edit;
     oled_.api.pollDisplayTransfer();
-    // Owner 2026-11-11: a frame is drawn over several passes — the tracks and the slot's grid, the roll in
-    // `kRollBands` row bands, then the status and the windows — and sent when complete (at 30 overdub layers the roll
-    // alone took 534 µs in one pass). The panel shows each frame whole.
+    // A frame is drawn over several passes — the tracks and the slot's grid, the roll in `kRollBands` row bands, then
+    // the status and the windows — and sent when complete: the roll alone is too long for one pass at 30 overdub
+    // layers (DEC-297, deep-overdub timing). The panel shows each frame whole.
     if (stage_ == 0) {
       if (nowMs - lastFrameMs_ < frameMs_ || oled_.api.isDisplayTransferActive()) return 0;
       lastFrameMs_ = nowMs;
@@ -352,7 +350,7 @@ class OledScreen {
     }
     snprintf(out, n, "%lu/%lu", static_cast<unsigned long>(num), static_cast<unsigned long>(den));
   }
-  /// `tenths` as whole.tenth right-aligned so its last column is `xr`, with the legacy thin dot (one pixel in the
+  /// `tenths` as whole.tenth right-aligned so its last column is `xr`, with a thin dot (one pixel in the
   /// spacing column) — "120.5" in 24 columns.
   void rtenths(uint32_t tenths, int16_t xr, uint8_t v) {
     char buf[8];
@@ -376,7 +374,7 @@ class OledScreen {
         {'R', 0x6BAD}, {'S', 0x388E}, {'T', 0x7492}, {'U', 0x5B6F}, {'V', 0x5B6A}, {'W', 0x5BFD}, {'X', 0x5AAD},
         {'Y', 0x5A92}, {'Z', 0x72A7}, {':', 0x0410}, {'.', 0x0002}, {'!', 0x2482}, {'<', 0x1511}, {'>', 0x4454},
         {'?', 0x6282}, {'(', 0x2922}, {')', 0x224A}, {'[', 0x6926}, {']', 0x324B},
-        {'*', 0x0AA8}, {'{', 0x2E92}, {'}', 0x24BA}, {'%', 0x54A5}};  // % the groove amount (DEC-294)  // ? ( ) the trash popups; [ ] * (×) { (↑) } (↓) the buttons
+        {'*', 0x0AA8}, {'{', 0x2E92}, {'}', 0x24BA}, {'%', 0x54A5}};  // % the groove amount  // ? ( ) the trash popups; [ ] * (×) { (↑) } (↓) the buttons
     for (const auto& g : kGlyphs)
       if (g.c == c) return g.bits;
     return 0;
@@ -482,15 +480,15 @@ class OledScreen {
     }
   }
 
-  // ---- The sets browser (owner 2026-11-09: a window over the performance screen, as the length popup; time down the
+  // ---- The sets browser (a window over the performance screen, as the length popup; time down the
   // list — year and month sticky on the top row, the day once, the time — on a spine gapped between months; saving and
   // loading split; the save popup as the history with every stage beside it) ----------------------------------------
   using SetBrowser = ContentEngine::ProductionBrowser;
   using Row = SetBrowser::Row;
   using RowKind = SetBrowser::RowKind;
   using Record = ContentEngine::library::Record;
-  // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. Owner
-  // 2026-11-09: the day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
+  // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. The
+  // day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
   static constexpr int16_t kWX0 = 27, kWY0 = 1, kWX1 = 228, kWY1 = 56, kDiv = 137;
   static constexpr int16_t kYearX = 31, kMonX = 49, kDayXR = 71, kSpineX = 77, kIdX = 83, kNoteXR = 133;
   static constexpr int16_t kDetailX = 142, kMosaicX = 192, kMosaicY = 14, kRow0 = 13, kPitch = 9, kHintY = 59;
@@ -517,9 +515,9 @@ class OledScreen {
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 3), static_cast<int16_t>(y0 + 2), 13);
   }
-  /// The bottom row starts with RECORD and EDIT's moves (owner 2026-11-09: `[REC]↑ [EDT]↓`).
+  /// The bottom row starts with RECORD and EDIT's moves (`[REC]↑ [EDT]↓`).
   static constexpr const char* kMoves = "[REC]{ [EDT]}  ";
-  /// Hint text: the buttons (`[TRK]`, brackets too) dimmer than the actions beside them (owner 2026-11-09).
+  /// Hint text: the buttons (`[TRK]`, brackets too) dimmer than the actions beside them.
   static constexpr uint8_t kHintV = 9, kButtonV = kDimText;  // the unselected menu text
   int16_t hintLabel(const char* s, int16_t x, int16_t top) {
     bool button = false;
@@ -535,7 +533,7 @@ class OledScreen {
     oled_.gfx.draw_rect_filled(fb(), 0, 57, 255, 63, 0);
     hintLabel(s, 2, kHintY);
   }
-  /// The bottom right (DEC-279 amendment 2: a long press exits every window): `HOLD EXIT`, or right after a move to the
+  /// The bottom right (a long press exits every window): `HOLD EXIT`, or right after a move to the
   /// trash `3× [TRK] UNDO` beside a can, the can as bright as the words.
   void drawTrashCorner(bool undo) {
     const uint8_t v = kHintV;
@@ -595,7 +593,7 @@ class OledScreen {
     }
     if (b.view() == SetBrowser::View::Failed) {
       hint(h);
-    } else {  // owner 2026-11-09: one line — the moves, the actions, and the trash on the right
+    } else {  // one line — the moves, the actions, and the trash on the right
       char line[64];
       snprintf(line, sizeof line, "%s%s", kMoves, h);
       hint(line);
@@ -603,12 +601,12 @@ class OledScreen {
     }
     if (confirming) drawConfirm(b);
   }
-  /// DEC-268: the target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
+  /// The target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
   /// its stage) and when it was saved — or `EMPTY THE TRASH?`, for good — over the list; YES and CANCEL, the selected
   /// one inverted.
   DISPLAY_COLD void drawConfirm(const SetBrowser& b) {
     constexpr int16_t x0 = 58, y0 = 4, x1 = 197, y1 = 56, kButtonY = 46;
-    if (b.confirmKind() == SetBrowser::Confirm::EmptyLoop) {  // DEC-272: an empty loop over a filled slot, centred
+    if (b.confirmKind() == SetBrowser::Confirm::EmptyLoop) {  // an empty loop over a filled slot, centred
       window(x0, y0, x1, y1, "EMPTY LOOP");
       char a[32], c[32];
       const uint8_t d = b.pickDestination();
@@ -670,11 +668,11 @@ class OledScreen {
     label(s, static_cast<int16_t>(xc - (static_cast<int16_t>(strlen(s)) * 4 - 1) / 2), top, v);
   }
 
-  // ---- Get a loop's picker (DEC-272; layout A of the plan's mockups) --------------------------------------------------
+  // ---- Get a loop's picker ------------------------------------------------------------------------------
   static constexpr int16_t kPresetX = 33, kPresetW = 13, kPresetH = 7, kPresetPitch = 8, kGridX = 52, kGridY = 13;
   static constexpr int16_t kCell = 4, kPitchX = 6, kPitchY = 5;
   static constexpr int16_t kPanelX0 = 141, kPanelX1 = 225, kPanelY0 = 21, kPanelY1 = 44;
-  // DEC-287: the browser's drawing runs from flash (RAM1 is assigned in 32 KiB banks; the groove builder took a bank's edge).
+  // The browser's drawing runs from flash (RAM1 is assigned in 32 KiB banks; the groove builder took a bank's edge).
   DISPLAY_COLD void drawPicker(const SetBrowser& b, ContentEngine::EngineRoot& e) {
     char title[32], a[32], c[24];
     const uint16_t rec = b.pickRecord();
@@ -799,7 +797,7 @@ class OledScreen {
     }
     return why == 1 ? "STOPPED" : why == 2 ? "NOT PLAYING" : why == 3 ? "MUTED" : "";
   }
-  /// The loop under the cursor, whole (owner 2026-11-10: every bar for now), from the preview slot's tiles.
+  /// The loop under the cursor, whole (every bar for now), from the preview slot's tiles.
   void drawPreviewRoll(ContentEngine::EngineRoot& e, uint16_t bars, bool dim) {
     panelBox();
     if (bars == 0) return;
@@ -857,7 +855,7 @@ class OledScreen {
     const Row r = b.row(i);
     const int16_t y = rowY(b, i);
     const bool on = i == b.selected();
-    if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages (owner 2026-11-09)
+    if (r.kind == RowKind::Divider) {  // what the list below is for: sets, or a set's stages
       const SetBrowser::View list = b.shownView();
       const char* what = list == SetBrowser::View::Bin      ? "RESTORE SET/STAGE"
                          : list == SetBrowser::View::Set    ? "LOAD STAGE"
@@ -872,7 +870,7 @@ class OledScreen {
     switch (r.kind) {
       case RowKind::Close: label("< CLOSE", kYearX, y, on ? 15 : 11); return;
       case RowKind::Empty: label("EMPTY TRASH", kYearX, y, on ? 15 : b.itemCount() != 0 ? 11 : kDimText); return;
-      case RowKind::Trash: {  // the second way in (owner 2026-11-09), its items on the right as a set's time is
+      case RowKind::Trash: {  // the second way in, its items on the right as a set's time is
         label("TRASH", kYearX, y, on ? 15 : 11);
         char n[8];
         snprintf(n, sizeof n, "%u", b.itemCount());
@@ -910,7 +908,7 @@ class OledScreen {
       }
       if (newDay) {
         snprintf(buf, sizeof buf, "%u", l.day);
-        rlabel(buf, kDayXR, y, on ? 15 : 9);  // right-aligned: 9 over 10 (owner 2026-11-09)
+        rlabel(buf, kDayXR, y, on ? 15 : 9);  // right-aligned: 9 over 10
       }
     }
     // The node: the working set a ring; a stage off the line hollow; the selected one larger and bright.
@@ -940,7 +938,7 @@ class OledScreen {
     } else {
       snprintf(text, sizeof text, "SET %u", r.set);
     }
-    if (rec != SetBrowser::kNone) {  // the time in one column for sets (their newest stage) and stages (owner 2026-11-09)
+    if (rec != SetBrowser::kNone) {  // the time in one column for sets (their newest stage) and stages
       ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
       if (strcmp(note, "--:--") == 0) note[0] = 0;
     }
@@ -994,7 +992,7 @@ class OledScreen {
         label("BACK TO ALL SETS", kDetailX, 30, 9);
         snprintf(h, n, "[TRK] SETS");
         return;
-      case RowKind::GetLoop: {  // DEC-272: into the selected slot, boxed in the working set's mosaic
+      case RowKind::GetLoop: {  // into the selected slot, boxed in the working set's mosaic
         label("GET", kDetailX, kMosaicY, 15, 3);
         label("A LOOP", kDetailX, 32, 11);
         const uint8_t d = b.pickDestination();
@@ -1014,7 +1012,7 @@ class OledScreen {
       case RowKind::Divider:
         h[0] = 0;
         return;
-      case RowKind::TrashSet:  // DEC-279 amendment 2: destructive, so a double press; a triple brings it back
+      case RowKind::TrashSet:  // destructive, so a double press; a triple brings it back
         snprintf(a, sizeof a, "SET %u", r.set);
         label(a, kDetailX, kMosaicY, 15, 2);
         snprintf(c, sizeof c, "%u STAGE%s", b.milestonesIn(r.set), b.milestonesIn(r.set) == 1 ? "" : "S");
@@ -1028,7 +1026,7 @@ class OledScreen {
         label(b.itemCount() != 0 ? a : "EMPTY", kDetailX, 30, 11);
         snprintf(h, n, "[TRK] OPEN TRASH");
         return;
-      case RowKind::Empty: {  // DEC-268
+      case RowKind::Empty: {
         label("EMPTY", kDetailX, kMosaicY, 15, 2);
         snprintf(a, sizeof a, "%u ITEM%s", b.itemCount(), b.itemCount() == 1 ? "" : "S");
         label(b.itemCount() != 0 ? a : "THE TRASH IS EMPTY", kDetailX, 30, 11);
@@ -1119,7 +1117,7 @@ class OledScreen {
         else oled_.gfx.draw_rect_filled(fb(), x, y, static_cast<int16_t>(x + 2), static_cast<int16_t>(y + 2), kLevel[l & 3]);
       }
   }
-  /// SAVE CURRENT (owner 2026-11-09): left, AS NEW SET on a lane of its own, then the new node on the working set's
+  /// SAVE CURRENT: left, AS NEW SET on a lane of its own, then the new node on the working set's
   /// history (newest first, the base's line on the main lane); right, every stage with the id it would get, the chosen
   /// one bright and wired to the new node, `<` on the suggested one.
   DISPLAY_COLD void drawSavePopup(const SetBrowser& b) {
@@ -1215,14 +1213,13 @@ class OledScreen {
     label(toast_, static_cast<int16_t>(x0 + 6), 20, 15);
   }
 
-  /// The length popup (owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen
-  /// around it): a window over the roll — a dim drop shadow (black would vanish on the dark screen), a frame, a GEM
-  /// title bar (hatched rows, the title in its own black box), the length large, the gestures in small letters. Kept
-  /// light (owner 2026-11-08: "the screen gets all dimmed"): the panel dims as a whole as its total load rises — a
-  /// filled bright title bar and grey interior took the frame's summed levels from ~5,000 to ~25,000.
-  /// DEC-284 amendment 1 (owner 2026-11-10: "show all possible lengths in the popup to cycle through"): every choice in
-  /// three rows — FULL · A · B (amendment 3), 1–8, 16 · 32 · 64 · 128 — BARS in the title once, the selected one inverted, the
-  /// others dim (CUSTOM dimmer while there is none).
+  /// The length popup ("a shadow border and look/feel the same like cubase/atari", the main screen around it): a window
+  /// over the roll — a dim drop shadow (black would vanish on the dark screen), a frame, a GEM title bar (hatched rows,
+  /// the title in its own black box), the length large, the gestures in small letters. Kept light ("the screen gets all
+  /// dimmed"): the panel dims as a whole as its total load rises — a filled bright title bar and grey interior took the
+  /// frame's summed levels from ~5,000 to ~25,000.
+  /// Every choice in three rows — FULL · A · B, 1–8, 16 · 32 · 64 · 128 — BARS in the title once, the selected one
+  /// inverted, the others dim (CUSTOM dimmer while there is none).
   void drawPopup() {
     constexpr int16_t x0 = 72, y0 = 1, x1 = 183, y1 = 45, sh = 3;
     oled_.gfx.draw_rect_filled(fb(), x0 + sh, y0 + sh, x1 + sh, y1 + sh, 2);  // the shadow
@@ -1268,12 +1265,12 @@ class OledScreen {
           static_cast<int16_t>(y1 - 7), 5);
   }
 
-  /// The GROOVE window (DEC-289; owner 2026-11-10: "long press on play/stop"): as the length popup — a shadow, a frame,
-  /// the hatched title bar with `GROOVE T<n> S<n>` centred — then (DEC-294, owner 2026-11-10: layout A, the small font)
+  /// The GROOVE window: as the length popup — a shadow, a frame,
+  /// the hatched title bar with `GROOVE T<n> S<n>` centred — then (layout A, the small font)
   /// the compare row or the cycle's timeline, B's template and amount with A's dim beside them, BARS and CYCLE, the
   /// slot's AUTO as a checkbox (with `WAIT` / `TOO BIG` / `FAILED`), and the progress bar along the bottom.
   DISPLAY_COLD void drawGroove() {
-    // DEC-295 (owner 2026-11-11: "better spaced similar to the load/save window"; static, only the highlight moves):
+    // Laid out as the load / save window, static; only the highlight moves:
     // OFF · A · B over two columns of GROOVE and AMOUNT, AUTO Q in the title bar, the keys along the bottom.
     constexpr int16_t x0 = kWX0, y0 = 1, x1 = kWX1, y1 = 51;
     constexpr int16_t lx = x0 + 6, ax = x0 + 52, bx = x0 + 130;
@@ -1287,7 +1284,7 @@ class OledScreen {
     const int16_t tw = static_cast<int16_t>(strlen(title)) * 4 + 3, tx = static_cast<int16_t>((x0 + x1 - tw) / 2);
     oled_.gfx.draw_rect_filled(fb(), tx, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(tx + tw), y0 + 8, 0);
     label(title, static_cast<int16_t>(tx + 2), static_cast<int16_t>(y0 + 2), 13);
-    {  // AUTO Q: a checkbox in the title bar (GEM's widget place), TRK's (DEC-295 am. 1, as in the load / save window)
+    {  // AUTO Q: a checkbox in the title bar (GEM's widget place), TRK's (as in the load / save window)
       const char* t = "[TRK]";
       const int16_t w = static_cast<int16_t>(strlen(t)) * 4 + 4 + 7 + 24 + 3, x = static_cast<int16_t>(x1 - 4 - w);
       oled_.gfx.draw_rect_filled(fb(), x, static_cast<int16_t>(y0 + 1), static_cast<int16_t>(x + w), y0 + 8, 0);
@@ -1342,7 +1339,7 @@ class OledScreen {
     static const char* const kState[6] = {"", "WAIT", "", "", "TOO BIG", "FAILED"};
     if (edit_.grooveState < 6 && kState[edit_.grooveState][0] != 0)
       rlabel(kState[edit_.grooveState], static_cast<int16_t>(x1 - 6), hy, edit_.grooveState >= 4 ? 15 : 10);
-    // DEC-295 amendment 3 (owner: "stick to the existing design language"): a change on its way as the save dots,
+    // A change on its way as the save dots,
     // bottom left — dim settling, one running while it builds and waits for its bar line or beat, bright once heard.
     const int16_t by = static_cast<int16_t>(y1 - 5);
     for (uint8_t i = 0; i < 4 && edit_.grooveDots != 0; ++i) {
@@ -1373,14 +1370,14 @@ class OledScreen {
         px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by - 2), 12), px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by + 2), 12);
       }
     }
-    hint(edit_.grooveCycling ? "[REC]{ [EDT]}  [ADD] KEEP  2*OFF  HOLD STOP"  // DEC-295 am. 5: ADD's three
+    hint(edit_.grooveCycling ? "[REC]{ [EDT]}  [ADD] KEEP  2*OFF  HOLD STOP"  // ADD's three
                              : "[REC]{ [EDT]}  [ADD] A/B  2*OFF  HOLD CYCLE");
     hintLabel("HOLD [PLY] APPLY", static_cast<int16_t>(256 - 16 * 4), kHintY);
   }
 
-  /// The progress bar over the stored loop (DEC-282, owner 2026-11-10: mockup B; amendment 1): the whole bar is the
-  /// stored loop (DEC-283's frame) or the stored notes' reach, gapped every 1 / 4 / 8 / 16 / 32 bars (the finest that fits); brackets
-  /// around the part looping now; the playhead fills it while playing; the loop past the stored notes dotted.
+  /// The progress bar over the stored loop: the whole bar is the stored loop (its frame) or the stored notes' reach,
+  /// gapped every 1 / 4 / 8 / 16 / 32 bars (the finest that fits); brackets around the part looping now; the playhead
+  /// fills it while playing; the loop past the stored notes dotted.
   void drawSection(int16_t x0, int16_t x1, const SlotInfo& info) {
     const uint32_t scale = edit_.barScale, start = edit_.barStart % scale, known = edit_.barKnown;
     const int32_t w = x1 - x0;
@@ -1398,7 +1395,7 @@ class OledScreen {
         if (at(k * kBar) == x) return true;
       return false;
     };
-    // DEC-283: the loop's place in the stored loop is absolute, so it may wrap past the frame's end to its start.
+    // The loop's place in the stored loop is absolute, so it may wrap past the frame's end to its start.
     const uint32_t loop = info.loop < scale ? info.loop : scale;
     const auto into = [&](int16_t x) {  // ticks from the loop's start to column x's tick
       const uint32_t t = static_cast<uint32_t>(static_cast<int64_t>(x - x0) * scale / (w > 0 ? w : 1));
@@ -1427,7 +1424,7 @@ class OledScreen {
     px(static_cast<int16_t>(b - 1), static_cast<int16_t>(y + 2), 12);
   }
 
-  /// Copy mode (DEC-279 amendment 1, owner 2026-11-10: its own minimal state): a small window over the roll's top —
+  /// Copy mode (its own minimal state): a small window over the roll's top —
   /// what is copied, what pastes it, and the way out (a slot's LOAD LOOP: the get-a-loop picker for it).
   void drawCopy() {
     constexpr int16_t x0 = 60, y0 = 3, x1 = 195, y1 = 31, sh = 3;
@@ -1457,23 +1454,23 @@ class OledScreen {
     }
     label(title, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(title)) * 4) / 2), y0 + 4, 15);
     label(paste, static_cast<int16_t>((x0 + x1 - static_cast<int16_t>(strlen(paste)) * 4) / 2), y0 + 13, 11);
-    if (edit_.copy != 1) {  // a bar / a note: REC / EDIT choose the paste first (DEC-279 amendment 8)
+    if (edit_.copy != 1) {  // a bar / a note: REC / EDIT choose the paste first
       const char* way = "[REC] REPLACE  [EDT] MERGE";
       int16_t w = 0;
       for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
       hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
-    } else {  // a slot: the picker, or cleared (owner 2026-11-10: a double press of the source)
+    } else {  // a slot: the picker, or cleared (a double press of the source)
       const char* way = "HOLD [TRK] LOAD LOOP  2* CLEAR";
       int16_t w = 0;
       for (const char* c = way; *c; ++c) w = static_cast<int16_t>(w + 4);
       hintLabel(way, static_cast<int16_t>((x0 + x1 - w) / 2), static_cast<int16_t>(y1 - 7));
     }
-    // The countdown (owner 2026-11-10: it closes by itself): the bottom edge, bright for what is left.
+    // The countdown (it closes by itself): the bottom edge, bright for what is left.
     const int16_t left = static_cast<int16_t>(x0 + 1 + static_cast<int32_t>(x1 - x0 - 2) * edit_.copyLeft / 1000);
     if (left > x0 + 1) hline(static_cast<int16_t>(x0 + 1), left, static_cast<int16_t>(y1 - 1), 15);
   }
 
-  /// The legacy track letter for track `t`.
+  /// The state letter for track `t`.
   static char letter(ContentEngine::EngineRoot& e, uint8_t t, uint8_t sel, uint8_t shown) {
     auto& x = e.transport();
     auto& c = e.control();
@@ -1491,7 +1488,7 @@ class OledScreen {
     for (uint8_t i = 0; i < 8; ++i) anySolo |= c.soloed(i);
     return c.muted(t) || (anySolo && !c.soloed(t));
   }
-  /// 1 Hz between 7 and 13 (legacy 4–10; owner 2026-11-08: readable at its darkest): the selected track's state letter,
+  /// 1 Hz between 7 and 13 (readable at its darkest): the selected track's state letter,
   /// NOTE_EDIT's mode cell behind its dark (0) label.
   static uint8_t pulseAt(uint32_t nowMs) {
     const float phase = static_cast<float>(nowMs % 1000) / 1000.0f;
@@ -1532,7 +1529,7 @@ class OledScreen {
     bool firstTake = false;
     if (writing) {
       pos = x.writePosition(lastTick);
-      if (loop == 0 || loop > 256 * kBar) {  // a first take: the view grows with it (legacy)
+      if (loop == 0 || loop > 256 * kBar) {  // a first take: the view grows with it
         loop = pos == 0 ? 1 : pos;
         firstTake = true;
       }
@@ -1548,14 +1545,14 @@ class OledScreen {
     const uint32_t bars = (loop + kBar - 1) / kBar;
     const bool editing = edit_.active && edit_.slot == slot;
     uint32_t viewTicks = loop < kViewBars * kBar ? loop : kViewBars * kBar;
-    // A first take's view ends at the current tick (the playhead at the right edge, as legacy); else the page holding
+    // A first take's view ends at the current tick (the playhead at the right edge); else the page holding
     // the playhead.
     uint32_t first = firstTake ? loop - viewTicks : (pos / viewTicks) * viewTicks;
     if (editing && edit_.ready && edit_.ticks != 0) {  // NOTE_EDIT: the session's window, frozen
       first = edit_.first;
       viewTicks = edit_.ticks;
     }
-    // Pitch range: the view's bars, from density tiles (as the legacy auto-fit).
+    // Pitch range: the view's bars, from density tiles (auto-fit).
     uint8_t lo, hi;
     const uint8_t firstBar = static_cast<uint8_t>(first / kBar);
     uint8_t lastBar = static_cast<uint8_t>((first + viewTicks - 1) / kBar);
@@ -1672,9 +1669,9 @@ class OledScreen {
       } else {
         position(nullptr, xr, 4, 4, false);
       }
-      if (edit_.ready && edit_.encoder == 1) hline(x0, xr, kLabY + 6, 15);  // the encoder moves the start (slice E)
+      if (edit_.ready && edit_.encoder == 1) hline(x0, xr, kLabY + 6, 15);  // the encoder moves the start
     } else {
-      // The transport icon, left of the counter (DEC-282 amendment 2, owner 2026-11-10).
+      // The transport icon, left of the counter.
       Icon ic = Icon::Stop;
       uint8_t iv = 10;
       if (x.writingTrack() == sel) {
@@ -1692,7 +1689,7 @@ class OledScreen {
         iv = 6;
       }
       icon(ic, x0, kValBase - 6, iv);
-      // The progress bar, the column's full width (amendment 2): the stored loop always (amendment 1), else the
+      // The progress bar, the column's full width: the stored loop always, else the
       // loop's progress while it moves.
       if (edit_.barScale != 0 && info.loop != 0 && queued == 0) {
         drawSection(x0, xr, info);
@@ -1713,7 +1710,7 @@ class OledScreen {
     x0 = static_cast<int16_t>(x0 + kTickW + kGap);
     // ---- BARS ----
     separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
-    rlabel("BARS", static_cast<int16_t>(x0 + kBarsW - 1), kLabY, 5);  // right-aligned over its number (amendment 2)
+    rlabel("BARS", static_cast<int16_t>(x0 + kBarsW - 1), kLabY, 5);  // right-aligned over its number
     if (info.loop != 0) {
       snprintf(buf, sizeof buf, "%lu", static_cast<unsigned long>((info.loop + kBar - 1) / kBar));
       rtext(buf, static_cast<int16_t>(x0 + kBarsW - 1), 9);
@@ -1733,7 +1730,7 @@ class OledScreen {
       cells[2] = Cell{"LENGTH", "-", 24};
       if (edit_.ready && edit_.note) {
         st::noteName(edit_.notePitch, cells[0].value);
-        if (ContentEngine::isMuted(edit_.noteVelocity))  // owner 2026-11-08: a muted note
+        if (ContentEngine::isMuted(edit_.noteVelocity))  // a muted note
           snprintf(cells[1].value, sizeof cells[1].value, "M");
         else
           snprintf(cells[1].value, sizeof cells[1].value, "%u", edit_.noteVelocity);
@@ -1742,16 +1739,16 @@ class OledScreen {
       const int16_t end = static_cast<int16_t>(x0 + 18 + 32 + 24 + 2 * kGap - 1);
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1, static_cast<int16_t>(end + 1),
                                  kLabY + 5, 11);
-      // The cell F2 / F3 or F4 edits pulses (owner 2026-11-08): LENGTH in length mode, VELOCITY while NOTELEN is held.
+      // The cell F2 / F3 or F4 edits pulses: LENGTH in length mode, VELOCITY while NOTELEN is held.
       // Its square spans from the divider on its left to the next divider (VELOCITY) or the bar's end (LENGTH), so no
-      // column of the steady bar is left beside it; its darkest level keeps the label readable (owner 2026-11-08).
+      // column of the steady bar is left beside it; its darkest level keeps the label readable.
       if (edit_.ready && (edit_.length || edit_.velocity)) {
         const int16_t cx = static_cast<int16_t>(edit_.velocity ? x0 + 18 + kGap : x0 + 18 + 32 + 2 * kGap);
         const int16_t right = static_cast<int16_t>(edit_.velocity ? cx + 32 + kGap / 2 - 1 : end + 1);
         oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(cx - kGap / 2), kLabY - 1, right, kLabY + 5,
                                    pulseAt(nowMs));
       }
-    } else if (loopEdit) {  // LOOP_EDIT (owner 2026-11-08): the shown loop's start, length (bars) and the tempo
+    } else if (loopEdit) {  // LOOP_EDIT: the shown loop's start, length (bars) and the tempo
       cells[0] = Cell{"START", "-", 24};
       cells[1] = Cell{"LENGTH", "-", 32};
       cells[2] = Cell{"BPM", "", 24};
@@ -1761,7 +1758,7 @@ class OledScreen {
                  static_cast<unsigned long>(edit_.loopStart % kBar / (kBar / 16) + 1));
         lengthText(edit_.loopTicks != 0 ? edit_.loopTicks : info.loop, cells[1].value, sizeof cells[1].value);
       }
-      // The tempo with its tenth (owner 2026-11-08: F3 sets tenths), drawn after the cells with the thin dot.
+      // The tempo with its tenth (F3 sets tenths), drawn after the cells with the thin dot.
       oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(x0 - 1), kLabY - 1,
                                  static_cast<int16_t>(x0 + 24 + 32 + 24 + 2 * kGap), kLabY + 5, 11);
     } else {
@@ -1777,7 +1774,7 @@ class OledScreen {
         snprintf(cells[2].value, sizeof cells[2].value, "%u", ch);
     }
     for (uint8_t i = 0; i < 3; ++i) {
-      static constexpr int8_t kEncoderCell[3] = {0, 3, 2};  // NOTE pitch, VELOCITY, LENGTH (slice E)
+      static constexpr int8_t kEncoderCell[3] = {0, 3, 2};  // NOTE pitch, VELOCITY, LENGTH
       if (noteEdit && edit_.ready && edit_.encoder == kEncoderCell[i])  // the encoder's option: a line under its label
         hline(x0, static_cast<int16_t>(x0 + cells[i].width - 1), kLabY + 6, 15);
       if (i) separator(static_cast<int16_t>(x0 - kGap / 2 - 1));
@@ -1818,8 +1815,8 @@ class OledScreen {
     } else {
       icon(Icon::Clock, bx, kLabY, 5);
     }
-    rtenths(st::tempoTenths(clock.usPerTick(), kQuarter), kX1, ext ? 12 : 9);  // the legacy thin dot before the tenth
-    // Save dots over the tempo while saving, or RO before saving is approved (DEC-282 amendment 2: the tempo's label
+    rtenths(st::tempoTenths(clock.usPerTick(), kQuarter), kX1, ext ? 12 : 9);  // a thin dot before the tenth
+    // Save dots over the tempo while saving, or RO before saving is approved (the tempo's label
     // row is the static one; the dots had hidden the progress bar).
     if (!started_) {
       dots_.start(p.stats().saves, p.stats().saveFailed);

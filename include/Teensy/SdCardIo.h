@@ -1,15 +1,15 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The card for the engine (fixed-memory-engine E9.8a): `CardIo` over the Teensy SD library (SdFat underneath).
+// The card for the engine: `CardIo` over the Teensy SD library (SdFat underneath).
 //
 // The adapter writes only what `Persistence` asks, and `Persistence` asks nothing before the owner approves saving on
-// the device (the engine folder; owner 2026-11-05). Files are only read (engine files of before the store, V1 files).
-// The store (E9.8g) is one file preallocated in one contiguous run; its sectors are then read and written on the card
+// the device (the engine folder). Files are only read (engine files of before the store, V1 files).
+// The store is one file preallocated in one contiguous run; its sectors are then read and written on the card
 // directly — no directory lookup, allocation or flush, so a sector costs the card's write and nothing else (every
 // file-system operation took 4–8 ms on the device). SdFat's cache never holds a store sector: the store is never
-// read or written through the file system after it is opened. Writes do not wait for the card either (E9.8h): see
-// `writeSector` and `ready`. The milestone library (DEC-258) is a second such file, written through the same stream.
+// read or written through the file system after it is opened. Writes do not wait for the card either: see
+// `writeSector` and `ready`. The milestone library is a second such file, written through the same stream.
 
 #pragma once
 
@@ -46,7 +46,7 @@ class SdCardIo : public ContentEngine::CardIo {
     worst(t_.exists, t);
     return e;
   }
-  bool rename(const char* from, const char* to) override {  // boot only (DEC-254: the store's names)
+  bool rename(const char* from, const char* to) override {  // boot only (the store's names)
     quiesce();
     return ready_ && SD.exists(from) && !SD.exists(to) && SD.sdfs.rename(from, to);
   }
@@ -106,7 +106,7 @@ class SdCardIo : public ContentEngine::CardIo {
     return readyAt(i == ContentEngine::CardIo::kIdle ? i : libBase_ + i);
   }
   // Store writes are SdFat's multi-block stream (`writeStart`, `writeData`), the adapter's own: SdFat's `writeSector`
-  // stops an open stream and waits while the card programs it (1.6–8.2 ms on the owner's card), so it is not used.
+  // stops an open stream and waits while the card programs it (1.6–8.2 ms), so it is not used.
   // The stream stays open while sectors follow; `ready` stops it without waiting when another sector or the idle card
   // is asked for, then reports busy (DAT0) until the card has programmed it. SdFat's own state stays idle throughout;
   // its transfer flag is cleared (`syncDevice` on an idle SdFat: no wait once the block is done) before a stop or a
