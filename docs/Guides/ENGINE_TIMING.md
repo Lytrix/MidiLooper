@@ -108,7 +108,25 @@ surface, `leds` and `screen` stages in the window: an upper bound on how long a 
 | overdub (2 runs) | 414 µs (transition) | 652–688 µs | 872–910 µs | 145–149 µs | 1,786–1,828 µs | 1,910–2,625 µs | yes |
 | the 6 s after an overdub (its save) | 136 µs (hard; persistence ≤ 82 µs during the overdub) | 10 µs | 816–836 µs | 147–149 µs | about 1,040 µs | 874–886 µs | yes |
 | playback after | 145 µs (hard) | 10 µs | 896 µs | 137 µs | 1,089 µs | 942 µs | yes |
-| a take (record), an undo into a cold step | not re-measured since the fix (the first run: grains ≤ 373 µs, fetch 335 µs) | | | | | | grains yes |
+| a take (record), 4 bars on an empty slot | 343 µs | 20 µs (was 3,643) | 729 µs | 176 µs | 969 µs | 999 µs | yes |
+| an undo into a cold step | not re-measured since the fix (the first run: grains ≤ 373 µs, fetch 335 µs) | | | | | | grains yes |
+
+**Stress: overdubs back to back (2026-11-11, `c23ede89…`, 300 BPM, seven tracks playing).** Before the history and
+LED work a slot hung after about 9 overdubs. A 4-bar take on an empty slot, then overdubs of 1.2 s each sent one after
+the other (about two a loop), sampled every 3 or 6:
+
+| Run | Overdubs sent → committed | Slot depth reached | Worst grain | `leds` | `screen` | Non-engine | Worst pass | Content free | Hang |
+|---|---|---|---|---|---|---|---|---|---|
+| 12 overdubs | 12 → 9 | 10 | 443 µs | ≤ 110 µs | ≤ 415 µs | ≤ 788 µs | 2,058 µs | 2,805–2,816 pages | no |
+| 30 overdubs | 30 → 22 | 23 | 581 µs | ≤ 439 µs | ≤ 549 µs | ≤ 1,264 µs | 3,281 µs | 2,810–2,844 pages | no |
+
+- Every grain stayed under g = 810 µs and the non-engine stretch under B_max; no clock gap; the hot table stayed full
+  (98–99) with `evicted_undo=0` (older steps went cold on the card, none forgotten); content memory flat.
+- The refused overdubs were `Busy` (one writer): sent the moment the previous one ended, before it was released.
+- Costs grow with the slot: from the take to the 23rd step the worst grain went 341 → 581 µs, `leds` 20 → 439 µs (the
+  512-row scan step) and `screen` 235 → 549 µs. A much larger slot is where g would be reached first; re-measure if
+  slots grow well past this (about 23 layered passes of 4 bars).
+- Afterwards the test steps were undone (the slot empty again, its steps as redo).
 
 A pass longer than a tick (`Worst pass`) is not lateness on its own: it holds up to 8 grains with the due ticks played
 between them. The largest non-engine part is now the screen (0.8–0.9 ms while playing); the next one to look at if
