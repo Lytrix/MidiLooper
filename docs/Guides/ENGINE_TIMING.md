@@ -91,6 +91,29 @@ Idle baseline (`bb0d3b0a…`, transport stopped, 2026-11-11): pass 221 µs; stag
 surface 15 µs; every grain class 0. A measurement while playing is the gate for any change to the playing path: compare
 `pass_max_us` and `grain_worst` with and without the change on the same set.
 
+## Measured at 300 BPM (2026-11-11, `bb0d3b0a…`)
+
+The owner's set playing (27 slots), internal clock at 300 BPM (1,041 µs a tick), the DROID connected; per phase the
+worst values of one `!ENGINE take` window. What bounds a tick's lateness is not `pass_max_us`: a pass runs up to 8
+grains (`kGrainsPerPass`) and plays a tick that comes due between them, so a long `grains` stage is by design. A tick
+waits at most one grain plus the longest non-engine stretch (input, serial, send, surface, LEDs, screen); the scheduler
+assumes that stretch is at most **B_max = 2,000 µs** (`kBlockUs`).
+
+| Phase | Worst grain (class) | `leds` stage | `screen` | Other non-engine | Within budget |
+|---|---|---|---|---|---|
+| playback | 194 µs (hard) | 12 µs | 180 µs | ≤ 160 µs | yes |
+| a take (record) | 365 µs (display) | **3,643 µs** | 806 µs | ≤ 280 µs | **no** — over B_max |
+| two overdubs | 425 µs (background) | **4,124–4,419 µs** | 803–815 µs | ≤ 290 µs | **no** — over B_max |
+| the 6 s after each take / overdub (their saves) | 223 µs | 1,695–1,801 µs | 772–814 µs | ≤ 160 µs | grains yes; non-engine about 2.6 ms, over B_max |
+| undo into a cold step (fetch from the card) | 373 µs (persistence 335 µs) | 1,831 µs | 787 µs | ≤ 180 µs | grains yes; non-engine over B_max |
+| redo + saves, playback after, stop | ≤ 369 µs | ≤ 18 µs | ≤ 177 µs | ≤ 160 µs | yes |
+
+**Findings.** Every grain class stays under g = 810 µs, and the card work (saves under 100 µs, the fetch 335 µs) under its
+0.9 ms budget; no clock gap. The budget that does not hold is B_max: the `leds` stage (DROID bank / motor messages,
+LED updates over the USB host port, and the screen's per-track state) blocks for up to 4.4 ms while a take or
+overdub runs and about 1.8 ms after it, with the screen stage near 0.8 ms beside it — up to about four ticks of
+lateness at 300 BPM. Not caused by the card or the undo history (plain playback: 12 µs); open for investigation.
+
 ## When a figure changes
 
 A new worst grain above g, a new kind of work on the playing path, or a card operation that can wait: re-measure
