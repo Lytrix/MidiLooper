@@ -814,7 +814,7 @@ class Surface {
     if (slot >= Config::kSlotCount) return false;
     const ManifestId c = transport().contentOf(slot);
     if (c == kNoManifest) return false;
-    beyondScan(c, kScanRows);  // the screen: in steps (the last state scanned until this one is done)
+    beyondScan(c, kScanRows / 2);  // the screen: in steps (the last state scanned until this one is done)
     scale = frame_;
     start = frameStart_;
     known = absEnd_;
@@ -1915,7 +1915,9 @@ class Surface {
     bool fit = false;
   };
   Scan scan_;
-  static constexpr uint32_t kScanRows = 512;  // rows a pass for the LEDs and the screen
+  // Rows a pass for the LEDs (the screen: half). Owner 2026-11-11: at 512 for both, a pass at 30 overdub layers scanned
+  // twice ~260 µs; 256 + 128 keep it near 200 µs (a new state's scan takes a few more passes).
+  static constexpr uint32_t kScanRows = 256;
   uint8_t stepAnchor_ = 0, barAnchor_ = 0;    // ... the first of them
   uint8_t rangeTapNote_ = 0xFF;                // ... the last one pressed alone, and when (a double: one bar / 16th)
   uint32_t rangeTapMs_ = 0;

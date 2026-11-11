@@ -1,3 +1,12 @@
+**2026-11-11 — engine timing under deep overdubs at 300 BPM (`feature/engine-sets-browser`).** A 30-overdub stress
+on one slot (300 BPM, seven tracks playing) now stays well inside both budgets: the worst grain 713 → 489 µs (g = 810)
+and the non-engine stretch 1,627 → 955 µs (B_max = 2,000), 30 of 30 overdubs, no hang. Commits: `eca1ff1a` stepped
+bind / seek, `b2c4ea0c` dirty-pitch mask (bind clear, checkpoint capture), `3a8e6111` the loop wrap as its own grain,
+and the LED / screen stages (scan steps 256 / 128, the frame drawn in row bands). Each found by attributing the worst
+grain or stage with temporary probes; two attempts that measured averages (a run tree, onset masks) did not move the
+worst case and were reverted. `!ENGINE end` now ends an overdub at once, as REC. Open: composing grows ~12 µs a layer
+(g near 55–60 layers); the USB serial wedge after a transport stop (seen three times) is for the hang investigation.
+
 **2026-11-11 — illustrated player’s manual.** The [offline website](../handbook/dist/index.html) documents the engine at `d61d8d62`. It includes the controller map, record/edit/library walkthroughs, one read-only OLED capture and nine software-rendered examples. Desktop search, mobile navigation, internal links and source excerpts were checked. The OLED examples now use the reference panel palette and a six-pixel surround. All ten rendering checks preserved the captured pixels. The hardware chapter includes the parts list, MIDI schematic, control wiring and external 8-in/8-out interface option.
 
 **2026-11-11 — DEC-254 merged into `feature/engine-sets-browser`; E9.8b-3b closed.** `feature/engine-per-slot-history`

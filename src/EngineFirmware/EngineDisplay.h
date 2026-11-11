@@ -288,13 +288,20 @@ class EngineDisplay {
                    uint32_t nowMs, const EditView& edit = EditView{}) {
     edit_ = edit;
     oled_.api.pollDisplayTransfer();
-    if (nowMs - lastFrameMs_ < frameMs_ || oled_.api.isDisplayTransferActive()) return 0;
-    lastFrameMs_ = nowMs;
+    // Owner 2026-11-11: a frame is drawn over several passes — the tracks and the slot's grid, the roll in
+    // `kRollBands` row bands, then the status and the windows — and sent when complete (at 30 overdub layers the roll
+    // alone took 534 µs in one pass). The panel shows each frame whole.
+    if (stage_ == 0) {
+      if (nowMs - lastFrameMs_ < frameMs_ || oled_.api.isDisplayTransferActive()) return 0;
+      lastFrameMs_ = nowMs;
+    }
     const uint32_t t0 = micros();
-    draw(e, clock, lastTick, nowMs);
+    const bool done = drawStage(e, clock, lastTick, nowMs);
     const uint32_t us = micros() - t0;
-    oled_.api.display();
-    ++frames_;
+    if (done) {
+      oled_.api.display();
+      ++frames_;
+    }
     if (us > worstUs_) worstUs_ = us;
     return us;
   }
@@ -421,34 +428,58 @@ class EngineDisplay {
   void hline(int16_t x0, int16_t x1, int16_t y, uint8_t v) { oled_.gfx.draw_hline(fb(), y, x0, x1, v); }
 
   // ---- Frame ---------------------------------------------------------------------------------------------------------
-  void draw(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick, uint32_t nowMs) {
-    oled_.gfx.fill_buffer(fb(), 0);
-    auto& x = e.transport();
-    const uint8_t sel = e.control().selectedTrack();
-    drawTracks(e, clock, sel, nowMs);
-    // The shown slot: the selected track's queued, playing or selected one (`show`), the writing one above all.
-    uint8_t slot = shown_[sel];
-    const bool queued = queued_[sel] && x.writingTrack() != sel;
-    if (x.writingTrack() == sel) slot = x.writingSlot();
-    drawMs_ = nowMs;
-    SlotInfo info;
-    if (slot < ContentEngine::Config::kSlotCount) {
-      if (slot != focus_) {  // span tiles for the shown slot (swept first)
-        e.setDisplayFocus(slot, slot);
-        focus_ = slot;
+  /// One stage of the frame (see `service`). True when the frame is complete.
+  bool drawStage(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick,
+                 uint32_t nowMs) {
+    if (stage_ == 0) {
+      oled_.gfx.fill_buffer(fb(), 0);
+      auto& x = e.transport();
+      frameSel_ = e.control().selectedTrack();
+      drawTracks(e, clock, frameSel_, nowMs);
+      // The shown slot: the selected track's queued, playing or selected one (`show`), the writing one above all.
+      uint8_t slot = shown_[frameSel_];
+      const bool queued = queued_[frameSel_] && x.writingTrack() != frameSel_;
+      if (x.writingTrack() == frameSel_) slot = x.writingSlot();
+      drawMs_ = nowMs;
+      frameInfo_ = SlotInfo{};
+      roll_.valid = false;
+      if (slot < ContentEngine::Config::kSlotCount) {
+        if (slot != focus_) {  // span tiles for the shown slot (swept first)
+          e.setDisplayFocus(slot, slot);
+          focus_ = slot;
+        }
+        frameInfo_ = drawSlot(e, frameSel_, slot, lastTick, queued);
       }
-      info = drawSlot(e, sel, slot, lastTick, queued);
+      stage_ = roll_.valid ? 1 : kRollBands + 1;
+      return false;
     }
-    drawStatus(e, clock, sel, info, lastTick, nowMs);
+    if (stage_ <= kRollBands) {  // a band of the roll's rows
+      const int16_t rows = static_cast<int16_t>(kRollY1 - kRollY0 + 1);
+      const int16_t from = static_cast<int16_t>(kRollY0 + (stage_ - 1) * rows / kRollBands);
+      const int16_t to = static_cast<int16_t>(kRollY0 + stage_ * rows / kRollBands - 1);
+      e.drawRollBand(roll_.view, fb(), DISPLAY_WIDTH, from, to);
+      ++stage_;
+      return false;
+    }
+    stage_ = 0;
+    if (roll_.valid) finishSlot();
+    drawStatus(e, clock, frameSel_, frameInfo_, lastTick, nowMs);
     if (browser_ != nullptr && browser_->isOpen()) {  // a window over the performance screen
       drawBrowser(*browser_, e);
       if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();  // a deletion's line: the browser stays open
-      return;
+      return true;
     }
     if (edit_.popup) drawPopup();
     if (edit_.groove) drawGroove();
     if (edit_.copy != 0) drawCopy();
     if (static_cast<int32_t>(toastUntil_ - nowMs) > 0) drawToast();
+    return true;
+  }
+  /// A whole frame at once (tests, the first frame).
+  void draw(ContentEngine::EngineRoot& e, const ContentEngine::EngineClock& clock, uint32_t lastTick, uint32_t nowMs) {
+    stage_ = 0;
+    while (!drawStage(e, clock, lastTick, nowMs)) {
+    }
   }
 
   // ---- The sets browser (owner 2026-11-09: a window over the performance screen, as the length popup; time down the
@@ -1562,19 +1593,31 @@ class EngineDisplay {
       v.highlightLength = edit_.noteLength;
       v.highlightPitch = edit_.notePitch;
     }
-    e.drawRollBand(v, fb(), DISPLAY_WIDTH, kRollY0, kRollY1);
-    if (playing || writing) {
-      const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
+    // The roll's rows are drawn in bands on the next passes (`drawStage`); the playhead and bracket after them.
+    roll_.view = v;
+    roll_.valid = true;
+    roll_.playhead = playing || writing;
+    roll_.queued = queued;
+    roll_.editing = editing;
+    roll_.pos = pos;
+    roll_.first = first;
+    roll_.ticks = viewTicks;
+    return info;
+  }
+  void finishSlot() {
+    const int32_t w = kX1 - kX0;
+    const auto& r = roll_;
+    if (r.playhead) {
+      const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(r.pos - r.first) * w / r.ticks);
       oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
-    } else if (queued && (drawMs_ / 250) % 2 == 0) {  // queued: parked at its launch point, flashing
-      const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(pos - first) * w / viewTicks);
+    } else if (r.queued && (drawMs_ / 250) % 2 == 0) {  // queued: parked at its launch point, flashing
+      const int16_t px = static_cast<int16_t>(kX0 + static_cast<int64_t>(r.pos - r.first) * w / r.ticks);
       oled_.gfx.draw_vline(fb(), px, kRollY0, kRollY1, 15);
     }
-    if (editing && edit_.ready && edit_.bracket >= first && edit_.bracket < first + viewTicks) {  // the bracket, dotted
-      const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - first) * w / viewTicks);
+    if (r.editing && edit_.ready && edit_.bracket >= r.first && edit_.bracket < r.first + r.ticks) {  // dotted bracket
+      const int16_t bx = static_cast<int16_t>(kX0 + static_cast<int64_t>(edit_.bracket - r.first) * w / r.ticks);
       for (int16_t y = kRollY0; y <= kRollY1; y += 2) oled_.gfx.draw_pixel(fb(), bx, y, 10);
     }
-    return info;
   }
 
   // ---- Status band ---------------------------------------------------------------------------------------------------
@@ -1811,6 +1854,16 @@ class EngineDisplay {
   uint8_t focus_ = 0xFF;
   bool started_ = false;
   uint32_t lastFrameMs_ = 0, frames_ = 0, worstUs_ = 0;
+  // The frame being drawn over passes (`service`, `drawStage`).
+  static constexpr uint8_t kRollBands = 4;
+  uint8_t stage_ = 0;  // 0: none; 1..kRollBands: the next roll band; then the status and the send
+  uint8_t frameSel_ = 0;
+  struct Roll {
+    ContentEngine::RollView view{};
+    bool valid = false, playhead = false, queued = false, editing = false;
+    uint32_t pos = 0, first = 0, ticks = 1;
+  } roll_;
+  SlotInfo frameInfo_{};
   uint32_t frameMs_ = kFrameMs;
   uint8_t clock_ = 0x91, phase_ = 0xE2;  // the library's boot values
 };

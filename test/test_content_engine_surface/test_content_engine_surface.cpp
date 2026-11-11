@@ -430,7 +430,7 @@ void test_a_large_state_is_scanned_in_steps() {
   const auto led = [](uint8_t n, uint8_t v) { gLed[n] = v; };
   gS.leds(gLast, gUs / 1000, led, 8);
   TEST_ASSERT_EQUAL_UINT32(scans, gS.rowScans());  // one pass: part of the rows only
-  for (uint8_t i = 0; i < 3; ++i) gS.leds(gLast, gUs / 1000, led, 8);
+  for (uint8_t i = 0; i < 7; ++i) gS.leds(gLast, gUs / 1000, led, 8);  // 800 rows read twice, 256 a pass
   TEST_ASSERT_EQUAL_UINT32(scans + 1, gS.rowScans());  // a few passes: done, once
 }
 // DEC-283 amendment 1 (owner 2026-11-10: the button LEDs absolute): a loop shortened to bars 2..3 of a 4-bar stored loop

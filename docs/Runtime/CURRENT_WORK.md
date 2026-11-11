@@ -1,5 +1,12 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-11 — engine timing under deep overdubs (owner-directed: "split bind", "yes, continue", "LEDs and screen").**
+On `feature/engine-sets-browser`: bounded the grains and main-loop stages that grew with a slot's overdub layers at 300
+BPM — stepped bind and resume seek, a dirty-pitch mask for the occluder table, the loop wrap as its own grain, smaller
+stored-loop scan steps, the screen drawn in row bands over passes. Evidence and per-step numbers:
+`docs/Guides/ENGINE_TIMING.md` (§ Measured at 300 BPM). Open: composing still grows ~12 µs a layer (g near 55–60
+layers).
+
 **2026-11-11 — documentation website (owner request, delivered locally).** The [player’s manual](../handbook/README.md) follows the current engine. The owner’s overview, controller, hardware and screen-presentation comments are incorporated. Its controller and library findings are documentation review items. Firmware work continues under its existing scope.
 
 **2026-11-11 — card-history representation direction (design only).** For E9.8b-3b — undo-depth sizing, the owner

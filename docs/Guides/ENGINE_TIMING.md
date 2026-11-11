@@ -185,6 +185,15 @@ the other (about two a loop), sampled every 3 or 6:
   **Where it stands:** the worst grain at 30 layers went 713 → 489 µs this day (stepped bind, dirty-pitch mask, wrap
   grain). What still grows is composing itself, about 12 µs a layer in `hard` and `display` (a row 1.3 → 2.2 µs):
   extrapolated, g = 810 µs is near 55–60 layers, close to a state's 63-run ceiling.
+- **The LED and screen stages (2026-11-11, `b3c8683d…`).** With the grains bounded the nearer limit was B_max: at
+  30 layers the non-engine stretch was 1,627 µs (LEDs 553, screen 765). Attributed with temporary timers: the LED
+  stage held two 512-row steps of the stored-loop scan in one pass (the LEDs' and the screen's `loopFrame`), and the
+  screen's piano roll (`drawSlot`) grew 73 → 534 µs, the rest of a frame flat (track column ≤ 44, status ~105 µs).
+  Now the scan steps are 256 rows for the LEDs and 128 for the screen (`Surface::kScanRows`), and a frame is drawn over
+  passes — the tracks and the grid, the roll in four row bands (`drawRollBand` already drew bands), then the status
+  and the windows — and sent when complete (`EngineDisplay::drawStage`; the panel shows each frame whole, checked with
+  `!ENGINE fbdump`). Same stress, at 30 layers: `leds` 553 → **268 µs**, `screen` 765 → **379 µs**, non-engine
+  1,627 → **955 µs** of 2,000. Both still grow with the slot (~9 and ~12 µs a layer): about 1.6 ms at 63 layers.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).
