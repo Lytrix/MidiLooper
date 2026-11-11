@@ -1,11 +1,11 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The run-once store's run area (DEC-254, E4.6b; owner 2026-11-11: "I choose DEC-254's run-once store").
+// The run-once store's run area (DEC-254, run-once store).
 //
 // * A run record: an extent of whole clusters in the run area — a header sector ("MLR1": slot, kind, rows, the rows'
-//   CRC-32, a check word), then the rows, 32 a sector (16 B each, `SetFile`'s row bytes). The header is written last, so
-//   a record cut short by power loss fails its check and is never taken.
+//   CRC-32, a check word), then the rows, 32 a sector (16 B each, `SetFile`'s row bytes). The header is written last,
+//   so a record cut short by power loss fails its check and is never taken.
 // * Space: a bitmap of `kCluster`-sector clusters, built at boot from every valid state record (`mark`), then only
 //   taken during a session (`take`, next fit); what no state record lists is free again at the next boot.
 // * A run on the card: `RunId` → (record sector, the run's serial at writing) — a `RunId` is reused after release, its
@@ -105,7 +105,7 @@ class ClusterMap {
     }
     return kNoSector;
   }
-  /// `sectors` area sectors from cluster-aligned `at` are held for good (the cold records' region, DEC-254 E4.6c).
+  /// `sectors` area sectors from cluster-aligned `at` are held for good (the cold records' region).
   void reserve(uint32_t at, uint32_t sectors) {
     for (uint32_t c = at / kCluster; c < (at + sectors + kCluster - 1) / kCluster && c < kClusters; ++c)
       if (!test(c)) {

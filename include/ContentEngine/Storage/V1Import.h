@@ -1,50 +1,50 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Reading a V1 slot file into the engine (fixed-memory-engine E9.7b / E9.7c; owner decisions 2026-11-05: exact current
-// content only; pass-stream files imported, E9.7c — their legacy note edits discarded, owner 2026-11-05: the import
-// only feeds the test setup).
+// Reading a V1 slot file into the engine: exact current content only; pass-stream files are imported with their note
+// edits discarded.
 // Read-only: V1 files are never written.
 //
 // File (`/MidiLooper/current/slots/loop_TT_SS.bin`): an optional 10-byte epoch header (epoch u32, schema u16, CRC u32,
-// written field by field — measured on the owner's card; the persistence guide's "16 B" is wrong), the body, a 4-byte
-// `SAVE` token. An LSV1 body: "LSV1", version u16 (1), flags u16, then sections — name length u8, name, payload length
-// u32, payload. The `LoopSnapshot` section holds the slot's resolved current content: a root header (loopId, loop
-// length, loop start, next note id, next event id: u32 each), the notes (u32 count; per note noteId u32, pitch u8,
-// velocity u8, u16 pad, start u32, end u32 — sorted by noteId, not by start; no channel: the old firmware plays a slot
-// on its track's channel, which `ClockOutput::setChannel` keeps), then the events (u32 count; per event eventId u32,
-// order u32 and the firmware's raw `MidiEvent`, whose layout is a parameter: 20 bytes with the payload at 12 on the
-// Teensy; note events among them are skipped — the notes list holds the notes). Everything after the events is skipped.
+// written field by field — as V1 cards hold it, not 16 B), the body, a 4-byte `SAVE` token. An LSV1 body: "LSV1",
+// version u16 (1), flags u16, then sections — name length u8, name, payload length u32, payload. The `LoopSnapshot`
+// section holds the slot's resolved current content: a root header (loopId, loop length, loop start, next note id, next
+// event id: u32 each), the notes (u32 count; per note noteId u32, pitch u8, velocity u8, u16 pad, start u32, end u32 —
+// sorted by noteId, not by start; no channel: the old firmware plays a slot on its track's channel, which
+// `ClockOutput::setChannel` keeps), then the events (u32 count; per event eventId u32, order u32 and the firmware's raw
+// `MidiEvent`, whose layout is a parameter: 20 bytes with the payload at 12 on the Teensy; note events among them are
+// skipped — the notes list holds the notes). Everything after the events is skipped.
 // * Windows (the notes are not in start order, and a slot can hold more notes than fit in memory): a counting pass
-//   builds a histogram of note starts and kept event ticks over 64 spans of the loop; consecutive spans are grouped so a
-//   group fits the collect area; one pass over the file per group collects its notes (then, per group, its events),
+//   builds a histogram of note starts and kept event ticks over 64 spans of the loop; consecutive spans are grouped so
+//   a group fits the collect area; one pass over the file per group collects its notes (then, per group, its events),
 //   heap-sorts them by start (tick, then file order) and feeds `ResolvedImport` (notes and events in their own runs).
 //   Each pass re-reads the file from the start (no seek): exact lengths only, the trailing token is never read.
-// A pass-stream body (no LSV1 magic; the legacy `writeLegacyLoopPersisted`): loopId, startLoopTick, loop length, loop
-// start, nextPassId, nextNoteId, nextMergeSequence, lastCommittedPassId, pass count (u32 each); per pass id u32,
+// A pass-stream body (no LSV1 magic; the V1 firmware's `writeLegacyLoopPersisted`): loopId, startLoopTick, loop length,
+// loop start, nextPassId, nextNoteId, nextMergeSequence, lastCommittedPassId, pass count (u32 each); per pass id u32,
 // mergeSequence u32, state u8 (0 = Active), type u8 (0 = record, 1 = overdub), sealedAtTick u32, event count u32 and
 // the raw `MidiEvent`s in capture order (ticks up to a bar past the loop end: wrapped); then nextPassId u32, "EPT3",
-// the edit-pass count u32 and the edit passes (not read: discarded, reported by `editsDiscarded`). The epoch header is detected as the legacy loader detects it
-// (`fileStartsWithEpochHeader`: a first word other than the container version 6 and a schema major of 0).
-// * As the legacy materialisation (`collectActiveCommittedChunkLists`): only Active passes; the record pass first, then
-//   the overdubs by mergeSequence. Each pass with notes becomes its own run (`ResolvedImport::nextPass`), so later
-//   passes occlude earlier ones at composition as a live overdub does. Kept events of all Active passes go to the
-//   event run.
-// * Pairing, cyclic (measured on the owner's card: a pass's events are stored in tick order, so a note held across the
-//   loop end has its NoteOff near the start of the pass and its NoteOn near the end): a NoteOff closes the last open
-//   note of its channel and pitch (a NoteOn of velocity 0 is a NoteOff); a NoteOff with none open is kept, and at the
-//   pass end those NoteOffs, in order, close the notes still open — the stream wrapped round. A NoteOn with no NoteOff
-//   anywhere in its pass is held for the whole loop (its NoteOff one tick before its start) and counted
-//   (`heldWhole`) rather than refusing the slot; NoteOffs left over are dropped.
+// the edit-pass count u32 and the edit passes (not read: discarded, reported by `editsDiscarded`). The epoch header is
+// detected as the V1 firmware detects it (`fileStartsWithEpochHeader`: a first word other than the container version 6
+// and a schema major of 0).
+// * As the V1 firmware materialises it (`collectActiveCommittedChunkLists`): only Active passes; the record pass first,
+//   then the overdubs by mergeSequence. Each pass with notes becomes its own run (`ResolvedImport::nextPass`), so later
+//   passes occlude earlier ones at composition as a live overdub does. Kept events of all Active passes go to the event
+//   run.
+// * Pairing, cyclic (as V1 cards hold them: a pass's events are stored in tick order, so a note held across the loop
+//   end has its NoteOff near the start of the pass and its NoteOn near the end): a NoteOff closes the last open note of
+//   its channel and pitch (a NoteOn of velocity 0 is a NoteOff); a NoteOff with none open is kept, and at the pass end
+//   those NoteOffs, in order, close the notes still open — the stream wrapped round. A NoteOn with no NoteOff anywhere
+//   in its pass is held for the whole loop (its NoteOff one tick before its start) and counted (`heldWhole`) rather
+//   than refusing the slot; NoteOffs left over are dropped.
 // * A loop length of 0 with no passes (the card's placeholders for empty slots) is `EmptySnapshot`.
 // * The windows run per pass: the counting pass builds one start histogram per Active pass, then each window re-reads
 //   the file up to the end of its pass (pairing that pass's events again) and collects the notes starting in it.
 // * Named outcomes: `NoFile`; `StartOffset` (a loop start other than 0, from loop-start editing: skipped and reported
 //   rather than imported at an unconfirmed offset); `EmptySnapshot` (no notes or kept events: skipped — for LSV1 its
-//   passes may hold content);
-//   `ManyPasses` (more Active passes than the importer's runs); `Dense` (one span holds more notes or events than the
-//   collect area, or a pass more than `kOpen` notes open, or NoteOffs waiting, at once); `BadFormat`; `ImportRefused` (the importer refused —
-//   everything released); `IoError`. `PassStream` and `Edited` are no longer returned (kept for the outcome numbering).
+//   passes may hold content); `ManyPasses` (more Active passes than the importer's runs); `Dense` (one span holds more
+//   notes or events than the collect area, or a pass more than `kOpen` notes open, or NoteOffs waiting, at once);
+//   `BadFormat`; `ImportRefused` (the importer refused — everything released); `IoError`. `PassStream` and `Edited` are
+//   not returned (kept for the outcome numbering).
 // No allocation; each grain reads at most `kReadBytes`; the open-note table, the span histograms and the collect area
 // are the rest of the scratch.
 
@@ -147,7 +147,7 @@ class Lsv1Reader {
   uint32_t eventsRead() const { return eventsDone_; }
   /// Notes of the last pass stream with no NoteOff in their pass, imported held for the whole loop.
   uint32_t heldWhole() const { return heldWhole_; }
-  /// The last pass stream had legacy note edits, which were discarded: its passes are imported as recorded.
+  /// The last pass stream had note edits, which were discarded: its passes are imported as recorded.
   bool editsDiscarded() const { return edited_; }
   /// Why the import was refused (the importer's status), for the report.
   uint8_t importStatus() const { return static_cast<uint8_t>(import_->status()); }
@@ -508,7 +508,7 @@ class Lsv1Reader {
   Status tail() {
     if (!read(12)) return end(Status::BadFormat);
     if (u32(scratch_ + 4) != kTailMarker) return end(Status::BadFormat);
-    edited_ = u32(scratch_ + 8) != 0;  // the legacy note edits are discarded (owner 2026-11-05), the slot reported
+    edited_ = u32(scratch_ + 8) != 0;  // the V1 note edits are discarded, the slot reported
     // The Active passes in materialisation order (insertion sort, ≤ 16), those with notes only.
     noted_ = 0;
     uint32_t notes = 0;

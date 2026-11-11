@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Writing milestones and the checkpoint into the library (sets browser slice 1c-ii; DEC-258).
+// Writing milestones and the checkpoint into the library (DEC-258, library file).
 //
 // * `SetSnapshot` — the whole working set at one instant T0: every slot's history chain (states, current index, empty-
 //   below flag) captured and every captured manifest pinned until `release`, so changes made while the set is written
@@ -12,8 +12,9 @@
 //   (header, each slot's set file from the snapshot, sector-aligned) at the log's append point, programmed; then its
 //   index record, programmed; then the index header into the sector that is not current, programmed — only then is the
 //   milestone published. A checkpoint: the blob into the region that is not current, programmed, then its header,
-//   programmed. A trash, restore or empty-trash record (DEC-268): the record, programmed, then the index header — no
-//   blob, nothing older rewritten. A working-set change (DEC-269): the index header alone. Any failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
+//   programmed. A trash, restore or empty-trash record (DEC-268, trash): the record, programmed, then the index header
+//   — no blob, nothing older rewritten. A working-set change (DEC-269, named working set): the index header alone. Any
+//   failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
 // No allocation.
 
 #pragma once
@@ -96,7 +97,7 @@ class SetSnapshot {
       if (shortest_ == 0 || m.loopLengthTicks < shortest_) shortest_ = m.loopLengthTicks;
       if (m.loopLengthTicks > longest_) longest_ = m.loopLengthTicks;
       for (uint8_t k = 0; k < m.runCount; ++k) rows[s] += runs_->run(m.runs[k]).rowCount;
-      if (rows[s] == 0) rows[s] = 1;  // an empty loop (DEC-256) still shows
+      if (rows[s] == 0) rows[s] = 1;  // an empty loop still shows
       if (rows[s] > most) most = rows[s];
     }
     for (auto& b : mosaic_) b = 0;
@@ -214,7 +215,7 @@ class LibraryWriter {
     start(library::kLogBase + header_.appendSector, record_.sequence, m.tempoTenths, m.surface);
     return Result::Ok;
   }
-  /// Starts publishing a trash-side record (DEC-268): `kind` library::kTrash (`target` a milestone's sequence, or 0 for
+  /// Starts publishing a trash-side record: `kind` library::kTrash (`target` a milestone's sequence, or 0 for
   /// `set`'s shown milestones so far), kRestore (`target` the trash record's sequence) or kEmptyTrash. Only the record
   /// and the header are written; refused by name when the index is full.
   Result beginMark(uint8_t kind, uint16_t set, uint32_t target, uint32_t wallTime) {
@@ -233,7 +234,7 @@ class LibraryWriter {
     status_ = Status::Running;
     return Result::Ok;
   }
-  /// Starts publishing `set` (base milestone `base`, 0 none) as the working set (DEC-269): the index header alone, so it
+  /// Starts publishing `set` (base milestone `base`, 0 none) as the working set: the index header alone, so it
   /// needs no index record; a failed write leaves the previous header — and working set — current.
   Result beginWorking(uint16_t set, uint32_t base) {
     if (!mounted_) return Result::NotMounted;

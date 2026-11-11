@@ -1,23 +1,23 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Saving and loading the engine's slots on the card (fixed-memory-engine E9.7a; owner decisions 2026-11-05).
+// Saving and loading the engine's slots on the card.
 //
-// * New format, new folder (`kFolder`); V1 files are never written (their import is E9.7b).
-// * Approval (owner: once, remembered): nothing is written until the owner approves saving on the device; `approve`
+// * New format, new folder (`kFolder`); V1 files are never written (they are imported, `V1Import.h`).
+// * Approval (once, remembered): nothing is written until the owner approves saving on the device; `approve`
 //   creates the folder, and the folder's existence is the remembered approval (`probe` at boot). Without it the engine
 //   only reads.
-// * Autosave (owner: when settled): a slot whose history changed (current state identity, undo / redo depth) is saved
+// * Autosave (when settled): a slot whose history changed (current state identity, undo / redo depth) is saved
 //   once it has not changed for `kSettleUs` and no take or NOTE_EDIT session is open on it, one slot at a time, as
 //   persistence-class grains. A slot that changes during its save is saved again later.
-// * The store (E9.8g, owner 2026-11-06: a save must not hold the main loop — every file-system operation took 4–8 ms on
-//   the device, a save ~30 ms): one file, `store.bin`, created and preallocated in one contiguous run when saving is
+// * The store (a save must not hold the main loop — a file-system operation takes 4–8 ms on the device, a save
+//   ~30 ms): one file, `store.bin`, created and preallocated in one contiguous run when saving is
 //   approved (or at the first boot after), then only read and written sector by sector, with no file-system work. Each
 //   slot has two copies (A / B, `kCopySectors` each: a slot may hold the whole content pool); a save writes the copy
 //   that is not current, one sector write a grain — the body (`SaveJob`), its last partial sector, then the header with
 //   the next sequence (one counter past every copy the boot found, so a save reads nothing) — so an interrupted save
 //   leaves the current copy whole. The surface state alternates between two sectors. No write waits for the card
-//   (E9.8h; a stop that waited for the card to program took up to 8 ms): a grain writes only when the card says it is
+//   (a stop that waited for the card to program took up to 8 ms): a grain writes only when the card says it is
 //   `ready` for that sector, and a save or state write is complete only once the card is idle again (`closing_`: what
 //   it holds programmed).
 // * Boot load: every slot's valid copy with the later sequence is loaded (`LoadJob`: admission, CRC, full release on
@@ -25,16 +25,16 @@
 //   (`Stats::loadFailed`); loading never writes. A slot with no copy in the store is taken from before the store: its
 //   engine file `slot_NN.mle` (or the complete `slot_NN.tmp` an interrupted rename left), then written into the store
 //   (`Stats::migrated`; the files stay on the card, never written again). A slot with neither whose V1 file
-//   (`/MidiLooper/current/slots/loop_TT_SS.bin`, slot = TT x 8 + SS) holds an LSV1 snapshot is imported from it (E9.7b,
-//   `Lsv1Reader`: exact current content), as is one holding a pass stream (E9.7c: its Active passes as runs, legacy
+//   (`/MidiLooper/current/slots/loop_TT_SS.bin`, slot = TT x 8 + SS) holds an LSV1 snapshot is imported from it
+//   (`Lsv1Reader`: exact current content), as is one holding a pass stream (its Active passes as runs, V1
 //   note edits discarded and named: `v1EditedMask`); a loop-start-shifted or empty V1 slot is skipped and named
 //   (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved once approved; V1 files are
 //   never written.
-// * ControlSurface state (owner 2026-11-06, E9.8): the selected track and each track's selected slot, as `kStateBytes` bytes
+// * ControlSurface state: the selected track and each track's selected slot, as `kStateBytes` bytes
 //   from the surface (`setSurfaceState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
 //   persistence grain — into the store's state sectors ("MLS2", sequence, the state packed in 27 bits, a check word;
 //   before the store: `surface.mls`, read once); read at boot (`restoredSurfaceState`), none valid meaning none.
-//   DEC-293 (owner 2026-11-10): the muted tracks too, a fifth word in the sector with its own check (none before).
+//   The muted tracks too (DEC-293), a fifth word in the sector with its own check.
 // `Card`: the files read only (exists, makeDir, openRead, read, closeRead) and the store (openStore, readSector,
 // writeSector) — see `CardIo`.
 // No allocation.
@@ -52,7 +52,7 @@ namespace ContentEngine {
 
 /// The card, as the integration provides it (SD on the Teensy, a fake on the host).
 struct CardIo {
-  // Files, read only: engine files written before the store (E9.8g), V1 files.
+  // Files, read only: engine files written before the store, V1 files.
   virtual bool exists(const char* path) = 0;
   virtual bool makeDir(const char* path) = 0;
   virtual bool openRead(const char* path) = 0;
@@ -92,7 +92,7 @@ struct CardIo {
     (void)i;
     return true;
   }
-  /// Renames a file (false: not done — the target exists, the source is missing, or no card). Boot only (DEC-254: the
+  /// Renames a file (false: not done — the target exists, the source is missing, or no card). Boot only (the
   /// store's names); the default renames nothing.
   virtual bool rename(const char* from, const char* to) {
     (void)from, (void)to;
@@ -116,14 +116,14 @@ class Persistence : public ColdSink {
   // A save grain produces at most one sector (the CRC runs across chunks, so the file is the same whatever the chunk).
   static constexpr uint32_t kSaveChunk = 512;
   static constexpr uint32_t kSector = 512;
-  // DEC-254 (E4.6b): the run-once store. Sectors 0–1 the surface state; per slot two state-record copies of
+  // The run-once store (DEC-254). Sectors 0–1 the surface state; per slot two state-record copies of
   // `kCopySectors` (a header sector, then the slot stream without its rows: header, directory with each run's record
   // sector, states, CRC); then the run area (`RunStore.h`): each run once, as its own record.
   static constexpr const char* kStoreFile = "/MidiLooper/engine/store.bin";
-  // The DEC-253 store (whole slot copies): read once at boot to migrate into the run-once store, never written again.
-  // Kept as `store.bak` (owner 2026-11-11: "rename store.bin to .bak and rename store2.bin to store.bin").
+  // The two-copy store (DEC-253, whole slot copies): read once at boot to migrate into the run-once store, never
+  // written again; kept as `store.bak`.
   static constexpr const char* kOldStoreFile = "/MidiLooper/engine/store.bak";
-  // The run-once store's first name (E4.6b): renamed to `kStoreFile` at the next boot (`nameStores`).
+  // The run-once store's first name: renamed to `kStoreFile` at the next boot (`nameStores`).
   static constexpr const char* kInterimStoreFile = "/MidiLooper/engine/store2.bin";
   // The largest slot file: one slot may hold every content row (the pool is shared), each run once, every state.
   static constexpr uint32_t kMaxFileBytes = 24 + Config::kRunCount * 8u + Config::kContentRows * kSetFileRowBytes +
@@ -136,9 +136,9 @@ class Persistence : public ColdSink {
   static constexpr uint32_t kCopySectors = 1 + (kRecordBodyBytes + kSector - 1) / kSector;  // header + body
   static constexpr uint32_t kRunAreaBase = 2 + 2u * Slots * kCopySectors;
   static constexpr uint32_t kStoreSectors = kRunAreaBase + runstore::kAreaSectors;
-  // DEC-254 (E4.6c): each state-record copy's cold record — the slot's cold states, in the run area's last region
+  // Each state-record copy's cold record — the slot's cold states, in the run area's last region
   // (never taken for runs): magic "MLK1", the copy's sequence, the count, per state its revision, loop length and run
-  // records (sector, rows, kind), then a CRC-32. A copy without one (E4.6b) has no cold states.
+  // records (sector, rows, kind), then a CRC-32. A copy without one has no cold states.
   static constexpr uint32_t kColdMaxBytes = 10 + 99u * (9u + 9u * Config::kRunsPerManifest) + 4;
   static constexpr uint32_t kColdSectors = (kColdMaxBytes + kSector - 1) / kSector;
   static constexpr uint32_t kColdBase = runstore::kAreaSectors - 2u * Slots * kColdSectors;
@@ -152,7 +152,7 @@ class Persistence : public ColdSink {
   struct Sink {
     Persistence* p;
     bool write(const uint8_t* d, uint32_t n) {
-      if (!p->legacy_) return p->fifoPush(d, n);  // DEC-254: split by the persistence grain, one sector at a time
+      if (!p->legacy_) return p->fifoPush(d, n);  // split by the persistence grain, one sector at a time
       uint8_t* buf = p->sectorBuf();
       p->ioBytes_ += n;
       while (n != 0) {
@@ -173,7 +173,7 @@ class Persistence : public ColdSink {
     Persistence* p;
     bool read(uint8_t* d, uint32_t n) {
       if (!p->ioStore_) return p->card_->read(d, n);
-      if (!p->legacy_) return p->recordRead(d, n);  // DEC-254: the state record and the run records
+      if (!p->legacy_) return p->recordRead(d, n);  // the state record and the run records
       if (n > p->ioBytes_) return false;
       p->ioBytes_ -= n;
       uint8_t* buf = p->importScratch_;  // no V1 import runs while a store copy loads
@@ -201,28 +201,28 @@ class Persistence : public ColdSink {
     uint32_t loadFailed;     // engine files that failed to load (slot left empty)
     uint64_t loadFailedMask; // which slots
     uint32_t v1Imported;     // slots imported from V1 files
-    uint64_t v1SkippedMask;  // V1 slots skipped (owner: reported): a shifted loop start, or empty
+    uint64_t v1SkippedMask;  // V1 slots skipped (reported): a shifted loop start, or empty
     uint64_t v1OffsetMask;   // ... of them, skipped for a shifted loop start
     uint64_t v1EmptyMask;    // ... of them, without notes or kept events
     uint8_t v1Outcome[Slots];  // per slot: the reader's status (and the importer's in the high nibble when refused)
     uint64_t v1FailedMask;   // V1 slots that failed to read or import
-    uint64_t v1EditedMask;   // imported slots whose legacy note edits were discarded (owner 2026-11-05)
+    uint64_t v1EditedMask;   // imported slots whose V1 note edits were discarded
     uint32_t v1HeldWhole;    // imported notes that had no NoteOff in their pass: held for the whole loop
     uint32_t migrated;       // slots loaded from an engine file of before the store (written into the store)
     uint8_t store;           // 0: not opened (no approval yet), 1: ready, 2: could not be opened or created
-    // DEC-254 (E4.6b): the run-once store.
+    // The run-once store.
     uint32_t runsWritten;    // run records written
     uint32_t runSectors;     // ... their sectors
     uint32_t runsKept;       // runs a save found on the card already (not written again)
     uint32_t storeFull;      // saves refused: no contiguous room in the run area
     uint32_t badRun;         // run records that failed their check on load
-    uint32_t migratedSlots;  // slots carried from the DEC-253 store into the run-once store
+    uint32_t migratedSlots;  // slots carried from the two-copy store into the run-once store
     uint32_t storeRenamed;   // boot renames that put the run-once store at `store.bin` (`nameStores`)
-    // DEC-254 (E4.6c): the cold tier.
+    // The cold tier.
     uint32_t coldLoaded;     // cold states read at boot
     uint32_t coldBad;        // cold records that failed their check (the slot's cold states not loaded)
     uint32_t coldRestarts;   // saves restarted: the slot's cold states changed while they were written
-    // DEC-254 (E4.6d): fetches.
+    // Fetches.
     uint32_t fetches;        // fetches that arrived (switched to, or kept when the slot moved meanwhile)
     uint32_t fetchedStates;  // cold states made hot
     uint32_t fetchSectors;   // sectors read by fetches
@@ -318,7 +318,7 @@ class Persistence : public ColdSink {
         changedAt_[s] = stamp(nowUs);
       }
     }
-    if (!approved_ || booting() || saving_ != kNone || stateDue_ || fetching()) return;  // E4.6d: a fetch first
+    if (!approved_ || booting() || saving_ != kNone || stateDue_ || fetching()) return;  // a fetch first
     for (uint8_t s = 0; s < Slots; ++s) {
       if (seen_[s] == saved_[s] || s == busySlotA || s == busySlotB) continue;
       if (static_cast<uint32_t>(static_cast<uint16_t>(stamp(nowUs) - changedAt_[s])) * 1024u < kSettleUs) continue;
@@ -330,7 +330,7 @@ class Persistence : public ColdSink {
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_ || fetching(); }
-  /// DEC-254 (E4.6d): a fetch is under way (not yet arrived).
+  /// A fetch is under way (not yet arrived).
   bool fetching() const { return fetchSlot_ != kNone && !fetchArrived_; }
   /// A fetch arrived: its slot and the state the presses were made on; the engine switches (once).
   bool takeFetch(uint8_t& slot, ManifestId& floor) {
@@ -344,8 +344,8 @@ class Persistence : public ColdSink {
   }
   /// A save or state write is on the card and not yet programmed (the milestone library waits for it, DEC-258).
   bool onCard() const { return saving_ != kNone || closing_; }
-  /// For the display's save dots (E9.8k): a slot is being written. The surface state (the selection) is saved
-  /// silently: a track switch must not hide the screen's progress line behind the dots (owner 2026-11-06).
+  /// For the display's save dots: a slot is being written. The surface state (the selection) is saved
+  /// silently: a track switch must not hide the screen's progress line behind the dots.
   bool writing() const { return saving_ != kNone || closingSave_; }
   /// A slot changed since its last save (it is saved once settled).
   bool unsaved() const {
@@ -364,20 +364,20 @@ class Persistence : public ColdSink {
     stateKnown_ = true;
     stateChangedUs_ = nowUs;
   }
-  /// E9.8b-3c: the engine's settings saved with the surface state — the GROOVE cycle's bars (1–255; 0: not saved).
+  /// The engine's settings saved with the surface state — the GROOVE cycle's bars (1–255; 0: not saved).
   void setSettings(uint8_t cycleBars, uint32_t nowUs) {
     if (cycleBars == settings_) return;
     settings_ = cycleBars;
     stateChangedUs_ = nowUs;
   }
-  /// The settings read at boot (0: none — a state saved before E9.8b-3c).
+  /// The settings read at boot (0: none — a state sector without a settings word).
   uint8_t restoredCycleBars() const { return settingsRead_; }
   /// The state read at boot. False: none (no file, or a bad one).
   bool restoredSurfaceState(uint8_t* out) const {
     if (stateRead_ == kNoState) return false;
     out[0] = stateRead_ & 7;  // the selected track; then track t's slot, t x 8 + its index
     for (uint8_t t = 0; t < kTracks; ++t) out[1 + t] = static_cast<uint8_t>(t * 8 + ((stateRead_ >> (3 + 3 * t)) & 7));
-    out[kStateBytes - 1] = mutesRead_;  // bit t: track t muted (none in a state saved before DEC-293)
+    out[kStateBytes - 1] = mutesRead_;  // bit t: track t muted (zeros: none)
     return true;
   }
   /// One persistence grain: a save chunk, or a load grain, or the next boot file opened.
@@ -389,7 +389,7 @@ class Persistence : public ColdSink {
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
     if (importing_ != kNone) return stepImport();
-    if (fetching()) return stepFetch();  // DEC-254 (E4.6d)
+    if (fetching()) return stepFetch();
     if (stateDue_) {  // the card is idle here (`closing_`): the write does not wait
       writeState();
       closing_ = store_;
@@ -436,7 +436,7 @@ class Persistence : public ColdSink {
 
   const Stats& stats() const { return stats_; }
   bool savedCurrent(uint8_t slot) const { return seen_[slot] == saved_[slot]; }
-  /// DEC-254 (diagnostics, tests): run `id`'s record's first store sector, or `kNoSector` when it is not on the card.
+  /// Diagnostics, tests: run `id`'s record's first store sector, or `kNoSector` when it is not on the card.
   uint32_t runRecordSector(RunId id) const {
     const runstore::CardRun& c = cardRun_[id];
     return c.serial != 0 && c.serial == runs_->run(id).serial ? kRunAreaBase + c.sector : runstore::kNoSector;
@@ -476,7 +476,7 @@ class Persistence : public ColdSink {
     return v;
   }
   static constexpr uint8_t kTracks = 8;
-  /// The muted tracks' word after the state's four (DEC-293): "MU", the mask, its complement (a check of its own, so a
+  /// The muted tracks' word after the state's four: "MU", the mask, its complement (a check of its own, so a
   /// state sector of before — zeros there — reads as none muted and stays valid).
   static uint32_t muteWord(uint8_t m) { return 0x4D550000u | static_cast<uint32_t>(m) << 8 | static_cast<uint8_t>(~m); }
   static uint8_t mutesOf(const uint8_t* b) {
@@ -486,7 +486,7 @@ class Persistence : public ColdSink {
     return w == muteWord(m) ? m : 0;
   }
   static uint32_t settingsWord(uint8_t c) { return 0x53450000u | static_cast<uint32_t>(c) << 8 | static_cast<uint8_t>(~c); }
-  static uint8_t settingsOf(const uint8_t* b) {  // bytes 20–23 ("SE"): none in a sector written before E9.8b-3c
+  static uint8_t settingsOf(const uint8_t* b) {  // bytes 20–23 ("SE"): zeros read as none
     const uint32_t w = b[20] | static_cast<uint32_t>(b[21]) << 8 | static_cast<uint32_t>(b[22]) << 16 |
                        static_cast<uint32_t>(b[23]) << 24;
     const uint8_t c = static_cast<uint8_t>(w >> 8);
@@ -561,7 +561,7 @@ class Persistence : public ColdSink {
 
   // ---- The store -------------------------------------------------------------------------------------------------------
   // Sectors 0–1: the surface state. Slot s, copy c (A = 0, B = 1): `kCopySectors` from `copyBase(s, c)` — a header
-  // sector (magic "MLC1", slot, sequence, body bytes, check word), then the body (the slot file of E8.1). A save writes
+  // sector (magic "MLC1", slot, sequence, body bytes, check word), then the body (the slot file, `SlotFile.h`). A save writes
   // the copy that is not current: the body, then the header with the next sequence — an interrupted save leaves the
   // current copy whole. Boot loads the valid copy with the later sequence (the other
   // when it fails its CRC).
@@ -583,7 +583,7 @@ class Persistence : public ColdSink {
     return ((slot * 0x9E3779B1u) ^ (seq * 2654435761u) ^ (bytes * 0x85EBCA77u)) + 0x5A5A5A5Au;
   }
   /// Opens the run-once store (creating it when missing; a new store's headers are cleared: its sectors hold old card
-  /// data). `boot`: when the run-once store is new and the DEC-253 store is there, that one is opened instead and read
+  /// data). `boot`: when the run-once store is new and the two-copy store is there, that one is opened instead and read
   /// (`legacy_`); the boot's slots are then written into the run-once store (`finishMigration`).
   void openStore(uint8_t* buf, bool boot) {
     if (boot) nameStores();
@@ -600,17 +600,17 @@ class Persistence : public ColdSink {
       closing_ = true;  // once, at creation: these writes may wait for the card
       bool old = false;
       if (store_ && boot && card_->openStore(kOldStoreFile, kOldStoreSectors, false, old)) {
-        legacy_ = migrate_ = true;  // read the DEC-253 store; the run-once store is written after the boot
+        legacy_ = migrate_ = true;  // read the two-copy store; the run-once store is written after the boot
       } else if (store_) {
         store_ = card_->openStore(kStoreFile, kStoreSectors, false, created);
       }
     }
     stats_.store = store_ ? 1 : 2;
   }
-  /// At boot, before the store opens (owner 2026-11-11): the DEC-253 store becomes `store.bak` and the run-once store
-  /// `store.bin`. A card with the interim `store2.bin`: `store.bin` (the DEC-253 store) is renamed `.bak`, then
-  /// `store2.bin` takes its name. A card with only the DEC-253 store under `store.bin` (shorter than the run-once store):
-  /// it is renamed `.bak`, so the boot migrates from it. Nothing is renamed over an existing file; nothing is deleted.
+  /// At boot, before the store opens: the two-copy store becomes `store.bak` and the run-once store `store.bin`. A card
+  /// with the interim `store2.bin`: `store.bin` (the two-copy store) is renamed `.bak`, then `store2.bin` takes its
+  /// name. A card with only the two-copy store under `store.bin` (shorter than the run-once store): it is renamed
+  /// `.bak`, so the boot migrates from it. Nothing is renamed over an existing file; nothing is deleted.
   void nameStores() {
     if (card_->exists(kInterimStoreFile)) {
       if (card_->exists(kStoreFile) && !card_->exists(kOldStoreFile)) card_->rename(kStoreFile, kOldStoreFile);
@@ -621,7 +621,7 @@ class Persistence : public ColdSink {
     if (n != 0 && n < kStoreSectors && !card_->exists(kOldStoreFile) && card_->rename(kStoreFile, kOldStoreFile))
       ++stats_.storeRenamed;
   }
-  /// After a boot that read the DEC-253 store: the run-once store, and every slot with a history saved into it.
+  /// After a boot that read the two-copy store: the run-once store, and every slot with a history saved into it.
   void finishMigration() {
     migrate_ = false;
     bool created = false;
@@ -636,7 +636,7 @@ class Persistence : public ColdSink {
       }
     if (stateRead_ != kNoState) stateSaved_ = kNoState;  // the surface state too
   }
-  /// The run-area extents slot `s`'s copy `c` lists, held (the boot's cluster map: DEC-254, reclaim at boot).
+  /// The run-area extents slot `s`'s copy `c` lists, held (the boot's cluster map, reclaimed at boot).
   void markCopy(uint8_t s, uint8_t c, uint32_t bytes) {
     uint8_t* b = importScratch_;
     uint32_t next = copyBase(s, c) + 1, at = kSector, pos = 0, count = 0, seen = 0, got = 0;
@@ -660,7 +660,7 @@ class Persistence : public ColdSink {
       }
     }
   }
-  // ---- DEC-254: saving into the run-once store, one sector a grain --------------------------------------------------
+  // ---- saving into the run-once store, one sector a grain --------------------------------------------------
   // `SaveJob` writes the slot stream into a FIFO (`Sink`); `splitStep` reads it: the header, the directory (each run
   // with its record's sector — a run on the card keeps its record, a new one gets an extent) and the states go to the
   // state record's body; a new run's rows go to its record (its header last), a kept run's rows nowhere. A sector ready
@@ -854,7 +854,7 @@ class Persistence : public ColdSink {
       }
       return true;
     }
-    if (sealStage_ == 1) {  // E4.6c: the copy's cold record, before its header seals the copy
+    if (sealStage_ == 1) {  // the copy's cold record, before its header seals the copy
       coldBegin(s);
       sealStage_ = 3;
       return true;
@@ -868,7 +868,7 @@ class Persistence : public ColdSink {
       if (r > 0) sealStage_ = 4;
       return true;
     }
-    // The header, last, with the next sequence: the copy is the current one once it is written (stage 4).
+    // The header, last, with the next sequence: the copy is the current one once it is written.
     uint8_t* b = sectorBuf();
     for (uint32_t i = 0; i < kSector; ++i) b[i] = 0;
     putWords(b, kCopyMagic, s, savingSeq_, ioBytes_);
@@ -878,7 +878,7 @@ class Persistence : public ColdSink {
     sealStage_ = 2;
     return true;
   }
-  // ---- DEC-254 (E4.6c): the cold tier -------------------------------------------------------------------------------
+  // ---- the cold tier -------------------------------------------------------------------------------
  public:
   bool demote(uint8_t slot, ManifestId m) override {
     if (!store_ || legacy_) return false;
@@ -894,7 +894,7 @@ class Persistence : public ColdSink {
     }
     return coldTier_.push(slot, d.revision, d.loopLengthTicks, refs, d.runCount);
   }
-  /// Run `id`'s record sector: known, or (E4.6e) one of the slot being loaded from its records — its own oldest
+  /// Run `id`'s record sector: known, or one of the slot being loaded from its records — its own oldest
   /// states may go cold while it loads, before the load maps its runs. kNoSector: not on the card.
   uint32_t cardSectorOf(RunId id) const {
     const runstore::CardRun& c = cardRun_[id];
@@ -907,8 +907,8 @@ class Persistence : public ColdSink {
   uint8_t coldCount(uint8_t slot) const override { return coldTier_.count(slot); }
   void dropOldestCold(uint8_t slot) override { coldTier_.dropOldest(slot); }
   void clearCold(uint8_t slot) override { coldTier_.clearSlot(slot); }
-  /// E4.6d: an undo at the slot's cold floor — the next cold state below; a press during the fetch reaches one deeper
-  /// (owner 2026-11-11: only the final target is switched to).
+  /// An undo at the slot's cold floor — the next cold state below; a press during the fetch reaches one deeper
+  /// (only the final target is switched to).
   void requestFetch(uint8_t slot) override {
     if (!store_ || legacy_ || slot >= Slots) return;
     if (fetchSlot_ == kNone) {
@@ -946,7 +946,8 @@ class Persistence : public ColdSink {
     runstore::put32(item_ + itemLen_, v);
     itemLen_ = static_cast<uint8_t>(itemLen_ + 4);
   }
-  /// The cold record's bytes until a sector is to be written: 1 done, 0 more to come, -1 the slot's cold states changed.
+  /// The cold record's bytes until a sector is to be written: 1 done, 0 more to come, -1 the slot's cold states
+  /// changed.
   int8_t coldStep(uint8_t s) {
     while (pendSector_ == runstore::kNoSector) {
       if (itemPos_ == itemLen_) {
@@ -1053,7 +1054,7 @@ class Persistence : public ColdSink {
     }
   }
 
-  // ---- DEC-254 (E4.6d): the fetch -----------------------------------------------------------------------------------
+  // ---- the fetch -----------------------------------------------------------------------------------
   static constexpr uint8_t kFetchSectors = 4;  // a grain reads at most this many (the boot's 32 took 31 ms)
   /// A run in PSRAM whose record is at area sector `sector` (kNoRun: none).
   RunId cardRunAt(uint32_t sector) const {
@@ -1206,7 +1207,7 @@ class Persistence : public ColdSink {
     saved_[s] = savingPrint_;
     return false;
   }
-  // ---- DEC-254: loading from the run-once store ------------------------------------------------------------------
+  // ---- loading from the run-once store ------------------------------------------------------------------
   // The slot stream rebuilt for `LoadJob`: the header and directory from the state record (each entry's record sector
   // kept), each run's rows from its record (its header checked first, its rows' CRC at its end), the states and CRC
   // from the state record again.
@@ -1328,7 +1329,7 @@ class Persistence : public ColdSink {
       seq[c] = w[2];
       bytes_[c] = bytes;
     }
-    if (!legacy_)  // DEC-254: what either valid copy lists stays held (a boot may fall back to the other)
+    if (!legacy_)  // what either valid copy lists stays held (a boot may fall back to the other)
       for (uint8_t c = 0; c < 2; ++c)
         if (valid[c]) {
           copySeq_[c] = seq[c];
@@ -1353,7 +1354,7 @@ class Persistence : public ColdSink {
     ioNext_ = copyBase(s, c) + 1;
     ioBytes_ = w[3];
     ioFill_ = kSector;
-    ld_ = Split::Head;  // DEC-254: the record source from its start
+    ld_ = Split::Head;  // the record source from its start
     ldCount_ = 0;
     loading_ = s;  // `openRun` checks the records' slot
     if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, s, source_, loadScratch_) !=
@@ -1461,12 +1462,12 @@ class Persistence : public ColdSink {
     loading_ = kNone;
     if (fromStore_) {
       if (st == Load::Status::Done) {
-        if (!legacy_) {  // DEC-254: the loaded runs are on the card, in the records the state record names
+        if (!legacy_) {  // the loaded runs are on the card, in the records the state record names
           for (uint16_t i = 0; i < ldCount_; ++i) {
             const RunId id = load_.directoryRun(i);
             cardRun_[id] = runstore::CardRun{runSector_[i], runs_->run(id).serial};
           }
-          readCold(s, loadingCopy_, copySeq_[loadingCopy_], false);  // E4.6c: below the hot states
+          readCold(s, loadingCopy_, copySeq_[loadingCopy_], false);  // below the hot states
         }
         ++stats_.loads;
         saved_[s] = seen_[s] = fingerprint(s);  // what the store holds
@@ -1571,8 +1572,8 @@ class Persistence : public ColdSink {
   uint16_t ioFill_ = 0;                // bytes used of the sector buffer
   bool ioStore_ = false;               // the load reads the store (else a file)
   bool stateDue_ = false, stateKnown_ = false;
-  uint8_t mutes_ = 0, mutesSaved_ = 0, mutesRead_ = 0;  // DEC-293: bit t, track t muted (in the padding before)
-  uint8_t settings_ = 0, settingsSaved_ = 0, settingsRead_ = 0;  // E9.8b-3c: the GROOVE cycle's bars (0: none)
+  uint8_t mutes_ = 0, mutesSaved_ = 0, mutesRead_ = 0;  // bit t, track t muted
+  uint8_t settings_ = 0, settingsSaved_ = 0, settingsRead_ = 0;  // the GROOVE cycle's bars (0: none)
   uint32_t state_ = 0, stateSaved_ = 0, stateRead_ = 0xFFFFFFFFu, stateChangedUs_ = 0;
   uint8_t saving_ = kNone, loading_ = kNone, bootNext_ = Slots;
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};
@@ -1584,9 +1585,9 @@ class Persistence : public ColdSink {
   uint8_t* importScratch_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   uint8_t importing_ = kNone;
-  // DEC-254 (E4.6b): the run-once store.
+  // The run-once store.
   enum class Split : uint8_t { Head, Dir, Rows, Tail };
-  bool legacy_ = false;   // the DEC-253 store is open (read at boot to migrate)
+  bool legacy_ = false;   // the two-copy store is open (read at boot to migrate)
   bool migrate_ = false;  // ... and the run-once store is to take its slots after the boot
   bool saveDone_ = false;
   uint8_t sealStage_ = 0, runEnd_ = 0, got_ = 0, outLen_ = 0, outPos_ = 0;
@@ -1601,14 +1602,14 @@ class Persistence : public ColdSink {
   bool runWrite_[Runs::kRunCount] = {};
   runstore::CardRun cardRun_[Runs::kRunCount];
   runstore::ClusterMap clusters_;
-  // DEC-254 (E4.6c): the cold tier and the cold record being written.
+  // The cold tier and the cold record being written.
   cold::ColdTier<Slots> coldTier_;
   uint16_t coldSt_ = cold::kNone, coldEpoch_ = 0;
   uint8_t coldLeft_ = 0, coldPhase_ = 0, coldRun_ = 0, itemLen_ = 0, itemPos_ = 0;
   uint8_t item_[16] = {};
   uint16_t coldFill_ = 0;
   uint32_t coldOut_ = 0, coldCrc_ = 0, copySeq_[2] = {};
-  // DEC-254 (E4.6d): the fetch.
+  // The fetch.
   uint8_t fetchSlot_ = kNone, fWant_ = 0, fGot_ = 0, fPhase_ = 0, fN_ = 0, fR_ = 0, fetchCold_ = 0;
   bool fetchArrived_ = false, fHead_ = false;
   ManifestId fetchFloor_ = kNoManifest, fetchOldest_ = kNoManifest;

@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Sets browser slice 2a (DEC-259): loading a milestone, returning to the checkpoint, restoring after a failed load.
+// Loading a milestone (DEC-259, whole-set load), returning to the checkpoint, restoring after a failed load.
 //
 // * `BlobReader` loads a set written by `LibraryWriter` (a milestone in the log, or the checkpoint) into a set whose
 //   slots have no history: its header, then each slot's file through `LoadJob`, one library sector a grain.
@@ -9,7 +9,7 @@
 //   transaction: a failure there changes nothing), then clears every slot's history, then loads the milestone. A load
 //   that fails after the clear is undone by loading the checkpoint back (`Restored`); only when that fails as well is
 //   the set left as far as it got (`Lost`). Return clears and loads the checkpoint, writing nothing.
-// * Get a loop (DEC-270): `StateReader` reads one slot of a milestone for another slot — its current state only, the
+// * Get a loop: `StateReader` reads one slot of a milestone for another slot — its current state only, the
 //   caller's to place (`takeGot`); no checkpoint, no clear, no history touched; a failed read or an empty source slot
 //   changes nothing (`Unchanged`).
 // * The caller loads only with the transport stopped, no take and no NOTE_EDIT session open, and resets the tracks in
@@ -56,7 +56,7 @@ class BlobReader {
   using Load = LoadJob<Pool, Runs, Manifests, HistoryT, Source, library::kSector>;
 
   /// Starts loading the set whose header is library sector `at`, written as sequence `sequence`: the slots in `slots`
-  /// (bit s), or — `detached` (DEC-261) — only their current states, as manifests the caller owns (`detachedState`).
+  /// (bit s), or — `detached` — only their current states, as manifests the caller owns (`detachedState`).
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res,
              NoteIdSource& ids, uint32_t at, uint32_t sequence, uint8_t* scratch, uint64_t slots = ~0ull,
              bool detached = false, const uint8_t* adoptSlot = nullptr, const ManifestId* adoptState = nullptr,
@@ -113,7 +113,7 @@ class BlobReader {
     left_ = blob_.slotBytes[slot_];
     fill_ = library::kSector;  // nothing buffered: the first read takes the slot's first sector
     source_.r = this;
-    ManifestId adopt = kNoManifest;  // a staged state for this slot (DEC-261)
+    ManifestId adopt = kNoManifest;  // a staged state for this slot
     for (uint8_t k = 0; k < adoptCount_; ++k)
       if (adoptSlot_[k] == slot_) adopt = adoptState_[k];
     if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, slot_, source_, scratch_, detached_, adopt) !=
@@ -167,7 +167,7 @@ class BlobReader {
   Status status_ = Status::Idle;
 };
 
-/// Get a loop (DEC-270; plan §6.2 fix 1: a read must not take what live takes rely on): one slot file of a set written
+/// Get a loop (a read must not take what live takes rely on): one slot file of a set written
 /// by `LibraryWriter`, its current state made for slot `into` — only the runs that state lists — detached (one
 /// reference, the caller's: `take`). Pass 1 streams the whole file once for its CRC, keeping the run directory and the
 /// current state's run list, no rows; pass 2 reads just those runs' rows (admitted before any is read, written as owed
@@ -182,7 +182,7 @@ class StateReader {
   static constexpr uint32_t kGrainBytes = 2048;
 
   /// Starts reading slot `from` of the set whose header is library sector `at` (written as `sequence`) for `into`.
-  /// `preview` (plan §6.2 fix 1): into preview runs, within the preview partition — larger fails `Capacity`.
+  /// `preview`: into preview runs, within the preview partition — larger fails `Capacity`.
   void start(Card& card, Pool& pool, Runs& runs, Manifests& manifests, Reservations& res, NoteIdSource& ids,
              uint32_t at, uint32_t sequence, uint8_t from, uint8_t into, bool preview = false) {
     cancel();
@@ -333,12 +333,12 @@ class StateReader {
           e.origin = b[15];
           ++row_;
           --budget;
-          if (legacyFitRow(legacyFit_, runs_->run(run_[k_]).kind, e.status)) continue;  // DEC-285: forgiven at the seal
+          if (legacyFitRow(legacyFit_, runs_->run(run_[k_]).kind, e.status)) continue;  // a version-3 fit lookup (DEC-285): forgiven at the seal
           if (!res_->writeOwed(run_[k_], e)) return fail(Why::BadFile);
         }
         if (k_ < count_) return status_;
         for (uint8_t k = 0; k < count_; ++k) {
-          res_->forgive(run_[k]);  // version-3 fit lookups not loaded (DEC-285)
+          res_->forgive(run_[k]);  // version-3 fit lookups not loaded
           runs_->seal(run_[k]);
         }
         const ManifestId m = manifests_->create(into_, revision_, loop_, run_, count_, *runs_);
@@ -423,7 +423,7 @@ class StateReader {
   Why why_ = Why::None;
   Phase phase_ = Phase::Blob;
   Status status_ = Status::Idle;
-  bool legacyFit_ = false;  // a version-3 slot file (DEC-285); in the class's tail padding
+  bool legacyFit_ = false;  // a version-3 slot file; in the class's tail padding
 };
 
 template <typename Card, typename Pool, typename Runs, typename Manifests, typename HistoryT, uint8_t Slots>
@@ -455,11 +455,12 @@ class SetLoad {
     ctx_ = ctx;
   }
 
-  /// Starts loading milestone `index`. `c` describes the checkpoint written first (the working set's base, its set,
-  /// the time, tempo and surface state); its `loaded` is set to the milestone's sequence here.
+  /// Starts loading milestone `index`. `c` describes the checkpoint written first (the working set's base, its set, the
+  /// time, tempo and surface state); its `loaded` is set to the milestone's sequence here.
   /// `atSwitch` (a live load, DEC-260): after the checkpoint the load waits for `release` — the switch point — before
-  /// anything is cleared. `stageTracks` (bit t, DEC-261): for each, the milestone's selected slot of that track is
-  /// staged first — its current state loaded beside the playing set (`staged`), for a switch without a gap.
+  /// anything is cleared. `stageTracks` (bit t, DEC-261, gapless live switch): for each, the milestone's selected slot
+  /// of that track is staged first — its current state loaded beside the playing set (`staged`), for a switch without a
+  /// gap.
   Result beginLoad(uint16_t index, typename CaptureWriter::Checkpoint c, bool atSwitch = false, uint8_t stageTracks = 0) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
@@ -475,9 +476,9 @@ class SetLoad {
     stageTracks_ = atSwitch ? stageTracks : 0;
     return start();
   }
-  /// Get a loop (DEC-270): starts reading slot `from` of milestone `index` for slot `into` — its current state only,
+  /// Get a loop: starts reading slot `from` of milestone `index` for slot `into` — its current state only,
   /// detached (`takeGot` once Done). Unchanged: the read failed or the slot was empty there; nothing changed.
-  /// `preview` (plan §6.2 fix 1): into the preview partition (a picker's preview, never kept as it is).
+  /// `preview`: into the preview partition (a picker's preview, never kept as it is).
   Result beginGet(uint16_t index, uint8_t from, uint8_t into, bool preview = false) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
@@ -561,7 +562,7 @@ class SetLoad {
   }
 
   bool busy() const { return status_ == Status::Running; }
-  /// DEC-261: track `t`'s staged content once staging ended (kNoManifest: none) and its slot; the caller launches it
+  /// Track `t`'s staged content once staging ended (kNoManifest: none) and its slot; the caller launches it
   /// and, when the load has ended, gives the references back (`releaseStaged`).
   ManifestId staged(uint8_t t) const { return t < kTracks ? staged_[t] : kNoManifest; }
   uint8_t stagedSlot(uint8_t t) const { return t < kTracks ? stageSlot_[t] : kNoSlot; }
@@ -602,7 +603,7 @@ class SetLoad {
   uint32_t setSequence() const {
     return kind_ != Kind::Return && !restoring_ ? record_.sequence : checkpoint_.sequence;
   }
-  /// One staging grain (DEC-261): the set's header (which slot each staged track selects), then those slots' current
+  /// One staging grain: the set's header (which slot each staged track selects), then those slots' current
   /// states, detached. Staging that fails leaves nothing staged: those tracks take the gap.
   Status stage() {
     if (!stageStarted_) {

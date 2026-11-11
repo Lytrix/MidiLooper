@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The engine's slot file (fixed-memory-engine E8.1; owner decision 2026-11-05: a new format in a new folder, V1 files
-// imported read-only and never overwritten, nothing written to the card before the owner approves saving).
+// The engine's slot file: a new format in a new folder; V1 files are imported read-only and never overwritten, and
+// nothing is written to the card before the owner approves saving.
 //
 // One file per slot, little-endian:
 //   header     magic "MLE1", version, slot, flags (bit 0: the empty slot lies below the oldest state), loop length,
@@ -15,10 +15,10 @@
 // history selects (states); nothing derived.
 //
 // `SaveJob` writes a slot in persistence grains of at most `ChunkBytes` (one sink write per grain), pinning the
-// manifests it reads until it ends. `LoadJob` is writer-class admission (plan § 5.5): after the directory it reserves
-// every row against content quota or refuses by name, then appends the rows in grains, creates the manifests, and checks
-// the CRC; only then does it publish the slot's history. Any failure (I/O, format, CRC, capacity) releases everything
-// it took. `Sink::write(data, n)` / `Source::read(data, n)` return false on an I/O error. No allocation.
+// manifests it reads until it ends. `LoadJob` is writer-class admission: after the directory it reserves every row
+// against content quota or refuses by name, then appends the rows in grains, creates the manifests, and checks the CRC;
+// only then does it publish the slot's history. Any failure (I/O, format, CRC, capacity) releases everything it took.
+// `Sink::write(data, n)` / `Source::read(data, n)` return false on an I/O error. No allocation.
 
 #pragma once
 
@@ -34,7 +34,7 @@
 namespace ContentEngine {
 
 constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
-// Version 2 (owner 2026-11-08): a note's NoteOn row may carry `kVelocityMuted`. A version-1 file never does, so it
+// Version 2: a note's NoteOn row may carry `kVelocityMuted`. A version-1 file never does, so it
 // loads as it is; older engine firmware refuses version 2 by name rather than sending the bit.
 // Version 3 (DEC-257): a state may list a fit run (kind `kFit`), lookups that are not content; older firmware would
 // compose it as notes.
@@ -47,7 +47,7 @@ constexpr uint32_t kSetFileMagic = 0x31454C4Du;  // "MLE1"
 constexpr uint16_t kSetFileVersion = 5;
 constexpr uint16_t kSetFileOldestVersion = 1;
 constexpr uint32_t kSetFileRowBytes = 16;
-/// A version-3 fit lookup (filter, cross, held: RunId-keyed, DEC-285): not loaded.
+/// A version-3 fit lookup (filter, cross, held: RunId-keyed, DEC-285 fit run by position): not loaded.
 inline bool legacyFitRow(bool legacy, uint8_t kind, uint8_t status) {
   return legacy && kind == RunKind::kFit && status >= kFitFilterStatus && status <= kFitHeldStatus;
 }
@@ -81,7 +81,7 @@ class SaveJob {
     ownPins_ = true;
     return st;
   }
-  /// Starts saving `slot` from a captured chain (sets browser 1c-ii, DEC-258: a whole-set snapshot taken at one
+  /// Starts saving `slot` from a captured chain (a whole-set snapshot taken at one
   /// instant, whose owner holds the pins) instead of the live history. The job pins nothing itself.
   Status startChain(Pool& pool, Runs& runs, Manifests& manifests, uint8_t slot, const ManifestId* chain, uint8_t n,
                     int16_t current, bool emptyBelow, Sink& sink, uint32_t noteIdHigh, uint8_t* scratch) {
@@ -139,7 +139,7 @@ class SaveJob {
     if (status_ == Status::Running) end(Status::Idle);
   }
   Status status() const { return status_; }
-  /// The directory's run `i` (first-use order; DEC-254: the run-once store's sink names each run's record by it).
+  /// The directory's run `i` (first-use order; the run-once store's sink names each run's record by it).
   RunId directoryRun(uint16_t i) const { return run_[i]; }
   uint32_t totalRows() const { return totalRows_; }
 
@@ -259,11 +259,11 @@ class LoadJob {
   static constexpr uint8_t kMaxStates = Config::kHistoryDepth;
   using Reservations = RowReservations<Pool, Runs>;
 
-  /// Starts loading into `slot`, which must have no history. `scratch` holds ChunkBytes. `detached` (sets browser 2b-ii,
-  /// DEC-261: a switch's staged content): the slot's history is left as it is; only the file's current state is kept,
-  /// as a manifest the caller owns (`detachedState`, one reference), and the other states are released. `adoptCurrent`
-  /// (DEC-261): that staged state — the same content, already playing — becomes the slot's current state instead of a
-  /// new manifest (SlotUndoHistory takes a reference of its own), so the track playing it continues untouched.
+  /// Starts loading into `slot`, which must have no history. `scratch` holds ChunkBytes. `detached` (a set switch's
+  /// staged content, DEC-261): the slot's history is left as it is; only the file's current state is kept, as a
+  /// manifest the caller owns (`detachedState`, one reference), and the other states are released. `adoptCurrent`: that
+  /// staged state — the same content, already playing — becomes the slot's current state instead of a new manifest
+  /// (SlotUndoHistory takes a reference of its own), so the track playing it continues untouched.
   Status start(Pool& pool, Runs& runs, Manifests& manifests, HistoryT& history, Reservations& res, NoteIdSource& ids,
                uint8_t slot, Source& source, uint8_t* scratch, bool detached = false,
                ManifestId adoptCurrent = kNoManifest) {
@@ -358,7 +358,7 @@ class LoadJob {
       }
       case Phase::States: {
         for (uint16_t k = 0; k < runCount_; ++k) {  // every row is in: the runs are immutable
-          res_->forgive(run_[k]);  // version-3 fit lookups not loaded (DEC-285)
+          res_->forgive(run_[k]);  // version-3 fit lookups not loaded
           runs_->seal(run_[k]);
         }
         for (uint8_t i = 0; i < states_; ++i) {
@@ -419,7 +419,7 @@ class LoadJob {
     if (status_ == Status::Running) fail(Status::Idle);
   }
   Status status() const { return status_; }
-  /// The run loaded for directory entry `i` (DEC-254: the run-once store maps it to its record once loaded).
+  /// The run loaded for directory entry `i` (the run-once store maps it to its record once loaded).
   RunId directoryRun(uint16_t i) const { return run_[i]; }
   /// A detached load's current state (kNoManifest: the file's current is the empty slot).
   ManifestId detachedState() const { return detachedState_; }
@@ -464,17 +464,17 @@ class LoadJob {
   uint32_t loop_ = 0, crc_ = 0, noteIdHigh_ = 0, row_ = 0;
   uint16_t runCount_ = 0, r_ = 0;
   Phase phase_ = Phase::Header;
-  bool legacyFit_ = false;  // a version-3 file (DEC-285); in the byte before `run_`'s alignment
+  bool legacyFit_ = false;  // a version-3 file; in the byte before `run_`'s alignment
   RunId run_[Runs::kRunCount];
   uint32_t rows_[Runs::kRunCount];
   ManifestId made_list_[kMaxStates];
   Status status_ = Status::Idle;
 };
 
-/// V1 import (E8.2; owner decision 2026-11-05: exact current content only). A V1 slot's current content — its resolved
+/// V1 import: exact current content only. A V1 slot's current content — its resolved
 /// notes and events, as the old firmware plays them (LSV1 `LoopSnapshot`) — becomes one take, one manifest and the
 /// slot's only history state; no undo history from before the import. Notes come in start order and events in tick
-/// order, each stream on its own (E9.7b: events take a run of their own, listed first in the manifest so an event on a
+/// order, each stream on its own (events take a run of their own, listed first in the manifest so an event on a
 /// note's tick comes before it; a file stores all notes, then all events); a note whose end is before its
 /// start is held across the loop end. Rows: NoteOffs due at or before a NoteOn's tick first (DEC-244), held notes'
 /// NoteOffs in the wrap band. Notes get fresh ids. Admission and failure behave like `LoadJob`: every row is reserved
@@ -523,7 +523,7 @@ class ResolvedImport {
     run_ = runs.allocate(slot, RunKind::kRecord);
     if (run_ == kNoRun) return status_ = Status::DeniedCapacity;
     if (res.reserve(run_, 2 * notes) != Admission::Ok) return fail(Status::DeniedCapacity);
-    if (events != 0) {  // E9.7b: events take their own run, so notes and events each arrive in their own tick order
+    if (events != 0) {  // events take their own run, so notes and events each arrive in their own tick order
       eventRun_ = runs.allocate(slot, RunKind::kRecord);
       if (eventRun_ == kNoRun || res.reserve(eventRun_, events) != Admission::Ok) return fail(Status::DeniedCapacity);
     }
@@ -558,7 +558,7 @@ class ResolvedImport {
 
   static constexpr uint8_t kMaxPassRuns = 16;  // runs a pass stream's passes may take
 
-  /// E9.7c: the next recorded pass of a pass-stream V1 slot, with `notes` notes, as a run of its own — later passes
+  /// The next recorded pass of a pass-stream V1 slot, with `notes` notes, as a run of its own — later passes
   /// occlude earlier ones at composition, exactly as an overdub does. The previous pass's NoteOffs are written first.
   Status nextPass(uint32_t notes) {
     if (status_ != Status::Running) return status_;

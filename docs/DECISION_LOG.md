@@ -16870,3 +16870,24 @@ comment-only and keeps the image byte-identical.
   rows pressure E4.6e); the cost walk E9.8b-3b; the forget-all for a load sets browser 2a (DEC-259); explore counters
   sets browser slice 4.
 - `ColdTier`: E4.6c / E4.6d. `HistoryCost`: E9.8b-3b (owner: "99 is just arbitrarily chosen, not data analysed").
+
+### Storage
+
+- `Persistence` (E8.1 slot file, E9.7a–c V1 import and migration, E9.8 surface state, E9.8g / E9.8h the store
+  without waits, E9.8k): approval and autosave are owner rules ("once, remembered", "when settled"); the store owner
+  2026-11-06 ("a save must not hold the main loop" — every file-system operation took 4–8 ms on the device, a save
+  ~30 ms; a stop that waited for the card took up to 8 ms); the run-once store, cold tier and fetch DEC-254 (E4.6b–e);
+  the store names owner 2026-11-11 ("rename store.bin to .bak and rename store2.bin to store.bin"); mutes DEC-293
+  (in the sector's former padding); the settings word E9.8b-3c (the GROOVE cycle's bars). V1 skips are reported by
+  owner request. The run area: E4.6b (owner 2026-11-11: "I choose DEC-254's run-once store"); its cold region E4.6c.
+- `SlotFile` (E8.1, E8.2; owner decision 2026-11-05: a new format in a new folder, V1 files imported read-only and
+  never overwritten, nothing written before approval; plan § 5.5): the V1 import "exact current content only" (owner
+  2026-11-05, E9.7b / E9.7c); the snapshot chain DEC-258; detached loads sets browser 2b-ii (DEC-261).
+- `V1Import` (E9.7b / E9.7c; owner 2026-11-05: exact current content only, pass-stream files imported with their
+  note edits discarded, the import only feeds the test setup): the format notes were measured on the owner's card
+  (the epoch header is 10 bytes, not the 16 the V1 persistence guide says; pass events stored in tick order). The V1
+  firmware names cited (`writeLegacyLoopPersisted`, `fileStartsWithEpochHeader`, `collectActiveCommittedChunkLists`)
+  are from the retired legacy runtime.
+- `LibraryLoader` (sets browser slice 2a, DEC-259; get a loop DEC-270 with the get-a-loop plan § 6.2 fix 1: a read must
+  not take what live takes rely on; staging DEC-261). `LibraryWriter`, `SetLibraryFormat`: sets browser slice 1c
+  (DEC-258), the trash DEC-268, the working set DEC-269.

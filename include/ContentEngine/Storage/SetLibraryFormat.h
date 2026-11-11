@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The milestone library's on-card format (sets browser slice 1c-i; DEC-258).
+// The milestone library's on-card format (DEC-258, library file).
 //
 // One preallocated file of `kSectors` × 512 B, read and written by sector only:
 //   sectors 0–1        the index header, A / B (`IndexHeader`): the valid one with the higher sequence is current
@@ -9,19 +9,19 @@
 //   two regions        the checkpoint, A / B (`kCheckpointSectors` each: a `CheckpointHeader` sector, then the set)
 //   the rest           the milestone log, append-only: each milestone a `BlobHeader` sector, then its slots' set files,
 //                      each starting on a sector
-// The trash (DEC-268) is records too, each without a blob, published as a milestone's record and header are: a trash
-// record (`kind` kTrash) moves the milestone named by `parent` — or, `parent` 0, every shown milestone of its set
+// The trash (DEC-268, trash) is records too, each without a blob, published as a milestone's record and header are: a
+// trash record (`kind` kTrash) moves the milestone named by `parent` — or, `parent` 0, every shown milestone of its set
 // published before it — to the trash; a restore record (kRestore) takes the trash record named by `parent` back out; an
 // empty-trash record (kEmptyTrash) removes for good everything in the trash before it. Nothing already written is
 // rewritten; a removed milestone's blob keeps its log space (reclaiming it would be compaction).
-// The index header also names the working set (DEC-269): its number and base milestone, in a block after the header's
-// own CRC with a CRC of its own — a header without it (older firmware) is still valid and names none. A save sets it to
-// the milestone; a load or return publishes a header with nothing else changed (no record), so an interrupted write
-// leaves the previous header, and the working set it names, current. It moves with the card.
+// The index header also names the working set (DEC-269, named working set): its number and base milestone, in a block
+// after the header's own CRC with a CRC of its own — a header without it (older firmware) is still valid and names
+// none. A save sets it to the milestone; a load or return publishes a header with nothing else changed (no record), so
+// an interrupted write leaves the previous header, and the working set it names, current. It moves with the card.
 // A milestone is published in one order — blob, record, header (each programmed before the next) — so a header names
 // only complete milestones; records and log space past it are ignored and reused. Every structure carries a CRC-32.
-// `kMaxSetSectors` is the largest whole set (every content row, every run, every state, every slot), checked at
-// compile time against what the checkpoint regions and the log hold. No allocation.
+// `kMaxSetSectors` is the largest whole set (every content row, every run, every state, every slot), checked at compile
+// time against what the checkpoint regions and the log hold. No allocation.
 
 #pragma once
 
@@ -34,7 +34,7 @@ namespace ContentEngine {
 namespace library {
 
 constexpr uint32_t kSector = 512;
-constexpr uint32_t kSectors = 2097152;  // 1 GiB (owner 2026-11-08)
+constexpr uint32_t kSectors = 2097152;  // 1 GiB
 constexpr uint32_t kIndexRecords = 4096;
 constexpr uint32_t kRecordBytes = 64;
 constexpr uint32_t kRecordsPerSector = kSector / kRecordBytes;
@@ -84,7 +84,7 @@ struct IndexHeader {
   uint16_t count = 0;     // published records
   uint32_t appendSector = 0;  // the log's next free sector, relative to `kLogBase`
   uint32_t nextSequence = 1;  // the next milestone's internal sequence (never reused)
-  bool hasWorking = false;    // DEC-269: the working set below is named (else the boot falls back to a guess)
+  bool hasWorking = false;    // the working set below is named (else the boot falls back to a guess)
   uint16_t workingSet = 0;    // its number, kept while it has no shown milestone
   uint32_t workingBase = 0;   // its base milestone (sequence; 0 none)
 };
@@ -146,7 +146,7 @@ struct Record {
   uint32_t wallTime = 0;        // RTC seconds (0: the clock was not valid)
   uint16_t tempoTenths = 0;
   uint8_t loops = 0;            // slots with content
-  uint8_t kind = 0;             // kMilestone, or a trash / restore / empty-trash record (DEC-268; byte 19, zero before)
+  uint8_t kind = 0;             // kMilestone, or a trash / restore / empty-trash record (byte 19, zero in older records)
   uint32_t shortestLoop = 0, longestLoop = 0;  // ticks (0: no loops)
   uint32_t logSector = 0;       // the blob, relative to `kLogBase`
   uint32_t logSectors = 0;
@@ -290,7 +290,7 @@ inline bool currentCheckpoint(const uint8_t* a, const uint8_t* b, CheckpointHead
 
 // ---- Capacity --------------------------------------------------------------------------------------------------------
 enum class Fit : uint8_t { Ok, IndexFull, LogFull, TooLarge };
-/// Whether a blob of `sectors` can be published after `h` (DEC-258: refused before anything is written).
+/// Whether a blob of `sectors` can be published after `h` (refused before anything is written).
 inline Fit fits(const IndexHeader& h, uint32_t sectors) {
   if (sectors > kMaxSetSectors) return Fit::TooLarge;
   if (h.count >= kIndexRecords) return Fit::IndexFull;
