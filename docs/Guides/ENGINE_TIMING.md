@@ -155,8 +155,14 @@ the other (about two a loop), sampled every 3 or 6:
   sweep, the tile builder and NOTE_EDIT's gather use them (a small source still binds in the grain that starts it).
   The same 30-overdub stress, worst grain per class at 30 layers: `transition` 686 → **455 µs**, flat from 18 layers
   (444 / 449 / 455); `display` 632 → 508 µs; `hard` 542 → 482 µs; `background` 673 → 645 µs. 30 of 30 overdubs, no
-  hang. **Open:** `hard` and `background` still grow (about 13 µs a layer), from composing itself — the per-row loops
-  over later passes (`laterPassStartsWhileSounding`, `laterPassSounding`); g would be reached at about 45–50 layers.
+  hang. **Open:** `hard` and `background` still grow (about 13 µs a layer); g would be reached at about 45–50 layers.
+- **Not the per-row average (2026-11-11).** Probes inside `Composer::process` (30 layers): a row costs 2.16 µs on
+  average (1.32 at 6 layers), and the growth is almost all `laterPassStartsWhileSounding` (0.34 → 1.24 µs a NoteOn,
+  walking every later pass). Per-pitch masks of the runs that start a pitch (1 KiB a composer) cut that walk, but the
+  worst grains did not move (`hard` 482 → 522, `background` 645 → 664 µs, within run-to-run spread) and the bind grew
+  (455 → 507 µs): reverted. The worst grain is set by something other than the average row — a grain over a dense
+  cluster, or another path in the same job. **Next:** attribute the *worst* grain (which job and which part, timed
+  inside that grain) before changing code again.
 - `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
   the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).
