@@ -305,6 +305,8 @@ class Surface {
     blinkMs_ = 0;
     loopEdit_ = loopPark_ = popup_ = popupHeld_ = false;
     groove_ = groovePending_ = false;  // DEC-289
+    grooveToHear_ = false;
+    grooveHeardMs_ = 0;
     grooveChord_ = false;
     trackMute_ = false;
     grooveSlot_ = 0xFF;
@@ -591,13 +593,14 @@ class Surface {
     groovePending_ = false;  // the values stay; what plays is the one stepped to
     playHeard(heard_);
   }
-  /// The cycle's next turn built in the beat before its bar line, so it is heard from that bar line (DEC-292's beat).
+  /// The cycle's next turn built a bar ahead (DEC-295 am. 3: time for a long loop's build) and switched in on its bar
+  /// line.
   void serviceCycle() {
     if (!cycling_ || !clock_->running()) return;
     const uint32_t len = static_cast<uint32_t>(cycleBars_) * kBarTicks;
     const uint32_t k = tick_ < cycleStart_ ? 0 : (tick_ - cycleStart_) / len + 1;  // the turn starting next
     const uint32_t at = cycleStart_ + k * len;
-    if (k == cycleAsked_ || at - tick_ > kBarTicks / 4) return;
+    if (k == cycleAsked_ || at - tick_ > kBarTicks) return;
     cycleAsked_ = k;
     playHeard((k & 1u) == 0 ? Heard::A : Heard::B, at);
   }
@@ -717,6 +720,24 @@ class Surface {
     return 0xFF;
   }
   uint8_t grooveField() const { return grooveField_; }
+  /// DEC-295 am. 3, the save dots' states: 0 none, 1 a change settling (dim), 2 building or waiting for its bar line /
+  /// beat (one running), 3 heard in the last `kDotsDoneMs` (bright).
+  static constexpr uint32_t kDotsDoneMs = 800;
+  uint8_t grooveDots() const {
+    if (groovePending_) return 1;
+    const auto st = e_->grooveState();
+    if (st == Engine::Groove::State::Waiting || st == Engine::Groove::State::Building ||
+        st == Engine::Groove::State::Ready || grooveToHear_)
+      return 2;
+    if (grooveHeardMs_ != 0 && nowMs_ - grooveHeardMs_ < kDotsDoneMs) return 3;
+    return 0;
+  }
+  /// How far the cycle's current turn is, in 1/1000 (0 before its first bar line).
+  uint16_t cycleTurnPos() const {
+    if (!cycling_ || tick_ < cycleStart_) return 0;
+    const uint32_t len = static_cast<uint32_t>(cycleBars_) * kBarTicks;
+    return static_cast<uint16_t>((tick_ - cycleStart_) % len * 1000 / len);
+  }
   const groove::Settings& grooveSettings() const { return grooveSet_; }
   uint8_t grooveWindowSlot() const { return grooveWin_; }
   void openGroove(uint8_t slot) {
@@ -803,11 +824,17 @@ class Surface {
       press_.consume(kEditMode);
       leaveEdit();
     }
-    if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_) == Engine::Transport::Result::Ok) {
+    if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_, grooveAt_) ==
+        Engine::Transport::Result::Ok) {
       grooveAt_ = 0;
       visited(grooveSlot_);  // DEC-288: a groove published; this visit's next one replaces it
       grooveSwitchFrom_ = lastTick;  // DEC-292: the window's progress runs on to the beat it is heard on
       grooveSwitchAt_ = e_->groovePublishedAt();
+      grooveToHear_ = true;
+    }
+    if (grooveToHear_ && (!clock_->running() || lastTick >= grooveSwitchAt_)) {  // DEC-295 am. 3: heard — the dots lit
+      grooveToHear_ = false;
+      grooveHeardMs_ = ms == 0 ? 1 : ms;
     }
     serviceGroove(ms);
     for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
@@ -2327,6 +2354,8 @@ class Surface {
                                                  // beat before it, so the next beat (DEC-292) is that bar line
   uint32_t groovePendingMs_ = 0, autoTried_ = 0;
   uint32_t grooveSwitchFrom_ = 0, grooveSwitchAt_ = 0;  // DEC-292: the last publish's tick and the beat it is heard on
+  uint32_t grooveHeardMs_ = 0;                   // DEC-295 am. 3: when the last one was first heard (the dots' bright)
+  bool grooveToHear_ = false;                    // published, its switch tick not reached yet
   uint32_t popupUntil_ = 0, popupTapMs_ = 0, popupDownMs_ = 0;
   uint32_t startMs_ = 0, pendingStart_ = 0;
   bool startPending_ = false;

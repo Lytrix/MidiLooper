@@ -97,6 +97,9 @@ struct EditView {
   uint8_t grooveATemplate = 0, grooveAAmount = 0;  // DEC-295: A (both A and B edited in the window)
   uint8_t grooveHeard = 2;                         // 0 OFF, 1 A, 2 B
   bool grooveCycling = false;
+  uint8_t grooveDots = 0;                          // DEC-295 am. 3: 0 none, 1 pending, 2 building, 3 heard (bright)
+  uint8_t grooveCycleBars = 2;                     // bars a turn
+  uint16_t grooveTurnPos = 0;                      // the turn playing, in 1/1000
   bool grooveAuto = false;
 };
 
@@ -1308,17 +1311,36 @@ class EngineDisplay {
     static const char* const kState[6] = {"", "WAIT", "", "", "TOO BIG", "FAILED"};
     if (edit_.grooveState < 6 && kState[edit_.grooveState][0] != 0)
       rlabel(kState[edit_.grooveState], static_cast<int16_t>(x1 - 6), hy, edit_.grooveState >= 4 ? 15 : 10);
-    if (edit_.grooveProgress <= 100) {  // DEC-292: a change on its way, along the bottom
-      const int16_t b0 = static_cast<int16_t>(x0 + 4), b1 = static_cast<int16_t>(x1 - 4);
-      const int16_t top = static_cast<int16_t>(y1 - 6), bottom = static_cast<int16_t>(y1 - 3);
-      hline(b0, b1, top, 6);
-      hline(b0, b1, bottom, 6);
-      px(b0, static_cast<int16_t>(top + 1), 6), px(b0, static_cast<int16_t>(top + 2), 6);
-      px(b1, static_cast<int16_t>(top + 1), 6), px(b1, static_cast<int16_t>(top + 2), 6);
-      const int16_t fill = static_cast<int16_t>(b0 + 1 + (b1 - b0 - 2) * edit_.grooveProgress / 100);
-      if (fill > b0 + 1)
-        oled_.gfx.draw_rect_filled(fb(), static_cast<int16_t>(b0 + 1), static_cast<int16_t>(top + 1), fill,
-                                   static_cast<int16_t>(bottom - 1), 13);
+    // DEC-295 amendment 3 (owner: "stick to the existing design language"): a change on its way as the save dots,
+    // bottom left — dim settling, one running while it builds and waits for its bar line or beat, bright once heard.
+    const int16_t by = static_cast<int16_t>(y1 - 5);
+    for (uint8_t i = 0; i < 4 && edit_.grooveDots != 0; ++i) {
+      const uint8_t v = edit_.grooveDots == 1 ? 2
+                        : edit_.grooveDots == 2 ? (ContentEngine::status::SaveIndicator::step(drawMs_) == i ? 8 : 2)
+                                                : 15;
+      px(static_cast<int16_t>(lx + i * 3), by, v);
+    }
+    // Cycling: under A and B the main screen's loop bar — a gap a bar line, `[ ]` around the one playing, its playhead
+    // bright; the other waits dim.
+    if (edit_.grooveCycling) {
+      const uint8_t bars = edit_.grooveCycleBars == 0 ? 1 : edit_.grooveCycleBars;
+      for (uint8_t c = 0; c < 2; ++c) {
+        const int16_t c0 = c == 0 ? static_cast<int16_t>(ax - 2) : static_cast<int16_t>(bx - 2);
+        const int16_t c1 = c == 0 ? static_cast<int16_t>(bx - 12) : static_cast<int16_t>(x1 - 6);
+        const bool on = edit_.grooveHeard == c + 1;
+        const int32_t w = c1 - c0;
+        const int16_t fill = static_cast<int16_t>(c0 + w * edit_.grooveTurnPos / 1000);
+        for (int16_t x = c0; x <= c1; ++x) {
+          bool gap = false;
+          for (uint8_t k = 1; k < bars; ++k) gap |= x == c0 + w * k / bars;
+          if (!gap) px(x, by, on ? (x <= fill ? 15 : 6) : 3);
+        }
+        if (!on) continue;
+        for (int16_t e : {c0, c1})
+          for (int16_t dy : {-2, -1, 1, 2}) px(e, static_cast<int16_t>(by + dy), 12);
+        px(static_cast<int16_t>(c0 + 1), static_cast<int16_t>(by - 2), 12), px(static_cast<int16_t>(c0 + 1), static_cast<int16_t>(by + 2), 12);
+        px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by - 2), 12), px(static_cast<int16_t>(c1 - 1), static_cast<int16_t>(by + 2), 12);
+      }
     }
     hint(edit_.grooveCycling ? "[REC]{ [EDT]}  [PLY] KEEP  2*[PLY] STOP CYCLE"
                              : "[REC]{ [EDT]}  [PLY] OFF/A/B  2*[PLY] CYCLE");

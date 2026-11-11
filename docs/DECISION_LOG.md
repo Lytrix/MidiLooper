@@ -16588,4 +16588,15 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   move (`faderSeen_`); a move's following CCs act. Native: the bank test's reports change nothing, then the moves do.
   Device image `65c54eea…` (`crash=0`): opening and applying on T1 S3 left its runs unchanged. (The test's groove on
   T1 S3 from `6e7ccf96…` was undone over serial.)
+- **Amendment 3 (owner 2026-11-11: "the groove cycle needs a countdown … stick to the existing design language, so 4
+  dots for 'saving' … and 2 progress bars like the main screen within each column"; "is this process ready before the
+  cycle starts?"):** the build shows as the save dots at the window's bottom left (`Surface::grooveDots`: dim settling,
+  one running while it builds and until its switch tick, bright `kDotsDoneMs` = 800 ms once heard) instead of the
+  full-width bar; while cycling, each column has the main screen's loop bar (a gap a bar line, `[ ]` and the bright
+  playhead on the one playing, `cycleTurnPos`; the other dim). Each turn is now asked for a **bar** ahead (was a beat:
+  a long loop's build could land a beat late) and published for its bar line (`grooveService`'s `want` again).
+  Native: every cycle publish lands on a bar line with more than a beat to spare, the turn position wraps; the dots
+  go dim → running → bright → off. Full native 4,546 passed. Device image `ef5ddcde…` (`crash=0`, flashed by HalfKay
+  after the board ignored the reboot request): T8 S8 cycling — A's bar bracketed and filling, the dots running while
+  B's turn builds a bar ahead; the visit undone afterwards.
 

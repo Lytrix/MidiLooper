@@ -2449,6 +2449,17 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(3, gS.grooveField());  // B's amount selected
   const uint8_t settling = gS.grooveProgress();
   TEST_ASSERT_TRUE(settling <= 25);  // DEC-292: the bar starts at once
+  TEST_ASSERT_EQUAL_UINT8(1, gS.grooveDots());  // DEC-295 am. 3: the dots dim while it settles …
+  bool running = false, bright = false;
+  for (int i = 0; i < 2000 && !bright; ++i) {
+    ms(1);
+    running |= gS.grooveDots() == 2;  // … one running while it builds and waits for its beat …
+    bright = gS.grooveDots() == 3;    // … bright once heard
+  }
+  TEST_ASSERT_TRUE(running);
+  TEST_ASSERT_TRUE(bright);
+  ms(S::kDotsDoneMs + 10);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveDots());
   run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat — the changed one heard
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
@@ -2574,7 +2585,26 @@ void test_the_groove_window_compares_a_b_and_off() {
   ms(450);
   TEST_ASSERT_TRUE(gS.cycling());
   const uint32_t from = gHeardCount;
-  run(gUs + 9 * 768 * kTick);
+  // DEC-295 am. 3: each turn is built a bar ahead — published while its bar line is still ahead, switched on it; the
+  // turn's position runs 0 → 1000 and starts again.
+  uint32_t published = gE.groovePublishedAt(), turns = 0;
+  uint16_t lastPos = 0;
+  bool wrapped = false;
+  for (uint32_t t = 0; t < 9 * 768 * kTick / 1000; ++t) {
+    ms(1);
+    if (gE.groovePublishedAt() != published) {
+      published = gE.groovePublishedAt();
+      TEST_ASSERT_EQUAL_UINT32(0, published % 768);
+      TEST_ASSERT_TRUE(published > gLast + 192);  // more than a beat to spare
+      ++turns;
+    }
+    const uint16_t pos = gS.cycleTurnPos();
+    TEST_ASSERT_TRUE(pos < 1000);
+    wrapped |= pos < lastPos;
+    lastPos = pos;
+  }
+  TEST_ASSERT_TRUE(turns >= 3);
+  TEST_ASSERT_TRUE(wrapped);
   uint32_t lastAt = 0, sameRun = 0, runs = 0;
   for (uint32_t i = from; i < gHeardCount; ++i) {
     if (gHeard[i % 4096].pitch != 60) continue;

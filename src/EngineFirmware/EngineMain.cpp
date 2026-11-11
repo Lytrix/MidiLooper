@@ -2126,6 +2126,9 @@ void loop() {
     ev.grooveAAmount = gSurface.grooveA().amount;
     ev.grooveHeard = static_cast<uint8_t>(gSurface.grooveHeard());
     ev.grooveCycling = gSurface.cycling();
+    ev.grooveDots = gSurface.grooveDots();  // DEC-295 am. 3
+    ev.grooveCycleBars = gSurface.cycleBars();
+    ev.grooveTurnPos = gSurface.cycleTurnPos();
   }
   if (ed.active()) {
     ev.active = true;

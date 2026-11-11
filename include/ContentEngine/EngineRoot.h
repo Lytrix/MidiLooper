@@ -589,14 +589,15 @@ class EngineRoot {
   }
   /// One groove grain; a ready build published so the tracks playing the slot follow from the next beat (DEC-292; was a
   /// bar line two bars ahead — seconds before a change was heard; stopped: at once). Ok: published this call (one undo
-  /// step; `replace` as resize).
+  /// step; `replace` as resize). `want` (ahead of `tick`): the tick asked for instead — a cycle turn's bar line.
   ProductionTransport::Result grooveService(uint32_t tick, bool running, uint32_t nowUs, uint32_t usPerTick,
-                                            uint32_t replace = 0) {
+                                            uint32_t replace = 0, uint32_t want = 0) {
     if (p_->groove.state() == ProductionGroove::State::Waiting || p_->groove.state() == ProductionGroove::State::Building)
       p_->groove.step();
     if (p_->groove.state() != ProductionGroove::State::Ready) return ProductionTransport::Result::NoChange;
     uint32_t at = tick;
     if (running) at = (tick / kTicksPerBeat + 1) * kTicksPerBeat;  // DEC-292: the next beat (as a resize, at once)
+    if (running && want > tick) at = want;  // DEC-295 am. 3: a cycle turn, built a bar ahead, on its bar line
     const auto r = r_->control.grooveFinish(p_->groove, at, nowUs, usPerTick, replace);
     if (r == ProductionTransport::Result::Ok) groovePublishedAt_ = at;
     return r;

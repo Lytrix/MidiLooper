@@ -1,3 +1,9 @@
+**2026-11-11 — DEC-295 amendments 2–3: the GROOVE window's DROID bank and its cycle countdown.** The window has its own
+fader bank (program 2, selectat 2, CC 20–23 on ch16: F1/F2 A's groove/amount, F3/F4 B's; the DROID's position report
+on opening is not a move). Builds show as the save dots; while cycling each column has the main screen's loop bar;
+turns are built a bar ahead and switch on their bar line. Full native 4,546 passed; device `65c54eea…`, `ef5ddcde…`.
+The board twice ignored the upload's reboot request (PROGRAM press needed).
+
 **2026-11-11 — DEC-295: the GROOVE window as a static A / B table.** Spaced as the load / save window: `OFF A B` over
 GROOVE and AMOUNT columns, both editable (F1 / F2 grooves, F3 / F4 amounts, REC / EDIT + encoder); PLAY/STOP steps
 OFF → A → B, double cycles A / B two bars each (global), hold applies; NOTELEN toggles AUTO Q in the title bar; keys
