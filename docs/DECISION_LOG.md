@@ -16853,3 +16853,20 @@ comment-only and keeps the image byte-identical.
   `remappedPlaybackChannel`; the activity level E9.8k. `MidiOutputHub`: CE-C1, the memory-ownership correction of
   2026-11-04, expired-note cancellation owner 2026-11-04; the USB message estimate measured in E0.7.
 - `TerminalScheduler`: CE-B1, DEC-148, DEC-244; T = 16 per track owner-ratified.
+
+### NoteEdit
+
+- `NoteEditSession` (E4.5, E9.5; the shared gather E9.6; E9.8b-2): it keeps the legacy NOTE_EDIT behaviour (the edited
+  note drives, the others adapt). Owner 2026-11-06: a lookup found length 0 and never moved on, which hung entering
+  NOTE_EDIT — hence the rule that a note under a tick long is not selectable.
+- `NoteEditWriter` (E4.5, CE-A1): owner 2026-11-05 "hear each edit, rewrite one run"; the overlap rule (owner
+  2026-11-07) follows the legacy `resolveConstrainedGeometry` and DEC-030; create is the legacy NOTELEN double press
+  on an empty bracket; copy / paste owner 2026-11-10 (DEC-279).
+
+### History
+
+- `SlotUndoHistory` (E4, E4.2 sessions, E4.3, E4.5 NOTE_EDIT, E4.7, E8, E9.1): the NOTE_EDIT session limit "99,
+  shared" owner 2026-11-05; pressure diagnostics owner 2026-11-06; the cold tier DEC-254 (E4.6c, the fetch E4.6d,
+  rows pressure E4.6e); the cost walk E9.8b-3b; the forget-all for a load sets browser 2a (DEC-259); explore counters
+  sets browser slice 4.
+- `ColdTier`: E4.6c / E4.6d. `HistoryCost`: E9.8b-3b (owner: "99 is just arbitrarily chosen, not data analysed").

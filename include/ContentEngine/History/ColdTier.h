@@ -1,17 +1,18 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The cold undo states (DEC-254, E4.6c): states of a slot below its oldest hot state, whose rows are on the card only.
+// The cold undo states (DEC-254, per-slot undo): states of a slot below its oldest hot state, whose rows are on the
+// card only.
 // A cold state is a descriptor — revision, loop length, and per run its record in the run-once store (sector, rows,
 // kind) — held in PSRAM so the UNDO level counts it, a save lists it in the slot's state record, the boot marks its
-// extents, and a fetch (E4.6d) knows what to read.
+// extents, and a fetch knows what to read.
 //
 // * Per slot a list, oldest first; states are pushed at the newest end (a demoted hot state is the newest cold one) and
 //   dropped at the oldest (the slot's depth is full) or all at once (the slot is cleared).
 // * Run records are shared by many states (an overdub's chain lists the take again and again): a directory, keyed by
 //   record sector, holds each once with a reference count; a state lists directory indices in chunks of eight.
-// * Bounded: `kStates` descriptors (64 slots × 99), `kChunks` chunks, `kDir` records. `push` refuses (false) when one is
-//   full — the caller then forgets the state, as before the cold tier.
+// * Bounded: `kStates` descriptors (64 slots × 99), `kChunks` chunks, `kDir` records. `push` refuses (false) when one
+//   is full — the caller then forgets the state, as before the cold tier.
 // No allocation, no I/O.
 
 #pragma once
@@ -119,7 +120,7 @@ class ColdTier {
   }
   /// Changes when a slot's cold states are dropped (a save listing them restarts on a change).
   uint16_t epoch(uint8_t slot) const { return slot < Slots ? epoch_[slot] : 0; }
-  /// E4.6d: the slot's newest cold state goes (it was fetched and is hot now). False: none.
+  /// The slot's newest cold state goes (it was fetched and is hot now). False: none.
   bool dropNewest(uint8_t slot) {
     if (slot >= Slots || tail_[slot] == kNone) return false;
     const uint16_t st = tail_[slot];

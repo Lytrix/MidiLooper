@@ -1,34 +1,33 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Undo history and slot currents of the content engine (fixed-memory-engine E4; owner decisions 2026-11-05).
+// Undo history and slot currents of the content engine.
 //
-// * Per slot: undo and redo step only the slot they are asked for. A slot's history is a chain of committed states
-//   (one manifest each, oldest to newest) and a current pointer into it; below the first state lies the empty slot,
-//   unless older states were evicted, in which case the oldest kept state is the floor.
+// * Per slot: undo and redo step only the slot they are asked for. A slot's history is a chain of committed states (one
+//   manifest each, oldest to newest) and a current pointer into it; below the first state lies the empty slot, unless
+//   older states were evicted, in which case the oldest kept state is the floor.
 // * Shared depth: at most `Depth` states are held across all slots (99 in W). Each holds one manifest reference.
-// * Commit: drops the slot's redo branch (newer than current), then, if the table is full, evicts the oldest step in the
-//   set — the oldest-committed state that is not any slot's current — and appends the new state as current. Recording
-//   is never refused for history. Evicting a slot's oldest undo state moves its floor up; evicting a redo state drops
-//   that slot's whole redo branch (a redo chain cannot have a hole).
+// * Commit: drops the slot's redo branch (newer than current), then, if the table is full, evicts the oldest step in
+//   the set — the oldest-committed state that is not any slot's current — and appends the new state as current.
+//   Recording is never refused for history. Evicting a slot's oldest undo state moves its floor up; evicting a redo
+//   state drops that slot's whole redo branch (a redo chain cannot have a hole).
 // * Undo / redo: O(1) pointer moves; they return the slot's new current manifest (`kNoManifest`: the empty slot).
-// * Overdub session (DEC-038, E4.2): every non-empty wrap is an ordinary commit. While the session is open, undo on its
-//   slot stops at the session start (the O: level counts the session's states). `endSession` (Stop) drops the
-//   session's redo and collapses its states into one step — the session's current — so U: undoes the whole session
-//   at once; with every wrap undone it leaves no step. The start is the commit counter at `beginSession`, so eviction
-//   (the session's states share the 99) can never leave it dangling, and redo from before the session is neither a
-//   session step nor reachable while the session is open.
-// * NOTE_EDIT session (E4.3; owner 2026-11-05: limit 99, shared): each edit action is a commit (the E: level); the
-//   same bound and fold apply when NOTE_EDIT is left, and `abandonSession` returns the slot to its session-start state.
-//   One overdub session and one NOTE_EDIT session may be open at once (W: one writer + one NOTE_EDIT), on different
-//   slots.
-// * Restore point (owner 2026-11-05): an open session protects its start state (or, for a session started on the empty
-//   slot, the empty slot) from eviction, so abandon always returns to the pre-session state and U: after the fold
-//   always reaches it. A session longer than the 99 forgets its own oldest steps instead; undo then steps from the
-//   oldest kept session state straight back to the start.
-// * Pressure diagnostics (E4.7, owner 2026-11-06; no effect on any rule above): the most states ever held, steps
-//   forgotten by eviction (undo states, and redo branches), how many each slot lost and which lost last, and undo
-//   presses refused because the slot's older steps were forgotten.
+// * Overdub session (DEC-038, overdub wrap commit): every non-empty wrap is an ordinary commit. While the session is
+//   open, undo on its slot stops at the session start (the O: level counts the session's states). `endSession` (Stop)
+//   drops the session's redo and collapses its states into one step — the session's current — so U: undoes the whole
+//   session at once; with every wrap undone it leaves no step. The start is the commit counter at `beginSession`, so
+//   eviction (the session's states share the 99) can never leave it dangling, and redo from before the session is
+//   neither a session step nor reachable while the session is open.
+// * NOTE_EDIT session (the same depth bound): each edit action is a commit (the E: level); the same bound and fold
+//   apply when NOTE_EDIT is left, and `abandonSession` returns the slot to its session-start state. One overdub session
+//   and one NOTE_EDIT session may be open at once (W: one writer + one NOTE_EDIT), on different slots.
+// * Restore point: an open session protects its start state (or, for a session started on the empty slot, the empty
+//   slot) from eviction, so abandon always returns to the pre-session state and U: after the fold always reaches it. A
+//   session longer than the 99 forgets its own oldest steps instead; undo then steps from the oldest kept session state
+//   straight back to the start.
+// * Pressure diagnostics (no effect on any rule above): the most states ever held, steps forgotten by eviction (undo
+//   states, and redo branches), how many each slot lost and which lost last, and undo presses refused because the
+//   slot's older steps were forgotten.
 // Every dropped state releases its manifest reference, so its runs reach the reclaim queue. No allocation.
 
 #pragma once
@@ -41,16 +40,16 @@ namespace ContentEngine {
 
 enum class HistoryCommit : uint8_t { Committed, CommittedEvicted, Refused };
 
-/// DEC-254 (E4.6c): the cold tier, as the persistence owner provides it. A slot's cold states lie below its oldest hot
-/// state; their rows are on the card only.
+/// The cold tier (DEC-254, per-slot undo), as the persistence owner provides it. A slot's cold states lie below its
+/// oldest hot state; their rows are on the card only.
 struct ColdSink {
-  /// Takes `manifest` (slot `slot`'s oldest hot state) as the slot's newest cold state. False: not every run it lists is
-  /// on the card, or the cold tier is full — the state is then forgotten, as before the cold tier.
+  /// Takes `manifest` (slot `slot`'s oldest hot state) as the slot's newest cold state. False: not every run it lists
+  /// is on the card, or the cold tier is full — the state is then forgotten, as before the cold tier.
   virtual bool demote(uint8_t slot, ManifestId manifest) = 0;
   virtual uint8_t coldCount(uint8_t slot) const = 0;
   virtual void dropOldestCold(uint8_t slot) = 0;
   virtual void clearCold(uint8_t slot) = 0;
-  /// E4.6d: an undo at the slot's oldest hot state with cold states below — fetch the next one (deeper on each call).
+  /// An undo at the slot's oldest hot state with cold states below — fetch the next one (deeper on each call).
   virtual void requestFetch(uint8_t slot) = 0;
   virtual ~ColdSink() = default;
 };
@@ -69,24 +68,24 @@ class SlotUndoHistory {
     uint32_t evictedUndo;     // oldest undo states forgotten to make room
     uint32_t droppedRedo;     // redo states dropped (by a commit on their slot, or by eviction)
     uint32_t collapsedWraps;  // session states folded into the session's one step at its end (overdub or edit)
-    // Pressure (E4.7).
+    // Pressure.
     uint32_t evictedRedo;       // redo branches dropped by eviction (their states also count in `droppedRedo`)
     uint32_t undoPastRetained;  // undo refused at a floor that eviction raised (older steps forgotten)
     uint8_t highWater;          // the most states held at once
     uint8_t lastLostSlot;       // the slot that last lost a step to eviction (kNone: none)
     uint8_t lastPastSlot;       // the slot of the last undo refused past retained history (kNone: none)
-    // DEC-254 (E4.6c).
+    // The cold tier.
     uint32_t demoted;     // hot states moved to the cold tier (not forgotten)
     uint32_t slotDepth;   // steps a slot forgot at its own depth (kSlotDepth)
-    uint32_t undoAtCold;  // undo presses at the hot floor with cold states below (the fetch is E4.6d)
-    uint32_t pressureDemoted;  // E4.6e: hot states demoted to make room in the content pool (never forgotten)
+    uint32_t undoAtCold;  // undo presses at the hot floor with cold states below (they start a fetch)
+    uint32_t pressureDemoted;  // hot states demoted to make room in the content pool (never forgotten)
   };
-  /// E4.6e (rows pressure): the oldest undo step goes cold — only if it can (a slot's oldest hot state, on the card);
+  /// Rows pressure: the oldest undo step goes cold — only if it can (a slot's oldest hot state, on the card);
   /// never forgotten. False: nothing to demote.
   bool demoteOldest() { return evictOldest(kNone, true); }
-  /// DEC-254: a slot's states, hot and cold, at most (with a cold tier attached).
+  /// A slot's states, hot and cold, at most (with a cold tier attached).
   static constexpr uint8_t kSlotDepth = 99;
-  /// The cold tier (nullptr: none — the shared table alone, E4).
+  /// The cold tier (nullptr: none — the shared table alone).
   void attachCold(ColdSink* cold) { cold_ = cold; }
   uint8_t coldCount(uint8_t slot) const { return cold_ != nullptr && slot < Slots ? cold_->coldCount(slot) : 0; }
 
@@ -182,8 +181,8 @@ class SlotUndoHistory {
     s.newest = start;
   }
 
-  /// NOTE_EDIT (E4.5): the open session of `kind` has one state, replaced in place as edits are rebuilt. `manifest`
-  /// becomes it (SlotUndoHistory takes the reference; a replaced manifest is released); `kNoManifest` removes it, so the slot is
+  /// NOTE_EDIT: the open session of `kind` has one state, replaced in place as edits are rebuilt. `manifest` becomes it
+  /// (SlotUndoHistory takes the reference; a replaced manifest is released); `kNoManifest` removes it, so the slot is
   /// back at the session start. False when no session of `kind` is open.
   bool setSessionState(SessionKind kind, ManifestId manifest) {
     const Session& x = sessions_[static_cast<uint8_t>(kind)];
@@ -206,8 +205,8 @@ class SlotUndoHistory {
     return true;
   }
 
-  /// A take's completion (E9.1): the slot's state holding `old` holds `fresh` instead, in place (no step, no redo
-  /// dropped). SlotUndoHistory takes the caller's reference to `fresh` and releases `old`. False (nothing changes) when no state
+  /// A take's completion: the slot's state holding `old` holds `fresh` instead, in place (no step, no redo dropped).
+  /// SlotUndoHistory takes the caller's reference to `fresh` and releases `old`. False (nothing changes) when no state
   /// of the slot holds `old`. O(slot states).
   bool replaceState(uint8_t slot, ManifestId old, ManifestId fresh) {
     if (slot >= Slots || fresh == kNoManifest) return false;
@@ -248,7 +247,7 @@ class SlotUndoHistory {
     if (s.current == kNone) return false;
     for (const Session& x : sessions_)
       if (x.slot == slot && entries_[s.current].seq <= x.baseSeq) return false;  // not below the session start
-    if (entries_[s.current].older == kNone && coldCount(slot) != 0) return false;  // the cold tier: a fetch (E4.6d)
+    if (entries_[s.current].older == kNone && coldCount(slot) != 0) return false;  // the cold tier: a fetch
     return entries_[s.current].older != kNone || s.emptyBelow;
   }
   bool canRedo(uint8_t slot) const {
@@ -266,7 +265,7 @@ class SlotUndoHistory {
       if (slot < Slots && slots_[slot].current != kNone && entries_[slots_[slot].current].older == kNone &&
           coldCount(slot) != 0 && !sessionOn(slot)) {
         ++stats_.undoAtCold;
-        cold_->requestFetch(slot);  // E4.6d: the next cold state is fetched; the switch follows once it is in
+        cold_->requestFetch(slot);  // the next cold state is fetched; the switch follows once it is in
       }
       if (slot < Slots && atForgottenFloor(slot)) {
         ++stats_.undoPastRetained;
@@ -285,8 +284,8 @@ class SlotUndoHistory {
     return true;
   }
 
-  /// E4.6d: a fetched cold state as the slot's oldest hot state (a fresh commit number: the table makes room on other
-  /// slots first — never on this one, whose order would break). SlotUndoHistory takes the caller's reference. False: no room.
+  /// A fetched cold state as the slot's oldest hot state (a fresh commit number: the table makes room on other slots
+  /// first — never on this one, whose order would break). SlotUndoHistory takes the caller's reference. False: no room.
   bool promote(uint8_t slot, ManifestId manifest) {
     if (slot >= Slots || manifest == kNoManifest) return false;
     if (count_ == Depth && !evictOldest(slot)) return false;
@@ -306,7 +305,7 @@ class SlotUndoHistory {
     const uint8_t e = slots_[slot].oldest;
     return e == kNone ? kNoManifest : entries_[e].manifest;
   }
-  /// E4.6d: the fetch arrived — the slot steps down to its oldest hot state, if it is still at `floor` (the state the
+  /// The fetch arrived — the slot steps down to its oldest hot state, if it is still at `floor` (the state the
   /// undo presses were made on). False: it moved meanwhile (nothing changes).
   bool toOldest(uint8_t slot, ManifestId floor) {
     if (slot >= Slots || floor == kNoManifest || current(slot) != floor) return false;
@@ -329,7 +328,7 @@ class SlotUndoHistory {
     uint8_t n = 0;
     for (uint8_t e = s.current; e != kNone && n < Depth; e = entries_[e].older) ++n;
     if (n == 0) return 0;
-    const uint32_t d = (n - 1u) + coldCount(slot) + (s.emptyBelow ? 1u : 0u);  // DEC-254: the cold steps below count
+    const uint32_t d = (n - 1u) + coldCount(slot) + (s.emptyBelow ? 1u : 0u);  // the cold steps below count
     return static_cast<uint8_t>(d > 255 ? 255 : d);
   }
   uint8_t redoDepth(uint8_t slot) const {
@@ -343,7 +342,7 @@ class SlotUndoHistory {
     return n;
   }
   uint8_t heldStates() const { return count_; }
-  /// Diagnostics (undo-depth sizing, E9.8b-3b): the newest commit's slot, manifest and the state before it on that slot
+  /// Diagnostics (undo-depth sizing): the newest commit's slot, manifest and the state before it on that slot
   /// (`kNoManifest`: none). False: none held.
   bool newest(uint8_t& slot, ManifestId& manifest, ManifestId* before = nullptr) const {
     uint32_t best = 0;
@@ -361,7 +360,7 @@ class SlotUndoHistory {
     return true;
   }
 
-  /// Persistence (E8): the slot's states oldest to newest (at most `max`), the current one's index in that list (-1:
+  /// Persistence: the slot's states oldest to newest (at most `max`), the current one's index in that list (-1:
   /// the empty slot) and whether the empty slot lies below the oldest. O(states).
   uint8_t chain(uint8_t slot, ManifestId* out, uint8_t max, int16_t& currentIndex, bool& emptyBelow) const {
     const Slot& s = slots_[slot];
@@ -374,7 +373,7 @@ class SlotUndoHistory {
     emptyBelow = s.emptyBelow;
     return n;
   }
-  /// Load (E8): rebuilds an empty slot's chain from saved states (oldest to newest; SlotUndoHistory takes their references),
+  /// Load: rebuilds an empty slot's chain from saved states (oldest to newest; SlotUndoHistory takes their references),
   /// then steps back to the saved current state and floor. Commits follow the ordinary rules (the shared 99 may
   /// forget older steps elsewhere). False when the slot is not empty or the input is inconsistent.
   bool restoreSlot(uint8_t slot, const ManifestId* states, uint8_t n, int16_t currentIndex, bool emptyBelow) {
@@ -389,7 +388,7 @@ class SlotUndoHistory {
     s.current = currentIndex < 0 ? kNone : e;
     return true;
   }
-  /// Sets browser 2a (DEC-259): forgets the slot's whole history — a load replaces the set, histories included. The
+  /// Forgets the slot's whole history (DEC-259, whole-set load) — a load replaces the set, histories included. The
   /// states' references are released (a pinned one lives until its reader unpins it). False while a session is open on
   /// the slot.
   bool clearSlot(uint8_t slot) {
@@ -409,7 +408,7 @@ class SlotUndoHistory {
     return true;
   }
   const Stats& stats() const { return stats_; }
-  /// States committed so far (any slot): the sets browser's evidence of changed content (slice 4).
+  /// States committed so far (any slot): the sets browser's evidence of changed content.
   uint32_t commits() const { return seq_; }
   /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
   uint16_t lostSteps(uint8_t slot) const { return slot < Slots ? lost_[slot] : 0; }
@@ -439,7 +438,8 @@ class SlotUndoHistory {
     --count_;
   }
 
-  /// Drops every state newer than the slot's current (all of them when the slot is at its empty base); returns how many.
+  /// Drops every state newer than the slot's current (all of them when the slot is at its empty base); returns how
+  /// many.
   uint8_t dropRedo(uint8_t slot) {
     Slot& s = slots_[slot];
     uint8_t e = s.current == kNone ? s.oldest : entries_[s.current].newer;
@@ -486,7 +486,7 @@ class SlotUndoHistory {
   /// The oldest step in the set: the oldest-committed state that is no slot's current and no open session's protected
   /// start. Per slot that is its oldest state (skipping a protected start) if it lies below current, else the start of
   /// its redo chain. Lowest commit seq wins.
-  /// `skip` (E4.6d): a slot whose states stay (a fetch promotes into it). The side (undo / redo) is by position: a
+  /// `skip`: a slot whose states stay (a fetch promotes into it). The side (undo / redo) is by position: a
   /// promoted state's commit number is newer than the states above it. False: no candidate.
   bool evictOldest(uint8_t skip = kNone, bool demoteOnly = false) {
     uint8_t bestSlot = kNone, best = kNone;
@@ -520,7 +520,7 @@ class SlotUndoHistory {
       return true;
     }
     const uint8_t older = entries_[best].older, newer = entries_[best].newer;
-    // DEC-254 (E4.6c): the slot's oldest hot state goes cold when its runs are on the card — kept, not forgotten.
+    // The slot's oldest hot state goes cold when its runs are on the card — kept, not forgotten.
     const bool demote = older == kNone && cold_ != nullptr && cold_->demote(bestSlot, entries_[best].manifest);
     if (demoteOnly && !demote) return false;
     entries_[newer].older = older;
@@ -576,7 +576,7 @@ class SlotUndoHistory {
   uint32_t seq_ = 0;
   Slot slots_[Slots];
   Stats stats_{};
-  uint16_t lost_[Slots] = {};  // per slot: steps lost to eviction (E4.7)
+  uint16_t lost_[Slots] = {};  // per slot: steps lost to eviction
 };
 
 }  // namespace ContentEngine

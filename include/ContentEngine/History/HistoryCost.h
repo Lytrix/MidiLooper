@@ -1,10 +1,10 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// What the undo history costs (E9.8b-3b, undo-depth sizing; owner: "99 is just arbitrarily chosen, not data
-// analysed"). A diagnostic walk, O(states × runs), run only on request: the states held, and the runs and rows kept
-// alive only by states that are not a slot's current — the content the history pins beyond what plays. Runs shared
-// with a current state cost the history nothing; a cleared or replaced take's runs are the history's alone.
+// What the undo history costs (undo-depth sizing). A diagnostic walk, O(states × runs), run only on request: the states
+// held, and the runs and rows kept alive only by states that are not a slot's current — the content the history pins
+// beyond what plays. Runs shared with a current state cost the history nothing; a cleared or replaced take's runs are
+// the history's alone.
 // No allocation: two bitmaps over the run table and one chain buffer on the stack.
 
 #pragma once
