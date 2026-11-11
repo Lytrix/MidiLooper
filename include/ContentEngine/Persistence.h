@@ -43,6 +43,7 @@
 
 #include <cstdint>
 
+#include "ContentEngine/RunStore.h"
 #include "ContentEngine/SetFile.h"
 #include "ContentEngine/V1Import.h"
 
@@ -103,12 +104,23 @@ class Persistence {
   // A save grain produces at most one sector (the CRC runs across chunks, so the file is the same whatever the chunk).
   static constexpr uint32_t kSaveChunk = 512;
   static constexpr uint32_t kSector = 512;
-  static constexpr const char* kStoreFile = "/MidiLooper/engine/store.bin";
+  // DEC-254 (E4.6b): the run-once store. Sectors 0–1 the surface state; per slot two state-record copies of
+  // `kCopySectors` (a header sector, then the slot stream without its rows: header, directory with each run's record
+  // sector, states, CRC); then the run area (`RunStore.h`): each run once, as its own record.
+  static constexpr const char* kStoreFile = "/MidiLooper/engine/store2.bin";
+  // The DEC-253 store (whole slot copies): read once at boot to migrate into the run-once store, never written again.
+  static constexpr const char* kOldStoreFile = "/MidiLooper/engine/store.bin";
   // The largest slot file: one slot may hold every content row (the pool is shared), each run once, every state.
   static constexpr uint32_t kMaxFileBytes = 24 + Config::kRunCount * 8u + Config::kContentRows * kSetFileRowBytes +
                                             Config::kHistoryDepth * (9u + 2u * Config::kRunsPerManifest) + 4;
-  static constexpr uint32_t kCopySectors = 1 + (kMaxFileBytes + kSector - 1) / kSector;  // header + body
-  static constexpr uint32_t kStoreSectors = 2 + 2u * Slots * kCopySectors;  // the surface state's two, two per slot
+  static constexpr uint32_t kOldCopySectors = 1 + (kMaxFileBytes + kSector - 1) / kSector;  // header + body
+  static constexpr uint32_t kOldStoreSectors = 2 + 2u * Slots * kOldCopySectors;
+  // A state record's body: the slot stream's header, its directory with a record sector a run, its states, its CRC.
+  static constexpr uint32_t kRecordBodyBytes =
+      24 + Config::kRunCount * 12u + Config::kHistoryDepth * (9u + 2u * Config::kRunsPerManifest) + 4;
+  static constexpr uint32_t kCopySectors = 1 + (kRecordBodyBytes + kSector - 1) / kSector;  // header + body
+  static constexpr uint32_t kRunAreaBase = 2 + 2u * Slots * kCopySectors;
+  static constexpr uint32_t kStoreSectors = kRunAreaBase + runstore::kAreaSectors;
   using Reservations = RowReservations<Pool, Runs>;
 
   // A save's body into the store, and a load's bytes out of it (or out of a file of before the store), through one
@@ -116,6 +128,7 @@ class Persistence {
   struct Sink {
     Persistence* p;
     bool write(const uint8_t* d, uint32_t n) {
+      if (!p->legacy_) return p->fifoPush(d, n);  // DEC-254: split by the persistence grain, one sector at a time
       uint8_t* buf = p->sectorBuf();
       p->ioBytes_ += n;
       while (n != 0) {
@@ -136,6 +149,7 @@ class Persistence {
     Persistence* p;
     bool read(uint8_t* d, uint32_t n) {
       if (!p->ioStore_) return p->card_->read(d, n);
+      if (!p->legacy_) return p->recordRead(d, n);  // DEC-254: the state record and the run records
       if (n > p->ioBytes_) return false;
       p->ioBytes_ -= n;
       uint8_t* buf = p->importScratch_;  // no V1 import runs while a store copy loads
@@ -172,6 +186,13 @@ class Persistence {
     uint32_t v1HeldWhole;    // imported notes that had no NoteOff in their pass: held for the whole loop
     uint32_t migrated;       // slots loaded from an engine file of before the store (written into the store)
     uint8_t store;           // 0: not opened (no approval yet), 1: ready, 2: could not be opened or created
+    // DEC-254 (E4.6b): the run-once store.
+    uint32_t runsWritten;    // run records written
+    uint32_t runSectors;     // ... their sectors
+    uint32_t runsKept;       // runs a save found on the card already (not written again)
+    uint32_t storeFull;      // saves refused: no contiguous room in the run area
+    uint32_t badRun;         // run records that failed their check on load
+    uint32_t migratedSlots;  // slots carried from the DEC-253 store into the run-once store
   };
   using Import = ResolvedImport<Pool, Runs, Manifests, HistoryT, /*held*/ 64>;
   using Reader = Lsv1Reader<Card, Import>;
@@ -217,6 +238,10 @@ class Persistence {
     stateDue_ = stateKnown_ = false;
     stateChangedUs_ = 0;
     stats_ = Stats{};
+    legacy_ = migrate_ = false;
+    pendSector_ = runstore::kNoSector;
+    clusters_.clear();
+    for (auto& c : cardRun_) c = runstore::CardRun{};
   }
 
   // ---- Approval -------------------------------------------------------------------------------------------------------
@@ -226,7 +251,7 @@ class Persistence {
   bool approve() {
     if (!approved_) approved_ = card_->exists(kFolder) || card_->makeDir(kFolder);
     if (approved_ && !store_ && saving_ == kNone) {
-      openStore(sectorBuf());
+      openStore(sectorBuf(), false);
       for (uint8_t s = 0; s < Slots && store_; ++s)
         if (seen_[s].any) saved_[s] = Fingerprint{};  // loaded or imported before the store: written into it
     }
@@ -243,6 +268,7 @@ class Persistence {
   /// Once per pass: tracks changes and starts the next save when one is due. `busySlotA` / `busySlotB`: slots a take or
   /// NOTE_EDIT session holds (0xFF: none).
   void service(uint32_t nowUs, uint8_t busySlotA, uint8_t busySlotB) {
+    if (migrate_ && !booting()) finishMigration();
     for (uint8_t s = 0; s < Slots; ++s) {
       const Fingerprint f = fingerprint(s);
       if (!(f == seen_[s])) {
@@ -306,7 +332,7 @@ class Persistence {
       return closing_;
     }
     if (bootNext_ == 0) {  // the boot's first grain: the store (created on the first boot after approval), the state
-      if (approved_) openStore(importScratch_);
+      if (approved_) openStore(importScratch_, true);
       readState();
     }
     while (bootNext_ < Slots) {
@@ -346,6 +372,13 @@ class Persistence {
 
   const Stats& stats() const { return stats_; }
   bool savedCurrent(uint8_t slot) const { return seen_[slot] == saved_[slot]; }
+  /// DEC-254 (diagnostics, tests): run `id`'s record's first store sector, or `kNoSector` when it is not on the card.
+  uint32_t runRecordSector(RunId id) const {
+    const runstore::CardRun& c = cardRun_[id];
+    return c.serial != 0 && c.serial == runs_->run(id).serial ? kRunAreaBase + c.sector : runstore::kNoSector;
+  }
+  /// The run area's clusters held (written this session, or listed by a valid state record at boot).
+  uint32_t runAreaClusters() const { return clusters_.usedClusters(); }
 
  private:
   static constexpr uint8_t kNone = 0xFF;
@@ -466,13 +499,19 @@ class Persistence {
     ioFill_ = 0;
     return true;
   }
-  static uint32_t copyBase(uint8_t s, uint8_t c) { return 2 + (2u * s + c) * kCopySectors; }
+  uint32_t copyBase(uint8_t s, uint8_t c) const {
+    return 2 + (2u * s + c) * (legacy_ ? kOldCopySectors : kCopySectors);
+  }
   static uint32_t copySum(uint32_t slot, uint32_t seq, uint32_t bytes) {
     return ((slot * 0x9E3779B1u) ^ (seq * 2654435761u) ^ (bytes * 0x85EBCA77u)) + 0x5A5A5A5Au;
   }
-  /// Opens the store (creating it when missing; a new store's headers are cleared: its sectors hold old card data).
-  void openStore(uint8_t* buf) {
+  /// Opens the run-once store (creating it when missing; a new store's headers are cleared: its sectors hold old card
+  /// data). `boot`: when the run-once store is new and the DEC-253 store is there, that one is opened instead and read
+  /// (`legacy_`); the boot's slots are then written into the run-once store (`finishMigration`).
+  void openStore(uint8_t* buf, bool boot) {
     bool created = false;
+    legacy_ = false;
+    clusters_.clear();
     store_ = card_->openStore(kStoreFile, kStoreSectors, true, created);
     if (store_ && created) {
       for (uint32_t i = 0; i < kSector; ++i) buf[i] = 0;
@@ -480,8 +519,372 @@ class Persistence {
       for (uint8_t s = 0; s < Slots && store_; ++s)
         for (uint8_t c = 0; c < 2 && store_; ++c) store_ = card_->writeSector(copyBase(s, c), buf);
       closing_ = true;  // once, at creation: these writes may wait for the card
+      bool old = false;
+      if (store_ && boot && card_->openStore(kOldStoreFile, kOldStoreSectors, false, old)) {
+        legacy_ = migrate_ = true;  // read the DEC-253 store; the run-once store is written after the boot
+      } else if (store_) {
+        store_ = card_->openStore(kStoreFile, kStoreSectors, false, created);
+      }
     }
     stats_.store = store_ ? 1 : 2;
+  }
+  /// After a boot that read the DEC-253 store: the run-once store, and every slot with a history saved into it.
+  void finishMigration() {
+    migrate_ = false;
+    bool created = false;
+    legacy_ = false;
+    store_ = card_->openStore(kStoreFile, kStoreSectors, false, created);
+    stats_.store = store_ ? 1 : 2;
+    haveCopy_ = copyB_ = 0;  // the run-once store holds no copy yet
+    for (uint8_t s = 0; s < Slots; ++s)
+      if (seen_[s].any) {
+        saved_[s] = Fingerprint{};
+        ++stats_.migratedSlots;
+      }
+    if (stateRead_ != kNoState) stateSaved_ = kNoState;  // the surface state too
+  }
+  /// The run-area extents slot `s`'s copy `c` lists, held (the boot's cluster map: DEC-254, reclaim at boot).
+  void markCopy(uint8_t s, uint8_t c, uint32_t bytes) {
+    uint8_t* b = importScratch_;
+    uint32_t next = copyBase(s, c) + 1, at = kSector, pos = 0, count = 0, seen = 0, got = 0;
+    uint8_t e[24];
+    bool head = true;
+    while (pos < bytes && (head || seen < count)) {
+      if (at == kSector) {
+        if (!card_->readSector(next++, b)) return;
+        at = 0;
+      }
+      e[got++] = b[at++];
+      ++pos;
+      if (head && got == 24) {  // the slot stream's header: its run count
+        count = static_cast<uint32_t>(e[12] | (e[13] << 8));
+        head = false;
+        got = 0;
+      } else if (!head && got == 12) {  // a directory entry: kind, rows, record sector
+        clusters_.mark(runstore::get32(e + 8), runstore::get32(e + 4));
+        got = 0;
+        ++seen;
+      }
+    }
+  }
+  // ---- DEC-254: saving into the run-once store, one sector a grain --------------------------------------------------
+  // `SaveJob` writes the slot stream into a FIFO (`Sink`); `splitStep` reads it: the header, the directory (each run
+  // with its record's sector — a run on the card keeps its record, a new one gets an extent) and the states go to the
+  // state record's body; a new run's rows go to its record (its header last), a kept run's rows nowhere. A sector ready
+  // to write waits in `pend*_` until the card is ready for it.
+  static constexpr uint32_t kFifo = 1024;
+  uint8_t* runBuf() { return saveScratch_ + 2 * kSaveChunk; }
+  uint8_t* hdrBuf() { return saveScratch_ + 3 * kSaveChunk; }
+  uint8_t* fifoBuf() { return saveScratch_ + 4 * kSaveChunk; }
+  bool fifoPush(const uint8_t* d, uint32_t n) {
+    if (n > kFifo - fifoUsed_) return false;
+    for (uint32_t i = 0; i < n; ++i) fifoBuf()[(fifoHead_ + fifoUsed_ + i) % kFifo] = d[i];
+    fifoUsed_ += n;
+    return true;
+  }
+  void pend(uint32_t sector, uint8_t* buf) {
+    pendSector_ = sector;
+    pendBuf_ = buf;
+  }
+  void bodyByte(uint8_t v) {
+    uint8_t* b = sectorBuf();
+    b[ioFill_++] = v;
+    ++ioBytes_;
+    if (ioFill_ == kSector) {
+      pend(ioNext_++, b);
+      ioFill_ = 0;
+    }
+  }
+  void out(const uint8_t* d, uint8_t n) {
+    for (uint8_t i = 0; i < n; ++i) outq_[outLen_++] = d[i];
+  }
+  uint32_t runBytes(uint16_t r) const { return runRows_[r] * kSetFileRowBytes; }
+  /// Run `r` is about to stream: a run without rows ends at once.
+  void beginRun() {
+    rowByte_ = 0;
+    runOut_ = 0;
+    runFill_ = 0;
+    runCrc_ = 0;
+    if (r_ < dirCount_ && runBytes(r_) == 0) runEnd_ = runWrite_[r_] ? 2 : 3;
+  }
+  /// False: no room in the run area (the save fails by name).
+  bool splitStep() {
+    while (pendSector_ == runstore::kNoSector) {
+      if (outPos_ < outLen_) {
+        bodyByte(outq_[outPos_++]);
+        if (outPos_ == outLen_) outPos_ = outLen_ = 0;
+        continue;
+      }
+      if (runEnd_ == 1) {  // the run's last, partial rows sector
+        for (uint32_t i = runFill_; i < kSector; ++i) runBuf()[i] = 0;
+        pend(kRunAreaBase + runSector_[r_] + 1 + runOut_++, runBuf());
+        runFill_ = 0;
+        runEnd_ = 2;
+        continue;
+      }
+      if (runEnd_ == 2) {  // its header, last: the record is whole once it is written
+        runstore::writeHeader(hdrBuf(), saving_, runKind_[r_], runRows_[r_], runCrc_);
+        pend(kRunAreaBase + runSector_[r_], hdrBuf());
+        ++stats_.runsWritten;
+        stats_.runSectors += runstore::sectorsFor(runRows_[r_]);
+        runEnd_ = 3;
+        continue;
+      }
+      if (runEnd_ == 3) {
+        runEnd_ = 0;
+        ++r_;
+        if (r_ >= dirCount_) {
+          split_ = Split::Tail;
+        } else {
+          beginRun();
+        }
+        continue;
+      }
+      if (fifoUsed_ == 0) return true;
+      const uint8_t v = fifoBuf()[fifoHead_];
+      fifoHead_ = (fifoHead_ + 1) % kFifo;
+      --fifoUsed_;
+      switch (split_) {
+        case Split::Head:
+          head_[got_++] = v;
+          if (got_ == 24) {
+            out(head_, 24);
+            dirCount_ = static_cast<uint16_t>(head_[12] | (head_[13] << 8));
+            dirAt_ = 0;
+            got_ = 0;
+            split_ = dirCount_ ? Split::Dir : Split::Tail;
+          }
+          break;
+        case Split::Dir:
+          entry_[got_++] = v;
+          if (got_ == 8) {
+            got_ = 0;
+            const uint16_t i = dirAt_++;
+            const RunId id = save_.directoryRun(i);
+            runKind_[i] = entry_[0];
+            runRows_[i] = runstore::get32(entry_ + 4);
+            runSerial_[i] = runs_->run(id).serial;
+            const runstore::CardRun& c = cardRun_[id];
+            runWrite_[i] = !(c.serial != 0 && c.serial == runSerial_[i]);
+            if (runWrite_[i]) {
+              runSector_[i] = clusters_.take(runRows_[i]);
+              if (runSector_[i] == runstore::kNoSector) return false;
+            } else {
+              runSector_[i] = c.sector;
+              ++stats_.runsKept;
+            }
+            uint8_t a[4];
+            runstore::put32(a, runSector_[i]);
+            out(entry_, 8);
+            out(a, 4);
+            if (dirAt_ == dirCount_) {
+              split_ = Split::Rows;
+              r_ = 0;
+              beginRun();
+            }
+          }
+          break;
+        case Split::Rows:
+          if (r_ >= dirCount_) {
+            split_ = Split::Tail;
+            out(&v, 1);
+            break;
+          }
+          if (runWrite_[r_]) {
+            runBuf()[runFill_++] = v;
+            runCrc_ = crc32Update(runCrc_, &v, 1);
+            if (runFill_ == kSector) {
+              pend(kRunAreaBase + runSector_[r_] + 1 + runOut_++, runBuf());
+              runFill_ = 0;
+            }
+          }
+          if (++rowByte_ == runBytes(r_)) runEnd_ = runWrite_[r_] ? (runFill_ != 0 ? 1 : 2) : 3;
+          break;
+        case Split::Tail:
+          out(&v, 1);
+          break;
+      }
+    }
+    return true;
+  }
+  void startRecordSave() {
+    split_ = Split::Head;
+    got_ = 0;
+    dirCount_ = dirAt_ = 0;
+    r_ = 0;
+    runEnd_ = 0;
+    outLen_ = outPos_ = 0;
+    fifoHead_ = fifoUsed_ = 0;
+    pendSector_ = runstore::kNoSector;
+    saveDone_ = false;
+    sealStage_ = 0;
+  }
+  bool stepRecordSave() {
+    const uint8_t s = saving_;
+    if (pendSector_ != runstore::kNoSector) {  // one sector a grain, once the card is ready for it
+      if (!card_->ready(pendSector_)) return true;
+      const uint32_t at = pendSector_;
+      pendSector_ = runstore::kNoSector;
+      if (!card_->writeSector(at, pendBuf_)) return recordSaveFailed(s);
+      if (sealStage_ == 2) {  // the state record's header: the save is whole
+        saving_ = kNone;
+        closing_ = closingSave_ = true;
+        haveCopy_ |= 1ull << s;
+        if (savingCopy_) copyB_ |= 1ull << s; else copyB_ &= ~(1ull << s);
+        for (uint16_t i = 0; i < dirCount_; ++i)
+          if (runWrite_[i]) cardRun_[save_.directoryRun(i)] = runstore::CardRun{runSector_[i], runSerial_[i]};
+        ++stats_.saves;
+        saved_[s] = savingPrint_;
+        return false;
+      }
+      return true;
+    }
+    if (!splitStep()) {
+      ++stats_.storeFull;
+      return recordSaveFailed(s);
+    }
+    if (pendSector_ != runstore::kNoSector || outLen_ != 0) return true;
+    if (!saveDone_) {
+      const typename Save::Status st = save_.step();  // into the FIFO (empty here): at most one chunk
+      if (st == Save::Status::Done) saveDone_ = true;
+      else if (st != Save::Status::Running) return recordSaveFailed(s);
+      return true;
+    }
+    if (runEnd_ != 0 || fifoUsed_ != 0) return true;
+    if (sealStage_ == 0) {  // the body's last, partial sector
+      sealStage_ = 1;
+      if (ioFill_ != 0) {
+        uint8_t* b = sectorBuf();
+        for (uint32_t i = ioFill_; i < kSector; ++i) b[i] = 0;
+        pend(ioNext_++, b);
+        ioFill_ = 0;
+      }
+      return true;
+    }
+    // The header, last, with the next sequence: the copy is the current one once it is written.
+    uint8_t* b = sectorBuf();
+    for (uint32_t i = 0; i < kSector; ++i) b[i] = 0;
+    putWords(b, kCopyMagic, s, savingSeq_, ioBytes_);
+    const uint32_t check = copySum(s, savingSeq_, ioBytes_);
+    for (uint8_t i = 0; i < 4; ++i) b[16 + i] = static_cast<uint8_t>(check >> (8 * i));
+    pend(copyBase(s, savingCopy_), b);
+    sealStage_ = 2;
+    return true;
+  }
+  bool recordSaveFailed(uint8_t s) {
+    save_.cancel();
+    saving_ = kNone;
+    pendSector_ = runstore::kNoSector;
+    closing_ = closingSave_ = true;
+    ++stats_.saveFailed;  // the current copy stays; extents taken stay held until the next boot
+    saved_[s] = savingPrint_;
+    return false;
+  }
+  // ---- DEC-254: loading from the run-once store ------------------------------------------------------------------
+  // The slot stream rebuilt for `LoadJob`: the header and directory from the state record (each entry's record sector
+  // kept), each run's rows from its record (its header checked first, its rows' CRC at its end), the states and CRC
+  // from the state record again.
+  bool bodyRead(uint8_t* d, uint32_t n) {
+    if (n > ioBytes_) return false;
+    ioBytes_ -= n;
+    uint8_t* buf = importScratch_;
+    while (n != 0) {
+      if (ioFill_ == kSector) {
+        if (!card_->readSector(ioNext_++, buf)) return false;
+        ioFill_ = 0;
+      }
+      const uint32_t k = n < kSector - ioFill_ ? n : kSector - ioFill_;
+      for (uint32_t i = 0; i < k; ++i) d[i] = buf[ioFill_ + i];
+      ioFill_ = static_cast<uint16_t>(ioFill_ + k);
+      d += k;
+      n -= k;
+    }
+    return true;
+  }
+  bool openRun(uint16_t r) {
+    rowByte_ = 0;
+    runCrc_ = 0;
+    runOut_ = 0;
+    runFill_ = kSector;
+    if (!card_->readSector(kRunAreaBase + runSector_[r], runBuf())) return false;
+    uint32_t crc = 0;
+    if (!runstore::readHeader(runBuf(), loading_, runKind_[r], runRows_[r], crc)) {
+      ++stats_.badRun;
+      return false;
+    }
+    wantCrc_ = crc;
+    return true;
+  }
+  bool closeRun() {
+    if (runCrc_ != wantCrc_) {
+      ++stats_.badRun;
+      return false;
+    }
+    return true;
+  }
+  bool recordRead(uint8_t* d, uint32_t n) {
+    while (n != 0) {
+      switch (ld_) {
+        case Split::Head: {
+          if (n < 24 || !bodyRead(d, 24)) return false;
+          dirCount_ = static_cast<uint16_t>(d[12] | (d[13] << 8));
+          if (dirCount_ > Runs::kRunCount) return false;
+          ldCount_ = dirCount_;
+          dirAt_ = 0;
+          ld_ = dirCount_ ? Split::Dir : Split::Tail;
+          d += 24;
+          n -= 24;
+          break;
+        }
+        case Split::Dir: {
+          uint8_t e[12];
+          if (n < 8 || !bodyRead(e, 12)) return false;
+          for (uint8_t i = 0; i < 8; ++i) d[i] = e[i];
+          runKind_[dirAt_] = e[0];
+          runRows_[dirAt_] = runstore::get32(e + 4);
+          runSector_[dirAt_] = runstore::get32(e + 8);
+          if (runSector_[dirAt_] >= runstore::kAreaSectors) return false;
+          if (++dirAt_ == dirCount_) {
+            ld_ = Split::Rows;
+            r_ = 0;
+            if (!openRun(0)) return false;
+          }
+          d += 8;
+          n -= 8;
+          break;
+        }
+        case Split::Rows: {
+          while (r_ < dirCount_ && rowByte_ == runBytes(r_)) {  // a run done (or without rows): checked, the next
+            if (!closeRun()) return false;
+            if (++r_ < dirCount_ && !openRun(r_)) return false;
+          }
+          if (r_ >= dirCount_) {
+            ld_ = Split::Tail;
+            break;
+          }
+          const uint32_t left = runBytes(r_) - rowByte_;
+          uint32_t k = n < left ? n : left;
+          while (k != 0) {
+            if (runFill_ == kSector) {
+              if (!card_->readSector(kRunAreaBase + runSector_[r_] + 1 + runOut_++, runBuf())) return false;
+              runFill_ = 0;
+            }
+            const uint32_t m = k < kSector - runFill_ ? k : kSector - runFill_;
+            for (uint32_t i = 0; i < m; ++i) d[i] = runBuf()[runFill_ + i];
+            runCrc_ = crc32Update(runCrc_, d, m);
+            runFill_ = static_cast<uint16_t>(runFill_ + m);
+            rowByte_ += m;
+            d += m;
+            n -= m;
+            k -= m;
+          }
+          break;
+        }
+        case Split::Tail:
+          return bodyRead(d, n);
+      }
+    }
+    return true;
   }
   /// Slot `s`'s copies: true when one is valid (`copyB_` names the later; `altValid_` the other).
   bool pickCopy(uint8_t s) {
@@ -494,10 +897,14 @@ class Persistence {
       const uint32_t bytes = w[3];
       uint32_t check = 0;
       for (uint8_t i = 0; i < 4; ++i) check |= static_cast<uint32_t>(importScratch_[16 + i]) << (8 * i);
-      valid[c] = w[0] == kCopyMagic && w[1] == s && bytes != 0 && bytes <= kMaxFileBytes &&
-                 check == copySum(s, w[2], bytes);
+      valid[c] = w[0] == kCopyMagic && w[1] == s && bytes != 0 &&
+                 bytes <= (legacy_ ? kMaxFileBytes : kRecordBodyBytes) && check == copySum(s, w[2], bytes);
       seq[c] = w[2];
+      bytes_[c] = bytes;
     }
+    if (!legacy_)  // DEC-254: what either valid copy lists stays held (a boot may fall back to the other)
+      for (uint8_t c = 0; c < 2; ++c)
+        if (valid[c]) markCopy(s, c, bytes_[c]);
     if (!valid[0] && !valid[1]) return false;
     for (uint8_t c = 0; c < 2; ++c)
       if (valid[c] && static_cast<int32_t>(seq[c] - nextSeq_) >= 0) nextSeq_ = seq[c] + 1;
@@ -516,9 +923,14 @@ class Persistence {
     ioNext_ = copyBase(s, c) + 1;
     ioBytes_ = w[3];
     ioFill_ = kSector;
+    ld_ = Split::Head;  // DEC-254: the record source from its start
+    ldCount_ = 0;
+    loading_ = s;  // `openRun` checks the records' slot
     if (load_.start(*pool_, *runs_, *manifests_, *history_, *res_, *ids_, s, source_, loadScratch_) !=
-        Load::Status::Running)
+        Load::Status::Running) {
+      loading_ = kNone;
       return false;
+    }
     loading_ = s;
     loadingCopy_ = c;
     return true;
@@ -565,10 +977,13 @@ class Persistence {
     ioNext_ = copyBase(s, c) + 1;
     ioBytes_ = 0;
     ioFill_ = 0;
+    saving_ = s;  // the run records name their slot
+    if (!legacy_) startRecordSave();
     if (save_.start(*pool_, *runs_, *manifests_, *history_, s, sink_, ids_->peek(), saveScratch_) !=
         Save::Status::Running) {
       ++stats_.saveFailed;
       saved_[s] = seen_[s];
+      saving_ = kNone;
       return;
     }
     saving_ = s;
@@ -578,6 +993,7 @@ class Persistence {
   /// A save grain: one sector write at most, and only once the card is ready for it — a body chunk, then the last,
   /// partial sector, then the header.
   bool stepSave() {
+    if (!legacy_) return stepRecordSave();
     const uint8_t s = saving_;
     // The sector this grain may write: a body chunk fills at most one (`ioNext_`), then the last one, then the header.
     if (!card_->ready(!sealing_ || ioFill_ != 0 ? ioNext_ : copyBase(s, savingCopy_))) return true;
@@ -615,6 +1031,11 @@ class Persistence {
     loading_ = kNone;
     if (fromStore_) {
       if (st == Load::Status::Done) {
+        if (!legacy_)  // DEC-254: the loaded runs are on the card, in the records the state record names
+          for (uint16_t i = 0; i < ldCount_; ++i) {
+            const RunId id = load_.directoryRun(i);
+            cardRun_[id] = runstore::CardRun{runSector_[i], runs_->run(id).serial};
+          }
         ++stats_.loads;
         saved_[s] = seen_[s] = fingerprint(s);  // what the store holds
       } else if (altValid_) {  // the later copy failed its CRC: the earlier one
@@ -730,6 +1151,23 @@ class Persistence {
   uint8_t* importScratch_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   uint8_t importing_ = kNone;
+  // DEC-254 (E4.6b): the run-once store.
+  enum class Split : uint8_t { Head, Dir, Rows, Tail };
+  bool legacy_ = false;   // the DEC-253 store is open (read at boot to migrate)
+  bool migrate_ = false;  // ... and the run-once store is to take its slots after the boot
+  bool saveDone_ = false;
+  uint8_t sealStage_ = 0, runEnd_ = 0, got_ = 0, outLen_ = 0, outPos_ = 0;
+  Split split_ = Split::Head, ld_ = Split::Head;
+  uint16_t dirCount_ = 0, dirAt_ = 0, r_ = 0, runFill_ = 0, ldCount_ = 0;
+  uint32_t rowByte_ = 0, runOut_ = 0, runCrc_ = 0, wantCrc_ = 0, fifoHead_ = 0, fifoUsed_ = 0, bytes_[2] = {};
+  uint32_t pendSector_ = runstore::kNoSector;
+  uint8_t* pendBuf_ = nullptr;
+  uint8_t head_[24] = {}, entry_[8] = {}, outq_[32] = {};
+  uint32_t runSector_[Runs::kRunCount] = {}, runRows_[Runs::kRunCount] = {}, runSerial_[Runs::kRunCount] = {};
+  uint8_t runKind_[Runs::kRunCount] = {};
+  bool runWrite_[Runs::kRunCount] = {};
+  runstore::CardRun cardRun_[Runs::kRunCount];
+  runstore::ClusterMap clusters_;
   Import import_;
   Reader reader_;
   Stats stats_{};

@@ -1343,7 +1343,7 @@ void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
 
-void command(char* line, uint32_t nowUs) {
+FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  // DEC-254: serial commands from flash (RAM1 room)
   const uint32_t us = gClock.usPerTick();
   if (std::strcmp(line, "!STOP_STATUS") == 0) {
     Serial.printf("#STOP_STATUS,state=%s\n", gClock.running() ? "RUNNING" : "STOPPED");
@@ -1592,6 +1592,15 @@ void command(char* line, uint32_t nowUs) {
                   static_cast<unsigned long>(ct.exists), static_cast<unsigned long>(ct.openRead),
                   static_cast<unsigned long>(ct.sectorRead), static_cast<unsigned long>(ct.sectorWrite),
                   static_cast<unsigned long>(ct.store), gEngine.persistence().stats().store);
+    {  // DEC-254 (E4.6b): the run-once store
+      const auto& ps = gEngine.persistence().stats();
+      Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
+                    "migrated_slots=%lu,clusters=%lu\n",
+                    static_cast<unsigned long>(ps.runsWritten), static_cast<unsigned long>(ps.runSectors),
+                    static_cast<unsigned long>(ps.runsKept), static_cast<unsigned long>(ps.storeFull),
+                    static_cast<unsigned long>(ps.badRun), static_cast<unsigned long>(ps.migratedSlots),
+                    static_cast<unsigned long>(gEngine.persistence().runAreaClusters()));
+    }
     Serial.printf("#ENGINE,card_write,next=%lu,jump=%lu,not_ready=%lu,stops=%lu\n",
                   static_cast<unsigned long>(ct.nextWrite), static_cast<unsigned long>(ct.jumpWrite),
                   static_cast<unsigned long>(ct.notReady), static_cast<unsigned long>(ct.stops));

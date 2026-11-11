@@ -80,7 +80,8 @@ struct FakeCard : CardIo {
     dirCount = 0;
     reading = -1;
     sectorCount = 0;
-    storeExists = storeOpen = false;
+    storeExists = storeOpen = oldExists = false;
+    storeAt = 0;
     libraryExists = libraryOpen = false;
     storeSectors = 0;
     failSectorWritesAfter = failOneSectorWrite = 0xFFFFFFFFu;
@@ -126,21 +127,29 @@ struct FakeCard : CardIo {
     return true;
   }
   void closeRead() override { reading = -1; }
+  // DEC-254: the run-once store ("store2.bin") at sector 0 of the fake; the DEC-253 store ("store.bin", read to
+  // migrate) at `kOldAt` — each opened as the one store, as the SD adapter does.
+  static constexpr uint32_t kOldAt = 0x20000000u;
+  bool oldExists = false;
+  uint32_t storeAt = 0;
   bool openStore(const char* p, uint32_t n, bool create, bool& created) override {
-    TEST_ASSERT_EQUAL_STRING("/MidiLooper/engine/store.bin", p);
     created = false;
-    if (!storeExists) {
+    const bool old = std::strcmp(p, "/MidiLooper/engine/store.bin") == 0;
+    if (!old) TEST_ASSERT_EQUAL_STRING("/MidiLooper/engine/store2.bin", p);
+    bool& exists = old ? oldExists : storeExists;
+    if (!exists) {
       if (!create) return false;
-      storeExists = created = true;  // a new file over old card data: whatever the sectors held stays
+      exists = created = true;  // a new file over old card data: whatever the sectors held stays
       ++writes;
     }
     storeOpen = true;
     storeSectors = n;
+    storeAt = old ? kOldAt : 0;
     return true;
   }
   bool readSector(uint32_t i, uint8_t* d) override {
     if (!storeOpen || i >= storeSectors) return false;
-    return readAbs(i, d);
+    return readAbs(storeAt + i, d);
   }
   bool openLibrary(const char* p, uint32_t, bool create, bool& created) override {
     TEST_ASSERT_EQUAL_STRING("/MidiLooper/library/library.bin", p);
@@ -166,6 +175,7 @@ struct FakeCard : CardIo {
     return true;
   }
   bool writeSector(uint32_t i, const uint8_t* d) override {
+    TEST_ASSERT_EQUAL_UINT32(0, storeAt);  // the DEC-253 store is never written
     return storeOpen && i < storeSectors && writeAbs(i, d);
   }
   bool writeAbs(uint32_t i, const uint8_t* d) {
@@ -869,6 +879,171 @@ void test_a_live_load_at_loop_end_waits_for_the_selected_loop() {
   gA.setSwitchAt(ProductionControl::SwitchAt::NextBar);
 }
 
+
+// ---- DEC-254 (E4.6b): the run-once store -----------------------------------------------------------------------------
+/// Every run of slot `s`'s states, once.
+static uint32_t slotClusters(EngineRoot& e, uint8_t s) {
+  ManifestId chain[Config::kHistoryDepth];
+  int16_t cur;
+  bool below;
+  const uint8_t n = e.history().chain(s, chain, Config::kHistoryDepth, cur, below);
+  RunId seen[256];
+  uint16_t k = 0;
+  uint32_t clusters = 0;
+  for (uint8_t i = 0; i < n; ++i) {
+    const auto& m = e.manifests().manifest(chain[i]);
+    for (uint8_t r = 0; r < m.runCount; ++r) {
+      bool dup = false;
+      for (uint16_t j = 0; j < k && !dup; ++j) dup = seen[j] == m.runs[r];
+      if (dup) continue;
+      seen[k++] = m.runs[r];
+      clusters += runstore::clustersFor(e.runs().run(m.runs[r]).rowCount);
+    }
+  }
+  return clusters;
+}
+
+// A run is written once: an overdub's save writes its new run only; an undo's save writes none. The next boot loads
+// the slot from the state record and the run records.
+void test_each_run_is_written_once() {
+  gA.approveSaving();
+  record(gA, 0, 0, 60);
+  run(gA, gClock + kSettleTicks + 50);
+  const auto& st = gA.persistence().stats();
+  TEST_ASSERT_EQUAL_UINT32(1, st.saves);
+  const uint32_t first = st.runsWritten;
+  TEST_ASSERT_TRUE(first > 0);
+  TEST_ASSERT_EQUAL_UINT32(0, st.runsKept);
+  const uint8_t before = gA.manifests().manifest(gA.history().current(0)).runCount;
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().startOverdub(0, gClock));
+  const uint32_t o = gClock;
+  run(gA, o + 4 * kBar - 100, {{o + 100, o + 300, 70}});
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().stopNow(gClock, us(gClock), kUsPerTick));
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL_UINT32(2, st.saves);
+  const uint8_t after = gA.manifests().manifest(gA.history().current(0)).runCount;
+  TEST_ASSERT_EQUAL_UINT32(after - before, st.runsWritten - first);  // the overdub's run, nothing else
+  TEST_ASSERT_EQUAL_UINT32(before, st.runsKept);                      // the take's runs stayed on the card
+  const uint32_t written = st.runsWritten, sectors = st.runSectors;
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().undo(0, gClock, us(gClock), kUsPerTick));
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL_UINT32(3, st.saves);
+  TEST_ASSERT_EQUAL_UINT32(written, st.runsWritten);  // an undo writes no run
+  TEST_ASSERT_EQUAL_UINT32(sectors, st.runSectors);
+  bootB();
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().loads);
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT8(gA.history().undoDepth(0), gB.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT8(gA.history().redoDepth(0), gB.history().redoDepth(0));
+  const auto& ma = gA.manifests().manifest(gA.history().current(0));
+  const auto& mb = gB.manifests().manifest(gB.history().current(0));
+  TEST_ASSERT_EQUAL_UINT8(ma.runCount, mb.runCount);
+  for (uint8_t r = 0; r < ma.runCount; ++r)
+    TEST_ASSERT_EQUAL_UINT32(gA.runs().run(ma.runs[r]).rowCount, gB.runs().run(mb.runs[r]).rowCount);
+  // Loaded runs are known to be on the card: a save after the boot writes none of them again.
+  TEST_ASSERT_EQUAL(R::Ok, gB.control().redo(0, gClock, us(gClock), kUsPerTick));
+  run(gB, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().saves);
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().runsWritten);
+}
+
+// A damaged run record fails its check by name: the slot (whose two copies list that record) stays empty.
+void test_a_damaged_run_record_fails_by_name() {
+  gA.approveSaving();
+  record(gA, 0, 0, 60);
+  run(gA, gClock + kSettleTicks + 50);
+  const auto& m = gA.manifests().manifest(gA.history().current(0));
+  uint32_t at = runstore::kNoSector;
+  for (uint8_t r = 0; r < m.runCount && at == runstore::kNoSector; ++r)
+    if (gA.runs().run(m.runs[r]).rowCount > 0) at = gA.persistence().runRecordSector(m.runs[r]);
+  TEST_ASSERT_TRUE(at != runstore::kNoSector);
+  TEST_ASSERT_NOT_NULL(gCard.sector(at + 1));
+  gCard.sector(at + 1)[3] ^= 0x40;  // a row's byte: the rows' CRC fails
+  bootB();
+  TEST_ASSERT_EQUAL_UINT32(1, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_TRUE(gB.persistence().stats().badRun > 0);
+  TEST_ASSERT_EQUAL(kNoManifest, gB.history().current(0));
+}
+
+// Space is taken during a session and reclaimed at boot: a take neither copy lists any more is free again.
+void test_a_run_no_copy_lists_is_reclaimed_at_boot() {
+  gA.approveSaving();
+  record(gA, 0, 0, 60);  // take A
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().undo(0, gClock, us(gClock), kUsPerTick));
+  record(gA, 0, 0, 64);  // take B: A's redo is dropped
+  run(gA, gClock + kSettleTicks + 50);  // the other copy: B (the first still lists A)
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().undo(0, gClock, us(gClock), kUsPerTick));
+  run(gA, gClock + kSettleTicks + 50);  // the first copy again: B (as redo) — A listed nowhere
+  TEST_ASSERT_EQUAL_UINT32(3, gA.persistence().stats().saves);
+  const uint32_t session = gA.persistence().runAreaClusters();
+  bootB();
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT32(slotClusters(gB, 0), gB.persistence().runAreaClusters());  // B's only
+  TEST_ASSERT_TRUE(gB.persistence().runAreaClusters() < session);
+}
+
+// Migration: with only the DEC-253 store on the card, the boot loads it, then every slot is saved into the run-once
+// store (the old one never written); the next boot loads from the run-once store.
+struct OldStoreSink {
+  std::vector<uint8_t> bytes;
+  bool write(const uint8_t* d, uint32_t n) {
+    bytes.insert(bytes.end(), d, d + n);
+    return true;
+  }
+};
+void test_the_dec253_store_is_migrated() {
+  record(gA, 0, 0, 60);  // not approved: nothing on the card yet
+  record(gA, 1, 9, 72);
+  for (uint8_t s : {0, 9}) {  // the DEC-253 layout: copy A of slot s, a header sector then the slot stream
+    using Old = SaveJob<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory, OldStoreSink, 512>;
+    static Old job;
+    static uint8_t scratch[512];
+    OldStoreSink sink;
+    TEST_ASSERT_EQUAL(Old::Status::Running,
+                      job.start(const_cast<ProductionPool&>(gA.pool()), const_cast<ProductionRuns&>(gA.runs()),
+                                const_cast<ProductionManifests&>(gA.manifests()), gA.history(), s, sink,
+                                gA.noteIds().peek(), scratch));
+    while (job.step() == Old::Status::Running) {
+    }
+    TEST_ASSERT_EQUAL(Old::Status::Done, job.status());
+    const uint32_t base = FakeCard::kOldAt + 2 + 2u * s * ProductionPersistence::kOldCopySectors;
+    for (uint32_t i = 0; i * 512 < sink.bytes.size(); ++i) {
+      uint8_t b[512] = {};
+      for (uint32_t k = 0; k < 512 && i * 512 + k < sink.bytes.size(); ++k) b[k] = sink.bytes[i * 512 + k];
+      gCard.writeAbs(base + 1 + i, b);
+    }
+    const uint32_t n = static_cast<uint32_t>(sink.bytes.size()), seq = s + 1u;
+    uint8_t h[512] = {};
+    const uint32_t w[4] = {0x31434C4Du, s, seq, n};
+    for (int k = 0; k < 16; ++k) h[k] = static_cast<uint8_t>(w[k / 4] >> (8 * (k % 4)));
+    const uint32_t check = ((s * 0x9E3779B1u) ^ (seq * 2654435761u) ^ (n * 0x85EBCA77u)) + 0x5A5A5A5Au;
+    for (int k = 0; k < 4; ++k) h[16 + k] = static_cast<uint8_t>(check >> (8 * k));
+    gCard.writeAbs(base, h);
+  }
+  gCard.oldExists = true;
+  gCard.makeDir(ProductionPersistence::kFolder);  // approved before (the DEC-253 firmware saved)
+  bootB();
+  TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().loads);
+  TEST_ASSERT_TRUE(gCard.storeExists);  // the run-once store, created at the boot
+  run(gB, gClock + kSettleTicks + 200);
+  TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().migratedSlots);
+  TEST_ASSERT_EQUAL_UINT32(2, gB.persistence().stats().saves);
+  TEST_ASSERT_TRUE(gB.persistence().stats().runsWritten > 0);
+  TEST_ASSERT_TRUE(gA.init(gPsramA, gRam2A, 2000));  // the next boot: the run-once store
+  gA.attachCard(gCard);
+  gA.startBootLoad();
+  run(gA, gClock + 30);
+  TEST_ASSERT_EQUAL_UINT32(2, gA.persistence().stats().loads);
+  TEST_ASSERT_EQUAL_UINT32(0, gA.persistence().stats().migratedSlots);
+  for (uint8_t s : {0, 9}) {
+    const auto& ma = gA.manifests().manifest(gA.history().current(s));
+    const auto& mb = gB.manifests().manifest(gB.history().current(s));
+    TEST_ASSERT_EQUAL_UINT32(ma.loopLengthTicks, mb.loopLengthTicks);
+    TEST_ASSERT_EQUAL_UINT8(ma.runCount, mb.runCount);
+  }
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -904,6 +1079,10 @@ int main(int, char**) {
   RUN_TEST(test_a_live_load_switches_at_the_bar_and_resumes_together);
   RUN_TEST(test_a_staged_live_load_switches_without_a_gap);
   RUN_TEST(test_a_live_load_at_loop_end_waits_for_the_selected_loop);
+  RUN_TEST(test_each_run_is_written_once);
+  RUN_TEST(test_a_damaged_run_record_fails_by_name);
+  RUN_TEST(test_a_run_no_copy_lists_is_reclaimed_at_boot);
+  RUN_TEST(test_the_dec253_store_is_migrated);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

@@ -175,7 +175,9 @@ struct EngineRam2 {
 // engine's tables,
 // writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
 // a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7198896u;  // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+constexpr size_t kPsramBudget = 7244656u;  // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),
+                                           // each run's record sector / serial / save state, the save FIFO state;
+                                           // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
                                            // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
                                            // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
                                            // run lists and source list; DEC-290: + 224 B the request's template table and label
@@ -183,9 +185,10 @@ constexpr size_t kRam2Budget = 160072u;  // measured (DEC-275, a step or bar res
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
-static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u,
+static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u,
               "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
-              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap (ARM)");
+              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
+              "map and per-run tables (DEC-254, E4.6b: + 45,752 B) (ARM)");
 #endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
               "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");

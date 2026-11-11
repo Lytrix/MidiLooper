@@ -139,6 +139,8 @@ class SaveJob {
     if (status_ == Status::Running) end(Status::Idle);
   }
   Status status() const { return status_; }
+  /// The directory's run `i` (first-use order; DEC-254: the run-once store's sink names each run's record by it).
+  RunId directoryRun(uint16_t i) const { return run_[i]; }
   uint32_t totalRows() const { return totalRows_; }
 
  private:
@@ -417,6 +419,8 @@ class LoadJob {
     if (status_ == Status::Running) fail(Status::Idle);
   }
   Status status() const { return status_; }
+  /// The run loaded for directory entry `i` (DEC-254: the run-once store maps it to its record once loaded).
+  RunId directoryRun(uint16_t i) const { return run_[i]; }
   /// A detached load's current state (kNoManifest: the file's current is the empty slot).
   ManifestId detachedState() const { return detachedState_; }
 
