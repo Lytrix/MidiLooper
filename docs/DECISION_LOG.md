@@ -16688,4 +16688,4 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   kept). Rebuilt fit runs carry the row; undo restores the previous columns; it is saved and loaded with the slot.
   Native: `test_the_groove_window_sets_a_groove` (open / close no step; B applied, A edited silently, stored and
   restored; a resize carries it), two mutations caught (a third equivalent). Device `32da4c93…`: open / close no step;
-  a B change one step, recalled on re-entering (F4 100); undone.
+  a B change one step, recalled on re-entering (F4 100); undone. Owner confirmed on the DROID (2026-11-11).
