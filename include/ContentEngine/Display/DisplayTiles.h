@@ -1,21 +1,21 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Piano-roll tiles (fixed-memory-engine E7, plan revision 3 § 9.3, invariant I6).
+// Piano-roll tiles.
 //
-// * Span tile per (detail slot, bar): up to 256 note segments (8 B) plus a 32 x 128 one-bit raster = 2,560 B. A bar with
-//   more than 256 segments keeps only its raster: the named `dense` state.
+// * Span tile per (detail slot, bar): up to 256 note segments (8 B) plus a 32 x 128 one-bit raster = 2,560 B. A bar
+//   with more than 256 segments keeps only its raster: the named `dense` state.
 // * Density tile per (slot, bar) for every slot: 128 pitches x 4-bit note count (saturating at 15) = 64 B.
 // * Tiles are replaced only by complete ones. A sweep writes a span tile into a spare and swaps it in whole; a density
-//   tile is written into a staging copy and copied in one step between draws. The draw rule (`drawSource`): a bar's span
-//   tile, else its density tile — whatever identity they hold — so a starved sweep, a focus switch, an Undo or an
+//   tile is written into a staging copy and copied in one step between draws. The draw rule (`drawSource`): a bar's
+//   span tile, else its density tile — whatever identity they hold — so a starved sweep, a focus switch, an Undo or an
 //   exhausted pool show the previous content, never a blank bar. Nothing on the draw path allocates or reads pages.
 // * `TileSweep` (a display job, soft) composes the slot's manifest with every effective note selected (the piano roll
 //   shows stored content; OUT-POLY limits only output) and publishes each bar as it completes. Bars after the source's
 //   wrap reach compose the same in cycle 0 as in steady state, so they are published in cycle 0; the early bars that
 //   notes held across the loop end reach are published from cycle 1, after which the sweep stops (one loop plus those
-//   bars, instead of two loops). A sweep whose slot was given another
-//   manifest stops (`Superseded`), returns its spare and releases its source lease.
+//   bars, instead of two loops). A sweep whose slot was given another manifest stops (`Superseded`), returns its spare
+//   and releases its source lease.
 // No allocation; `init()` writes every field.
 
 #pragma once
@@ -132,7 +132,7 @@ class TileStore {
   }
   uint16_t freeSpares() const { return freeSpares_; }
 
-  /// E9.6: an empty (or cleared) slot shows nothing: its density bars and its detail tiles drop out. One step per bar.
+  /// An empty (or cleared) slot shows nothing: its density bars and its detail tiles drop out. One step per bar.
   void clearSlot(uint8_t slot) {
     densitySwept_[slot] = 0;
     densityIdentity_[slot] = 0;
@@ -208,7 +208,7 @@ class TileSweep {
       if (!source_.prepared()) return status_;
       if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
       bindStarted_ = true;
-      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps
       if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
       if (b == SpanWindowComposer::BindStep::Failed) return stop(Status::Refused);
@@ -381,13 +381,13 @@ class TileSweep {
   Status status_ = Status::Idle;
 };
 
-/// The live overlay (plan § 9.3): what the writer is recording, drawn over the piano roll until the committed tiles
+/// The live overlay: what the writer is recording, drawn over the piano roll until the committed tiles
 /// show it. A list of the take's notes in loop positions (start, end, pitch, brightness from velocity), so the roll
-/// draws them at whatever scale its view has — owner 2026-11-06: as legacy, a first take's view grows with the current
+/// draws them at whatever scale its view has — a first take's view grows with the current
 /// tick, so a fixed-scale raster cannot follow it. A held note's end is the current position (`advance`) until its
 /// NoteOff. A note crossing the loop end (`setLoop`; 0: no loop yet, a first take) wraps. More than `MaxNotes` notes:
 /// the rest are not shown until the tiles show them (`dropped`). `extent` names the pitches shown, for the auto-fit.
-/// Pickups (E9.8j, a Record take's notes begun before its tick 0; `MaxPickups`): drawn `before` ticks before the
+/// Pickups (a Record take's notes begun before its tick 0; `MaxPickups`): drawn `before` ticks before the
 /// view's end (the loop's, or the take's length so far), ending where they were released — wrapped to the take's
 /// start when released after tick 0; a held one fills the view (at Stop it becomes almost a loop long). Notes
 /// `count()` and `note(i)` list both. No allocation; O(1) a NoteOn / advance, O(`MaxPickups`) a NoteOff.
@@ -507,7 +507,7 @@ class LiveOverlay {
   uint8_t lo_ = 0xFF, hi_ = 0;
 };
 
-/// Tile sweeps as scheduler jobs (E7.2). `Workers` sweep workers (the display compose cursors), each with its own
+/// Tile sweeps as scheduler jobs. `Workers` sweep workers (the display compose cursors), each with its own
 /// composer and scratch window. A slot's newest request replaces its older one (and supersedes a running sweep for the
 /// slot). The focused slot's request is started first, then the others in request order. Each running sweep is a
 /// display-class job, so it gets at least one grain in four while display work is pending.
@@ -535,7 +535,8 @@ class DisplayJobs {
     focus_ = 0xFF;
   }
 
-  /// The slot's tiles should show `manifest` (a commit, Undo / Redo, an edit, a load). Replaces the slot's older request.
+  /// The slot's tiles should show `manifest` (a commit, Undo / Redo, an edit, a load). Replaces the slot's older
+  /// request.
   void request(uint8_t slot, ManifestId manifest) {
     dropPin(slot);
     pending_[slot] = manifest;
@@ -543,7 +544,7 @@ class DisplayJobs {
     store_->setWanted(slot, manifests_->manifest(manifest).identity);
   }
   /// As `request`, holding `manifest` with a pin of its own until its sweep takes one (or the request is replaced or
-  /// cancelled): for a manifest its owner may release meanwhile (plan §6.2 fix 2, a get-a-loop preview).
+  /// cancelled): for a manifest its owner may release meanwhile (a get-a-loop preview).
   void requestPinned(uint8_t slot, ManifestId manifest) {
     manifests_->pin(manifest);
     request(slot, manifest);
@@ -580,7 +581,7 @@ class DisplayJobs {
     }
   }
 
-  /// E9.6: the display cursor is wanted elsewhere (a NOTE_EDIT gather): running sweeps stop and their slots are asked
+  /// The display cursor is wanted elsewhere (a NOTE_EDIT gather): running sweeps stop and their slots are asked
   /// again; `service` starts nothing until the caller resumes calling it.
   void yield() {
     for (auto& w : worker_) {

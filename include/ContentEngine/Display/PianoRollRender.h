@@ -1,14 +1,15 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Banded piano-roll drawing from tiles (fixed-memory-engine E9.6, plan § 9.3 "DisplayManager: banded draw / DMA").
+// Banded piano-roll drawing from tiles.
 //
-// The note layer only — grid, playhead, bracket and sidebar stay `DisplayManager`'s. Draws into the SSD1322 4-bit
-// framebuffer (two pixels a byte, even x in the high nibble), one band of rows at a time, so a frame can be drawn and
-// sent in bands. It reads tiles and the live overlay only: nothing on the draw path composes, allocates or reads pages.
-// The legacy geometry: x = x0 + map(position in the view, 0, view ticks, 0, width), y = map(pitch, low, high, y1, y0),
-// one-row note bars at brightness 7, the highlighted note at 10; a muted note at 3, 6 highlighted. A note's first pixel
-// is brighter (13, 15 highlighted, 6 / 9 muted; owner 2026-11-08), so notes that touch on a pitch read as separate.
+// The note layer only — grid, playhead, bracket and sidebar are the screen's (`Teensy::OledScreen`). Draws into the
+// SSD1322 4-bit framebuffer (two pixels a byte, even x in the high nibble), one band of rows at a time, so a frame can
+// be drawn and sent in bands. It reads tiles and the live overlay only: nothing on the draw path composes, allocates or
+// reads pages.
+// Geometry: x = x0 + map(position in the view, 0, view ticks, 0, width), y = map(pitch, low, high, y1, y0), one-row
+// note bars at brightness 7, the highlighted note at 10; a muted note at 3, 6 highlighted. A note's first pixel is
+// brighter (13, 15 highlighted, 6 / 9 muted), so notes that touch on a pitch read as separate.
 // * Detailed view (`drawRollBand`): per visible bar its draw source — span segments; a dense bar's 32-column raster;
 //   else (no span tile yet) its density tile as a dim bar-wide line per sounding pitch; never blank once swept — then
 //   the live overlay's notes (a take being recorded) on top, at the view's scale.
@@ -38,9 +39,9 @@ struct RollView {
 constexpr uint8_t kRollNoteBrightness = 7;
 constexpr uint8_t kRollHighlightBrightness = 10;
 constexpr uint8_t kRollDensityBrightness = 3;
-constexpr uint8_t kRollMutedBrightness = 3;           // a muted note (`kVelocityMuted`; owner 2026-11-08)
+constexpr uint8_t kRollMutedBrightness = 3;           // a muted note (`kVelocityMuted`)
 constexpr uint8_t kRollMutedHighlightBrightness = 6;  // a muted note selected
-// A note's first pixel, brighter than its bar (owner 2026-11-08: notes touching on a pitch read as one).
+// A note's first pixel, brighter than its bar (notes touching on a pitch read as one).
 constexpr uint8_t kRollNoteStartBrightness = 13;
 constexpr uint8_t kRollHighlightStartBrightness = 15;
 constexpr uint8_t kRollMutedStartBrightness = 6;

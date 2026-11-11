@@ -1,13 +1,13 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// What the screen's status band shows (fixed-memory-engine E9.8k; owner 2026-11-06, mock-up "B2 round 6"): the rules
+// What the screen's status band shows: the rules
 // behind its fields, kept apart from the drawing so they are tested on the host.
-// * Save dots: the legacy `resolveDeferredSaveDisplayStatus` rules — busy (one dot runs, 200 ms a step) before pending
+// * Save dots: busy (one dot runs, 200 ms a step) before pending
 //   (all dim); a completed save flashes the dots bright for 800 ms, a failed one at mid brightness; else none.
 // * Position: bar.beat.16th.tick, the bar 1-based and without leading zeros; a queued launch counts the time left
-//   (every part 0-based, as the legacy countdown).
-// * Tempo in tenths of a BPM (legacy `120.0`); the output port as one label; note names with C3 = 60 (Yamaha).
+//   (every part 0-based).
+// * Tempo in tenths of a BPM; the output port as one label; note names with C3 = 60 (Yamaha).
 // No allocation.
 
 #pragma once
@@ -65,7 +65,7 @@ inline Position position(uint32_t ticks, uint32_t ticksPerBar, uint32_t ticksPer
   return Position{ticks / ticksPerBar + 1, static_cast<uint8_t>(inBar / ticksPerQuarter + 1),
                   static_cast<uint8_t>(inBar % ticksPerQuarter / six + 1), static_cast<uint8_t>(inBar % six)};
 }
-/// Time left before a queued launch: every part 0-based (legacy `ticksToLaunchCountdown…`).
+/// Time left before a queued launch: every part 0-based.
 inline Position countdown(uint32_t ticks, uint32_t ticksPerBar, uint32_t ticksPerQuarter) {
   const uint32_t six = ticksPerQuarter / 4, inBar = ticks % ticksPerBar;
   return Position{ticks / ticksPerBar, static_cast<uint8_t>(inBar / ticksPerQuarter),
