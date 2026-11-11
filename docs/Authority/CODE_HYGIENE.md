@@ -19,7 +19,8 @@ Check a change with `scripts/code_hygiene_report.py` (sizes and history referenc
 - **Decision references are sparse.** At most one per non-obvious rule, only where a reader would otherwise take a
   deliberate choice for a mistake, in one form: `// DEC-254 (run-once store): …`, the ID with its short name
   ([NAMING.md § Short names beside IDs](NAMING.md#short-names-beside-ids-in-chat)). Stage and task IDs (`E4.6d`,
-  `slice 3`) do not appear in code.
+  `slice 3`), plan sections and owner quotes do not appear in code. Specification requirement IDs (`OVL-1`,
+  `Q-LEN-1`, `OUT-POLY`) may name the rule a line implements: they are normative and timeless.
 - **Measured figures** (µs, bytes) stay only when the code depends on them (a budget, a threshold), with what they bound;
   where they were measured goes to the decision log.
 - **File comment:** what the file owns and what does not belong in it — not its history.

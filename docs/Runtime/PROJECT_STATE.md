@@ -1,3 +1,13 @@
+**2026-11-12 — code hygiene stage B: comment history moved out of the code (branch `feature/delete-legacy`).** Owner:
+comments overloaded with DEC numbers confuse a normal reader; the rationale must move, not vanish; failed attempts
+must stay learning points. Rules: CODE_HYGIENE.md § 4 (where it goes: the code keeps timeless rules, each area folder
+an `AGENTS.md` of invariants, traps and *Don't* lines capped at 120 lines, the decision log the history) and § 5 (Tried
+and rejected: a DEC table with *Revisit if*, a *Don't* line, a guard test that names its lesson); templates and the
+root AGENTS.md updated. DEC-297 records the deep-overdub timing work with its rejected attempts; DEC-298 holds the
+history the comments carried, per folder (including the budget ledger and the owner reports). Code: DEC references
+491 → 98, owner quotes 220 → 0, stage IDs 243 → 0; every commit comment-only, the image byte-identical (`31140291…`).
+Next: stage C (DRY), stage D (split the six files over 1,000 lines). Not merged yet.
+
 **2026-11-11 — E9.8d: the legacy runtime removed (branch `feature/delete-legacy`).** The firmware is the engine only:
 `teensy41-capture-serial` builds it (17 legacy envs gone), 150 legacy test suites and every legacy source / header
 deleted (src/ and include/ hold the engine; the image byte-identical through the deletions), the D1 build gates met

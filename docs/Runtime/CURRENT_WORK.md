@@ -1,5 +1,11 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-12 — code hygiene stage B (owner: "yes implement as such").** On `feature/delete-legacy`: one commit per
+area folder, comment-only and byte-identical; folder `AGENTS.md` notes; DEC-297 (deep-overdub timing) and DEC-298
+(comment history, moved). Open: stage C — DRY (`SlotTransport` resize / rotate / setColumns tail), stage D — the six
+files over 1,000 lines; `TempoMapping.h` is included by nothing (dead-code candidate); the merge into
+`feature/engine-sets-browser` waits for the owner.
+
 **2026-11-11 — E9.8d legacy removal (owner: "continue with removing the legacy code"; a new branch; legacy tooling and
 docs kept as history).** On `feature/delete-legacy`: envs, legacy tests, legacy sources and headers removed in stages;
 the D1 build gates met. Evidence: `fixed-memory-engine` tasks E9.8d. E9.8b-3a (MIDI groove import) parked by the owner.
