@@ -1,58 +1,58 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Span-window composer (fixed-memory-engine E3). Merges the runs of one source (a manifest's runs in pass order, each
-// read up to a row limit, so a writer's open prefix composes like a sealed run) in DEC-244 order and writes span windows
-// in sequence, carrying state from one window to the next and from one loop cycle to the next. Effective content is
-// derived here (CE-E, OVL-1..8), never stored:
+// Span-window composer. Merges the runs of one source (a manifest's runs in pass order, each read up to a row limit, so
+// a writer's open prefix composes like a sealed run) in DEC-244 order and writes span windows in sequence, carrying
+// state from one window to the next and from one loop cycle to the next. Effective content is derived here (CE-E,
+// OVL-1..8), never stored:
 //   * an earlier-pass NoteOn is hidden when a later pass has a note sounding on its pitch, or starts one on its pitch
 //     within the next 8 ticks while the earlier note still sounds (equal start, OVL-2; minimum-length remnant, OVL-6),
 //     across the loop end too;
-//   * a wrap-held earlier-pass note (its NoteOff lies past the loop end) is hidden when a later pass starts a note on its
-//     pitch at tick 0 (ratified occupy rule: head shorten needs hold > 0; Q-OVL-3);
-//   * a later-pass NoteOn shortens every admitted earlier-pass note sounding on its pitch to one tick before it (OVL-1;
-//     at a window's first tick the end goes into the previous window, by looking one tick past each window's end);
-//   * channel never matters for overlap (OVL-5); sources are counted per (pitch, pass) whether effective or not (OVL-8).
-// Output admission (OUT-POLY, Q-OUT-2 source-ordered refusal, owner decision 2026-11-05): the composer keeps every
-// *effective* source instance that is open (started, not hidden, not yet ended by its NoteOff, an OVL-1 shortening, a
-// Q-LEN-1 re-strike or the window look-ahead), selected for output or not, and marks those carried in from the previous
-// loop cycle. A NoteOn is selected iff, when the DEC-244 merge reaches it, fewer than T instances are open that were
-// either selected in this cycle or carried in (selected or not). Whether an instance is effective and when it ends never
-// depends on a selection, and every effective span is shorter than the loop (Q-LEN-1), so the carried-in set is the
-// source's effective instances open at the loop end: the in-cycle decisions start from a source-determined state and
-// repeat identically every loop from the first steady cycle (design.md, Q-OUT-2 proof). At most T selected instances
-// sound (the latest one selected this cycle counted every other), none is cut or restarted to make room, and every
-// window holds <= START rows + T entries (CE-B1). Up to kMaxOpen instances are tracked; beyond that an instance is
-// refused untracked (counted: `Stats::openOverflow`) and periodicity is no longer guaranteed, while the bound holds.
-// The composer never predicts port admission or live occupancy; the track's TerminalScheduler decides what sounds.
+//   * a wrap-held earlier-pass note (its NoteOff lies past the loop end) is hidden when a later pass starts a note on
+//     its pitch at tick 0 (occupy rule: head shorten needs hold > 0; Q-OVL-3); * a later-pass NoteOn shortens every
+//     admitted earlier-pass note sounding on its pitch to one tick before it (OVL-1; at a window's first tick the end
+//     goes into the previous window, by looking one tick past each window's end); * channel never matters for overlap
+//     (OVL-5); sources are counted per (pitch, pass) whether effective or not (OVL-8). Output admission (OUT-POLY,
+//     Q-OUT-2 source-ordered refusal): the composer keeps every *effective* source instance that is open (started, not
+//     hidden, not yet ended by its NoteOff, an OVL-1 shortening, a Q-LEN-1 re-strike or the window look-ahead),
+//     selected for output or not, and marks those carried in from the previous loop cycle. A NoteOn is selected iff,
+//     when the DEC-244 merge reaches it, fewer than T instances are open that were either selected in this cycle or
+//     carried in (selected or not). Whether an instance is effective and when it ends never depends on a selection, and
+//     every effective span is shorter than the loop (Q-LEN-1), so the carried-in set is the source's effective
+//     instances open at the loop end: the in-cycle decisions start from a source-determined state and repeat
+//     identically every loop from the first steady cycle (the Q-OUT-2 proof). At most T selected instances sound (the
+//     latest one selected this cycle counted every other), none is cut or restarted to make room, and every window
+//     holds <= START rows + T entries (CE-B1). Up to kMaxOpen instances are tracked; beyond that an instance is refused
+//     untracked (counted: `Stats::openOverflow`) and periodicity is no longer guaranteed, while the bound holds. The
+//     composer never predicts port admission or live occupancy; the track's TerminalScheduler decides what sounds.
 //
 // Row timeline per run: ticks are monotonic; rows of one loop cycle have ticks < loop length, and a run's NoteOffs for
-// notes held across the loop end carry `loop length + position` (the closing run's wrap section). Each run is read as two
-// streams: the main stream (ticks < loop) and the wrap stream (ticks >= loop, played at `tick - loop` in the next cycle).
-// A cold `begin` counts the wrap-held source notes as sounding at tick 0 (so occlusion at the loop start is exact) but
-// opens none of them, so its cycle 0 is not the steady selection: a production cold start resumes from a checkpoint or
-// warms up one cycle (`ColdStart`), and the player ignores carried instances it never sent (DEC-148).
+// notes held across the loop end carry `loop length + position` (the closing run's wrap section). Each run is read as
+// two streams: the main stream (ticks < loop) and the wrap stream (ticks >= loop, played at `tick - loop` in the next
+// cycle). A cold `begin` counts the wrap-held source notes as sounding at tick 0 (so occlusion at the loop start is
+// exact) but opens none of them, so its cycle 0 is not the steady selection: a production cold start resumes from a
+// checkpoint or warms up one cycle (`ColdStart`), and the player ignores carried instances it never sent (DEC-148).
 //
-// Q-LEN-1 (owner decision 2026-11-04, re-strike once per loop): a note held for at least one loop length (its NoteOff
-// flagged `kOriginHeldLoop` by the writer) is replayed with effective end min(recorded end, start + loop - 1): its NoteOn
-// repeats every loop and each iteration ends one tick before its successor. The flagged NoteOff is never sent against a
-// newer iteration. Its source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the
-// effective span is continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule.
-// Resized loops (DEC-257, owner 2026-11-08): a state's loop may differ from the length its runs were recorded at; its
-// fit run (`FitRun.h`) names the runs with rows past the end that are not wrapping NoteOffs. Such a run's wrap and
-// second-wrap rows act only as NoteOffs of its crossing notes (`wraps`); NoteOns, controllers and NoteOffs past a
-// shorter end have no effect. The held-loop rule reads `kOriginHeldLoop` through the fit run (`held`). The fit run
-// composes nothing.
+// Q-LEN-1 (re-strike once per loop): a note held for at least one loop length (its NoteOff flagged `kOriginHeldLoop` by
+// the writer) is replayed with effective end min(recorded end, start + loop - 1): its NoteOn repeats every loop and
+// each iteration ends one tick before its successor. The flagged NoteOff is never sent against a newer iteration. Its
+// source count is one per loop: +1 at each NoteOn, -1 once at the end of each loop sweep (the effective span is
+// continuous apart from the restart). Live holds are the scheduler's occupancy, not this rule. Resized loops (DEC-257,
+// loop length is a play window): a state's loop may differ from the length its runs were recorded at; its fit run
+// (`FitRun.h`) names the runs with rows past the end that are not wrapping NoteOffs. Such a run's wrap and second-wrap
+// rows act only as NoteOffs of its crossing notes (`wraps`); NoteOns, controllers and NoteOffs past a shorter end have
+// no effect. The held-loop rule reads `kOriginHeldLoop` through the fit run (`held`). The fit run composes nothing.
 // Edit runs (NOTE_EDIT): their HideNote rows hide every row of the named noteId in earlier runs (lineage: a replacement
-// keeps the noteId and lives in the edit run). The hide index is shared per manifest identity (`EditIndexStore`, E3.3):
-// `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1 (ratified): an edit run is not a derived occluder; NOTE_EDIT writes its own
-// overlap results as explicit hides/replacements. Later overdub passes occlude edited notes as usual, and a note hidden
-// by an edit still counts as a source occluder (OVL-8).
-// Restart checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 56 entries,
-// open instances <= 32 with their selection, stamps); `resume` rebuilds the composer there (cursors by binary search on tick), so a mid-loop
-// start (undo, redo, slot switch, adoption warm-up) replays at most from the nearest earlier checkpoint instead of the
-// loop start. A sounding set that does not fit is refused by name (`capture` false); the caller uses an earlier one.
-// Scratch is fixed: 128 x 64 source counters, kMaxOpen open instances, three cursors per run.
+// keeps the noteId and lives in the edit run). The hide index is shared per manifest identity (`EditIndexStore`):
+// `begin` pins the identity's slot, lookups are O(log H), and the next `begin` / `end` releases it. EDIT-1: an edit run
+// is not a derived occluder; NOTE_EDIT writes its own overlap results as explicit hides/replacements. Later overdub
+// passes occlude edited notes as usual, and a note hidden by an edit still counts as a source occluder (OVL-8). Restart
+// checkpoints: `capture` stores the carry state at a window boundary (sparse source counters <= 56 entries, open
+// instances <= 32 with their selection, stamps); `resume` rebuilds the composer there (cursors by binary search on
+// tick), so a mid-loop start (undo, redo, slot switch, adoption warm-up) replays at most from the nearest earlier
+// checkpoint instead of the loop start. A sounding set that does not fit is refused by name (`capture` false); the
+// caller uses an earlier one. Scratch is fixed: 128 x 64 source counters, kMaxOpen open instances, three cursors per
+// run.
 
 #pragma once
 
@@ -68,10 +68,10 @@
 
 namespace ContentEngine {
 
-/// Limits (DEC-286, amended by DEC-287): playback tracks at most `kMaxOpen` (48) instances open and selects `T` voices.
-/// The groove builder's extraction lends the composer a larger open list (`extractAll`: 128, the writer's open-note
-/// bound) and selects every instance, so one composer type — one copy of its code in RAM1, each cursor within its
-/// 12 KiB — serves both, and no effective note is refused up to the lent list's size.
+/// Limits (DEC-286, the composer's open-instance limit): playback tracks at most `kMaxOpen` (48) instances open and
+/// selects `T` voices. The groove builder's extraction lends the composer a larger open list (`extractAll`: 128, the
+/// writer's open-note bound) and selects every instance, so one composer type — one copy of its code in RAM1, each
+/// cursor within its 12 KiB — serves both, and no effective note is refused up to the lent list's size.
 template <typename Pool, typename Runs, uint8_t MaxRuns = 64, uint8_t T = Config::kMaxSoundingPerTrack,
           typename IndexStore = EditIndexStore<Pool, Runs>>
 class SpanWindowComposer {
@@ -90,7 +90,7 @@ class SpanWindowComposer {
   static constexpr uint8_t kMaxOpen = 48;  // the playback tracking limit
   static_assert(T <= kMaxOpen, "every selected instance is tracked");
   struct Open;
-  /// Extraction (DEC-286): every effective instance selected and tracked, in `list` (`n` entries, the caller's, kept
+  /// Extraction: every effective instance selected and tracked, in `list` (`n` entries, the caller's, kept
   /// while this composer is used) — up to `n` open at once.
   void extractAll(Open* list, uint8_t n) {
     open_ = list;
@@ -127,8 +127,9 @@ class SpanWindowComposer {
     for (auto& z : zeroOnsetLast_) z = -1;
   }
 
-  /// False (named, `indexResult()`) when the source has edit runs and their index cannot be pinned: no store, every slot
-  /// pinned by other identities (`Busy`), or more hides than a slot holds (`CapacityExceeded`). Nothing is composed.
+  /// False (named, `indexResult()`) when the source has edit runs and their index cannot be pinned: no store, every
+  /// slot pinned by other identities (`Busy`), or more hides than a slot holds (`CapacityExceeded`). Nothing is
+  /// composed.
   bool begin(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity) {
     return bind(source, count, loopLength, identity, true);
   }
@@ -155,7 +156,7 @@ class SpanWindowComposer {
     stats_.lookaheadRowsLastWindow = 0;
     ccPos_ = UINT32_MAX;
     for (uint8_t i = 0; i < openCount_; ++i) {
-      // Playback selects at most T (<= the carry list); extraction (DEC-286) selects more and reads no carry list.
+      // Playback selects at most T (<= the carry list); extraction selects more and reads no carry list.
       if (open_[i].selected && w.carryCount < sizeof w.carry / sizeof w.carry[0])
         w.carry[w.carryCount++] = {open_[i].noteId, open_[i].runKey};
       open_[i].entry = kNoEntry;
@@ -200,7 +201,7 @@ class SpanWindowComposer {
   IndexStore* indexStore() const { return index_; }
 
   static constexpr uint8_t kCheckpointActive = 56;
-  static constexpr uint8_t kCheckpointOpen = 20;  // the owner's realistic ceiling of open notes per track (2026-11-05)
+  static constexpr uint8_t kCheckpointOpen = 20;  // the realistic ceiling of open notes per track
 
   /// Carry state at a window boundary. Fixed size; stamped with the source it belongs to.
   struct Checkpoint {
@@ -230,7 +231,7 @@ class SpanWindowComposer {
     cp.cycle = windowStart_ < loop_ ? cycle_ : cycle_ + 1;
     cp.runCount = count_;
     cp.activeCount = 0;
-    for (uint8_t w = 0; w < 2; ++w)  // only the pitches raised since the bind, ascending (owner 2026-11-11)
+    for (uint8_t w = 0; w < 2; ++w)  // only the pitches raised since the bind, ascending
       for (uint64_t m = dirty_[w]; m != 0; m &= m - 1) {
         const uint8_t p = static_cast<uint8_t>(w * 64 + __builtin_ctzll(m));
         for (uint8_t r = 0; r < count_; ++r) {
@@ -284,13 +285,14 @@ class SpanWindowComposer {
     windowStart_ = cp.position;
     cycle_ = cp.cycle;
   }
-  /// Runs a `bindMore` / `resumeSeekMore` call takes in the grain jobs (owner 2026-11-11: ~23 µs a run at 30 layers).
+  /// Runs a `bindMore` / `resumeSeekMore` call takes in the grain jobs (a run costs about 23 µs at 30 layers).
   static constexpr uint8_t kRunsPerStep = 12;
   void resumeSeek() {
     seekRun_ = 0;
     resumeSeekMore(0xFF);
   }
-  /// `resumeSeek` in steps of `runs` runs (start with `seekRun_ = 0` via `resumeSeekStart`). True when every cursor is set.
+  /// `resumeSeek` in steps of `runs` runs (start with `seekRun_ = 0` via `resumeSeekStart`). True when every cursor is
+  /// set.
   void resumeSeekStart() { seekRun_ = 0; }
   bool resumeSeekMore(uint8_t runs) {
     const uint32_t p = windowStart_;
@@ -412,15 +414,15 @@ class SpanWindowComposer {
   /// `begin` from tick 0 (`fromStart`: cursors, heads and the wrap-held occluders set here), or the source binding
   /// alone for `resume`, which seeks the cursors and restores the occluders from its checkpoint. The tick-0 onset
   /// order comes from the source and is needed at every later cycle start, so both paths set it.
-  /// `bind` in steps (owner 2026-11-11: at 300 BPM with 30 overdub layers it took 711 µs in one grain — about 13 µs a
-  /// run): `bindStart` the source, then `bindMore` until Done — `runs` runs a call, the index acquired with the last.
+  /// `bind` in steps (DEC-297, deep-overdub timing: a bind costs about 13 µs a run, too long for one grain at 63 runs):
+  /// `bindStart` the source, then `bindMore` until Done — `runs` runs a call, the index acquired with the last.
  public:
   enum class BindStep : uint8_t { Running, Done, Failed };
   void bindStart(const SourceRun* source, uint8_t count, uint32_t loopLength, uint32_t identity, bool fromStart) {
     end();
     count_ = count > MaxRuns ? MaxRuns : count;
     loop_ = loopLength;
-    clearActive();  // only the rows raised since the last bind (owner 2026-11-11: the whole 8 KiB took ~330 µs)
+    clearActive();  // only the rows raised since the last bind: the whole 8 KiB costs about 330 µs
     for (auto& z : zeroOnsetLast_) z = -1;
     stats_ = Stats{};
     wrapReach_ = 0;
@@ -564,8 +566,8 @@ class SpanWindowComposer {
   }
 
   /// OVL-2 / OVL-6: the earlier note (run `r`, NoteOn at position `on`) is hidden if a later pass starts a note on its
-  /// pitch at h in [on, on + 8] while it still sounds (h < its NoteOff). h may lie in the next cycle (past the loop end),
-  /// where only a wrap-held note still sounds; h = 0 there is Q-OVL-3, handled by `wrapHeldHiddenAtZero`.
+  /// pitch at h in [on, on + 8] while it still sounds (h < its NoteOff). h may lie in the next cycle (past the loop
+  /// end), where only a wrap-held note still sounds; h = 0 there is Q-OVL-3, handled by `wrapHeldHiddenAtZero`.
   bool laterPassStartsWhileSounding(uint8_t r, uint32_t noteId, uint8_t pitch, uint32_t on) const {
     const uint32_t to = on + kHideLookahead;
     uint32_t off = offTickWithin(r, noteId, to);  // run timeline; UINT32_MAX when it ends after `to`
@@ -601,7 +603,7 @@ class SpanWindowComposer {
     return false;
   }
 
-  /// Q-OVL-3 (ratified): a wrap-held earlier note is hidden by a later-pass note starting on its pitch at tick 0. The
+  /// Q-OVL-3: a wrap-held earlier note is hidden by a later-pass note starting on its pitch at tick 0. The
   /// per-pitch table makes the common case O(1); only then is the run's wrap section (notes held at the wrap) scanned.
   bool wrapHeldHiddenAtZero(uint8_t r, uint32_t noteId, uint8_t pitch) const {
     if (zeroOnsetLast_[pitch & 0x7F] <= static_cast<int8_t>(r)) return false;
@@ -681,8 +683,8 @@ class SpanWindowComposer {
   }
 
   /// A later-pass NoteOn on `pitch` at position `pos` > 0 shortens every open earlier-pass instance on that pitch to
-  /// `pos - 1`. At position 0 the only earlier notes sounding are wrap-held ones, which the ratified rule hides outright
-  /// (decided at their NoteOn).
+  /// `pos - 1`. At position 0 the only earlier notes sounding are wrap-held ones, which the ratified rule hides
+  /// outright (decided at their NoteOn).
   template <uint16_t Cap>
   void shorten(SpanWindow<Cap>& w, uint8_t order, uint8_t pitch, uint32_t pos) {
     if (pos == 0) return;
@@ -723,7 +725,7 @@ class SpanWindowComposer {
       return;
     }
     if (c == 2) {
-      // Owner 2026-11-05: at most 32 continuous-controller values per tick reach the window (MidiClass.h). Rows arrive
+      // At most 32 continuous-controller values per tick reach the window (MidiClass.h). Rows arrive
       // in DEC-244 order, so the same ones are kept every cycle.
       if (controlClass(e.status, e.data1) == ControlClass::Continuous) {
         if (pos != ccPos_) {

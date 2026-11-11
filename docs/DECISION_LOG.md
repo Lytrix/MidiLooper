@@ -16808,3 +16808,23 @@ comment-only and keeps the image byte-identical.
   columns row the owner's "save B with the slot" (2026-11-11, DEC-295 amendment 6).
 - `ReclaimJob`: fixed-memory-engine E5, plan revision 3 § 5.3 / § 7.1. The preview partition in `RunTable` and
   `RowReservations` is the get-a-loop plan's § 6.2 fix 1.
+
+### Composition
+
+- `SpanWindowComposer` (fixed-memory-engine E3): owner decisions 2026-11-04 (Q-LEN-1, re-strike once per loop) and
+  2026-11-05 (Q-OUT-2 source-ordered output admission; at most 32 continuous values a tick; 20 open notes a track as
+  the realistic checkpoint ceiling); Q-OVL-3 and EDIT-1 were ratified rules of the fixed-memory-engine design (its
+  `design.md` holds the Q-OUT-2 proof). Resized loops: DEC-257, owner 2026-11-08. Limits: DEC-286 amended by DEC-287.
+  The stepped bind, the dirty-pitch mask and the wrap grain are owner-approved steps of 2026-11-11 (DEC-297): a bind
+  took 711 µs in one grain at 300 BPM with 30 layers (about 13 µs a run, about 23 µs a run inside the grain jobs);
+  clearing the whole 8 KiB occluder table took about 330 µs.
+- `CheckpointTable` (E5, plan revision 3 § 7.2, § 5.4, `kIndexGrain` § 7.1); retention two sets a slot: owner
+  decision 2026-11-05, E6.2d. The `warmUp` false path is E9.1b (a Record prefix).
+- `EditIndexStore`: E3.3, placed and sliced in E5.3; identities monotonic by DEC-246.
+- `FitRun`: DEC-257 (owner 2026-11-08); positions instead of RunIds by DEC-285 — a lookup naming a RunId pointed at
+  nothing after a load and a note past the end came back. `rotate`: owner 2026-11-08 (LOOP_EDIT's F1). The window:
+  DEC-283, owner 2026-11-10 ("the selected bars should always stay absolute"). Ranges A / B: DEC-284 amendment 3.
+  The slot copy of runs: owner 2026-11-10. The columns: owner 2026-11-11, DEC-295 amendment 6.
+- `Groove`, `GroovePass`: DEC-287 and the groove design (`docs/Plans/groove_quantize_design.md` §§ 1–6); the job
+  DEC-288 (slice 3); progress DEC-292; the file template referenced as DEC-290 (no entry; DEC-289's slice 5).
+- `SpanWindow` / `WindowPlayer`: the output fields are E9.3; the bounded late join an owner ruling of 2026-11-05.

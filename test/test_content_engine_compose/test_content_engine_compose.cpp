@@ -168,8 +168,8 @@ void tearDown() {}
 // 384 source notes sounding at once (3 passes x 16 channels x 8 stacked, three pitches), spanning windows 0..2, plus a
 // fourth pass whose note on pass 0's pitch shortens pass 0's sounding notes inside window 1. 16 are sent; the stream equals the
 // reference with the same admission; every window stays inside the bound.
-// Owner 2026-11-11 (at 300 BPM a 30-layer slot's bind took 711 us in one grain): a source binds in steps of
-// `kRunsPerStep` runs, and the stepped bind composes exactly what the one-shot bind does.
+// Guards DEC-297 (deep-overdub timing): a one-grain bind costs about 13 us a run, past g at 63 runs. A source binds
+// in steps of `kRunsPerStep` runs, and the stepped bind composes exactly what the one-shot bind does.
 void test_a_source_binds_in_steps_of_runs() {
   SourceRun many[30];
   for (uint32_t k = 0; k < 30; ++k) {

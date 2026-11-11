@@ -168,8 +168,8 @@ static void workAll() {
   for (uint32_t g = 0; gTrack.work(128); ++g) TEST_ASSERT_TRUE(g < 10000);
 }
 
-// Owner 2026-11-11 (at 300 BPM the loop wrap — every run's cursors and heads reset, O(runs) — ran in the same grain as a
-// full compose: 179 us at 30 layers on top): the wrap is a grain of its own, composing nothing.
+// Guards DEC-297 (deep-overdub timing): the loop wrap resets every run's cursors and heads, O(runs); in the same
+// grain as a full compose it added 179 us at 30 layers. The wrap is a grain of its own, composing nothing.
 void test_the_loop_wrap_is_a_grain_of_its_own() {
   Emit buf[64];
   gTrack.select(0, gSrcA, kLoop - 1);

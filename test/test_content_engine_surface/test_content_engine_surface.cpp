@@ -373,8 +373,9 @@ void test_bars_with_notes_outside_the_loop_light_dim() {
   TEST_ASSERT_TRUE(gLed[41] >= 48);  // the loop's bars above them
 }
 
-// Owner 2026-11-11 (the LED stage over B_max at 300 BPM): playing across bars, the step LEDs show each bar's 16ths
-// without scanning the state's rows again — one scan per new state, none when the playhead enters a bar.
+// Guards DEC-297 (deep-overdub timing): a row rescan on each bar put the LED stage over B_max. Playing across bars,
+// the step LEDs show each bar's 16ths without scanning the state's rows again — one scan per new state, none when
+// the playhead enters a bar.
 void test_step_leds_follow_the_bars_without_a_row_scan() {
   tap(S::kSlotBase + 0);
   ms(400);
@@ -401,8 +402,9 @@ void test_step_leds_follow_the_bars_without_a_row_scan() {
   }
   TEST_ASSERT_EQUAL_UINT32(scans, gS.rowScans());  // no scan as the playhead entered the bars
 }
-// Owner 2026-11-11 (the LED stage over B_max at 300 BPM): a new state of a large slot is scanned for the LEDs and the
-// screen in steps of `kScanRows` rows a pass, not in one pass; until it is done they show the last state scanned.
+// Guards DEC-297 (deep-overdub timing): scanning a new state in one pass put the LED stage over B_max. A new state
+// of a large slot is scanned for the LEDs and the screen in steps of `kScanRows` rows a pass; until it is done they
+// show the last state scanned.
 void test_a_large_state_is_scanned_in_steps() {
   tap(S::kSlotBase + 0);
   ms(400);

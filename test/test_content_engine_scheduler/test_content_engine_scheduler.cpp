@@ -347,6 +347,7 @@ void test_real_compose_and_sweep_jobs_meet_window_deadlines() {
 // onset-pitch mask cannot skip a pass) must meet every window deadline at the measured worst grain g = 810 us and
 // U_e = 50 %. The window's grain count is measured here with the production composer (work units, deterministic),
 // so the gate follows every optimization. While infeasible it is reported RED and ignored, not hidden.
+// Guards DEC-297 (deep-overdub timing): counting stream selection as work units made this gate miss its deadlines.
 void test_feasibility_gate_clustered_eight_tracks() {
   gPool.init();
   gRuns.init();

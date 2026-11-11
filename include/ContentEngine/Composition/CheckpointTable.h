@@ -1,10 +1,10 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Restart-checkpoint ownership (fixed-memory-engine E5, plan revision 3 § 7.2, § 5.4): one fixed table per slot of
-// `PerSlot` checkpoints at a fixed spacing (8 bars), stamped with the manifest identity swept. The sweep worker fills it
-// as a by-product of composing the loop; a mid-loop cold start (undo, redo, edit commit, slot switch) resumes from the
-// nearest usable checkpoint at or before its position and replays at most the windows of one spacing.
+// Restart-checkpoint ownership: one fixed table per slot of `PerSlot` checkpoints at a fixed spacing (8 bars), stamped
+// with the manifest identity swept. The sweep worker fills it as a by-product of composing the loop; a mid-loop cold
+// start (undo, redo, edit commit, slot switch) resumes from the nearest usable checkpoint at or before its position and
+// replays at most the windows of one spacing.
 //
 // Steady state: playback from cycle 1 on carries notes held across the loop end, cycle 0 of a cold composition does
 // not. A cold start wants the steady state, so the sweep composes cycle 0 and captures provisional checkpoints, takes
@@ -13,13 +13,13 @@
 // from that position on the cycle-0 captures are steady too and are promoted without composing further. Cost: one loop
 // plus the windows until the carried notes have ended (<= one more loop). Only usable checkpoints are ever resumed.
 //
-// Retention (owner decision 2026-11-05, E6.2d): each slot keeps `Sets` checkpoint sets (2: the current source's and
-// one historical), each keyed by (slot, manifest identity). A cold start looks up the set of its own manifest, so Undo /
-// Redo to a recently played revision resume from its checkpoints without rebuilding them. A new sweep reuses its
-// identity's set or takes the least recently used set that no sweep is writing; Undo / Redo themselves never replace a
-// set. Completed checkpoints are value snapshots with an identity stamp and pin nothing (identities are never reused,
-// so a stale set never matches another manifest); a running sweep holds its source lease. A sweep whose set was taken
-// by a newer sweep ends `Superseded` and writes nothing.
+// Retention: each slot keeps `Sets` checkpoint sets (2: the current source's and one historical), each keyed by (slot,
+// manifest identity). A cold start looks up the set of its own manifest, so Undo / Redo to a recently played revision
+// resume from its checkpoints without rebuilding them. A new sweep reuses its identity's set or takes the least
+// recently used set that no sweep is writing; Undo / Redo themselves never replace a set. Completed checkpoints are
+// value snapshots with an identity stamp and pin nothing (identities are never reused, so a stale set never matches
+// another manifest); a running sweep holds its source lease. A sweep whose set was taken by a newer sweep ends
+// `Superseded` and writes nothing.
 
 #pragma once
 
@@ -201,7 +201,7 @@ class SourceLease {
     identity_ = m.identity;
     loop_ = m.loopLengthTicks;
     count_ = m.runCount;
-    // DEC-287: the runs before a groove pass are its sources, kept and not played — composed (and edit-indexed) empty,
+    // The runs before a groove pass (DEC-287) are its sources, kept and not played — composed (and edit-indexed) empty,
     // in place, so a fit lookup's position still names the same run.
     uint8_t played = 0;
     for (uint8_t i = 0; i < count_; ++i)
@@ -260,22 +260,23 @@ class SourceLease {
 /// boundary and only while the slot's table still belongs to this sweep; a sweep replaced at any point (also between
 /// the grains of one window) ends `Superseded` at its next step and publishes nothing more.
 ///
-/// Work bound: the sweep composes at most two loops (cycle 0, then cycle 1 up to convergence), i.e. at most
-/// `2 x ceil(rows per loop / maxRows) + 2 x windows per loop` grains, however long the loop plays; it never waits for
+/// Work bound: the sweep composes at most two loops (cycle 0, then cycle 1 up to convergence), i.e. at most `2 x
+/// ceil(rows per loop / maxRows) + 2 x windows per loop` grains, however long the loop plays; it never waits for
 /// playback. `periodic()` (when Done) reports that the composition is periodic from cycle 1, so every published
-/// checkpoint equals uninterrupted playback in any later cycle. It holds whenever no effective instance overflowed the composer's open table (Q-OUT-2 proof,
-/// design.md); convergence (equal state at one position implies equal state from there on) ends the sweep early.
+/// checkpoint equals uninterrupted playback in any later cycle. It holds whenever no effective instance overflowed the
+/// composer's open table (Q-OUT-2 proof, design.md); convergence (equal state at one position implies equal state from
+/// there on) ends the sweep early.
 template <typename SpanWindowComposer, typename Table, typename Window, typename Manifests, typename Runs>
 class CheckpointSweep {
  public:
   enum class Status : uint8_t { Idle, Running, Done, Superseded, Refused };
-  static constexpr uint32_t kIndexGrain = 256;  // index units per grain (plan § 7.1)
+  static constexpr uint32_t kIndexGrain = 256;  // index units per grain
   using Checkpoint = typename SpanWindowComposer::Checkpoint;
   using State = typename Table::EntryState;
 
-  /// Pins `manifest` and takes a checkpoint set for it (CheckpointTable::beginSweep). The first grains build the manifest's edit index (if it
-  /// has edit runs and it is not resident); composition begins once it is Ready. Refused (source released) when the
-  /// index does not fit.
+  /// Pins `manifest` and takes a checkpoint set for it (CheckpointTable::beginSweep). The first grains build the
+  /// manifest's edit index (if it has edit runs and it is not resident); composition begins once it is Ready. Refused
+  /// (source released) when the index does not fit.
   Status start(SpanWindowComposer& composer, Table& table, Manifests& manifests, Runs& runs, uint8_t slot, ManifestId manifest,
                uint32_t windowTicks, uint32_t spacing) {
     if (status_ == Status::Running) cancel();
@@ -316,7 +317,7 @@ class CheckpointSweep {
       if (!source_.prepared()) return status_;
       if (!bindStarted_) composer_->bindStart(source_.source(), source_.count(), loop_, identity_, true);
       bindStarted_ = true;
-      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (owner 2026-11-11)
+      const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);  // in steps (DEC-297, deep-overdub timing)
       if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
       if (b == SpanWindowComposer::BindStep::Failed) {
@@ -343,7 +344,7 @@ class CheckpointSweep {
       if (cycle_ == 0) {  // end of cycle 0: its selections were made without carried-in instances, so provisional
         cycle_ = 1;
         table_->store(slot_, identity_, cp, State::Provisional);
-        wrapNext_ = true;  // the loop wrap is the next grain (owner 2026-11-11: O(runs))
+        wrapNext_ = true;  // the loop wrap is the next grain: it is O(runs) (DEC-297)
         return status_;
       }
       // A whole steady cycle 1 without convergence: its end is the steady position-0 state (Q-OUT-2 proof).
@@ -420,7 +421,7 @@ class ColdStart {
   enum class Status : uint8_t { Idle, Running, Done, Refused, Cancelled };
   static constexpr uint32_t kIndexGrain = 256;
 
-  /// `warmUp` false (E9.1b, a Record prefix: nothing crosses its loop end yet): with no checkpoint, compose from the
+  /// `warmUp` false (a Record prefix: nothing crosses its loop end yet): with no checkpoint, compose from the
   /// loop start in cycle `cycle` without replaying cycle 0 first.
   Status start(SpanWindowComposer& composer, const Table& table, Manifests& manifests, Runs& runs, uint8_t slot,
                ManifestId manifest, uint32_t position, uint32_t cycle, uint32_t windowTicks, bool warmUp = true) {
@@ -462,7 +463,7 @@ class ColdStart {
       settle();
       return status_;
     }
-    if (bindStarted_) {  // the source, `SpanWindowComposer::kRunsPerStep` runs a grain (owner 2026-11-11)
+    if (bindStarted_) {  // the source, `SpanWindowComposer::kRunsPerStep` runs a grain
       const auto b = composer_->bindMore(SpanWindowComposer::kRunsPerStep);
       if (b == SpanWindowComposer::BindStep::Running) return status_;
       bindStarted_ = false;
@@ -480,7 +481,7 @@ class ColdStart {
     ++replayed_;
     if (warmup_) {
       if (!composer_->cycleDone()) return status_;  // still in cycle 0
-      wrapNext_ = true;  // the loop wrap is the next grain (owner 2026-11-11: O(runs))
+      wrapNext_ = true;  // the loop wrap is the next grain: it is O(runs) (DEC-297)
       return status_;
     } else {
       at_ += window_;

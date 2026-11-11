@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Shared, revision-keyed edit-hide index (fixed-memory-engine E3.3, placed and sliced in E5.3).
+// Shared, revision-keyed edit-hide index.
 //
 // A manifest's edit runs (NOTE_EDIT commits) hide noteIds in earlier passes. Composing that manifest needs, per NoteOn,
 // "does a later edit run hide this noteId?". The answer depends only on the manifest identity, so one sorted index per
@@ -13,20 +13,20 @@
 //   * a new identity takes a free slot, else the least recently used unpinned slot; pinned slots are never evicted;
 //   * named outcomes: `Busy` (every slot pinned by other identities), `CapacityExceeded` (more hides than a slot holds,
 //     found while gathering), `Building` (another job is still building that identity); none of them keeps a slot;
-//   * the identity is monotonic and never reused (DEC-246), so a slot can never answer for another revision; an evicted
+//   * the identity is monotonic and never reused, so a slot can never answer for another revision; an evicted
 //     identity rebuilds the same index from its runs (deterministic: heapsort + collapse to the latest hiding pass).
 //
-// Placement (E5.3): the entries live in the page pool's edit-index partition. `init` takes Slots x kPagesPerSlot pages
+// Placement: the entries live in the page pool's edit-index partition. `init` takes Slots x kPagesPerSlot pages
 // from the pool once, tags them `kOwnerIndex` and never returns or adds to them; content, writers and Stop never see
 // them (the ledger's fixed reserve then counts only the compaction partition). The store object holds headers and the
 // page lists only.
 //
-// Grains (E5.3): a worker job builds with `reserve` (takes and pins the slot, state Building) and `buildStep` (at most
+// Grains: a worker job builds with `reserve` (takes and pins the slot, state Building) and `buildStep` (at most
 // `maxWork` units: a gathered row, a sift-down, an extraction or a collapsed entry). `acquire` still builds to
 // completion when nothing prepared the identity (tests, tools); `syncBuilds()` counts those, so a production path can
 // prove it never builds inside a composer's `begin`.
 // Production sizing: 18 slots (one per compose cursor: 16 playback + 2 display; each pins at most one) x 4,096 hides
-// = 576 pages, the plan's edit-index partition.
+// = 576 pages, the edit-index partition.
 
 #pragma once
 

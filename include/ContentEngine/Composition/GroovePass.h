@@ -1,25 +1,26 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The groove pass (DEC-287, groove design `docs/Plans/groove_quantize_design.md` §§ 1–5). A grooved state lists
+// The groove pass (DEC-287). A grooved state lists
 //
 //   [ source prefix … ] [ groove pass G (kind kGroove) ] [ passes made after G … ] [ fit run ]
 //
 // The prefix is kept and saved but not played (`SourceLease` composes the runs before G empty, in place). G is the
-// prefix's *effective content* — every effective note and event, read by the extraction composer (DEC-286: 128 open, no
-// output limit) over the whole stored loop — with the notes in scope moved by the groove (`groove::place`). Notes keep
-// their noteId, velocity and length; events keep their places; a note whose sounding version comes from an edit pass
-// keeps its composed place (no drift). Same-pitch notes moved onto one tick merge (the earliest pass's noteId stays);
-// a same-pitch overlap ends the earlier note one tick before the later.
+// prefix's *effective content* — every effective note and event, read by the extraction composer (128 open, no output
+// limit) over the whole stored loop — with the notes in scope moved by the groove (`groove::place`). Notes keep their
+// noteId, velocity and length; events keep their places; a note whose sounding version comes from an edit pass keeps
+// its composed place (no drift). Same-pitch notes moved onto one tick merge (the earliest pass's noteId stays); a
+// same-pitch overlap ends the earlier note one tick before the later.
 //
 // A rebuild's prefix is the old prefix plus the passes after G up to the last record / overdub pass — never G itself,
 // so a groove always starts from the original timing and pass order (precedence) is never reordered; edit passes after
 // that stay after the new G. Amount 0: no G, the prefix and the passes after it played as they are.
 //
-// A background job (DEC-288): `start`, then `step` a grain at a time — rows reserved first (waiting while pages are
-// held, `TooBig` when it cannot fit), the index and the composer's start, one extraction window a grain, the shaping,
-// `kWriteRows` rows a grain — then `Ready`; `SlotTransport::grooveFinish` publishes it only on the state it started
-// from. Bounded by `kRows` rows and the extraction composer's 128 open notes, named when larger.
+// A background job (DEC-288, background groove build): `start`, then `step` a grain at a time — rows reserved first
+// (waiting while pages are held, `TooBig` when it cannot fit), the index and the composer's start, one extraction
+// window a grain, the shaping, `kWriteRows` rows a grain — then `Ready`; `SlotTransport::grooveFinish` publishes it
+// only on the state it started from. Bounded by `kRows` rows and the extraction composer's 128 open notes, named when
+// larger.
 
 #pragma once
 
@@ -37,15 +38,15 @@ namespace ContentEngine {
 
 enum class GrooveResult : uint8_t { Ok, TooLarge, TooManyOpen, Index, DeniedRun, DeniedCapacity };
 
-/// What one groove build is asked: the setting, and the stored loop it counts in (DEC-283: its length and the content's
+/// What one groove build is asked: the setting, and the stored loop it counts in (its length and the content's
 /// start in it; a range scope's start and length, absolute).
 struct GrooveRequest {
   groove::Settings settings;
-  groove::Table table;  // the template's table (DEC-290: a built-in's, or a groove file's)
+  groove::Table table;  // the template's table (a built-in's, or a groove file's)
   char label[21] = {};  // a file template's name, stored with it
   uint32_t frame = 0, start = 0;
   uint32_t scopeStart = 0, scopeLength = 0;  // used for scope A / B
-  // The GROOVE window's columns, stored with the state (owner 2026-11-11; heard 0: not from the window, the base's kept).
+  // The GROOVE window's columns, stored with the state (heard 0: not from the window, the base's kept).
   uint32_t columnA = 0, columnB = 0;
   uint8_t heard = 0;
 };
@@ -67,7 +68,7 @@ class GrooveBuilder {
     w_ = &window;
     rows_ = rows;
     c_->init(pool, runs, &index);
-    c_->extractAll(lent_, kLent);  // every effective note: 128 tracked, 128 selected (DEC-286)
+    c_->extractAll(lent_, kLent);  // every effective note: 128 tracked, 128 selected
     state_ = State::Idle;  // memory is not constructed: `init` sets the job's fields
     begun_ = false;
     run_ = kNoRun;
@@ -96,7 +97,7 @@ class GrooveBuilder {
     for (int16_t i = lastTake < 0 ? g + 1 : lastTake + 1; i < n; ++i) after[afterCount++] = list[i];
   }
 
-  /// The job's state (DEC-288, slice 3): `Idle` nothing asked; `Waiting` for rows (the reservation was refused for want
+  /// The job's state: `Idle` nothing asked; `Waiting` for rows (the reservation was refused for want
   /// of free pages — held by things that end); `Building` in grains; `Ready` G sealed (or none: the groove removed),
   /// to be published; `TooBig` it cannot fit (more than `kRows` rows, a run's size); `Failed` (index, open notes).
   enum class State : uint8_t { Idle, Waiting, Building, Ready, TooBig, Failed };
@@ -176,7 +177,7 @@ class GrooveBuilder {
   RunId afterRun(uint8_t i) const { return after_[i]; }
   /// Diagnostics: grains taken by the last build.
   uint32_t grains() const { return grains_; }
-  /// The build's progress in percent (DEC-292, an estimate from its grains: the extraction's windows, the shaping, then
+  /// The build's progress in percent (an estimate from its grains: the extraction's windows, the shaping, then
   /// the rows written — the reservation's bound until the rows are known). 0 while waiting, 100 once ready.
   uint8_t progress() const {
     if (state_ == State::Ready) return 100;
@@ -435,7 +436,7 @@ class GrooveBuilder {
   SpanWindow<WindowCap>* w_ = nullptr;
   PassEvent* rows_ = nullptr;
   uint32_t count_ = 0, open_ = 0;
-  // The job (DEC-288).
+  // The job.
   State state_ = State::Idle;
   Phase phase_ = Phase::Prepare;
   bool begun_ = false;

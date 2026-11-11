@@ -69,9 +69,9 @@ struct SpanWindow {
 
 /// Plays one track's windows. Per tick: due NoteOffs first, then the window's rows in order (the composer already
 /// limited continuous controllers to 32 per tick). A row is consumed only if what it emits fits the caller's buffer;
-/// the rest stay for
-/// the next tick (counted as spill), so nothing is consumed without being emitted; due NoteOffs that do not fit stay due
-/// in the scheduler. `beginWindow`'s buffer must hold T (a transition may close every sounding instance).
+/// the rest stay for the next tick (counted as spill), so nothing is consumed without being emitted; due NoteOffs that
+/// do not fit stay due in the scheduler. `beginWindow`'s buffer must hold T (a transition may close every sounding
+/// instance).
 template <uint16_t T>
 class WindowPlayer {
  public:
@@ -86,7 +86,7 @@ class WindowPlayer {
     uint16_t runKey;
     uint8_t channel;  // 1..16
     uint8_t pitch;    // data1 for other events
-    // E9.3, what physical output needs:
+    // What physical output needs:
     uint8_t status;    // the full status byte (type | channel - 1)
     uint8_t data2;     // velocity, controller value, ...
     uint8_t track;     // set by the transport (the player does not know its track)
@@ -127,13 +127,13 @@ class WindowPlayer {
     return n;
   }
 
-  /// Bounded late join (owner ruling 2026-11-05): `w` starts playing at tick `t`, inside its span. The join state was
-  /// prepared by worker grains: `keep` are the instances the new source has sounding at `t` (with their ends: open for a
-  /// carried one whose end comes later), `starts` the START entries begun before `t` and still sounding then, `events`
-  /// the essential / parameter events of the missed span. Instances not kept close now; a kept instance already
-  /// sounding continues with its new end; the others in `starts` begin now with their original end; play resumes at
-  /// entry `from` (the first at or after `t`). Notes wholly in the missed span are not emitted. `out` must hold T plus
-  /// the starts and events. The Clock work is bounded by T and the prepared lists.
+  /// Bounded late join: `w` starts playing at tick `t`, inside its span. The join state was prepared by worker grains:
+  /// `keep` are the instances the new source has sounding at `t` (with their ends: open for a carried one whose end
+  /// comes later), `starts` the START entries begun before `t` and still sounding then, `events` the essential /
+  /// parameter events of the missed span. Instances not kept close now; a kept instance already sounding continues with
+  /// its new end; the others in `starts` begin now with their original end; play resumes at entry `from` (the first at
+  /// or after `t`). Notes wholly in the missed span are not emitted. `out` must hold T plus the starts and events. The
+  /// Clock work is bounded by T and the prepared lists.
   template <uint16_t Cap>
   uint8_t beginWindowLate(const SpanWindow<Cap>& w, uint16_t from, const typename Scheduler::Carry* keep, uint8_t nKeep,
                           const uint16_t* starts, uint8_t nStarts, const uint16_t* events, uint8_t nEvents, uint32_t t,

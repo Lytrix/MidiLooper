@@ -1,31 +1,30 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The fit run of a resized loop (DEC-257, owner 2026-11-08: loop length is a play window; notes keep their recorded
-// lengths and wrap at the loop end in force; notes past a shorter end are kept, not played).
+// The fit run of a resized loop (DEC-257, loop length is a play window): notes keep their recorded lengths and wrap at
+// the loop end in force; notes past a shorter end are kept, not played.
 //
 // Content runs stay as recorded; a resized state lists them with one run of kind `kFit` holding lookups, sorted by
-// (tick = the content run's position in the state's run list, status, noteId). A position, not a RunId (DEC-285): a
-// state's run list keeps its order through save / load, slot copy and get a loop, while RunIds are reassigned — a
-// lookup naming a RunId pointed at nothing (or another run) after a load and a note past the end came back. `build`'s
-// `content` is in the state's order, the fit run listed after it:
+// (tick = the content run's position in the state's run list, status, noteId). A position, not a RunId (DEC-285, fit
+// run by position): a state's run list keeps its order through save / load, slot copy and get a loop, while RunIds are
+// reassigned — a lookup naming a RunId points at nothing (or another run) after a load. `build`'s `content` is in the
+// state's order, the fit run listed after it:
 // * filter (`kFitFilterStatus`, noteId 0): the run has rows at or past the loop end that are not NoteOffs of notes
-//   crossing it — NoteOns or controllers past the end, NoteOffs of notes starting there. `SpanWindowComposer` then reads that
-//   run's rows at or past the end only as NoteOffs of its cross notes.
-// * cross (`kFitCrossStatus`, `seq` the NoteOff's tick): a note of a filtered run that starts before the end and ends at
-//   or past it — it wraps, its NoteOff `tick − loop` into the next cycle.
+//   crossing it — NoteOns or controllers past the end, NoteOffs of notes starting there. `SpanWindowComposer` then
+//   reads that run's rows at or past the end only as NoteOffs of its cross notes.
+// * cross (`kFitCrossStatus`, `seq` the NoteOff's tick): a note of a filtered run that starts before the end and ends
+//   at or past it — it wraps, its NoteOff `tick − loop` into the next cycle.
 // * held (`kFitHeldStatus`): a note starting before the end whose held-loop status (length ≥ loop, Q-LEN-1) differs
-//   from its `kOriginHeldLoop` flag at this length.
-// `build` scans every row of the content runs once (at most `kMaxScanRows`, else TooLarge), holds at most `kMaxOpen`
-// notes open per run and `kMaxEntries` lookups (else refused by name), and writes nothing when no lookup is needed (a
-// resize that changes no wrap: `None`).
-// `rotate` (owner 2026-11-08: LOOP_EDIT's F1 moves the loop start by rotating the content) copies a content run with
-// every note `shift` ticks earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its
-// NoteOff past the loop end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by
-// `loop − shift` gives the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation.
-// The window (DEC-283, owner 2026-11-10: "the selected bars should always stay absolute"): a state's content is its
-// stored loop rotated `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so
-// (`kFitWindowStatus`), written by `build` when the window is not the plain one (start 0, the frame the loop).
+//   from its `kOriginHeldLoop` flag at this length. `build` scans every row of the content runs once (at most
+//   `kMaxScanRows`, else TooLarge), holds at most `kMaxOpen` notes open per run and `kMaxEntries` lookups (else refused
+//   by name), and writes nothing when no lookup is needed (a resize that changes no wrap: `None`). `rotate`
+//   (LOOP_EDIT's F1 moves the loop start by rotating the content) copies a content run with every note `shift` ticks
+//   earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its NoteOff past the loop
+//   end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by `loop − shift` gives
+//   the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation. The window (DEC-283,
+//   loop start in the stored loop: the selected bars stay absolute): a state's content is its stored loop rotated
+//   `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so (`kFitWindowStatus`),
+//   written by `build` when the window is not the plain one (start 0, the frame the loop).
 
 #pragma once
 
@@ -40,24 +39,24 @@ namespace ContentEngine {
 
 enum class FitResult : uint8_t { Ok, None, DeniedRun, DeniedCapacity, TooLarge, TooManyOpen };
 
-/// A loop's play window in its stored notes (DEC-283): the content's tick 0 lies `start` ticks into the stored loop,
+/// A loop's play window in its stored notes: the content's tick 0 lies `start` ticks into the stored loop,
 /// which is `frame` ticks long (at least the loop).
 struct LoopWindow {
   uint32_t start = 0, frame = 0;
-  // DEC-284 amendment 3: the two last ranges of the step / bar buttons (A the older, B the newer), each a start in the
-  // stored loop and a length; length 0: none.
+  // The two last ranges of the step / bar buttons (DEC-284, HOME and variation) (A the older, B the newer), each a
+  // start in the stored loop and a length; length 0: none.
   uint32_t aStart = 0, aLength = 0, bStart = 0, bLength = 0;
-  uint32_t groove = 0;  // DEC-287: the packed groove setting of the state's groove pass (0: none)
-  uint32_t grooveShape = 0;  // DEC-290: a file template's shape (steps | step << 16; 0: a built-in)
-  RunId tableRun = kNoRun;   // DEC-290: the fit run holding its template and label rows (copied into a rebuilt one)
-  // The GROOVE window's columns (owner 2026-11-11, `kFitColumnsStatus`): A's and B's packed settings and the column
+  uint32_t groove = 0;  // the packed groove setting of the state's groove pass (0: none)
+  uint32_t grooveShape = 0;  // a groove file template's shape (steps | step << 16; 0: a built-in)
+  RunId tableRun = kNoRun;   // the fit run holding its template and label rows (copied into a rebuilt one)
+  // The GROOVE window's columns (`kFitColumnsStatus`): A's and B's packed settings and the column
   // heard (1 OFF, 2 A, 3 B); heard 0: none stored.
   uint32_t columnA = 0, columnB = 0;
   uint8_t heard = 0;
 };
 /// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
 /// loop.
-/// A file template stored in fit run `fit` (DEC-290): its table and label. False: none there.
+/// A groove file template stored in fit run `fit`: its table and label. False: none there.
 template <typename Runs, typename Pool>
 bool readTemplate(Runs& runs, Pool& pool, RunId fit, uint32_t shape, groove::Table& t, char* label) {
   if (fit == kNoRun || shape == 0) return false;
@@ -97,7 +96,7 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
   for (uint8_t i = 0; i < n; ++i) {
     const auto& d = runs.run(list[i]);
     if (d.kind != RunKind::kFit) continue;
-    for (uint32_t r = d.rowCount; r > 0; --r) {  // the marker rows sort last; every one read (DEC-287: no fixed count)
+    for (uint32_t r = d.rowCount; r > 0; --r) {  // the marker rows sort last; every one read (no fixed count)
       const PassEvent& e = runs.rowAt(list[i], r - 1, pool);
       if (e.tick != 0xFFFFFFFFu) break;
       if (e.status == kFitWindowStatus) {
@@ -175,7 +174,7 @@ class FitBuilder {
   }
 
   /// The rows of run `src` unchanged in a new sealed run of the same kind for `slot` (`out`, the writer's reference): a
-  /// slot copy (owner 2026-11-10; a state's runs are its slot's, so another slot takes its own).
+  /// slot copy (a state's runs are its slot's, so another slot takes its own).
   FitResult copy(Pool& pool, Runs& runs, Res& res, uint8_t slot, RunId src, RunId& out) {
     out = kNoRun;
     const auto& d = runs.run(src);
@@ -194,7 +193,7 @@ class FitBuilder {
   }
 
   /// The fit run of `content[0..n)` (no fit run among them) at loop length `loop`, for `slot`: `fit` is a sealed run
-  /// with the writer's reference, or kNoRun when the result is not Ok. `window` (DEC-283): the state's window, written
+  /// with the writer's reference, or kNoRun when the result is not Ok. `window`: the state's window, written
   /// as the last row unless it is the plain one.
   FitResult build(Pool& pool, Runs& runs, Res& res, uint8_t slot, const RunId* content, uint8_t n, uint32_t loop,
                   RunId& fit, LoopWindow window = LoopWindow{}, const groove::Table* table = nullptr,
@@ -213,7 +212,7 @@ class FitBuilder {
     const bool rangeA = window.aLength != 0;
     const bool rangeB = window.bLength != 0;
     const bool grooved = window.groove != 0;
-    // DEC-290: a file template's rows — given (a new groove) or copied from the base's fit run (a rebuild).
+    // A groove file template's rows — given (a new groove) or copied from the base's fit run (a rebuild).
     const bool fileTemplate = grooved && window.grooveShape != 0 && (table != nullptr || window.tableRun != kNoRun);
     const uint16_t steps = static_cast<uint16_t>(window.grooveShape & 0xFFFF);
     const uint32_t templateRows = fileTemplate ? (steps + 4u) / 5u + 2u : 0u;
@@ -284,7 +283,7 @@ class FitBuilder {
         res.writeOwed(run, e);
       }
     }
-    if (columns) {  // the GROOVE window's columns (owner 2026-11-11): the last row (statuses in order)
+    if (columns) {  // the GROOVE window's columns: the last row (statuses in order)
       PassEvent e{};
       e.tick = 0xFFFFFFFFu;
       e.status = kFitColumnsStatus;
@@ -312,7 +311,7 @@ class FitBuilder {
     uint16_t open;
     bool has;
     PassEvent next;
-    uint32_t key;  // new tick << 2 | class (DEC-244: NoteOffs first at a tick)
+    uint32_t key;  // new tick << 2 | class (NoteOffs first at a tick, DEC-244)
   };
   /// The segment of a NoteOn or controller at `t`: 0 after the shift, 1 before it, 2 at or past the loop end.
   static uint8_t segment(uint32_t t, uint32_t loop, uint32_t shift) { return t >= loop ? 2 : t >= shift ? 0 : 1; }

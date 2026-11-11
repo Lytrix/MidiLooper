@@ -1,8 +1,8 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Groove timing (DEC-287, groove design `docs/Plans/groove_quantize_design.md` §§ 4, 6): built-in templates and where a
-// note moves. Pure functions over ticks of the stored loop (DEC-283 frame); 768 ticks a bar, 48 a 16th.
+// Groove timing (DEC-287, the groove pass): built-in templates and where a note moves. Pure functions over ticks of the
+// stored loop (its frame); 768 ticks a bar, 48 a 16th.
 //
 // A template is a grid `g` and an offset per grid line (its swung place). A note at `t` goes toward the nearest
 // *swung* target among the neighbouring grid lines — not the nearest straight line first (grid 48, 75 % swing: a note
@@ -21,7 +21,7 @@ namespace groove {
 
 constexpr uint32_t kBar = 768, kSixteenth = 48;
 
-/// Built-in templates (DEC-287; the card's library comes later).
+/// Built-in templates.
 enum Template : uint8_t {
   kStraight = 0,
   kMpc16_54, kMpc16_58, kMpc16_62, kMpc16_66, kMpc16_71,
@@ -31,10 +31,10 @@ enum Template : uint8_t {
   kJazzRide, kBossa, kLaidBack, kPush,
   kTemplateCount
 };
-/// A template read from a groove file on the card (DEC-290): its table is stored with the state (marker rows).
+/// A template read from a groove file on the card: its table is stored with the state (marker rows).
 constexpr uint8_t kFileTemplate = 0xFE;
 
-/// Where a groove applies (DEC-284's ranges).
+/// Where a groove applies (the loop's A / B ranges).
 enum Scope : uint8_t { kFull = 0, kRangeA = 1, kRangeB = 2 };
 
 /// A groove setting, packed into the groove marker row's `seq` (0: no groove): template, amount 0–100, scope, AUTO.
@@ -95,7 +95,7 @@ inline int32_t offsetOf(uint8_t t, uint32_t line) {
   }
 }
 
-/// A template as a table (DEC-290): grid lines `step` ticks apart, a cycle of `steps` lines, each line's offset from its
+/// A template as a table: grid lines `step` ticks apart, a cycle of `steps` lines, each line's offset from its
 /// straight place. Built-ins are one bar long; a file's spans its cycle (four bars in the Grooves From Mars pack).
 struct Table {
   static constexpr uint16_t kMaxSteps = 96;  // 16th triplets over four bars
