@@ -1,5 +1,14 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-10 / 11 — owner-directed surface and groove work on `feature/engine-sets-browser` (scope as delivered).**
+Owner requests in session, each recorded as a decision: the progress bar and loop ranges (DEC-282 am., DEC-283,
+DEC-284 am. 1–3), quantize as a non-destructive groove — design `docs/Plans/groove_quantize_design.md` (rev. 3,
+after two reviews), slices 0–4 (DEC-285–289), the window's later shape (DEC-292, DEC-294, DEC-295 am. 1–5) — the EDIT
+button (DEC-291), saved mutes (DEC-293), PLAY/STOP under a stopped external clock (DEC-276 am. 2), and
+`docs/Guides/ENGINE_UI_UX_GUIDE.md`. OpenSpec: `fixed-memory-engine` E9.8b-3 (delivered list updated; open: 41–48,
+E9.8b-3a groove library, 3b undo-depth sizing, 3c GROOVE motor feedback / saved cycle length). Next authorized only on
+the owner's word. Evidence: `PROJECT_STATE` entries of 2026-11-10 / 11 and the DECs.
+
 **2026-11-08 — owner-requested scope (“start stage 1”), branch `feature/engine-sets-browser` from
 `rewrite/fixed-memory-engine`.** Design: [engine sets browser proposal](../Plans/engine_sets_browser_proposal.md)
 (revision 4 + the one-checkpoint / real-time decisions; not authority — the owner's decisions recorded there are).
