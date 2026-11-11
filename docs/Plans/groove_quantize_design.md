@@ -143,8 +143,8 @@ by the UI exploration.
   next field, turn = value. A long press closes (and cancels a waiting build); it stays open until closed (DEC-292),
   a progress bar along its bottom while a change is on its way. The window shows `WAIT` / `TOO BIG` beside AUTO.
 - **Compare (DEC-294, reshaped by DEC-295):** a static table like the load / save window — `OFF · A · B` over two
-  columns (A the groove at opening, B a copy; both edited) of GROOVE and AMOUNT; F1 / F2 the grooves of A / B, F3 / F4
-  their amounts; REC / EDIT select, the encoder turns; PLAY/STOP steps OFF → A → B, its double cycles A / B (two bars a
+  columns (A the groove at opening, B a copy; both edited) of GROOVE and AMOUNT; F1 / F2 A's groove / amount, F3 / F4 B's
+  (DEC-295 am. 2: their own DROID bank, CC 20–23); REC / EDIT select, the encoder turns; PLAY/STOP steps OFF → A → B, its double cycles A / B (two bars a
   turn, global), a short press while cycling keeps the one playing, its hold applies; TRK is AUTO Q (DEC-295 am. 1), a checkbox in
   the title bar. The scope (BARS) is gone: the whole loop (a selection later, maybe asked on applying).
 - **The cycle as a design language (owner 2026-11-10):** the same turn-taking is meant for the "loop chain" —

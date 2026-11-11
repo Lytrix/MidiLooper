@@ -16575,4 +16575,12 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   NOTELEN; in the window TRK switches no track and NOTELEN does nothing. Native: the compare test presses NOTELEN (no
   change), then TRK (AUTO Q on, still track 1). Full native 4,546 passed. Device image `901e8b65…` (`crash=0`): TRK in
   the window on T1 S3 → `[TRK] ■ AUTO Q`.
+- **Amendment 2 (owner 2026-11-11: "the faders reuse the droid's note editor mode setting, but it should get their own
+  droid setting … selectat 2 … all work as CC controls, so no pitch bend. also group A and B together"):** the window
+  sends its own fader bank, program 2 on channel 16 (`Surface::kGrooveBank`, from `bank()` while it is open); the
+  patch's `GrooveWindow` section has four motor faders at `selectat = 2` sending CC 20–23 on channel 16
+  (`kGrooveCc`): F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount — the fields' own order. The loop-edit
+  bank's pitch bends and CCs are not the window's any more. No motor feedback yet: the DROID keeps the bank's own fader
+  positions. Native: the bank test opens the window (program 2), sets all four by CC, ignores a pitch bend, and returns
+  to the loop-edit bank. Full native 4,546 passed. Device: pending (the board did not take the upload).
 

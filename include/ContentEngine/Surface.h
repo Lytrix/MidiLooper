@@ -248,7 +248,8 @@ class Surface {
   static constexpr uint8_t kBarStepBase = 17, kStepNotes = 25;  // 16ths 0–15, bars 17–24 (channel 16; 16 unused)
   /// The DROID's fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
   static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)
-  static constexpr uint8_t kLoopEditBank = 0, kNoteEditBank = 1;
+  static constexpr uint8_t kLoopEditBank = 0, kNoteEditBank = 1, kGrooveBank = 2;  // DEC-295 am. 2: the GROOVE window's
+  static constexpr uint8_t kGrooveCc = 20;  // the GROOVE bank's F1–F4: CC 20–23 on channel 16
   static constexpr uint8_t kTempoChannel = 14;  // LOOP_EDIT's F4: pitch bend on channel 15; F3 / F4 triggers there
   static constexpr uint8_t kLengthCc = 101;      // LOOP_EDIT's F2: CC 101 on channel 16
   static constexpr uint8_t kFineCc = 100;        // LOOP_EDIT's F3: CC 100 on channel 16 (the fine tempo)
@@ -482,8 +483,8 @@ class Surface {
   }
   // ---- The GROOVE window (DEC-289) -------------------------------------------------------------------------------
   // Fields (DEC-295): A's groove, A's amount, B's groove, B's amount (AUTO Q: TRK, the title bar's checkbox). REC / EDIT move
-  // up / down as in the load / save window, the encoder's push down, its turn the value; F1 / F2 the grooves of A / B,
-  // F3 / F4 their amounts.
+  // up / down as in the load / save window, the encoder's push down, its turn the value; the GROOVE fader bank (DEC-295
+  // am. 2, program 2): F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount — CC 20–23 on channel 16.
   void nextGrooveField(int8_t d) {
     grooveField_ = static_cast<uint8_t>((grooveField_ + kGrooveFields + d) % kGrooveFields);
   }
@@ -515,23 +516,17 @@ class Surface {
     }
     grooveChanged(col, ms);
   }
-  /// The loop-edit bank's faders in the window: F1 (pitch bend ch 16) A's groove, F2 (CC 101) B's, F3 (CC 100) A's
-  /// amount, F4 (pitch bend ch 15) B's. True: taken.
+  /// The GROOVE bank's faders (CC 20–23 on channel 16): F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount.
+  /// True: taken. The fields are in the same order (A's groove, A's amount, B's groove, B's amount).
   bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) {
-    const uint32_t v14 = static_cast<uint32_t>(d1 | (d2 << 7));  // 0..16383
-    uint8_t field;
-    if (type == 0xE0 && channel == 15) field = kFieldGrooveA;
-    else if (type == 0xB0 && channel == 15 && d1 == kLengthCc) field = kFieldGrooveB;
-    else if (type == 0xB0 && channel == 15 && d1 == kFineCc) field = kFieldAmountA;
-    else if (type == 0xE0 && channel == 14) field = kFieldAmountB;
-    else return false;
+    if (type != 0xB0 || channel != 15 || d1 < kGrooveCc || d1 >= kGrooveCc + kGrooveFields) return false;
+    const uint8_t field = static_cast<uint8_t>(d1 - kGrooveCc);
     const Heard col = columnOf(field);
     groove::Settings& g = columnSettings(col);
     const groove::Settings before = g;
-    if (field == kFieldGrooveA) g.tmpl = static_cast<uint8_t>(v14 * groove::kTemplateCount / 16384);
-    else if (field == kFieldGrooveB) g.tmpl = static_cast<uint8_t>((d2 & 0x7F) * groove::kTemplateCount / 128);
-    else if (field == kFieldAmountA) g.amount = static_cast<uint8_t>(((d2 & 0x7F) * 100 + 63) / 127);
-    else g.amount = static_cast<uint8_t>((v14 * 100 + 8191) / 16383);
+    const uint32_t v = d2 & 0x7F;
+    if (field == kFieldGrooveA || field == kFieldGrooveB) g.tmpl = static_cast<uint8_t>(v * groove::kTemplateCount / 128);
+    else g.amount = static_cast<uint8_t>((v * 100 + 63) / 127);
     grooveField_ = field;
     if (g.tmpl != before.tmpl || g.amount != before.amount) grooveChanged(col, ms);
     return true;
@@ -901,7 +896,7 @@ class Surface {
   /// note-edit bank while a NOTE_EDIT session is open (as legacy, at the session's opening), else the loop-edit bank;
   /// the first call (boot) sends the current one, so the DROID follows a restart too. False: no change.
   bool bank(uint8_t& program) {
-    const uint8_t want = edit_.editing() ? kNoteEditBank : kLoopEditBank;
+    const uint8_t want = groove_ ? kGrooveBank : edit_.editing() ? kNoteEditBank : kLoopEditBank;
     if (want == bankSent_) return false;
     bankSent_ = want;
     program = want;

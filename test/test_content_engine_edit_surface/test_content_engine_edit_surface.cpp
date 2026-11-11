@@ -314,6 +314,30 @@ void test_the_droid_fader_bank_follows_note_edit() {
   TEST_ASSERT_TRUE(gS.bank(p));
   TEST_ASSERT_EQUAL_UINT8(S::kLoopEditBank, p);
   TEST_ASSERT_FALSE(gS.bank(p));
+  // DEC-295 amendment 2: the GROOVE window has its own bank (program 2), back to loop edit once applied.
+  gS.input(0x9F, S::kGrooveNote, 127, gUs / 1000);
+  gS.input(0x8F, S::kGrooveNote, 0, gUs / 1000);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  TEST_ASSERT_TRUE(gS.bank(p));
+  TEST_ASSERT_EQUAL_UINT8(S::kGrooveBank, p);
+  // Its faders are CCs 20–23 on channel 16 in the fields' order: A's groove, A's amount, B's groove, B's amount.
+  gS.input(0xBF, S::kGrooveCc + 0, 127, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kTemplateCount - 1, gS.grooveA().tmpl);
+  gS.input(0xBF, S::kGrooveCc + 1, 0, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveA().amount);
+  gS.input(0xBF, S::kGrooveCc + 2, 0, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kStraight, gS.grooveSettings().tmpl);
+  gS.input(0xBF, S::kGrooveCc + 3, 64, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gS.grooveField());
+  pitchBend(14, 8191);  // the old pitch bends are not the window's any more
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
+  gS.input(0x9F, S::kGrooveNote, 127, gUs / 1000);
+  gS.input(0x8F, S::kGrooveNote, 0, gUs / 1000);
+  ms(50);
+  TEST_ASSERT_TRUE(gS.bank(p));
+  TEST_ASSERT_EQUAL_UINT8(S::kLoopEditBank, p);
 }
 
 // Motor feedback (owner 2026-11-06): the DROID's motor faders follow the selection — a value, then its trigger note,
@@ -2411,7 +2435,7 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
-  pitchBend(14, 8191);  // F4 at the top: B's amount 100 %
+  gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23) at the top: B's amount 100 %
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
   TEST_ASSERT_EQUAL_UINT8(3, gS.grooveField());  // B's amount selected
@@ -2513,7 +2537,7 @@ void test_the_groove_window_compares_a_b_and_off() {
   ms(50);
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
-  pitchBend(14, 8191);  // F4: B's amount 100 % → 144, heard
+  gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23): B's amount 100 % → 144, heard
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
