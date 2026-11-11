@@ -119,6 +119,21 @@ class ColdTier {
   }
   /// Changes when a slot's cold states are dropped (a save listing them restarts on a change).
   uint16_t epoch(uint8_t slot) const { return slot < Slots ? epoch_[slot] : 0; }
+  /// E4.6d: the slot's newest cold state goes (it was fetched and is hot now). False: none.
+  bool dropNewest(uint8_t slot) {
+    if (slot >= Slots || tail_[slot] == kNone) return false;
+    const uint16_t st = tail_[slot];
+    uint16_t prev = kNone;
+    for (uint16_t i = head_[slot]; i != st; i = states_[i].next) prev = i;
+    if (prev == kNone) head_[slot] = kNone;
+    else states_[prev].next = kNone;
+    tail_[slot] = prev;
+    freeStateAt(st);
+    --count_[slot];
+    --total_;
+    ++epoch_[slot];
+    return true;
+  }
   /// Forgets every cold state of the slot (newest first is not needed: they all go).
   void clearSlot(uint8_t slot) {
     while (dropOldest(slot)) {

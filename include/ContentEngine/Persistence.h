@@ -207,6 +207,13 @@ class Persistence : public ColdSink {
     uint32_t coldLoaded;     // cold states read at boot
     uint32_t coldBad;        // cold records that failed their check (the slot's cold states not loaded)
     uint32_t coldRestarts;   // saves restarted: the slot's cold states changed while they were written
+    // DEC-254 (E4.6d): fetches.
+    uint32_t fetches;        // fetches that arrived (switched to, or kept when the slot moved meanwhile)
+    uint32_t fetchedStates;  // cold states made hot
+    uint32_t fetchSectors;   // sectors read by fetches
+    uint32_t fetchRefused;   // no room (rows, runs, manifests, table) or a damaged record: the slot stays
+    uint32_t fetchCancelled; // the slot changed under a fetch
+    uint32_t fetchBusy;      // presses on another slot while one fetch runs
   };
   using Import = ResolvedImport<Pool, Runs, Manifests, HistoryT, /*held*/ 64>;
   using Reader = Lsv1Reader<Card, Import>;
@@ -254,6 +261,9 @@ class Persistence : public ColdSink {
     stats_ = Stats{};
     legacy_ = migrate_ = false;
     pendSector_ = runstore::kNoSector;
+    fetchSlot_ = kNone;
+    fetchArrived_ = false;
+    fGot_ = 0;
     coldTier_.clear();
     clusters_.clear();
     clusters_.reserve(kColdBase, 2u * Slots * kColdSectors);
@@ -292,7 +302,7 @@ class Persistence : public ColdSink {
         changedAt_[s] = stamp(nowUs);
       }
     }
-    if (!approved_ || booting() || saving_ != kNone || stateDue_) return;
+    if (!approved_ || booting() || saving_ != kNone || stateDue_ || fetching()) return;  // E4.6d: a fetch first
     for (uint8_t s = 0; s < Slots; ++s) {
       if (seen_[s] == saved_[s] || s == busySlotA || s == busySlotB) continue;
       if (static_cast<uint32_t>(static_cast<uint16_t>(stamp(nowUs) - changedAt_[s])) * 1024u < kSettleUs) continue;
@@ -302,7 +312,19 @@ class Persistence : public ColdSink {
     if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && (state_ != stateSaved_ || mutes_ != mutesSaved_))
       stateDue_ = true;  // written by the next persistence grain
   }
-  bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_; }
+  bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_ || fetching(); }
+  /// DEC-254 (E4.6d): a fetch is under way (not yet arrived).
+  bool fetching() const { return fetchSlot_ != kNone && !fetchArrived_; }
+  /// A fetch arrived: its slot and the state the presses were made on; the engine switches (once).
+  bool takeFetch(uint8_t& slot, ManifestId& floor) {
+    if (fetchSlot_ == kNone || !fetchArrived_) return false;
+    slot = fetchSlot_;
+    floor = fetchFloor_;
+    fetchSlot_ = kNone;
+    fetchArrived_ = false;
+    ++stats_.fetches;
+    return true;
+  }
   /// A save or state write is on the card and not yet programmed (the milestone library waits for it, DEC-258).
   bool onCard() const { return saving_ != kNone || closing_; }
   /// For the display's save dots (E9.8k): a slot is being written. The surface state (the selection) is saved
@@ -342,6 +364,7 @@ class Persistence : public ColdSink {
     if (saving_ != kNone) return stepSave();
     if (loading_ != kNone) return stepLoad();
     if (importing_ != kNone) return stepImport();
+    if (fetching()) return stepFetch();  // DEC-254 (E4.6d)
     if (stateDue_) {  // the card is idle here (`closing_`): the write does not wait
       writeState();
       closing_ = store_;
@@ -821,6 +844,27 @@ class Persistence : public ColdSink {
   uint8_t coldCount(uint8_t slot) const override { return coldTier_.count(slot); }
   void dropOldestCold(uint8_t slot) override { coldTier_.dropOldest(slot); }
   void clearCold(uint8_t slot) override { coldTier_.clearSlot(slot); }
+  /// E4.6d: an undo at the slot's cold floor — the next cold state below; a press during the fetch reaches one deeper
+  /// (owner 2026-11-11: only the final target is switched to).
+  void requestFetch(uint8_t slot) override {
+    if (!store_ || legacy_ || slot >= Slots) return;
+    if (fetchSlot_ == kNone) {
+      fetchSlot_ = slot;
+      fWant_ = 1;
+      fGot_ = 0;
+      fPhase_ = 0;
+      fetchFloor_ = history_->current(slot);
+      fetchOldest_ = history_->oldestHot(slot);
+      fetchCold_ = coldTier_.count(slot);
+      fetchArrived_ = false;
+      return;
+    }
+    if (slot == fetchSlot_ && !fetchArrived_) {
+      if (fWant_ < fetchCold_) ++fWant_;
+      return;
+    }
+    ++stats_.fetchBusy;
+  }
   const cold::ColdTier<Slots>& coldTier() const { return coldTier_; }
 
  private:
@@ -942,6 +986,150 @@ class Persistence : public ColdSink {
           ++stats_.coldBad;
           return;
         }
+      }
+    }
+  }
+
+  // ---- DEC-254 (E4.6d): the fetch -----------------------------------------------------------------------------------
+  static constexpr uint8_t kFetchSectors = 4;  // a grain reads at most this many (the boot's 32 took 31 ms)
+  /// A run in PSRAM whose record is at area sector `sector` (kNoRun: none).
+  RunId cardRunAt(uint32_t sector) const {
+    for (RunId id = 0; id < Runs::kRunCount; ++id) {
+      const runstore::CardRun& c = cardRun_[id];
+      if (c.sector == sector && c.serial != 0 && c.serial == runs_->run(id).serial) return id;
+    }
+    return kNoRun;
+  }
+  /// Gives back the state in progress (its first `n` runs) and everything fetched so far; the slot stays as it is.
+  void dropFetch(uint8_t n) {
+    for (uint8_t i = 0; i < n; ++i) {
+      if (fNew_[i]) {
+        res_->forgive(fRun_[i]);
+        runs_->seal(fRun_[i]);
+      }
+      runs_->release(fRun_[i]);
+    }
+    for (uint8_t k = 0; k < fGot_; ++k) manifests_->release(fMade_[k], *runs_);
+    fGot_ = 0;
+    fetchSlot_ = kNone;
+    fetchArrived_ = false;
+  }
+  bool refuseFetch(uint8_t n) {
+    ++stats_.fetchRefused;
+    dropFetch(n);
+    return false;
+  }
+  bool stepFetch() {
+    const uint8_t s = fetchSlot_;
+    if (history_->oldestHot(s) != fetchOldest_ || coldTier_.count(s) != fetchCold_) {  // the slot changed: cancelled
+      ++stats_.fetchCancelled;
+      dropFetch(fPhase_ == 0 ? 0 : fN_);
+      return false;
+    }
+    switch (fPhase_) {
+      case 0: {  // the next cold state (from the newest down): reuse the runs in PSRAM, admit the others
+        if (fGot_ >= fetchCold_) return refuseFetch(0);
+        fSt_ = coldTier_.at(s, static_cast<uint8_t>(fetchCold_ - 1 - fGot_));
+        fN_ = coldTier_.runCount(fSt_);
+        for (uint8_t i = 0; i < fN_; ++i) {
+          const cold::CardRunRef ref = coldTier_.run(fSt_, i);
+          const RunId have = cardRunAt(ref.sector);
+          if (have != kNoRun) {
+            runs_->addRef(have);
+            fRun_[i] = have;
+            fNew_[i] = false;
+            continue;
+          }
+          const RunId id = runs_->allocate(s, ref.kind);
+          if (id == kNoRun) return refuseFetch(i);
+          fRun_[i] = id;
+          fNew_[i] = true;
+          if (res_->reserve(id, ref.rows) != Admission::Ok) return refuseFetch(static_cast<uint8_t>(i + 1));
+        }
+        fR_ = 0;
+        fRow_ = 0;
+        fHead_ = false;
+        fPhase_ = 1;
+        return true;
+      }
+      case 1: {  // the new runs' records: a header, then at most `kFetchSectors` sectors a grain
+        while (fR_ < fN_ && !fNew_[fR_]) ++fR_;
+        if (fR_ == fN_) {
+          fPhase_ = 2;
+          return true;
+        }
+        const cold::CardRunRef ref = coldTier_.run(fSt_, fR_);
+        uint8_t* b = importScratch_;
+        if (!fHead_) {
+          ++stats_.fetchSectors;
+          if (!card_->readSector(kRunAreaBase + ref.sector, b) || !runstore::readHeader(b, s, ref.kind, ref.rows, fWantCrc_)) {
+            ++stats_.badRun;
+            return refuseFetch(fN_);
+          }
+          fHead_ = true;
+          fCrc_ = 0;
+          fSec_ = 0;
+          return true;
+        }
+        for (uint8_t k = 0; k < kFetchSectors && fRow_ < ref.rows; ++k) {
+          ++stats_.fetchSectors;
+          if (!card_->readSector(kRunAreaBase + ref.sector + 1 + fSec_++, b)) return refuseFetch(fN_);
+          const uint32_t m = ref.rows - fRow_ < runstore::kRowsPerSector ? ref.rows - fRow_ : runstore::kRowsPerSector;
+          fCrc_ = crc32Update(fCrc_, b, m * kSetFileRowBytes);
+          for (uint32_t j = 0; j < m; ++j) {
+            const uint8_t* r = b + j * kSetFileRowBytes;
+            PassEvent e{};
+            e.tick = runstore::get32(r);
+            e.noteId = runstore::get32(r + 4);
+            e.seq = runstore::get32(r + 8);
+            e.status = r[12];
+            e.data1 = r[13];
+            e.data2 = r[14];
+            e.origin = r[15];
+            res_->writeOwed(fRun_[fR_], e);
+          }
+          fRow_ += m;
+        }
+        if (fRow_ == ref.rows) {  // the run is in: checked, sealed, known to be on the card
+          if (fCrc_ != fWantCrc_) {
+            ++stats_.badRun;
+            return refuseFetch(fN_);
+          }
+          res_->forgive(fRun_[fR_]);
+          runs_->seal(fRun_[fR_]);
+          cardRun_[fRun_[fR_]] = runstore::CardRun{ref.sector, runs_->run(fRun_[fR_]).serial};
+          fNew_[fR_] = false;  // sealed: given back as any reused run
+          ++fR_;
+          fRow_ = 0;
+          fHead_ = false;
+        }
+        return true;
+      }
+      default: {  // the state: kept aside until the target is in
+        const ManifestId m = manifests_->create(s, coldTier_.revision(fSt_), coldTier_.loop(fSt_), fRun_, fN_, *runs_);
+        for (uint8_t i = 0; i < fN_; ++i) runs_->release(fRun_[i]);  // the manifest holds them now
+        if (m == kNoManifest) {
+          fN_ = 0;
+          return refuseFetch(0);
+        }
+        fMade_[fGot_++] = m;
+        fPhase_ = 0;
+        if (fGot_ < fWant_) return true;
+        // The target is in: every fetched state hot (the newest cold first, each below the last), then the switch.
+        for (uint8_t k = 0; k < fGot_; ++k) {
+          if (!history_->promote(s, fMade_[k])) {
+            for (uint8_t j = k; j < fGot_; ++j) manifests_->release(fMade_[j], *runs_);
+            ++stats_.fetchRefused;
+            fGot_ = 0;
+            fetchArrived_ = true;  // what was promoted stays; the switch finds the slot as it is
+            return false;
+          }
+          coldTier_.dropNewest(s);
+          ++stats_.fetchedStates;
+        }
+        fGot_ = 0;
+        fetchArrived_ = true;
+        return false;
       }
     }
   }
@@ -1356,6 +1544,15 @@ class Persistence : public ColdSink {
   uint8_t item_[16] = {};
   uint16_t coldFill_ = 0;
   uint32_t coldOut_ = 0, coldCrc_ = 0, copySeq_[2] = {};
+  // DEC-254 (E4.6d): the fetch.
+  uint8_t fetchSlot_ = kNone, fWant_ = 0, fGot_ = 0, fPhase_ = 0, fN_ = 0, fR_ = 0, fetchCold_ = 0;
+  bool fetchArrived_ = false, fHead_ = false;
+  ManifestId fetchFloor_ = kNoManifest, fetchOldest_ = kNoManifest;
+  uint16_t fSt_ = cold::kNone;
+  uint32_t fRow_ = 0, fSec_ = 0, fCrc_ = 0, fWantCrc_ = 0;
+  RunId fRun_[Manifests::kMaxRuns] = {};
+  bool fNew_[Manifests::kMaxRuns] = {};
+  ManifestId fMade_[99] = {};
   Import import_;
   Reader reader_;
   Stats stats_{};

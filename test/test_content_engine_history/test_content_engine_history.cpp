@@ -624,6 +624,12 @@ struct FakeCold : ColdSink {
     if (n[s] != 0) --n[s];
   }
   void clearCold(uint8_t s) override { n[s] = 0; }
+  uint8_t fetchSlot = 0xFF;
+  uint32_t fetches = 0;
+  void requestFetch(uint8_t s) override {
+    fetchSlot = s;
+    ++fetches;
+  }
 };
 
 // A full table demotes the oldest undo step instead of forgetting it: the slot's UNDO level is unchanged; undo stops at

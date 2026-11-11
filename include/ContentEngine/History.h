@@ -50,6 +50,8 @@ struct ColdSink {
   virtual uint8_t coldCount(uint8_t slot) const = 0;
   virtual void dropOldestCold(uint8_t slot) = 0;
   virtual void clearCold(uint8_t slot) = 0;
+  /// E4.6d: an undo at the slot's oldest hot state with cold states below — fetch the next one (deeper on each call).
+  virtual void requestFetch(uint8_t slot) = 0;
   virtual ~ColdSink() = default;
 };
 enum class SessionKind : uint8_t { Overdub = 0, Edit = 1 };
@@ -258,8 +260,10 @@ class History {
   bool undo(uint8_t slot) {
     if (!canUndo(slot)) {
       if (slot < Slots && slots_[slot].current != kNone && entries_[slots_[slot].current].older == kNone &&
-          coldCount(slot) != 0)
+          coldCount(slot) != 0 && !sessionOn(slot)) {
         ++stats_.undoAtCold;
+        cold_->requestFetch(slot);  // E4.6d: the next cold state is fetched; the switch follows once it is in
+      }
       if (slot < Slots && atForgottenFloor(slot)) {
         ++stats_.undoPastRetained;
         stats_.lastPastSlot = slot;
@@ -277,6 +281,39 @@ class History {
     return true;
   }
 
+  /// E4.6d: a fetched cold state as the slot's oldest hot state (a fresh commit number: the table makes room on other
+  /// slots first — never on this one, whose order would break). History takes the caller's reference. False: no room.
+  bool promote(uint8_t slot, ManifestId manifest) {
+    if (slot >= Slots || manifest == kNoManifest) return false;
+    if (count_ == Depth && !evictOldest(slot)) return false;
+    const uint8_t e = freeHead_;
+    freeHead_ = nextFree_[e];
+    ++count_;
+    Slot& s = slots_[slot];
+    entries_[e] = Entry{manifest, ++seq_, kNone, s.oldest, slot};
+    if (s.oldest != kNone) entries_[s.oldest].older = e;
+    else s.newest = e;
+    s.oldest = e;
+    if (count_ > stats_.highWater) stats_.highWater = count_;
+    return true;
+  }
+  /// The slot's oldest hot manifest (kNoManifest: none).
+  ManifestId oldestHot(uint8_t slot) const {
+    const uint8_t e = slots_[slot].oldest;
+    return e == kNone ? kNoManifest : entries_[e].manifest;
+  }
+  /// E4.6d: the fetch arrived — the slot steps down to its oldest hot state, if it is still at `floor` (the state the
+  /// undo presses were made on). False: it moved meanwhile (nothing changes).
+  bool toOldest(uint8_t slot, ManifestId floor) {
+    if (slot >= Slots || floor == kNoManifest || current(slot) != floor) return false;
+    slots_[slot].current = slots_[slot].oldest;
+    return true;
+  }
+  bool sessionOn(uint8_t slot) const {
+    for (const Session& x : sessions_)
+      if (x.slot == slot) return true;
+    return false;
+  }
   /// The slot's current manifest, or `kNoManifest` for an empty slot.
   ManifestId current(uint8_t slot) const {
     const uint8_t c = slots_[slot].current;
@@ -445,24 +482,37 @@ class History {
   /// The oldest step in the set: the oldest-committed state that is no slot's current and no open session's protected
   /// start. Per slot that is its oldest state (skipping a protected start) if it lies below current, else the start of
   /// its redo chain. Lowest commit seq wins.
-  void evictOldest() {
+  /// `skip` (E4.6d): a slot whose states stay (a fetch promotes into it). The side (undo / redo) is by position: a
+  /// promoted state's commit number is newer than the states above it. False: no candidate.
+  bool evictOldest(uint8_t skip = kNone) {
     uint8_t bestSlot = kNone, best = kNone;
+    bool bestUndo = false;
     for (uint8_t i = 0; i < Slots; ++i) {
+      if (i == skip) continue;
       const Slot& s = slots_[i];
       uint8_t cand = s.oldest;
-      if (cand != kNone && protectedStart(cand)) cand = entries_[cand].newer;
-      if (cand == s.current) cand = s.current == kNone ? kNone : entries_[s.current].newer;
+      bool undo = s.current != kNone;
+      if (cand != kNone && protectedStart(cand)) {
+        if (cand == s.current) undo = false;  // the start is current: what lies above it is redo
+        cand = entries_[cand].newer;
+      }
+      if (cand == s.current) {
+        cand = s.current == kNone ? kNone : entries_[s.current].newer;
+        undo = false;
+      }
       if (cand != kNone && (best == kNone || entries_[cand].seq < entries_[best].seq)) {
         bestSlot = i;
         best = cand;
+        bestUndo = undo;
       }
     }
+    if (best == kNone) return false;
     Slot& s = slots_[bestSlot];
-    const bool undoSide = s.current != kNone && entries_[best].seq < entries_[s.current].seq;
+    const bool undoSide = bestUndo;
     if (!undoSide) {
       lose(bestSlot, dropRedo(bestSlot));  // a redo chain cannot have a hole
       ++stats_.evictedRedo;
-      return;
+      return true;
     }
     const uint8_t older = entries_[best].older, newer = entries_[best].newer;
     // DEC-254 (E4.6c): the slot's oldest hot state goes cold when its runs are on the card — kept, not forgotten.
@@ -477,10 +527,11 @@ class History {
     freeEntry(best);
     if (demote) {
       ++stats_.demoted;
-      return;
+      return true;
     }
     ++stats_.evictedUndo;
     lose(bestSlot, 1);
+    return true;
   }
   /// The slot's hot states.
   uint8_t hotStates(uint8_t slot) const {

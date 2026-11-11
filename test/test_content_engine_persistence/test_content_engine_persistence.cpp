@@ -66,6 +66,7 @@ struct FakeCard : CardIo {
   uint32_t failSectorWritesAfter = 0xFFFFFFFFu;  // sector writes, then every one fails
   uint32_t failOneSectorWrite = 0xFFFFFFFFu;     // sector writes, then the next one fails (once)
   uint32_t stepWrites = 0, mostStepWrites = 0;   // sector writes in one engine step, and the most of them
+  uint32_t stepReads = 0, mostStepReads = 0;     // DEC-254 (E4.6d): sector reads in one engine step
   // The card's timing, as the SD adapter sees it: a write stream stays open while sectors follow; a block keeps the
   // card busy for a while, a stopped stream longer (programming). A write while busy, or one that has to stop the
   // stream itself, waits on the device: `waitingWrites`.
@@ -85,7 +86,7 @@ struct FakeCard : CardIo {
     libraryExists = libraryOpen = false;
     storeSectors = 0;
     failSectorWritesAfter = failOneSectorWrite = 0xFFFFFFFFu;
-    writes = sectorWrites = sectorReads = stepWrites = mostStepWrites = 0;
+    writes = sectorWrites = sectorReads = stepWrites = mostStepWrites = stepReads = mostStepReads = 0;
     streaming = false;
     next = 0;
     busy = 0;
@@ -104,6 +105,8 @@ struct FakeCard : CardIo {
   void endStep() {
     if (stepWrites > mostStepWrites) mostStepWrites = stepWrites;
     stepWrites = 0;
+    if (stepReads > mostStepReads) mostStepReads = stepReads;
+    stepReads = 0;
   }
   bool exists(const char* p) override {
     for (int i = 0; i < dirCount; ++i)
@@ -167,6 +170,7 @@ struct FakeCard : CardIo {
   bool libraryReady(uint32_t i) override { return ready(i == kIdle ? kIdle : kLibraryAt + i); }
   bool readAbs(uint32_t i, uint8_t* d) {
     ++sectorReads;
+    ++stepReads;
     if (streaming) ++readsWhileStreaming;  // the adapter stops the stream and waits
     streaming = false;
     busy = 0;
@@ -1099,6 +1103,135 @@ void test_cold_states_survive_a_reboot() {
   TEST_ASSERT_EQUAL_UINT8(0, gA.history().coldCount(0));
 }
 
+
+// DEC-254 (E4.6d): undo past the hot states fetches the cold one below — read in small grains while the slot plays,
+// then switched to as an undo; presses during the fetch reach deeper, switched once; a damaged record refuses it by name
+// (the slot stays); a change on the slot cancels it.
+static void coldSlot(EngineRoot& e) {
+  e.approveSaving();
+  record(e, 0, 0, 60);
+  record(e, 1, 9, 72);
+  run(e, gClock + kSettleTicks + 50);
+  manyStates(e, 0, 60);
+  manyStates(e, 9, 70);
+  manyStates(e, 0, 1);
+  TEST_ASSERT_TRUE(e.history().coldCount(0) >= 4);
+}
+static uint8_t toFloor(EngineRoot& e, uint8_t slot) {  // undo to the oldest hot state; the last press asks the fetch
+  uint8_t n = 0;
+  while (e.control().undo(slot, gClock, us(gClock), kUsPerTick) == R::Ok) ++n;
+  return n;
+}
+void test_undo_fetches_the_cold_state_below() {
+  coldSlot(gA);
+  const auto& st = gA.persistence().stats();
+  toFloor(gA, 0);
+  const uint8_t cold = gA.history().coldCount(0), depth = gA.history().undoDepth(0);
+  const ManifestId floor = gA.history().current(0);
+  const auto& t = gA.persistence().coldTier();
+  const uint16_t want = t.at(0, static_cast<uint8_t>(cold - 1));
+  const uint32_t rev = t.revision(want), loop = t.loop(want);
+  TEST_ASSERT_TRUE(gA.persistence().fetching());
+  gCard.mostStepReads = 0;
+  run(gA, gClock + 200);
+  TEST_ASSERT_FALSE(gA.persistence().fetching());
+  TEST_ASSERT_EQUAL_UINT32(1, st.fetches);
+  TEST_ASSERT_TRUE(gA.history().current(0) != floor);  // switched: one step down
+  TEST_ASSERT_EQUAL_UINT8(cold - 1, gA.history().coldCount(0));
+  TEST_ASSERT_EQUAL_UINT8(depth - 1, gA.history().undoDepth(0));
+  const auto& m = gA.manifests().manifest(gA.history().current(0));
+  TEST_ASSERT_EQUAL_UINT32(rev, m.revision);
+  TEST_ASSERT_EQUAL_UINT32(loop, m.loopLengthTicks);
+  TEST_ASSERT_TRUE(gCard.mostStepReads <= 4);  // small grains: at most four sectors a step
+  TEST_ASSERT_EQUAL_UINT32(0, gA.history().stats().evictedUndo);
+  // Three presses during a fetch: one switch, three steps down.
+  TEST_ASSERT_FALSE(gA.control().undo(0, gClock, us(gClock), kUsPerTick) == R::Ok);  // at the floor: asks
+  TEST_ASSERT_FALSE(gA.control().undo(0, gClock, us(gClock), kUsPerTick) == R::Ok);
+  TEST_ASSERT_FALSE(gA.control().undo(0, gClock, us(gClock), kUsPerTick) == R::Ok);
+  const uint8_t cold2 = gA.history().coldCount(0), depth2 = gA.history().undoDepth(0);
+  run(gA, gClock + 400);
+  TEST_ASSERT_EQUAL_UINT32(2, st.fetches);
+  TEST_ASSERT_EQUAL_UINT8(cold2 - 3, gA.history().coldCount(0));
+  TEST_ASSERT_EQUAL_UINT8(depth2 - 3, gA.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT16(gA.history().oldestHot(0), gA.history().current(0));
+  // Redo climbs back through the fetched states (they are hot now).
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().redo(0, gClock, us(gClock), kUsPerTick));
+}
+void test_a_damaged_record_refuses_the_fetch() {
+  coldSlot(gA);
+  toFloor(gA, 0);
+  const uint8_t cold = gA.history().coldCount(0);
+  const ManifestId floor = gA.history().current(0);
+  const auto& t = gA.persistence().coldTier();
+  const uint16_t st = t.at(0, static_cast<uint8_t>(cold - 1));
+  uint32_t at = runstore::kNoSector;  // its own fit run's record: only this cold state lists it (not in PSRAM)
+  for (uint8_t i = 0; i < t.runCount(st) && at == runstore::kNoSector; ++i)
+    if (t.run(st, i).kind == RunKind::kFit && t.run(st, i).rows > 0)
+      at = ProductionPersistence::kRunAreaBase + t.run(st, i).sector;
+  TEST_ASSERT_TRUE(at != runstore::kNoSector);
+  TEST_ASSERT_NOT_NULL(gCard.sector(at + 1));
+  gCard.sector(at + 1)[2] ^= 0x01;  // a row: the rows' CRC refuses it
+  run(gA, gClock + 200);
+  TEST_ASSERT_FALSE(gA.persistence().fetching());
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().fetchRefused);
+  TEST_ASSERT_EQUAL_UINT16(floor, gA.history().current(0));  // the slot stays where it was
+  TEST_ASSERT_EQUAL_UINT8(cold, gA.history().coldCount(0));
+}
+void test_a_change_on_the_slot_cancels_the_fetch() {
+  coldSlot(gA);
+  toFloor(gA, 0);
+  TEST_ASSERT_TRUE(gA.persistence().fetching());
+  // A commit on the slot meanwhile: the fetch still arrives (the state is still the one below) but does not switch.
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().resize(0, 2 * kBar, gClock, us(gClock), kUsPerTick));
+  const ManifestId now = gA.history().current(0);
+  run(gA, gClock + 200);
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().fetches);
+  TEST_ASSERT_EQUAL_UINT16(now, gA.history().current(0));
+  // The slot cleared under a fetch (a set load): cancelled, nothing kept.
+  toFloor(gA, 0);
+  TEST_ASSERT_TRUE(gA.persistence().fetching());
+  TEST_ASSERT_TRUE(gA.history().clearSlot(0));
+  run(gA, gClock + 200);
+  TEST_ASSERT_FALSE(gA.persistence().fetching());
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().fetchCancelled);
+  TEST_ASSERT_EQUAL(kNoManifest, gA.history().current(0));
+  TEST_ASSERT_EQUAL_UINT8(0, gA.history().coldCount(0));
+}
+
+// A big run (a dense take no hot state shares) is read in many small grains: never more than four sectors a step.
+void test_a_big_run_is_fetched_in_small_grains() {
+  gA.approveSaving();
+  gA.control().selectTrack(0);
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().queueRecord(0, 0, gClock));
+  const uint32_t s0 = (gClock / kBar + 1) * kBar;
+  std::vector<Live> dense;
+  for (uint32_t i = 0; i < 400; ++i)  // 400 notes: 800 rows, 25 sectors
+    dense.push_back({s0 + 10 + i * 7, s0 + 13 + i * 7, static_cast<uint8_t>(36 + i % 48)});
+  run(gA, s0 + 4 * kBar - 10, dense);
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().queueStop(0, gClock));
+  run(gA, s0 + 4 * kBar + 1, dense);
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL(R::Ok, gA.control().clear(0, gClock, us(gClock), kUsPerTick));  // cleared, then a new take: the
+  run(gA, gClock + 2);                                                                // dense one is listed only by
+  record(gA, 0, 0, 64);                                                               // the oldest state from now on
+  record(gA, 1, 9, 72);
+  run(gA, gClock + kSettleTicks + 50);
+  manyStates(gA, 0, 60);
+  manyStates(gA, 9, 70);
+  manyStates(gA, 0, 1);
+  const uint8_t cold = gA.history().coldCount(0);
+  TEST_ASSERT_TRUE(cold >= 4);
+  toFloor(gA, 0);
+  for (uint8_t i = 1; i < cold; ++i) gA.control().undo(0, gClock, us(gClock), kUsPerTick);  // to the deepest
+  const uint32_t before = gA.persistence().stats().fetchSectors;
+  gCard.mostStepReads = 0;
+  run(gA, gClock + 3000);
+  TEST_ASSERT_EQUAL_UINT8(0, gA.history().coldCount(0));
+  TEST_ASSERT_TRUE(gA.persistence().stats().fetchSectors - before > 25);  // the dense take's record read
+  TEST_ASSERT_TRUE(gCard.mostStepReads <= 4);
+  TEST_ASSERT_EQUAL_UINT16(gA.history().oldestHot(0), gA.history().current(0));
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -1139,6 +1272,10 @@ int main(int, char**) {
   RUN_TEST(test_a_run_no_copy_lists_is_reclaimed_at_boot);
   RUN_TEST(test_the_dec253_store_is_migrated);
   RUN_TEST(test_cold_states_survive_a_reboot);
+  RUN_TEST(test_undo_fetches_the_cold_state_below);
+  RUN_TEST(test_a_damaged_record_refuses_the_fetch);
+  RUN_TEST(test_a_change_on_the_slot_cancels_the_fetch);
+  RUN_TEST(test_a_big_run_is_fetched_in_small_grains);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

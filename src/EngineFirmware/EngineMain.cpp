@@ -945,7 +945,7 @@ void applyLoaded(const library::BlobHeader& b) {
     if (b.surface[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(b.surface[1 + t] % 8));
 }
 /// A load's or return's end, reported once.
-void serviceLoad() {
+FLASHMEM __attribute__((noinline)) void serviceLoad() {  // DEC-254: from flash (RAM1 room)
   // The clock stopped while a live load waited for its switch point: it switches now.
   if (!gClock.running() && gEngine.setLoad().waiting()) gEngine.switchNow(gLastTick, micros(), gClock.usPerTick());
   const uint8_t gapped = gEngine.switchedTracks(), staged = gEngine.stagedTracks();
@@ -1034,7 +1034,7 @@ void serviceLoad() {
   reportLibrary(verb);
 }
 /// The browser (slice 3): kept current while closed, and what it asks carried out.
-void serviceBrowser(uint32_t nowUs) {
+FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC-254: from flash (RAM1 room)
   if (!gBrowserReady) return;
   library::CheckpointHeader cp{};
   const bool hasCheckpoint = gEngine.library().checkpoint(cp);
@@ -1607,6 +1607,11 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                     static_cast<unsigned long>(hs.slotDepth), static_cast<unsigned long>(hs.undoAtCold),
                     static_cast<unsigned long>(ps.coldLoaded), static_cast<unsigned long>(ps.coldBad),
                     static_cast<unsigned long>(ps.coldRestarts));
+      Serial.printf("#ENGINE,fetch,fetches=%lu,states=%lu,sectors=%lu,refused=%lu,cancelled=%lu,busy=%lu,active=%u\n",
+                    static_cast<unsigned long>(ps.fetches), static_cast<unsigned long>(ps.fetchedStates),
+                    static_cast<unsigned long>(ps.fetchSectors), static_cast<unsigned long>(ps.fetchRefused),
+                    static_cast<unsigned long>(ps.fetchCancelled), static_cast<unsigned long>(ps.fetchBusy),
+                    gEngine.persistence().fetching() ? 1u : 0u);
       Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
                     "migrated_slots=%lu,clusters=%lu\n",
                     static_cast<unsigned long>(ps.runsWritten), static_cast<unsigned long>(ps.runSectors),
@@ -1667,6 +1672,10 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
       const uint8_t n = u + r;
       ++spread[n == 0 ? 0 : n == 1 ? 1 : n == 2 ? 2 : n <= 4 ? 3 : n <= 8 ? 4 : n <= 16 ? 5 : 6];
     }
+    Serial.println();
+    Serial.print("#ENGINE,history_cold");  // DEC-254 (E4.6c): slot:cold steps, where any
+    for (uint8_t s = 0; s < ContentEngine::Config::kSlotCount; ++s)
+      if (h.coldCount(s) != 0) Serial.printf(",%u:%u", s, h.coldCount(s));
     Serial.println();
     Serial.printf("#ENGINE,history_spread,populated=%u,steps_0=%u,steps_1=%u,steps_2=%u,steps_3_4=%u,steps_5_8=%u,"
                   "steps_9_16=%u,steps_17_up=%u\n",
