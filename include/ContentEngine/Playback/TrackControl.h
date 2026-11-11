@@ -1,26 +1,23 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Gestures and live input of the content engine (fixed-memory-engine E9.4; owner 2026-11-05: one sounding slot per
-// track, layering and jam later, Clear undoable). ControlSurface actions (buttons, MIDI controls) call these; the legacy
-// semantics they keep (TrackManager capture queue, slot state machine, transport):
+// Gestures and live input of the content engine: one sounding slot per track, Clear undoable. ControlSurface actions
+// (buttons, MIDI controls) call these; the semantics they keep (capture queue, slot state machine, transport):
 //
-// * Timing: a gesture at Clock tick `clock` takes effect before that tick is played; input at `clock` arrives after
-//   it. Queued gestures run in `beforeTick`, never on the tick they were queued.
+// * Timing: a gesture at Clock tick `clock` takes effect before that tick is played; input at `clock` arrives after it.
+//   Queued gestures run in `beforeTick`, never on the tick they were queued.
 // * Record (queued): on a track that plays, at its slot's next loop start (phase reference); otherwise at the next bar.
-//   The track's playing slot stops then and the take begins on the queued slot. While another track writes (one
-//   writer) the record stays queued and starts at the first eligible tick after the writer is free.
-// * Stop (queued): the take ends at the next bar. A Record take stopped at most half a bar after a bar line ends at that
-//   line instead (E9.8i, legacy `RecordStopLength::quantizeTransportRecordLength`): it stops on the next tick, its loop
-//   one bar shorter than the next bar would make it, the notes played since kept as the loop's wrap stream
-//   (`SlotTransport::stop`). `stopNow` ends a take at once.
-// * Pre-roll (E9.8j, owner 2026-11-06: with an external clock the first note was missed; the note-off wrap in
+//   The track's playing slot stops then and the take begins on the queued slot. While another track writes (one writer)
+//   the record stays queued and starts at the first eligible tick after the writer is free.
+// * Stop (queued): the take ends at the next bar. A Record take stopped at most half a bar after a bar line ends at
+//   that line instead: it stops on the next tick, its loop one bar shorter than the next bar would make it, the notes
+//   played since kept as the loop's wrap stream (`SlotTransport::stop`). `stopNow` ends a take at once.
+// * Pre-roll (with an external clock a first note played on the downbeat arrives just before it; the note-off wrap in
 //   reverse): while no take writes, the last `kHeardNotes` live notes are kept with their arrival time. When a Record
 //   take starts on the track: a note that arrived within half a tick of tick 0 is recorded at tick 0, as is one held
-//   since longer than `kPreRollTicks` (legacy armed pre-roll); one that began 1..`kPreRollTicks` ticks before tick 0 is
-//   a pickup — its release is followed during the take (or a new NoteOn on its pitch ends it), and Stop writes it
-//   before the loop's end (`SlotTransport::stop`). A note released before tick 0 whose start was out of reach is not
-//   recorded.
+//   since longer than `kPreRollTicks`; one that began 1..`kPreRollTicks` ticks before tick 0 is a pickup — its release
+//   is followed during the take (or a new NoteOn on its pitch ends it), and Stop writes it before the loop's end
+//   (`SlotTransport::stop`). A note released before tick 0 whose start was out of reach is not recorded.
 // * Slot switch: the target composes from the request on (`SlotTransport::launch`, fresh from its loop start) and plays
 //   from the next grid step (`NextGrid`, 16ths by default) or the playing slot's loop end (`LoopEnd`); a take on the
 //   track ends first. An empty target stops the track and takes the slot, ready to record.
@@ -28,8 +25,8 @@
 // * Mute / solo: a track is audible when not muted and either no track is soloed or it is (`ClockOutput::setAudible`).
 // * Transport stop: queued gestures dropped, a take ends, every track stops — each one's slot starts composing again
 //   from its loop start, so transport start plays it from position 0 at once.
-// * Input: notes and events go to the writer when a take runs (live occupancy NoteOffs routed) and through to the
-//   ports of the writing track, else of the selected track.
+// * Input: notes and events go to the writer when a take runs (live occupancy NoteOffs routed) and through to the ports
+//   of the writing track, else of the selected track.
 // No allocation.
 
 #pragma once
@@ -42,17 +39,17 @@ template <typename Transport, typename Output, typename Emit, uint8_t Tracks, ui
 class TrackControl {
  public:
   using Result = typename Transport::Result;
-  enum class Quantize : uint8_t { NextGrid, LoopEnd, NextBar };  // NextBar: a set's tracks resume together (DEC-260)
-  enum class SwitchAt : uint8_t { NextBar, LoopEnd };             // the global set switch point (DEC-260)
+  enum class Quantize : uint8_t { NextGrid, LoopEnd, NextBar };  // NextBar: a set's tracks resume together
+  enum class SwitchAt : uint8_t { NextBar, LoopEnd };             // the global set switch point
   static constexpr uint8_t kNone = 0xFF;
 
   struct Stats {
     uint32_t recordsStarted;  // queued Records that began
-    uint32_t recordsWithOthers;  // of those, begun while another track played (sets browser slice 4: a Take)
-    uint32_t exploreGestures;    // launches, slot switches, track stops, mutes and solos asked for (slice 4)
+    uint32_t recordsWithOthers;  // of those, begun while another track played (a Take)
+    uint32_t exploreGestures;    // launches, slot switches, track stops, mutes and solos asked for
     uint32_t recordsWaited;   // eligible ticks a queued Record waited for the writer
     uint32_t switches;        // slot switches committed
-    uint32_t pickups;         // notes begun before a take's tick 0, written at its Stop (E9.8j)
+    uint32_t pickups;         // notes begun before a take's tick 0, written at its Stop
     uint32_t preRollAtStart;  // notes held at a take's start, recorded at its tick 0
   };
 
@@ -79,12 +76,12 @@ class TrackControl {
     grid_ = gridTicks;
     x_->setBarTicks(bar_);
   }
-  /// The global launch quantisation (surface slice B, owner 2026-11-10): the `NextGrid` step in ticks — a 16th, an
+  /// The global launch quantisation (DEC-274): the `NextGrid` step in ticks — a 16th, an
   /// 8th, a quarter or a bar.
   void setLaunchGrid(uint32_t gridTicks) { grid_ = gridTicks; }
   uint32_t launchGrid() const { return grid_; }
 
-  /// E9.8j: how long before a Record take's tick 0 a note may begin and still be recorded (a 16th at 192 PPQN).
+  /// How long before a Record take's tick 0 a note may begin and still be recorded (a 16th at 192 PPQN).
   static constexpr uint32_t kPreRollTicks = 48;
   static constexpr uint8_t kHeardNotes = 16;
 
@@ -104,7 +101,7 @@ class TrackControl {
     p.stop = true;
     p.stopAt = clock;
     p.trimEnd = 0;
-    if (x_->mode() == Transport::Mode::Recording && bar_ != 0) {  // E9.8i: half a bar past a bar line ends there
+    if (x_->mode() == Transport::Mode::Recording && bar_ != 0) {  // half a bar past a bar line ends there
       const uint32_t into = clock % bar_, start = clock - x_->writePosition(clock);
       if (into != 0 && into <= bar_ / 2 && clock - into > start) p.trimEnd = clock - into;
     }
@@ -117,7 +114,7 @@ class TrackControl {
     if (pending_[t].switchSlot != kNone) x_->stopLaunch(t);
     pending_[t].switchSlot = kNone;
   }
-  /// `trimEnd` (a Record take; 0: none): the loop ends at that earlier bar line (E9.8i).
+  /// `trimEnd` (a Record take; 0: none): the loop ends at that earlier bar line.
   Result stopNow(uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t trimEnd = 0) {
     const uint8_t w = x_->writingTrack();
     if (w == kNone) return Result::NotWriting;
@@ -140,7 +137,7 @@ class TrackControl {
   Result startOverdub(uint8_t t, uint32_t clock) { return x_->startOverdub(t, clock); }
 
   /// `gesture` false: the engine's own (a transport start resuming the tracks, a live load resuming them), not
-  /// evidence of exploring (slice 4).
+  /// evidence of exploring.
   Result queueSwitch(uint8_t t, uint8_t slot, Quantize q, uint32_t clock, bool gesture = true) {
     if (gesture) ++stats_.exploreGestures;
     Pending& p = pending_[t];
@@ -152,7 +149,7 @@ class TrackControl {
     if (x_->contentOf(slot) != kNoManifest && x_->writingTrack() != t) x_->launch(t, slot);  // composes from now on
     return Result::Ok;
   }
-  /// ControlSurface slice C (a step or bar button; legacy `queueBarPlaybackStart`): the playing slot restarts at loop position
+  /// A step or bar button (DEC-275, step restart): the playing slot restarts at loop position
   /// `position` (taken modulo its loop) at the next launch step, a queued switch replaced. Refused while the track is
   /// not playing (NoChange), takes (Busy) or plays nothing (Empty).
   Result queueSeek(uint8_t t, uint32_t position, uint32_t clock) {
@@ -171,7 +168,7 @@ class TrackControl {
     p.switchPos = position % loop;
     return x_->launch(t, slot, p.switchPos);
   }
-  /// The loop position a queued switch starts at (0: its loop start; slice C).
+  /// The loop position a queued switch starts at (0: its loop start).
   uint32_t queuedPosition(uint8_t t) const { return pending_[t].switchSlot == kNone ? 0 : pending_[t].switchPos; }
 
   Result clear(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
@@ -182,7 +179,7 @@ class TrackControl {
     return r;
   }
   Result createEmpty(uint8_t slot, uint32_t loop) { return x_->createEmpty(slot, loop); }
-  /// Copy / paste (owner 2026-11-10): `src`'s state onto `dst`, one undo step.
+  /// Copy / paste: `src`'s state onto `dst`, one undo step.
   Result copySlot(uint8_t src, uint8_t dst, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     uint8_t n;
@@ -190,7 +187,7 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// Groove (DEC-287, DEC-288): `gb`'s build started; its ready result published, tracks following from `clock`.
+  /// Groove: `gb`'s build started; its ready result published, tracks following from `clock`.
   template <typename Builder>
   Result grooveStart(Builder& gb, uint8_t slot, const GrooveRequest& q) { return x_->grooveStart(gb, slot, q); }
   template <typename Builder>
@@ -201,9 +198,9 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// The slot's play window in its stored notes (DEC-283).
+  /// The slot's play window in its stored notes.
   LoopWindow window(uint8_t slot) const { return x_->window(slot); }
-  /// Loop start (owner 2026-11-08): the slot's content rotated `shift` ticks earlier.
+  /// Loop start: the slot's content rotated `shift` ticks earlier.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0,
                 const LoopWindow* marks = nullptr) {
     Emit buf[Tracks * T];
@@ -212,7 +209,7 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// The GROOVE window's columns, stored with the slot (owner 2026-11-11; `SlotTransport::setColumns`).
+  /// The GROOVE window's columns, stored with the slot (`SlotTransport::setColumns`).
   Result setColumns(uint8_t slot, uint32_t columnA, uint32_t columnB, uint8_t heard, uint32_t clock, uint32_t nowUs,
                     uint32_t usPerTick, uint32_t replace = 0) {
     Emit buf[Tracks * T];
@@ -221,7 +218,7 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// Loop length (DEC-257): a play window over the slot's content.
+  /// Loop length: a play window over the slot's content.
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, uint32_t nowUs, uint32_t usPerTick, uint32_t replace = 0,
                 const LoopWindow* marks = nullptr) {
     Emit buf[Tracks * T];
@@ -237,7 +234,7 @@ class TrackControl {
     out_->route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// DEC-254 (E4.6d): a fetched cold state arrived on `slot` (see `SlotTransport::fetched`).
+  /// A fetched cold state arrived on `slot` (see `SlotTransport::fetched`).
   Result fetched(uint8_t slot, ManifestId floor, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     uint8_t n;
@@ -264,16 +261,16 @@ class TrackControl {
     applyAudible(nowUs);
   }
 
-  /// Sets browser 2a (DEC-259): a load is about to replace the set (stopped) — nothing stays queued, no launch prepared
-  /// (its window holds the old content), nothing resumes at Start.
-  /// The global switch point at `clock` (DEC-260): a bar line, or the selected track's loop start (a bar line when it
-  /// plays nothing).
+  /// A load is about to replace the set (stopped) — nothing stays queued, no launch prepared (its window holds the old
+  /// content), nothing resumes at Start.
+  /// The global switch point at `clock` (DEC-260, live load): a bar line, or the selected track's loop start (a bar
+  /// line when it plays nothing).
   bool switchPoint(SwitchAt at, uint32_t clock) const {
     if (at == SwitchAt::LoopEnd && x_->playing(selected_) && x_->contentOf(x_->playingSlot(selected_)) != kNoManifest)
       return atLoopStart(selected_, clock);
     return onBar(clock);
   }
-  /// DEC-261: a staged launch takes over `t` at `clock` (seamless, its position 0).
+  /// A staged launch (DEC-261, gapless live switch) takes over `t` at `clock` (seamless, its position 0).
   Result commitStaged(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[T];
     uint8_t n;
@@ -282,7 +279,7 @@ class TrackControl {
     cancelQueued(t);  // after: a queued switch would have dropped the staged launch
     return r;
   }
-  /// DEC-261: the tracks playing `slot` follow its (just loaded) current state where they are.
+  /// The tracks playing `slot` follow its (just loaded) current state where they are.
   void followSlot(uint8_t slot, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     Emit buf[Tracks * T];
     out_->route(buf, x_->follow(slot, clock, buf, Tracks * T), nowUs, usPerTick);
@@ -295,7 +292,7 @@ class TrackControl {
     }
   }
   void transportStop(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
-    x_->auditionCancel(clock);  // DEC-271: a stop ends an audition first, so each track restarts its slot's own loop
+    x_->auditionCancel(clock);  // a stop ends an audition first, so each track restarts its slot's own loop
     for (uint8_t t = 0; t < Tracks; ++t) cancelQueued(t);
     if (x_->writingTrack() != kNone) stopNow(clock, nowUs, usPerTick);
     Emit buf[T];
@@ -306,8 +303,9 @@ class TrackControl {
       x_->launch(t, x_->playingSlot(t));  // ready to start from position 0
     }
   }
-  /// DEC-276, an external clock running on: the tracks a local `transportStop` ended join again at the next bar line
-  /// (their launches queued, not committed now — the master's bar grid stays theirs).
+  /// An external clock running on (DEC-276, external-clock local stop / start): the tracks a local `transportStop`
+  /// ended join again at the next bar line (their launches queued, not committed now — the master's bar grid stays
+  /// theirs).
   void resumeAtBar(uint32_t clock) {
     for (uint8_t t = 0; t < Tracks; ++t) {
       if (!wasPlaying_[t]) continue;
@@ -378,7 +376,7 @@ class TrackControl {
     }
   }
 
-  /// E9.8b (the surface): the track stops at once, its queued gestures dropped.
+  /// The track stops at once, its queued gestures dropped.
   void stopTrack(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     cancelQueued(t);
     if (!x_->playing(t)) return;
@@ -386,7 +384,7 @@ class TrackControl {
     Emit buf[T];
     out_->route(buf, x_->stopTrack(t, clock, buf, T), nowUs, usPerTick);
   }
-  /// E9.8b: the track's queued Record starts now (a second press on an armed slot punches in), as at its boundary —
+  /// The track's queued Record starts now (a second press on an armed slot punches in), as at its boundary —
   /// the one writer still waits. DeniedSlot: none queued.
   Result punchIn(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     if (pending_[t].recordSlot == kNone) return Result::DeniedSlot;
@@ -394,7 +392,7 @@ class TrackControl {
     return x_->writingTrack() == t ? Result::Ok : Result::Busy;
   }
   uint8_t queuedRecordSlot(uint8_t t) const { return pending_[t].recordSlot; }
-  /// E9.8k, for the display: ticks from `clock` (the last tick played) to the tick that starts track `t`'s queued slot
+  /// For the display: ticks from `clock` (the last tick played) to the tick that starts track `t`'s queued slot
   /// switch, else its queued Record (0: neither queued) — the boundary `beforeTick` waits for.
   uint32_t ticksToQueued(uint8_t t, uint32_t clock) const {
     const Pending& p = pending_[t];
@@ -414,7 +412,7 @@ class TrackControl {
   bool stopQueued(uint8_t t) const { return pending_[t].stop; }
   bool switchQueued(uint8_t t) const { return pending_[t].switchSlot != kNone; }
   bool muted(uint8_t t) const { return muted_[t]; }
-  /// E9.8j, for the display: the running Record take's pre-roll — notes recorded at its tick 0 (pitch, velocity) and
+  /// For the display: the running Record take's pre-roll — notes recorded at its tick 0 (pitch, velocity) and
   /// its pickups (held ones `pickupOpen`).
   uint8_t pickupTrack() const { return pickupTrack_; }
   uint8_t startNoteCount() const { return startCount_; }
@@ -431,13 +429,13 @@ class TrackControl {
     uint32_t recordAt = 0;
     bool stop = false;
     uint32_t stopAt = 0;
-    uint32_t trimEnd = 0;  // a queued Record Stop that ends the loop at this earlier bar line (E9.8i; 0: none)
+    uint32_t trimEnd = 0;  // a queued Record Stop that ends the loop at this earlier bar line (0: none)
     uint8_t switchSlot = kNone;
     Quantize switchQ = Quantize::NextGrid;
     uint32_t switchAt = 0;
-    uint32_t switchPos = 0;  // a seek's loop position (slice C)
+    uint32_t switchPos = 0;  // a seek's loop position
   };
-  struct Heard {  // a live note while no take writes (E9.8j)
+  struct Heard {  // a live note while no take writes
     uint32_t onUs, offUs;
     uint8_t track, channel, pitch, velocity;
     bool used, held;
@@ -491,7 +489,7 @@ class TrackControl {
       gatherPreRoll(t, clock, nowUs, usPerTick);
     }
   }
-  /// E9.8j: the notes heard on `t` before its take's tick 0 (`clock`, at `nowUs`).
+  /// The notes heard on `t` before its take's tick 0 (`clock`, at `nowUs`).
   void gatherPreRoll(uint8_t t, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     pickupCount_ = 0;
     startCount_ = 0;

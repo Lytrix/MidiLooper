@@ -1,27 +1,26 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The Clock path's last step (fixed-memory-engine E9.3, plan § 9.2): playback events of every track into the output
-// hub, on the track's ports.
+// The Clock path's last step: playback events of every track into the output hub, on the track's ports.
 //
 // * Keys: the hub identifies a logical note by one 32-bit key; a track's sounding instance is (noteId, run). Each track
 //   has `PerTrack` key slots (its sounding bound T); a NoteOn takes a free slot and a new generation, its NoteOff frees
-//   it. Key = generation (16 bits) | track (3) | slot (4): unique among notes the hub still holds, so a re-strike of the
-//   same instance (NoteOff and NoteOn on one tick, Q-LEN-1, or an edit replacement keeping its id across a transition)
-//   is a new note in the hub, never swallowed by the old one's pending NoteOff.
+//   it. Key = generation (16 bits) | track (3) | slot (4): unique among notes the hub still holds, so a re-strike of
+//   the same instance (NoteOff and NoteOn on one tick, Q-LEN-1, or an edit replacement keeping its id across a
+//   transition) is a new note in the hub, never swallowed by the old one's pending NoteOff.
 // * NoteOn: to each port in the track's mask, with its scheduled end in microseconds (expired-note cancellation, C.7);
 //   an open end is none. NoteOff: to every port (a port that never took the NoteOn ignores it), so a routing change
 //   cannot strand a note. Other events: to the track's ports, classified by the hub.
 // * A NoteOn with no free key slot (more than T sounding — the terminal scheduler already bounds that) is refused and
 //   counted; a NoteOff for an instance with no key (its NoteOn was refused) is counted and dropped.
-// * E9.4: mute / solo gate a track (`setAudible`): going silent ends what it sounds on every port at once and frees its
-//   keys; while silent its NoteOns are dropped (counted) and their NoteOffs find no key. Live MIDI thru (`thruNoteOn` /
+// * Mute / solo gate a track (`setAudible`): going silent ends what it sounds on every port at once and frees its keys;
+//   while silent its NoteOns are dropped (counted) and their NoteOffs find no key. Live MIDI thru (`thruNoteOn` /
 //   `thruNoteOff` / `thruEvent`) plays the input on a track's ports; its notes hold `kThruSlots` keys of their own with
 //   generations (top bit set: never a composed key), so a fast repeated note is a new note, not swallowed by the
 //   previous one's pending NoteOff. Thru is not gated by mute: the musician hears what they play.
-// * Output channel (E9.7b, the legacy playback rule `remappedPlaybackChannel`): a track with a MIDI channel set sends
-//   every channel message (notes, controllers, pitch bend, program change, aftertouch) on that channel, whatever channel
-//   it was recorded on; `kAsRecorded` keeps the recorded channel. Thru follows the same rule.
+// * Output channel: a track with a MIDI channel set sends every channel message (notes, controllers, pitch bend,
+//   program change, aftertouch) on that channel, whatever channel it was recorded on; `kAsRecorded` keeps the recorded
+//   channel. Thru follows the same rule.
 // No allocation.
 
 #pragma once
@@ -159,7 +158,7 @@ class ClockOutput {
   }
   const Stats& stats() const { return stats_; }
 
-  /// The display's activity level (E9.8k): the velocity of track `t`'s last NoteOn — played or played through, muted
+  /// The display's activity level: the velocity of track `t`'s last NoteOn — played or played through, muted
   /// or not — falling linearly to 0 over `kLevelFallUs`.
   static constexpr uint32_t kLevelFallUs = 500000;
   uint8_t level(uint8_t t, uint32_t nowUs) const {

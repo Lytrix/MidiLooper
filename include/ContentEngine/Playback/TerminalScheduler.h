@@ -1,25 +1,27 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Fixed terminal scheduler of one playback track (fixed-memory-engine CE-B1, DEC-148, DEC-244).
+// Fixed terminal scheduler of one playback track.
 //
-// Playback windows carry START entries (a NoteOn with its end inline, or an open end), TERMINAL entries and a carry list
-// (instances sounding across a window start); NoteOffs are not rows. This scheduler holds every *sounding instance* the
-// track actually sent, at most T, and owns its NoteOff:
+// Playback windows carry START entries (a NoteOn with its end inline, or an open end), TERMINAL entries and a carry
+// list (instances sounding across a window start); NoteOffs are not rows. This scheduler holds every *sounding
+// instance* the track actually sent, at most T, and owns its NoteOff:
 //   * composed close: an inline end or a TERMINAL entry sets the end;
 //   * live close: the writer's NoteOff for a still-held note whose window was composed before that NoteOff existed;
-//   * live occupy: a live NoteOn on the pitch ends every sounding instance on it now (DEC-033: any channel), and
-//     composed NoteOns on an occupied pitch are suppressed until every live note on it is released (a count, not a bit);
+//   * live occupy: a live NoteOn on the pitch ends every sounding instance on it now (any channel, DEC-033), and
+//     composed NoteOns on an occupied pitch are suppressed until every live note on it is released (a count, not a
+//     bit);
 //   * revision transition: instances the new source does not carry are closed now; carried entries for notes never sent
 //     are ignored.
 // Whichever close comes first sends the NoteOff; later terminals for that instance are suppressed. Nothing is sent into
 // the past: an end already behind the current tick fires at the current tick (counted). A started instance always gets
-// its NoteOff; a new instance is refused by name when T are sounding (OUT-POLY, owner-ratified T = 16 per track:
+// its NoteOff; a new instance is refused by name when T are sounding (OUT-POLY, T = 16 per track:
 // `Config::kMaxSoundingPerTrack`).
 //
-// Instance identity is (noteId, run): an edit run's replacement row keeps the hidden note's id, so the id alone does not
-// tell an old instance from the replacement across a revision switch. `runKey` packs the run descriptor (bits 6..15)
-// and the run's pass order in its manifest (bits 0..5, for DEC-244 ties). O(T) per call; no allocation.
+// Instance identity is (noteId, run): an edit run's replacement row keeps the hidden note's id, so the id alone does
+// not tell an old instance from the replacement across a revision switch. `runKey` packs the run descriptor (bits
+// 6..15) and the run's pass order in its manifest (bits 0..5, for equal-tick ties, DEC-244). O(T) per call; no
+// allocation.
 
 #pragma once
 
@@ -110,8 +112,8 @@ class TerminalScheduler {
     return CloseResult::Closed;
   }
 
-  /// Sends every NoteOff due at `tick` (ends at or before it), in DEC-244 order (pass, then id). Returns the count.
-  /// With `max` below the due count (port backpressure) the rest stay owned and go out on later calls.
+  /// Sends every NoteOff due at `tick` (ends at or before it), in equal-tick order (pass, then id; DEC-244). Returns
+  /// the count. With `max` below the due count (port backpressure) the rest stay owned and go out on later calls.
   uint8_t due(uint32_t tick, Out* out, uint8_t max) {
     uint8_t n = 0;
     while (n < max) {
@@ -191,7 +193,7 @@ class TerminalScheduler {
     return a.noteId < b.noteId;
   }
 
-  /// DEC-244 among NoteOffs sent at one tick: pass, then id. Insertion sort over at most `max` entries.
+  /// The equal-tick order among NoteOffs sent at one tick: pass, then id. Insertion sort over at most `max` entries.
   static void order(Out* out, uint8_t n) {
     for (uint8_t i = 1; i < n; ++i) {
       const Out x = out[i];

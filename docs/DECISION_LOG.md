@@ -16828,3 +16828,28 @@ comment-only and keeps the image byte-identical.
 - `Groove`, `GroovePass`: DEC-287 and the groove design (`docs/Plans/groove_quantize_design.md` §§ 1–6); the job
   DEC-288 (slice 3); progress DEC-292; the file template referenced as DEC-290 (no entry; DEC-289's slice 5).
 - `SpanWindow` / `WindowPlayer`: the output fields are E9.3; the bounded late join an owner ruling of 2026-11-05.
+
+### Playback
+
+- `TrackControl` (E9.4; owner 2026-11-05: one sounding slot per track, layering and jam later, Clear undoable): keeps
+  the legacy `TrackManager` capture queue, slot state machine and transport semantics; the trimmed Stop is E9.8i
+  (legacy `RecordStopLength::quantizeTransportRecordLength`); the pre-roll E9.8j (owner 2026-11-06: with an external
+  clock the first note was missed — the note-off wrap in reverse; legacy armed pre-roll); step / bar restarts
+  surface slice C (legacy `queueBarPlaybackStart`, DEC-275); launch quantisation surface slice B (owner 2026-11-10,
+  DEC-274); the take / explore counters sets browser slice 4; the display hooks E9.8b / E9.8k.
+- `SlotTransport` (E9.1, plan § 8): one writer owner 2026-11-05 (E5.10b); overdub sessions DEC-038 / E4.2, "publish at
+  the wrap" owner 2026-11-05; gapless handoff E9.1b (plan § 8.3); trimmed Stop E9.8i (owner 2026-11-06: rows stay
+  immutable); pickups E9.8j (owner 2026-11-06); live occupancy E6.2f; Clear and one sounding slot E9.4 (owner
+  2026-11-05); the fetch DEC-254 / E4.6d; copy / paste owner 2026-11-10 (DEC-279); the empty loop owner 2026-11-08;
+  loop length DEC-257 (owner 2026-11-08, one undo step a LOOP_EDIT visit); rotate owner 2026-11-08; the late-Stop hide
+  owner 2026-11-09 (DEC-262); the GROOVE columns owner 2026-11-11 ("save B with the slot", DEC-295 amendment 6); set
+  switches sets browser 2b-ii (DEC-261); the audition DEC-271 amendment 1 (owner: "Need beat line").
+- `PlaybackTrack` (E6.1, plan revision 3 § 9.1): the NOTE_EDIT publish heard at once (owner 2026-11-07); the late join
+  an owner ruling of 2026-11-05; live input plan § 6.2 ("live effect"); the wrap grain DEC-297 (179 µs at 30 layers
+  with a full compose in the same grain).
+- `PlaybackJobs` (E6.2, plan revision 3 § 7.3 / § 7.5): steady grains measured in E5.8; the transition class an owner
+  ruling of 2026-11-05; transition grains plan § 7.2.
+- `ClockOutput` (E9.3, plan § 9.2): mute / solo E9.4; the output channel E9.7b, the legacy playback rule
+  `remappedPlaybackChannel`; the activity level E9.8k. `MidiOutputHub`: CE-C1, the memory-ownership correction of
+  2026-11-04, expired-note cancellation owner 2026-11-04; the USB message estimate measured in E0.7.
+- `TerminalScheduler`: CE-B1, DEC-148, DEC-244; T = 16 per track owner-ratified.

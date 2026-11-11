@@ -1,9 +1,10 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Physical MIDI output (fixed-memory-engine CE-C1, memory-ownership correction 2026-11-04).
+// Physical MIDI output.
 //
-// One `MidiOutputHub` owns the output state of all destinations (DIN, USB device, USB host); fixed memory, no allocation.
+// One `MidiOutputHub` owns the output state of all destinations (DIN, USB device, USB host); fixed memory, no
+// allocation.
 //   * Logical notes are shared: one table sized tracks x 16 (`Notes`), not ports x tracks x 16. A note routed to
 //     several ports keeps one identity with a 2-bit state per port (queued / playing / off pending), so each port sends
 //     and terminates it independently.
@@ -14,18 +15,18 @@
 // Semantics per port (unchanged from the previous OutputPort; see test_content_engine_output):
 //   * NoteOn: admitted only if a logical note entry exists or can be taken and the port's ordered queue has note space;
 //     otherwise suppressed by name for that port (the stored event is unchanged).
-//   * NoteOff: needs no queue entry; owed by the port's note state, sent with priority once due and never before its own
-//     NoteOn.
-//   * Expired-note cancellation (owner decision 2026-11-04): a NoteOn that has not begun transmission when its scheduled
-//     end is reached is never transmitted on that port: either its NoteOff arrives while it is still queued, or the
-//     transmitter reaches it at or after its `endMicros`. The instance and its pending state are released there and
-//     counted as `expiredBeforeTransmit` (apart from capacity refusal, polyphony suppression and lateness). Once a NoteOn
-//     has started on the wire its NoteOff obligation is kept. Per destination; recorded events are untouched.
-//   * Essential state (Bank Select, Program Change, CC64-69, CC120-127): ordered with notes, never dropped; coalesces only
-//     without a dependent NoteOn between; overflow waits per channel/state and holds back new NoteOns.
+//   * NoteOff: needs no queue entry; owed by the port's note state, sent with priority once due and never before its
+//     own NoteOn.
+//   * Expired-note cancellation: a NoteOn that has not begun transmission when its scheduled end is reached is never
+//     transmitted on that port: either its NoteOff arrives while it is still queued, or the transmitter reaches it at
+//     or after its `endMicros`. The instance and its pending state are released there and counted as
+//     `expiredBeforeTransmit` (apart from capacity refusal, polyphony suppression and lateness). Once a NoteOn has
+//     started on the wire its NoteOff obligation is kept. Per destination; recorded events are untouched.
+//   * Essential state (Bank Select, Program Change, CC64-69, CC120-127): ordered with notes, never dropped; coalesces
+//     only without a dependent NoteOn between; overflow waits per channel/state and holds back new NoteOns.
 //   * Parameter (CC6/38/96-101): ordered, never coalesced; 64-message overflow; beyond it counted as dropped.
-//   * Continuous automation: coalesced per lane to its latest value, unchanged values not re-sent, final value sent.
-//     A lane exists only while in use; a clean lane (nothing pending) is evicted for a new one when the table is full;
+//   * Continuous automation: coalesced per lane to its latest value, unchanged values not re-sent, final value sent. A
+//     lane exists only while in use; a clean lane (nothing pending) is evicted for a new one when the table is full;
 //     only if every lane has a pending value is the new value counted (`automationLanesFull`) and suppressed.
 //   * Scheduling per port: due NoteOffs, then the ordered queue, with automation one slot in four while both wait.
 
@@ -38,7 +39,7 @@
 namespace ContentEngine {
 
 constexpr uint32_t kDinMessageMicros = 960;  // 3 bytes x 10 bits at 31,250 baud
-constexpr uint32_t kUsbMessageMicros = 125;  // declared estimate for USB full-speed MIDI; measured on the device (E0.7)
+constexpr uint32_t kUsbMessageMicros = 125;  // declared estimate for USB full-speed MIDI; measured on the device
 constexpr uint32_t kNoEndMicros = 0xFFFFFFFFu;  // NoteOn without a known scheduled end (live input, open composed end)
 
 enum class PortResult : uint8_t { Queued, Coalesced, Deduplicated, Suppressed, CancelledUnsent, NotAdmitted };

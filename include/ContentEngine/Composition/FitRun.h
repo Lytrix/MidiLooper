@@ -15,16 +15,17 @@
 // * cross (`kFitCrossStatus`, `seq` the NoteOff's tick): a note of a filtered run that starts before the end and ends
 //   at or past it — it wraps, its NoteOff `tick − loop` into the next cycle.
 // * held (`kFitHeldStatus`): a note starting before the end whose held-loop status (length ≥ loop, Q-LEN-1) differs
-//   from its `kOriginHeldLoop` flag at this length. `build` scans every row of the content runs once (at most
-//   `kMaxScanRows`, else TooLarge), holds at most `kMaxOpen` notes open per run and `kMaxEntries` lookups (else refused
-//   by name), and writes nothing when no lookup is needed (a resize that changes no wrap: `None`). `rotate`
-//   (LOOP_EDIT's F1 moves the loop start by rotating the content) copies a content run with every note `shift` ticks
-//   earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its NoteOff past the loop
-//   end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by `loop − shift` gives
-//   the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation. The window (DEC-283,
-//   loop start in the stored loop: the selected bars stay absolute): a state's content is its stored loop rotated
-//   `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so (`kFitWindowStatus`),
-//   written by `build` when the window is not the plain one (start 0, the frame the loop).
+//   from its `kOriginHeldLoop` flag at this length.
+// `build` scans every row of the content runs once (at most `kMaxScanRows`, else TooLarge), holds at most `kMaxOpen`
+// notes open per run and `kMaxEntries` lookups (else refused by name), and writes nothing when no lookup is needed (a
+// resize that changes no wrap: `None`).
+// `rotate` (LOOP_EDIT's F1 moves the loop start by rotating the content) copies a content run with every note `shift`
+// ticks earlier, wrapped at the loop: a note keeps its length, one crossing the new seam wraps (its NoteOff past the
+// loop end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by `loop − shift`
+// gives the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation.
+// The window (DEC-283, loop start in the stored loop: the selected bars stay absolute): a state's content is its
+// stored loop rotated `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so
+// (`kFitWindowStatus`), written by `build` when the window is not the plain one (start 0, the frame the loop).
 
 #pragma once
 

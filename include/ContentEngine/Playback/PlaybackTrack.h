@@ -1,19 +1,19 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// One track's playback windows (fixed-memory-engine E6.1, plan revision 3 § 9.1). Three window buffers per track:
-// the window playing, the next window of the same source (steady), and the transition window of a new source. Two
-// compose cursors: the steady composer continues the playing source window after window; a transition composer is
-// positioned by a `ColdStart` (checkpoint or warm-up, E5) at the next boundary when the slot's source changes.
+// One track's playback windows. Three window buffers per track: the window playing, the next window of the same source
+// (steady), and the transition window of a new source. Two compose cursors: the steady composer continues the playing
+// source window after window; a transition composer is positioned by a `ColdStart` (checkpoint or warm-up) at the next
+// boundary when the slot's source changes.
 //
 // * Windows lie on a fixed grid: position % W == 0 within each loop cycle (the last one ends at the loop end), so a
 //   boundary is a timeline tick whose loop position is a multiple of W. A buffer is stamped with its source identity
 //   and timeline start; a `Complete` buffer is immutable.
 // * Succession is deterministic (§ 9.1). At a boundary the track takes the `Complete` window stamped with the wanted
 //   source and starting at the boundary; otherwise the next window of the source already playing, and counts a late
-//   source switch; otherwise nothing (an underrun, counted: notes already sounding still end on time). A window that starts
-//   before the boundary is stale. A composer (steady or transition) that missed its boundary moves its target to the
-//   next boundary and composes, then discards, windows that start before it; composing a window takes less than a
+//   source switch; otherwise nothing (an underrun, counted: notes already sounding still end on time). A window that
+//   starts before the boundary is stale. A composer (steady or transition) that missed its boundary moves its target to
+//   the next boundary and composes, then discards, windows that start before it; composing a window takes less than a
 //   window's time, so it catches up.
 // * Work is grains (`work`): the steady window first, then the transition (cold-start replay, then its window). The
 //   caller runs them as hard jobs with the boundary as deadline. `tick` does no composition and no page read.
@@ -51,13 +51,13 @@ class PlaybackTrack {
     uint32_t underruns;      // boundaries with no window to play
     uint32_t staleWindows;   // windows composed after their boundary had passed, discarded to catch up
     uint32_t refusedStarts;  // cold starts refused (e.g. index capacity): the old source keeps playing
-    uint32_t preparedHandoffs;  // Record Stops that played a window composed ahead (E9.1b)
-    uint32_t launches;          // slot launches committed (E9.4)
+    uint32_t preparedHandoffs;  // Record Stops that played a window composed ahead
+    uint32_t launches;          // slot launches committed
     uint32_t lateJoins;         // transitions adopted inside their window after missing its boundary (bounded)
     uint32_t lateJoinsMissed;   // transitions whose window came after the late-join limit: the boundary rule
     uint32_t lastLateTicks, maxLateTicks;  // ticks after the boundary a late join became audible
     uint32_t joinOverflow;      // join-state entries beyond the prepared lists (not started / not sent)
-    uint32_t trimmedHandoffs;   // Record takes handed off inside cycle 1 (trimmed to the bar line before, E9.8i)
+    uint32_t trimmedHandoffs;   // Record takes handed off inside cycle 1 (trimmed to the bar line before)
     uint32_t editJoins;         // NOTE_EDIT publishes joined inside the playing window
   };
 
@@ -98,7 +98,7 @@ class PlaybackTrack {
   /// targets the next boundary after `now`; meanwhile the playing source continues.
   void select(uint8_t slot, ManifestId manifest, uint32_t now) { transition(slot, manifest, now, false); }
 
-  /// Get a loop's audition (DEC-271 amendment 1; owner: "Need beat line"): `manifest` heard from the first beat line
+  /// Get a loop's audition (DEC-271, audition on the beat): `manifest` heard from the first beat line
   /// after `now` (`beatTicks`, 0: the next boundary, as `select`). The window playing is composed from it and joined
   /// there late: a note it sounds across the join starts at the join (heard as if it had been playing), what the old
   /// source sounded ends; a join the composition misses moves to the next beat. A beat that is the window's end is the
@@ -118,7 +118,7 @@ class PlaybackTrack {
     transition(slot, manifest, now, false, beatTicks);
   }
 
-  /// A NOTE_EDIT publish while playing (owner 2026-11-07: changes heard at once, not from the next boundary): the
+  /// A NOTE_EDIT publish while playing (changes heard at once, not from the next boundary): the
   /// window playing is composed from `manifest` and joined at the first tick after `now` it is ready for. Nothing
   /// starts late — a note whose start has passed is heard from its next start (a note moved just behind the playhead
   /// is not heard this cycle; one moved just ahead plays); a sounding note that the edited source sounds there on the
@@ -175,10 +175,10 @@ class PlaybackTrack {
 
  public:
 
-  /// E9.1b, a Record take: window 0 of the take's cycle 1, composed ahead while recording from a provisional source
-  /// (the take's prefix, under a loop longer than any of its rows). A single pass carries nothing across its loop end
-  /// that is known before Stop, so the provisional source's window 0 of cycle 0 is that window, composed without the
-  /// cold start's warm-up (which would replay the whole provisional loop first). Only on a track that plays nothing; the
+  /// A Record take: window 0 of the take's cycle 1, composed ahead while recording from a provisional source (the
+  /// take's prefix, under a loop longer than any of its rows). A single pass carries nothing across its loop end that
+  /// is known before Stop, so the provisional source's window 0 of cycle 0 is that window, composed without the cold
+  /// start's warm-up (which would replay the whole provisional loop first). Only on a track that plays nothing; the
   /// track keeps no loop grid until `handoff`.
   void prepare(uint8_t slot, ManifestId provisional) {
     if (steady_ != kNone || playing_ != kNone) return;
@@ -197,10 +197,10 @@ class PlaybackTrack {
     }
   }
 
-  /// E9.1b, Record Stop before timeline tick `t` is played (`t`: cycle 1, position `position` of `final`, whose loop
+  /// Record Stop before timeline tick `t` is played (`t`: cycle 1, position `position` of `final`, whose loop
   /// is now known): a complete prepared window becomes the transition for cycle 1's start; when it is adopted, `final`
   /// is selected for the next boundary and the prepared window's cursor ends (its loop was provisional), so until
-  /// `final` is adopted there is no steady window. `position` 0: adopted at `t`, a boundary. Otherwise (E9.8i, a take
+  /// `final` is adopted there is no steady window. `position` 0: adopted at `t`, a boundary. Otherwise (a take
   /// trimmed to the bar line before `t`) cycle 1 began `position` ticks before `t`: the window joins late at `t` —
   /// what lies before is not played, a note still sounding there starts — with no late-join limit (no boundary was
   /// missed). Without a complete prepared window, or when `usePrepared` is false (it does not cover `final`'s loop):
@@ -231,13 +231,12 @@ class PlaybackTrack {
   /// A Record take's window 0 is prepared (`prepare`) and not yet handed off.
   bool prepared() const { return prepared_; }
 
-  /// E9.4, a slot launch: `manifest` will start from its loop start — a fresh start, nothing carried — when the caller
+  /// A slot launch: `manifest` will start from its loop start — a fresh start, nothing carried — when the caller
   /// commits it. Its window 0 composes now, without warm-up, while what plays continues; the transition takes no part
-  /// in succession until `commitLaunch`.
-  /// `position` (surface slice C, a step or bar button; < the loop): it starts there instead — the caller's timeline
-  /// restarts at `launchStart()` (cycle 1, as a mid-loop cold start: notes crossing into it carried). The window holding
-  /// it composes now (from a checkpoint, else a warm-up), and the join at `position` is prepared as a late join:
-  /// what sounds across it starts there, heard as if it had been playing.
+  /// in succession until `commitLaunch`. `position` (a step or bar button; < the loop): it starts there instead — the
+  /// caller's timeline restarts at `launchStart()` (cycle 1, as a mid-loop cold start: notes crossing into it carried).
+  /// The window holding it composes now (from a checkpoint, else a warm-up), and the join at `position` is prepared as
+  /// a late join: what sounds across it starts there, heard as if it had been playing.
   void launch(uint8_t slot, ManifestId manifest, uint32_t position = 0) {
     cancelTransition();
     const auto& m = manifests_->manifest(manifest);
@@ -267,7 +266,8 @@ class PlaybackTrack {
     }
   }
   bool launchPending() const { return launching_ && transActive_; }
-  /// The launch's first timeline tick (`commitLaunch` restarts the caller's timeline there): 0, or a position's in cycle 1.
+  /// The launch's first timeline tick (`commitLaunch` restarts the caller's timeline there): 0, or a position's in
+  /// cycle 1.
   uint32_t launchStart() const { return launchPending() ? launchStart_ : 0; }
   /// A launch in progress is dropped; what plays continues.
   void cancelLaunch() {
@@ -302,7 +302,7 @@ class PlaybackTrack {
   }
 
   uint32_t windowTicks() const { return window_; }
-  /// Bounded late join (owner ruling 2026-11-05): a transition that misses its boundary may still become audible
+  /// Bounded late join: a transition that misses its boundary may still become audible
   /// inside that window up to `ticks` later — the caller passes min(24 ticks, 25 ms at the tempo). 0: off.
   void setLateJoinLimit(uint32_t ticks) { lateLimit_ = ticks; }
 
@@ -385,7 +385,7 @@ class PlaybackTrack {
     return player_->stopAll(t, out, max);
   }
 
-  /// Live input recorded on this track (plan § 6.2 "live effect"): the writer accepted a NoteOn on `pitch` at `t`. The
+  /// Live input recorded on this track: the writer accepted a NoteOn on `pitch` at `t`. The
   /// track's sounding instances on the pitch end now (returned, to send before the live NoteOn) and composed NoteOns
   /// on it are suppressed until `liveNoteOff`. From the next cycle the stored run produces the composed equivalent.
   uint8_t liveNoteOn(uint8_t pitch, uint32_t t, Emit* out, uint8_t max) { return player_->liveOccupy(pitch, t, out, max); }
@@ -431,8 +431,8 @@ class PlaybackTrack {
     SpanWindowComposer& c = *comp_[steady_];
     Window& w = *buf_[next_].w;
     if (!c.windowOpen() && !c.openWindow(w, window_)) {
-      c.nextCycle();  // the loop wrap is its own grain (owner 2026-11-11: O(runs) — 179 µs at 30 layers, with a full
-      return;         // compose after it in the same grain)
+      c.nextCycle();  // the loop wrap is a grain of its own: it is O(runs) (DEC-297, deep-overdub timing)
+      return;
     }
     if (c.composeRows(w, maxRows)) {
       if (w.cycleBase + w.start < steadyTarget_) {
@@ -724,9 +724,9 @@ class PlaybackTrack {
   static constexpr uint8_t kJoinEvents = 16;
   uint32_t lateLimit_ = 0, lateBoundary_ = 0, lastTick_ = 0, joinTick_ = 0;
   bool late_ = false, joinReady_ = false;
-  bool joinUnbounded_ = false;  // a trimmed take's handoff joins late with no limit (E9.8i)
+  bool joinUnbounded_ = false;  // a trimmed take's handoff joins late with no limit
   bool editJoin_ = false;       // the join is a NOTE_EDIT publish's (`edit`): nothing starts late
-  uint32_t joinBeat_ = 0;       // DEC-271: an audition joins on this beat grid (0: at the first tick ready)
+  uint32_t joinBeat_ = 0;       // an audition joins on this beat grid (0: at the first tick ready)
   uint16_t scanIdx_ = 0, joinIndex_ = kNoIndex;
   uint16_t sound_[2 * T];  // START entries begun before the join and sounding at it
   uint8_t soundCount_ = 0;
@@ -734,7 +734,7 @@ class PlaybackTrack {
   uint16_t events_[kJoinEvents];
   uint8_t eventCount_ = 0;
   uint32_t launchLoop_ = 0;
-  uint32_t launchStart_ = 0;  // a launch at a position (slice C): its first timeline tick
+  uint32_t launchStart_ = 0;  // a launch at a position: its first timeline tick
   bool launchJoin_ = false;   // ... inside its window: joined late there
   uint8_t handoffSlot_ = 0;
   ManifestId handoffFinal_ = kNoManifest;  // selected once the prepared window it follows is adopted

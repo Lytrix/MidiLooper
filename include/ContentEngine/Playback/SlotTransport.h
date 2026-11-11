@@ -1,60 +1,59 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Slot transport of the content engine (fixed-memory-engine E9.1, plan § 8): the gestures that write — Record, overdub,
-// Stop — and Undo / Redo, turned into writer calls, manifests, history states and playback selections.
+// Slot transport of the content engine: the gestures that write — Record, overdub, Stop — and Undo / Redo, turned into
+// writer calls, manifests, history states and playback selections.
 //
-// * One writer (owner 2026-11-05, E5.10b): a second Record or overdub while one is writing is refused (`Busy`).
-// * Timeline: the caller's Clock tick. Each track keeps an origin (its slot's loop position 0); the writer works in Clock
-//   ticks from the run's base, the playback track in ticks since the origin.
-//   Input at `clock` arrives after tick `clock` was played; a gesture at `clock` (Stop, a wrap) takes effect before
-//   tick `clock` is played: a Record Stop at `clock` makes `clock` cycle 1's position 0, and a wrap at `clock` puts
-//   that tick's input in the next run.
+// * One writer: a second Record or overdub while one is writing is refused (`Busy`).
+// * Timeline: the caller's Clock tick. Each track keeps an origin (its slot's loop position 0); the writer works in
+//   Clock ticks from the run's base, the playback track in ticks since the origin. Input at `clock` arrives after tick
+//   `clock` was played; a gesture at `clock` (Stop, a wrap) takes effect before tick `clock` is played: a Record Stop
+//   at `clock` makes `clock` cycle 1's position 0, and a wrap at `clock` puts that tick's input in the next run.
 // * Record: Stop sets the loop length (stop − start); an empty take leaves the slot empty. The take is the slot's first
 //   state and plays on the recording track from the first window boundary its window is ready for.
-// * Overdub (DEC-038 session, E4.2): every non-empty wrap publishes `current runs + the wrapped run` as a session step
-//   and selects it. **Owner 2026-11-05: publish at the wrap** — a run still closing (a note held across the loop end)
-//   is published with what it holds, so the cycle's other notes play from the next cycle; when its last NoteOff
-//   arrives and it seals, every state created before that holds a completion instead: a new manifest (new identity)
-//   with the same runs, in place, no extra step. A manifest's content therefore never changes under its identity, which
+// * Overdub (DEC-038, overdub wrap commit): every non-empty wrap publishes `current runs + the wrapped run` as a
+//   session step and selects it. **Publish at the wrap**: a run still closing (a note held across the loop end) is
+//   published with what it holds, so the cycle's other notes play from the next cycle; when its last NoteOff arrives
+//   and it seals, every state created before that holds a completion instead: a new manifest (new identity) with the
+//   same runs, in place, no extra step. A manifest's content therefore never changes under its identity, which
 //   checkpoints and tiles rely on. Stop publishes the active run and folds the session into one step. An empty wrap
-//   publishes nothing. A wrap that would overfill the manifest's run list, or finds no run descriptor, ends the take
-//   at that wrap (named); compaction is later work.
-// * Handoff without a gap (E9.1b, plan § 8.3): the next cycle's window 0 is composed before the gesture's boundary.
-//   Overdub: at `prepPosition()` in each cycle (`kLeadTicks` before the loop end, half the loop for a shorter one)
-//   the writing track selects a provisional source — the slot's current runs + the run being written, as recorded so
-//   far — for the wrap boundary; at the wrap the committed state is selected for the next boundary (window 1). The
-//   provisional source is never a history state, checkpointed or tiled; rows recorded after it was taken reach window
-//   0 only as live effects (held notes occupy their pitch), the accepted live tolerance. Taken earlier in the cycle it
-//   is adopted at an earlier boundary: harmless, as the run being written has no rows yet in the windows after it.
-//   Record: once the take passes window 0, a track that plays nothing composes window 0 of the take's cycle 1 from the
-//   prefix under a provisional loop. One pass: no overlap rule reaches across passes, so window 0 depends only on its
-//   own rows; notes still held then are open and end where the take says, carried by the take's next window. Stop
-//   makes it the transition for the Stop tick (`PlaybackTrack::handoff`). A shorter take composes window 0 at Stop,
-//   aimed at the Stop tick, and plays from the first boundary it is ready for. Within window 0 the prefix is also
-//   prepared at each bar line (`setBarTicks`), so a take trimmed to one of them has its window 0 (E9.8i).
-// * Trimmed Record Stop (E9.8i, legacy `RecordStopLength`, owner 2026-11-06: rows stay immutable): `stop` with a
-//   `length` shorter than the take ends the loop there; the take's rows past it are kept and are the loop's wrap
-//   stream — notes played after the bar line sound from the loop start, a note held across it ends in the next cycle.
-//   Playback goes on in phase: cycle 1 began at the bar line, so the take joins at its position now.
-// * Pickups (E9.8j, owner 2026-11-06: the note-off wrap in reverse): notes played shortly before a Record take's tick 0
-//   (`stop`'s `pickups`, gathered by `TrackControl`) are written at Stop, when the loop is known, as a second run of the
-//   take: NoteOn at `loop - before`, NoteOff where the note really ended (past the loop end: the wrap stream), never
-//   longer than the loop. From the second cycle they sound just before each downbeat.
-// * Live occupancy (E6.2f): an accepted overdub NoteOn occupies its pitch on the writing track; its NoteOff, or Stop's
+//   publishes nothing. A wrap that would overfill the manifest's run list, or finds no run descriptor, ends the take at
+//   that wrap (named); compaction is later work.
+// * Handoff without a gap: the next cycle's window 0 is composed before the gesture's boundary. Overdub: at
+//   `prepPosition()` in each cycle (`kLeadTicks` before the loop end, half the loop for a shorter one) the writing
+//   track selects a provisional source — the slot's current runs + the run being written, as recorded so far — for the
+//   wrap boundary; at the wrap the committed state is selected for the next boundary (window 1). The provisional source
+//   is never a history state, checkpointed or tiled; rows recorded after it was taken reach window 0 only as live
+//   effects (held notes occupy their pitch), the accepted live tolerance. Taken earlier in the cycle it is adopted at
+//   an earlier boundary: harmless, as the run being written has no rows yet in the windows after it. Record: once the
+//   take passes window 0, a track that plays nothing composes window 0 of the take's cycle 1 from the prefix under a
+//   provisional loop. One pass: no overlap rule reaches across passes, so window 0 depends only on its own rows; notes
+//   still held then are open and end where the take says, carried by the take's next window. Stop makes it the
+//   transition for the Stop tick (`PlaybackTrack::handoff`). A shorter take composes window 0 at Stop, aimed at the
+//   Stop tick, and plays from the first boundary it is ready for. Within window 0 the prefix is also prepared at each
+//   bar line (`setBarTicks`), so a take trimmed to one of them has its window 0.
+// * Trimmed Record Stop (rows stay immutable): `stop` with a `length` shorter than the take ends the loop there; the
+//   take's rows past it are kept and are the loop's wrap stream — notes played after the bar line sound from the loop
+//   start, a note held across it ends in the next cycle. Playback goes on in phase: cycle 1 began at the bar line, so
+//   the take joins at its position now.
+// * Pickups (the note-off wrap in reverse): notes played shortly before a Record take's tick 0 (`stop`'s `pickups`,
+//   gathered by `TrackControl`) are written at Stop, when the loop is known, as a second run of the take: NoteOn at
+//   `loop - before`, NoteOff where the note really ended (past the loop end: the wrap stream), never longer than the
+//   loop. From the second cycle they sound just before each downbeat.
+// * Live occupancy: an accepted overdub NoteOn occupies its pitch on the writing track; its NoteOff, or Stop's
 //   closures, release it.
-// * Undo / Redo: SlotUndoHistory moves (per slot; while overdubbing the session bounds its slot); every track playing the slot
-//   selects the new current, or stops when the slot is empty.
-// * E9.4 (owner 2026-11-05: one sounding slot per track; Clear is undoable):
+// * Undo / Redo: SlotUndoHistory moves (per slot; while overdubbing the session bounds its slot); every track playing
+//   the slot selects the new current, or stops when the slot is empty.
+// * One sounding slot per track; Clear is undoable:
 //   - Clear commits an empty state (a manifest with no runs): the slot is empty for every gesture (`contentOf`), its
 //     tracks stop, and Undo brings the content back.
 //   - Launch: a track starts a slot from its loop start, fresh (nothing carried), at a tick the caller commits; its
-//     window 0 composes from `launch` on while what plays continues (`PlaybackTrack::launch`), and at `commitLaunch` the
-//     track's origin moves to that tick and what sounded ends.
+//     window 0 composes from `launch` on while what plays continues (`PlaybackTrack::launch`), and at `commitLaunch`
+//     the track's origin moves to that tick and what sounded ends.
 //   - A track plays (`playing`) from a Record Stop or a committed launch until `stopTrack`; Undo / Redo / Clear select
 //     only on playing tracks.
-// The writer's reference on each run is dropped once the run sealed and is listed by the manifests that need it.
-// No allocation.
+// The writer's reference on each run is dropped once the run sealed and is listed by the manifests that need it. No
+// allocation.
 
 #pragma once
 
@@ -101,11 +100,11 @@ class SlotTransport {
     uint32_t completionsDenied;  // completion found no manifest slot (the state keeps the earlier manifest)
     uint32_t takesEndedFull;   // takes ended at a wrap: run list or run descriptors full
     uint32_t emptyTakes;       // Stops that recorded nothing
-    uint32_t provisionalSelections;  // wraps prepared with a provisional source (E9.1b)
+    uint32_t provisionalSelections;  // wraps prepared with a provisional source
     uint32_t recordPrepares;         // Record takes whose window 0 was composed ahead
-    uint32_t trimmedTakes;           // Record takes ended at the bar line before their Stop (E9.8i)
-    uint32_t repeatsHidden;          // notes a late Stop hid as repeats of the loop start (E9.8i amendment)
-    uint32_t pickupNotes;            // notes played before a take's tick 0, written at its Stop (E9.8j)
+    uint32_t trimmedTakes;           // Record takes ended at the bar line before their Stop
+    uint32_t repeatsHidden;          // notes a late Stop hid as repeats of the loop start
+    uint32_t pickupNotes;            // notes played before a take's tick 0, written at its Stop
     uint32_t pickupsDropped;         // pickups not written (no run descriptor)
   };
 
@@ -174,7 +173,7 @@ class SlotTransport {
   }
 
   /// Ends the take at `clock`. `out` receives NoteOffs (a track stopped by an empty slot); it must hold `Track::T`.
-  /// A note played before a Record take's tick 0 (E9.8j): `before` ticks before it (1 or more); `off` where it ended,
+  /// A note played before a Record take's tick 0: `before` ticks before it (1 or more); `off` where it ended,
   /// relative to tick 0 (negative: before it).
   struct Pickup {
     uint32_t before;
@@ -183,9 +182,9 @@ class SlotTransport {
   };
   static constexpr uint8_t kMaxPickups = 16;
 
-  /// `length` (a Record take; 0: the take's length): the loop ends there, before `clock` (E9.8i) — at most a loop
+  /// `length` (a Record take; 0: the take's length): the loop ends there, before `clock` — at most a loop
   /// earlier, so the take's rows past it fit the loop's wrap stream. `pickups` (a Record take, at most `kMaxPickups`):
-  /// notes played before its tick 0 (E9.8j).
+  /// notes played before its tick 0.
   Result stop(uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted, uint32_t length = 0,
               const Pickup* pickups = nullptr, uint8_t pickupCount = 0) {
     emitted = 0;
@@ -247,8 +246,8 @@ class SlotTransport {
     emitted = selectSlot(slot, clock, false, out, max);
     return Result::Ok;
   }
-  /// DEC-254 (E4.6d): a fetch arrived — the slot steps down to its oldest hot state (the fetched one) if it is still at
-  /// `floor`, and its playing tracks follow, as on an undo.
+  /// A fetch arrived (DEC-254, per-slot undo) — the slot steps down to its oldest hot state (the fetched one) if it is
+  /// still at `floor`, and its playing tracks follow, as on an undo.
   Result fetched(uint8_t slot, ManifestId floor, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
     if (slot == audSlot_) return Result::Busy;
@@ -267,7 +266,7 @@ class SlotTransport {
   Mode mode() const { return mode_; }
   uint8_t playingSlot(uint8_t track) const { return slot_[track]; }
   bool playing(uint8_t track) const { return playing_[track]; }
-  /// The slot's current state with content, or kNoManifest: empty, never recorded, or cleared (E9.4).
+  /// The slot's current state with content, or kNoManifest: empty, never recorded, or cleared.
   ManifestId contentOf(uint8_t slot) const {
     const ManifestId m = history_->current(slot);
     return m == kNoManifest || manifests_->manifest(m).runCount == 0 ? kNoManifest : m;
@@ -280,7 +279,7 @@ class SlotTransport {
     return mode_ == Mode::Overdubbing ? local(wTrack_, clock) % loop_ : clock - wStart_;
   }
 
-  /// Clear (owner 2026-11-05: undoable): an empty state on top of the slot's history; its playing tracks stop.
+  /// Clear (undoable): an empty state on top of the slot's history; its playing tracks stop.
   Result clear(uint8_t slot, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
     emitted = 0;
     if ((mode_ != Mode::Idle && wSlot_ == slot) || slot == audSlot_) return Result::Busy;
@@ -292,7 +291,7 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// Get a loop (DEC-270): state `m` — made for this slot elsewhere (a saved stage's slot, read in), one reference,
+  /// Get a loop: state `m` — made for this slot elsewhere (a saved stage's slot, read in), one reference,
   /// the caller's — on top of the slot's history: one undo step; its playing tracks follow as on an undo. Busy while
   /// the slot is written: nothing taken, `m` stays the caller's.
   Result place(uint8_t slot, ManifestId m, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
@@ -303,7 +302,7 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// Copy / paste (owner 2026-11-10: hold a slot, press another): `src`'s current state onto `dst` as one undo step —
+  /// Copy / paste (hold a slot, press another): `src`'s current state onto `dst` as one undo step —
   /// its runs' rows copied into new runs of `dst` (a state's runs are its slot's), the loop length kept; tracks playing
   /// `dst` follow as on an undo. Empty: `src` has no content; Busy: `dst` is written or auditioned; NoChange: the same
   /// slot; Denied* / Refused: no room (nothing changed).
@@ -337,12 +336,12 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  // ---- Get a loop's audition (DEC-271) --------------------------------------------------------------------------------
+  // ---- Get a loop's audition ---------------------------------------------------------------------------------------
   /// Starts auditioning `m` — a preview state made for `slot` (one reference, now the audition's) — as `track`'s
-  /// `slot`: when the track plays that slot it plays `m` instead from the next beat line (`PlaybackTrack::audition`); the
-  /// history is not touched. Otherwise it is a silent preview (`auditionSounding` false): nothing is launched. One at a
-  /// time; refused (nothing taken) while the track or the slot is written or the track has a launch in progress. While
-  /// it lasts the slot refuses clear, undo / redo, place, resize, rotate and an empty loop, the track takes and
+  /// `slot`: when the track plays that slot it plays `m` instead from the next beat line (`PlaybackTrack::audition`);
+  /// the history is not touched. Otherwise it is a silent preview (`auditionSounding` false): nothing is launched. One
+  /// at a time; refused (nothing taken) while the track or the slot is written or the track has a launch in progress.
+  /// While it lasts the slot refuses clear, undo / redo, place, resize, rotate and an empty loop, the track takes and
   /// launches.
   Result auditionStart(uint8_t track, uint8_t slot, ManifestId m, uint32_t clock) {
     if (audSlot_ != kNoSlot || launchSlot_[track] != kNoSlot) return Result::Busy;
@@ -381,7 +380,7 @@ class SlotTransport {
   bool auditionSounding() const { return audSlot_ != kNoSlot && audSounding_; }
   uint8_t auditionSlot() const { return audSlot_; }
 
-  /// Get a loop's preset (DEC-272): an empty loop of `loop` ticks on top of the slot's history — a filled slot too —
+  /// Get a loop's preset: an empty loop of `loop` ticks on top of the slot's history — a filled slot too —
   /// one undo step; its playing tracks follow it (silent from their next boundary). Busy while the slot is written or
   /// auditioned.
   Result emptyLoop(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted) {
@@ -399,7 +398,7 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// An empty loop (owner 2026-11-08: a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
+  /// An empty loop (a slot's long press, for step entry in NOTE_EDIT): one sealed run without rows
   /// and loop `loop` ticks, on top of the slot's history (undoable). A slot holds content while its state lists a run,
   /// so the loop plays, is edited and saved like a recorded one. Only on an empty slot.
   Result createEmpty(uint8_t slot, uint32_t loop) {
@@ -416,12 +415,12 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// Loop length (DEC-257, owner 2026-11-08: a play window): a state of the slot's content runs at loop `loop`, with a
+  /// Loop length (DEC-257, loop length is a play window): a state of the slot's content runs at loop `loop`, with a
   /// fit run re-wrapping them there (the previous one left out); notes keep their lengths, those past a shorter end are
   /// kept and not played. One undo step; tracks playing the slot follow from the next boundary.
-  /// `replace` (owner 2026-11-08: one undo step a LOOP_EDIT visit): when the slot's current state has this identity, the
+  /// `replace` (one undo step a LOOP_EDIT visit): when the slot's current state has this identity, the
   /// new state replaces it in place instead of adding a step (0: always a step).
-  /// `marks` (DEC-284): the remembered ranges to keep with the new state (nullptr: the base's).
+  /// `marks`: the remembered ranges to keep with the new state (nullptr: the base's).
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
                 uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
@@ -434,7 +433,7 @@ class SlotTransport {
     uint8_t n = 0;
     for (uint8_t i = 0; i < b.runCount; ++i)
       if (runs_->run(b.runs[i]).kind != RunKind::kFit) list[n++] = b.runs[i];
-    // DEC-283: the start kept, the frame at least the new loop.
+    // The start kept, the frame at least the new loop.
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
     if (w.frame < loop) w.frame = loop;
     mark(w, marks);
@@ -457,7 +456,7 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// The GROOVE window's columns (owner 2026-11-11: "save B with the slot"): a new state with the same content and loop,
+  /// The GROOVE window's columns, saved with the slot: a new state with the same content and loop,
   /// its fit run rebuilt with A's and B's settings and the column heard. One undo step (`replace` as `resize`); tracks
   /// playing the slot follow. NoChange: the state has these already.
   CE_COLD Result setColumns(uint8_t slot, uint32_t columnA, uint32_t columnB, uint8_t heard, uint32_t clock, Emit* out,
@@ -509,7 +508,7 @@ class SlotTransport {
     w.columnB = marks->columnB;
     w.heard = marks->heard;
   }
-  /// Groove (DEC-287, DEC-288): starts `gb`'s background build of the slot's groove pass per the prefix rule (amount 0:
+  /// Groove: starts `gb`'s background build of the slot's groove pass per the prefix rule (amount 0:
   /// its removal). NoChange: no groove to remove; Busy: the slot is written or auditioned; Refused: too big at once.
   template <typename Builder>
   CE_COLD Result grooveStart(Builder& gb, uint8_t slot, const GrooveRequest& q) {
@@ -532,7 +531,7 @@ class SlotTransport {
     const auto st = gb.start(slot, b.identity, prefix, pc, after, ac, q);
     return st == Builder::State::TooBig || st == Builder::State::Failed ? Result::Refused : Result::Ok;
   }
-  /// Publishes `gb`'s ready build (DEC-288): only while the slot's current state is the one it started from — an undo,
+  /// Publishes `gb`'s ready build: only while the slot's current state is the one it started from — an undo,
   /// load, edit or take since makes it stale: dropped (Refused). The new state lists the prefix, G (none when the
   /// groove was removed), the passes after it and a fit run rebuilt with the window's marks and the groove marker; one
   /// undo step (`replace` as `resize`); tracks playing the slot follow from `clock` (a bar line ahead: a musical
@@ -554,9 +553,9 @@ class SlotTransport {
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     const auto& rq = gb.request();
     w.groove = rq.settings.pack();
-    const bool file = rq.settings.tmpl == groove::kFileTemplate && rq.settings.amount != 0;  // DEC-290
+    const bool file = rq.settings.tmpl == groove::kFileTemplate && rq.settings.amount != 0;  // a groove file's template
     w.grooveShape = file ? rq.table.steps | (static_cast<uint32_t>(rq.table.step) << 16) : 0;
-    if (rq.heard != 0) {  // the GROOVE window's columns (owner 2026-11-11); else the base's are kept
+    if (rq.heard != 0) {  // the GROOVE window's columns; else the base's are kept
       w.columnA = rq.columnA;
       w.columnB = rq.columnB;
       w.heard = rq.heard;
@@ -590,7 +589,7 @@ class SlotTransport {
     return Result::Ok;
   }
 
-  /// The slot's play window in its stored notes (DEC-283; start 0 and the frame 0 without content).
+  /// The slot's play window in its stored notes (start 0 and the frame 0 without content).
   LoopWindow window(uint8_t slot) const {
     const ManifestId c = contentOf(slot);
     if (c == kNoManifest) return LoopWindow{};
@@ -598,10 +597,10 @@ class SlotTransport {
     return windowOf(*runs_, *pool_, m.runs, m.runCount, m.loopLengthTicks);
   }
 
-  /// Loop start (owner 2026-11-08: rotate): a state whose content runs are the slot's rotated `shift` ticks earlier
-  /// (`FitBuilder::rotate`: notes keep their lengths, one crossing the new loop start wraps), with a fit run rebuilt for
-  /// them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot follow
-  /// from the next boundary.
+  /// Loop start (rotate): a state whose content runs are the slot's rotated `shift` ticks earlier
+  /// (`FitBuilder::rotate`: notes keep their lengths, one crossing the new loop start wraps), with a fit run rebuilt
+  /// for them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot
+  /// follow from the next boundary.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
                 uint32_t replace = 0, const LoopWindow* marks = nullptr) {
     emitted = 0;
@@ -624,7 +623,7 @@ class SlotTransport {
       else
         result = f == FitResult::DeniedRun ? Result::DeniedRun : Result::Refused;
     }
-    // DEC-283: the start moves `shift` on in the frame (exact when the loop is the frame, as LOOP_EDIT rotates).
+    // The start moves `shift` on in the frame (exact when the loop is the frame, as LOOP_EDIT rotates).
     LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     w.start = (w.start + shift) % w.frame;
     mark(w, marks);
@@ -654,7 +653,7 @@ class SlotTransport {
     history_->commit(slot, m);
   }
 
-  /// Starts composing `slot` for `track` from its loop start — or from `position` (surface slice C: a step or bar
+  /// Starts composing `slot` for `track` from its loop start — or from `position` (a step or bar
   /// button restarting the playing slot there); `commitLaunch` makes it play.
   Result launch(uint8_t track, uint8_t slot, uint32_t position = 0) {
     if ((mode_ != Mode::Idle && wTrack_ == track) || auditionLocks(track, slot)) return Result::Busy;
@@ -689,8 +688,8 @@ class SlotTransport {
     return Result::Ok;
   }
   uint8_t launchingSlot(uint8_t track) const { return launchSlot_[track]; }
-  /// Sets browser 2b-ii (DEC-261): `track` composes a launch of `m` — a set switch's staged content, not `slot`'s
-  /// history (which the switch replaces) — for `commitStaged`.
+  /// A set switch (DEC-261, gapless live switch): `track` composes a launch of `m` — a set switch's staged content, not
+  /// `slot`'s history (which the switch replaces) — for `commitStaged`.
   void launchStaged(uint8_t track, uint8_t slot, ManifestId m) {
     tracks_[track]->launch(slot, m);
     launchSlot_[track] = slot;
@@ -759,9 +758,9 @@ class SlotTransport {
     const uint32_t l = local(track, clock);
     return l == 0 ? 0 : l - 1;
   }
-  /// A beat (DEC-271 amendment 1: an audition switches on the beat): a quarter of the bar; 0 without one.
+  /// A beat (an audition switches on the beat): a quarter of the bar; 0 without one.
   uint32_t beatTicks() const { return barTicks_ / 4; }
-  /// The audition (DEC-271) holds `track` (any of its slots) or `slot`.
+  /// The audition holds `track` (any of its slots) or `slot`.
   bool auditionLocks(uint8_t track, uint8_t slot) const {
     return audSlot_ != kNoSlot && (track == audTrack_ || slot == audSlot_);
   }
@@ -772,7 +771,7 @@ class SlotTransport {
     audTrack_ = 0xFF;
     audSounding_ = false;
   }
-  /// Emits carry their track (E9.3): the player does not know it.
+  /// Emits carry their track: the player does not know it.
   static uint8_t stamp(uint8_t track, Emit* out, uint8_t n) {
     for (uint8_t i = 0; i < n; ++i) out[i].track = track;
     return n;
@@ -863,11 +862,11 @@ class SlotTransport {
     manifests_->release(p, *runs_);  // the track's lease holds it while it is composed and played
     ++stats_.provisionalSelections;
   }
-  /// E9.8j: the take's pickups as one run of loop positions — NoteOn at `loop - before`, NoteOff at `loop + off`
+  /// The take's pickups as one run of loop positions — NoteOn at `loop - before`, NoteOff at `loop + off`
   /// (the wrap stream when past the loop end), at least a tick and less than a loop long — written in tick order.
-  /// A late Stop trimmed take `r0` to the bar line before (E9.8i): its notes from a 1/32 before that line on that repeat
+  /// A late Stop trimmed take `r0` to the bar line before: its notes from a 1/32 before that line on that repeat
   /// a note of the same pitch and channel within a 1/32 of the same place at the loop start — the musician starting the
-  /// pattern again — are hidden (owner 2026-11-09), so the loop start does not play them twice; any other note played
+  /// pattern again — are hidden, so the loop start does not play them twice; any other note played
   /// after the line still comes back at the loop start. `overrun`: how far past the line the take went (under half its
   /// length). A sealed Edit run of their HideNote rows, or kNoRun.
   RunId hideRepeats(RunId r0, uint32_t overrun) {
@@ -1043,7 +1042,7 @@ class SlotTransport {
   }
 
   Pool* pool_ = nullptr;
-  FitBuilder<Pool, Runs, typename WriterT::Reservations> fit_;  // a resize's scratch (DEC-257)
+  FitBuilder<Pool, Runs, typename WriterT::Reservations> fit_;  // a resize's scratch
   Runs* runs_ = nullptr;
   Manifests* manifests_ = nullptr;
   HistoryT* history_ = nullptr;
@@ -1052,13 +1051,13 @@ class SlotTransport {
   uint8_t slot_[Tracks] = {};
   bool playing_[Tracks] = {};
   uint8_t launchSlot_[Tracks] = {};  // a launch composing for the track (kNoSlot: none)
-  ManifestId staged_[Tracks] = {};   // DEC-261: that launch is a set switch's staged content (kNoManifest: none)
-  // DEC-271: the audition — its slot (kNoSlot: none), track, preview state (the audition's reference), heard or not.
+  ManifestId staged_[Tracks] = {};   // that launch is a set switch's staged content (kNoManifest: none)
+  // The audition — its slot (kNoSlot: none), track, preview state (the audition's reference), heard or not.
   uint8_t audSlot_ = kNoSlot, audTrack_ = 0xFF;
   ManifestId audState_ = kNoManifest;
   bool audSounding_ = false;
   uint32_t origin_[Tracks] = {};
-  uint32_t launchPos_[Tracks] = {};  // a launch's position (slice C; 0: the loop start)
+  uint32_t launchPos_[Tracks] = {};  // a launch's position (0: the loop start)
   Mode mode_ = Mode::Idle;
   uint8_t wTrack_ = 0, wSlot_ = kNoSlot;
   uint32_t wStart_ = 0, loop_ = 0, revision_ = 0;

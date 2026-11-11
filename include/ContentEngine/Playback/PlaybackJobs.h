@@ -1,11 +1,11 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Playback compose work as scheduler jobs (fixed-memory-engine E6.2, plan revision 3 § 7.3 / § 7.5). Per track two
+// Playback compose work as scheduler jobs. Per track two
 // jobs, each submitted only while its work is pending and never twice:
 //   * steady: the window for the track's next boundary. Hard, deadline = that boundary; declared grains = the measured
-//     worst window (100 grains at 128 row units, E5.8). Missing it is an underrun.
-//   * transition: cold-start replay plus the new source's window. Transition class (owner ruling 2026-11-05): bounded
+//     worst window (100 grains at 128 row units). Missing it is an underrun.
+//   * transition: cold-start replay plus the new source's window. Transition class: bounded
 //     progress — at least every second grain while the hard load allows — and priority over soft work, ordered by
 //     target boundary. If it is not ready at its boundary the previous source keeps playing (pins held), a late source
 //     switch is counted, and it is adopted at the first boundary after it is ready.
@@ -23,8 +23,8 @@ template <typename Track, uint8_t Tracks, typename Scheduler>
 class PlaybackJobs {
  public:
   static constexpr uint32_t kRowsPerGrain = 128;
-  static constexpr uint32_t kSteadyGrains = 100;       // measured worst window (clustered, E5.8)
-  static constexpr uint32_t kTransitionGrains = 3200;  // warm-up cycle + replay + window, plan § 7.2 (spread)
+  static constexpr uint32_t kSteadyGrains = 100;       // measured worst window (clustered)
+  static constexpr uint32_t kTransitionGrains = 3200;  // warm-up cycle + replay + window (spread)
   static constexpr uint32_t kMaxLeadTicks = 1u << 16;  // a deadline at most ~68 s ahead at 300 BPM
 
   struct Stats {
@@ -47,7 +47,7 @@ class PlaybackJobs {
     for (auto& n : now) n = nowTick;
     service(now, nowUs, usPerTick);
   }
-  /// The same with each track's own timeline tick (tracks keep their own loop origin, E9.1).
+  /// The same with each track's own timeline tick (tracks keep their own loop origin).
   void service(const uint32_t* trackTicks, uint32_t nowUs, uint32_t usPerTick) {
     for (uint8_t i = 0; i < Tracks; ++i) {
       const uint32_t nowTick = trackTicks[i];
