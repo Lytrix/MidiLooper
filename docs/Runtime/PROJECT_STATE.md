@@ -1,3 +1,9 @@
+**2026-11-11 — E4.6e pressure; DEC-254 / E4.6 complete (branch `feature/engine-per-slot-history`).** Low content memory
+makes card-held undo steps cold (never forgotten, one each 50 ms); a loading slot's own steps go cold at boot. With
+E4.6b–d: each run written once to `store2.bin`, 99 undo steps per slot (hot in PSRAM, cold on the card), undo into cold
+steps fetched in ≤ 4-sector grains. Native 4,561 passed; device `e1533cf2…` clean. Not merged into
+`feature/engine-sets-browser`; the board runs this branch.
+
 **2026-11-11 — E4.6d undo into cold steps (branch `feature/engine-per-slot-history`).** An undo past a slot's hot steps
 fetches the cold one from the card in ≤ 4-sector grains while the slot plays, then switches as an undo; more presses
 reach deeper, switched once. Native 4,559 passed; device: four fetches on T2 S3, each in place within one poll, worst

@@ -14835,6 +14835,15 @@ side by position. Native: 5 fetch tests, 3 mutations caught; full native 4,559. 
 worst persistence grain 337 µs (a sector read); the slot redone to its top afterwards. RAM1: the set-load and browser
 services from flash (2,068 B left in the last bank).
 
+### E4.6e — pressure and boot (2026-11-11)
+
+Below a content-pool floor (1/8 of the quota, about 26,000 rows of headroom) the oldest card-held undo step leaves
+PSRAM — `History::demoteOldest`, only ever a demotion — at most one each 50 ms so the reclaim of its pages is seen
+before the next; recording admission is unchanged. Boot loads hot states only (cold ones are descriptors, E4.6c); a
+loading slot whose own oldest step must make room makes it cold (its runs known from the load in progress), instead of
+forgetting it. Native: 2 tests, 3 mutations caught; full native 4,561. Device (`e1533cf2…`, `crash=0`): content free
+2,821 pages, no pressure demotion over 10 s idle. **E4.6 complete** (b–e) on `feature/engine-per-slot-history`.
+
 ### Alternatives considered
 
 | Alternative | Why not |
