@@ -1,59 +1,40 @@
 {
   "_doc": "Diff -> native suite selection for scripts/test_native.py (FAST / AFFECTED / FULL, .cursor/rules/Testing-Workflow.mdc). Suites are found mechanically from the include closure of each test; these rules only ADD to that. Patterns are fnmatch globs on repo-relative paths ('**' matches across directories).",
   "no_gate": [
-    "docs/**", "openspec/**", ".cursor/**", ".agents/**", ".claude/**", "*.md", "captures/**", "evidence/**",
-    "scripts/hitl/**", "scripts/parse_*.py", "scripts/hitl_*.py"
+    "docs/**",
+    "openspec/**",
+    ".cursor/**",
+    ".agents/**",
+    ".claude/**",
+    "*.md",
+    "captures/**",
+    "evidence/**",
+    "scripts/hitl/**",
+    "scripts/parse_*.py",
+    "scripts/hitl_*.py"
   ],
   "full": {
-    "_doc": "Shared ownership, Loop/Track transitions, widely included headers, undo/persistence, clocks, memory layout and the test infrastructure itself: a change here needs FULL now.",
+    "_doc": "The build configuration, the runner, and the engine's widely included headers: a change here needs FULL now (E9.8d: the legacy runtime is gone).",
     "paths": [
-      "platformio.ini", "scripts/native_test_link.py", "scripts/test_native.py", "scripts/test_map.json",
-      "test/test_support/**",
-      "include/Track.h", "src/Track/Track.cpp", "include/Loop.h", "src/Loop.cpp", "src/Loop/**",
-      "include/TrackManager.h", "src/TrackManager.cpp", "include/Globals.h", "include/Config*.h",
-      "include/LoopPasses.h", "include/LoopEventStore.h", "include/Utils/MidiServiceDrain.h",
-      "include/ClockManager.h", "src/ClockManager*.cpp",
-      "include/StorageManager*.h", "src/StorageManager/**", "include/*Undo*.h", "src/*Undo*.cpp", "src/Track/TrackUndo*.cpp"
+      "platformio.ini",
+      "scripts/test_native.py",
+      "scripts/test_map.json",
+      "include/ContentEngine/EngineConfig.h",
+      "include/ContentEngine/EngineRoot.h",
+      "include/ContentEngine/EngineCore.h",
+      "include/ContentEngine/PassEvent.h",
+      "include/ContentEngine/RunTable.h",
+      "include/ContentEngine/PagePool.h"
     ]
   },
-  "closures": [
-    {
-      "_doc": "rolling playback window lane",
-      "paths": ["src/Track/TrackPlaybackWindowBuild.cpp", "src/Track/TrackPlaybackRuntime.cpp", "include/TrackPlaybackRuntime.h",
-                "include/RuntimePlayback*.h", "src/Track/RuntimePlayback*.cpp", "include/RollingSuccessorProbe.h",
-                "include/Utils/PlaybackTickContext.h", "include/Utils/PlaybackBuildRefusal.h"],
-      "suites": ["test_revision_manifest_lane", "test_rolling_successor_lead", "test_rolling_record_retirement", "test_playback_prewarm",
-                 "test_playback_read_witness", "test_rootless_window_resolution", "test_windowed_preview_integration", "test_overlay_edge",
-                 "test_frozen_record_reader_survival", "test_overdub_source_window_parity", "test_playback_demand_arbitration"]
-    },
-    {
-      "_doc": "RevisionManifest store, reader seam and importer",
-      "paths": ["include/CommittedManifestLane.h", "include/CommittedWindowRowSource.h", "include/RevisionManifestReaderConfig.h",
-                "include/RevisionStore/**", "src/RevisionStore/**"],
-      "suites": ["test_revision_manifest_lane", "test_rolling_successor_lead", "test_revision_store_differential",
-                 "test_revision_manifest_store", "test_revision_store_capacity", "test_playback_prewarm"]
-    },
-    {
-      "_doc": "capture / stop / finalization",
-      "paths": ["src/Track/TrackCapture*.cpp", "include/CaptureStop*.h", "src/Track/TrackOverdubLifecycle.cpp"],
-      "suites": ["test_shared_capture_finalization", "test_continuous_capture", "test_rolling_record_retirement",
-                 "test_frozen_record_reader_survival", "test_revision_manifest_lane"]
-    },
-    {
-      "_doc": "window-lane measurement and the capture row it writes",
-      "paths": ["include/Utils/PlaybackLaneMeasurement.h"],
-      "suites": ["test_clock_transport_master", "test_runtime_working_set_ownership"]
-    },
-    {
-      "_doc": "session capture ring and Tier-A classification",
-      "paths": ["src/Utils/DebugSessionCapture.cpp", "include/Utils/DebugSessionCapture.h", "include/Utils/CaptureLineTier.h"],
-      "suites": ["test_capture_ring", "test_capture_line_tier"]
-    }
-  ],
+  "closures": [],
   "sentinels": {
-    "_doc": "Architecture invariants, always part of AFFECTED: manifest exact identity / consume-only tick / no silent fallback, the tick's read witness, undo-redo generation isolation, size pins, deferred-owner obligations, holder fairness, rootless window resolution, Tier-A classification.",
-    "suites": ["test_revision_manifest_lane", "test_playback_read_witness", "test_reboot_undo_redo", "test_global_undo_slot_scope",
-               "test_loop_size_probe", "test_midi_service_drain", "test_playback_demand_arbitration",
-               "test_rootless_window_resolution", "test_capture_line_tier"]
+    "_doc": "Engine invariants, always part of AFFECTED: the semantic oracle (overlap and ordering rules), the engine root at production capacity, the scheduler's E5 feasibility gate, persistence.",
+    "suites": [
+      "test_engine_semantic_oracle",
+      "test_content_engine_engine_root",
+      "test_content_engine_scheduler",
+      "test_content_engine_persistence"
+    ]
   }
 }

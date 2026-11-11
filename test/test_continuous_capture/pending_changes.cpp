@@ -1,6 +1,0 @@
-#include "../../src/EditManager/EditSessionLiveStoreSpan.cpp"
-#include "../../src/EditManager/NoteEditCurrentState.cpp"
-#include "../../src/EditManager/EditSessionInteraction.cpp"
-#include "../../src/EditManager/ResolveConstrainedGeometry.cpp"
-#include "../../src/EditManager/ParticipatingNoteSession.cpp"
-#include "../../src/Loop/LoopPendingNoteChange.cpp"
