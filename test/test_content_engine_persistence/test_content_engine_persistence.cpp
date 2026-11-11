@@ -652,6 +652,26 @@ void test_a_copy_loads_only_into_its_own_slot() {
 // Owner 2026-11-06: the selected track and slots survive a reboot. Saved like a slot (only after approval, once
 // settled) into the store's two state sectors in turn; a second engine restores the later one, the earlier one when
 // the later is damaged, nothing when both are.
+// E9.8b-3c: the GROOVE cycle's bars are saved with the surface state and come back at boot; a state written without
+// them reads as none.
+void test_the_cycle_length_is_saved_with_the_surface_state() {
+  const uint8_t state[ProductionPersistence::kStateBytes] = {2, 0, 9, 18, 24, 32, 41, 50, 63, 0};
+  gA.approveSaving();
+  gA.setSurfaceState(state, us(gClock));
+  run(gA, gClock + kSettleTicks + 20);
+  bootB();
+  TEST_ASSERT_EQUAL_UINT8(0, gB.persistence().restoredCycleBars());  // none set: none saved
+  gA.setEngineSettings(4, us(gClock));
+  const uint32_t writes = gCard.writes;
+  run(gA, gClock + kSettleTicks + 20);
+  TEST_ASSERT_TRUE(gCard.writes > writes);  // the setting alone is a change
+  bootB();
+  TEST_ASSERT_EQUAL_UINT8(4, gB.persistence().restoredCycleBars());
+  uint8_t back[ProductionPersistence::kStateBytes] = {};
+  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_EQUAL_UINT8_ARRAY(state, back, ProductionPersistence::kStateBytes);  // the selection unchanged
+}
+
 void test_the_surface_state_is_saved_and_restored() {
   const uint8_t state[ProductionPersistence::kStateBytes] = {7, 0, 9, 18, 24, 32, 41, 50, 63};
   gA.setSurfaceState(state, us(gClock));
@@ -1359,6 +1379,7 @@ int main(int, char**) {
   RUN_TEST(test_a_new_store_never_loads_stale_sectors);
   RUN_TEST(test_a_copy_loads_only_into_its_own_slot);
   RUN_TEST(test_the_surface_state_is_saved_and_restored);
+  RUN_TEST(test_the_cycle_length_is_saved_with_the_surface_state);
   RUN_TEST(test_the_state_file_of_before_the_store_is_restored);
   RUN_TEST(test_a_load_replaces_the_set_and_the_store_follows);
   RUN_TEST(test_a_live_load_switches_at_the_bar_and_resumes_together);

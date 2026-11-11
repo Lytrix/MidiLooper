@@ -129,7 +129,7 @@ The window holds two grooves side by side, **A** and **B**: A is the loop's groo
 | **Groove** | F1 | F3 |
 | **Amount** (0–100 %: how far each note moves toward its swung place) | F2 | F4 |
 
-The window has its own fader bank on the DROID (program 2; the supplied patch's `GrooveWindow` section): all four faders send CCs 20–23 on channel 16 — load the updated `midilooper_v1.ini`.
+The window has its own fader bank on the DROID (program 2; the supplied patch's `GrooveWindow` section): all four faders send CCs 20–23 on channel 16, and when the window opens the motorized faders move to A's and B's values — load the updated `midilooper_v1.ini`.
 
 Grooves: STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH.
 

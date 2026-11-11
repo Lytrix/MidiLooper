@@ -270,6 +270,7 @@ class Persistence : public ColdSink {
     }
     state_ = stateSaved_ = 0;
     mutes_ = mutesSaved_ = mutesRead_ = 0;
+    settings_ = settingsSaved_ = settingsRead_ = 0;
     stateRead_ = kNoState;
     stateDue_ = stateKnown_ = false;
     stateChangedUs_ = 0;
@@ -324,7 +325,8 @@ class Persistence : public ColdSink {
       startSave(s);
       return;
     }
-    if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs && (state_ != stateSaved_ || mutes_ != mutesSaved_))
+    if (stateKnown_ && nowUs - stateChangedUs_ >= kSettleUs &&
+        (state_ != stateSaved_ || mutes_ != mutesSaved_ || settings_ != settingsSaved_))
       stateDue_ = true;  // written by the next persistence grain
   }
   bool pending() const { return saving_ != kNone || booting() || stateDue_ || closing_ || fetching(); }
@@ -362,6 +364,14 @@ class Persistence : public ColdSink {
     stateKnown_ = true;
     stateChangedUs_ = nowUs;
   }
+  /// E9.8b-3c: the engine's settings saved with the surface state — the GROOVE cycle's bars (1–255; 0: not saved).
+  void setSettings(uint8_t cycleBars, uint32_t nowUs) {
+    if (cycleBars == settings_) return;
+    settings_ = cycleBars;
+    stateChangedUs_ = nowUs;
+  }
+  /// The settings read at boot (0: none — a state saved before E9.8b-3c).
+  uint8_t restoredCycleBars() const { return settingsRead_; }
   /// The state read at boot. False: none (no file, or a bad one).
   bool restoredSurfaceState(uint8_t* out) const {
     if (stateRead_ == kNoState) return false;
@@ -475,6 +485,13 @@ class Persistence : public ColdSink {
     const uint8_t m = static_cast<uint8_t>(w >> 8);
     return w == muteWord(m) ? m : 0;
   }
+  static uint32_t settingsWord(uint8_t c) { return 0x53450000u | static_cast<uint32_t>(c) << 8 | static_cast<uint8_t>(~c); }
+  static uint8_t settingsOf(const uint8_t* b) {  // bytes 20–23 ("SE"): none in a sector written before E9.8b-3c
+    const uint32_t w = b[20] | static_cast<uint32_t>(b[21]) << 8 | static_cast<uint32_t>(b[22]) << 16 |
+                       static_cast<uint32_t>(b[23]) << 24;
+    const uint8_t c = static_cast<uint8_t>(w >> 8);
+    return w == settingsWord(c) ? c : 0;
+  }
   static uint32_t stateSum(uint32_t v) { return (v * 2654435761u) ^ 0xA5A5A5A5u; }
   // The store's state sectors 0 and 1, alternately (one sector write is the whole save): magic "MLS2", sequence,
   // state, check word; the valid one with the later sequence counts.
@@ -489,12 +506,17 @@ class Persistence : public ColdSink {
     putWords(b, kStateMagic2, seq, state_, stateSum(state_ ^ seq));
     const uint32_t mw = muteWord(mutes_);
     for (uint8_t i = 0; i < 4; ++i) b[16 + i] = static_cast<uint8_t>(mw >> (8 * i));
+    if (settings_ != 0) {
+      const uint32_t sw = settingsWord(settings_);
+      for (uint8_t i = 0; i < 4; ++i) b[20 + i] = static_cast<uint8_t>(sw >> (8 * i));
+    }
     if (!card_->writeSector(c, b)) return;
     stateSeq_ = seq;
     stateCopy_ = c;
     stateHave_ = true;
     stateSaved_ = state_;
     mutesSaved_ = mutes_;
+    settingsSaved_ = settings_;
   }
   void readState() {
     if (store_) {
@@ -509,6 +531,7 @@ class Persistence : public ColdSink {
         stateCopy_ = c;
         stateRead_ = stateSaved_ = w[2];
         mutesRead_ = mutesSaved_ = mutesOf(importScratch_);
+        settingsRead_ = settingsSaved_ = settingsOf(importScratch_);
       }
       if (stateHave_) return;
     }
@@ -1549,6 +1572,7 @@ class Persistence : public ColdSink {
   bool ioStore_ = false;               // the load reads the store (else a file)
   bool stateDue_ = false, stateKnown_ = false;
   uint8_t mutes_ = 0, mutesSaved_ = 0, mutesRead_ = 0;  // DEC-293: bit t, track t muted (in the padding before)
+  uint8_t settings_ = 0, settingsSaved_ = 0, settingsRead_ = 0;  // E9.8b-3c: the GROOVE cycle's bars (0: none)
   uint32_t state_ = 0, stateSaved_ = 0, stateRead_ = 0xFFFFFFFFu, stateChangedUs_ = 0;
   uint8_t saving_ = kNone, loading_ = kNone, bootNext_ = Slots;
   Fingerprint saved_[Slots], seen_[Slots], savingPrint_{};

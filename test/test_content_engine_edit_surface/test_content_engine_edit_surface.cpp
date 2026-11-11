@@ -48,6 +48,7 @@ static EngineClock gClk;
 static S gS;
 static uint32_t gUs = 0, gLast = 0;
 static constexpr uint32_t kTick = 2604, kBarUs = 768 * kTick;
+static constexpr uint32_t kSettle = 520;  // ms: past EditSurface's kMotorSettleMs (500)
 
 // Live notes played into a take: positions in µs.
 struct Live {
@@ -328,6 +329,7 @@ void test_the_droid_fader_bank_follows_note_edit() {
   TEST_ASSERT_EQUAL_UINT8(a0, gS.grooveA().amount);
   TEST_ASSERT_EQUAL_UINT8(b0, gS.grooveSettings().amount);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
+  ms(kSettle);  // E9.8b-3c: the motors land on A / B first
   // Then its faders are CCs 20–23 on channel 16 in the fields' order: A's groove, A's amount, B's groove, B's amount.
   gS.input(0xBF, S::kGrooveCc + 0, 127, gUs / 1000);
   TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kTemplateCount - 1, gS.grooveA().tmpl);
@@ -2456,6 +2458,43 @@ void test_a_stale_groove_build_is_dropped() {
 // groove or the default (straight, 50 %); PLAY/STOP's press the next field; F1 the amount; a change applied once it
 // rests, heard from the next beat (DEC-292); the encoder's turn the selected field; one undo step a visit; open until
 // closed (DEC-292), its progress bar under way while a change is on its way.
+// E9.8b-3c (owner: "the bank's faders to the A / B values on opening, travel not read as moves"): opening the GROOVE
+// window moves F1–F4 to A's groove, A's amount, B's groove, B's amount — each a CC 20–23 value, then its clear note
+// 102–105 on and off — and the faders' travel to them changes nothing.
+void test_the_groove_faders_follow_a_and_b_on_opening() {
+  recordBar({{130, 60}});
+  tap(S::kPlayStopNote, 700);  // long: open
+  ms(5);
+  TEST_ASSERT_TRUE(gS.grooveOpen());
+  std::vector<Motor> sent;
+  for (const Sent& x : drainMotors(400)) sent.push_back(x.m);
+  TEST_ASSERT_EQUAL_UINT32(12, sent.size());
+  const uint8_t want[4] = {S::grooveCc(0, gS.grooveA()), S::grooveCc(1, gS.grooveA()),
+                           S::grooveCc(2, gS.grooveSettings()), S::grooveCc(3, gS.grooveSettings())};
+  uint8_t values = 0, ons = 0, offs = 0;
+  for (const auto& m : sent) {
+    if (m.status == 0xBF && m.d1 >= S::kGrooveCc && m.d1 < S::kGrooveCc + 4) {
+      TEST_ASSERT_EQUAL_UINT8(want[m.d1 - S::kGrooveCc], m.d2);
+      ++values;
+    } else if (m.status == 0x9F && m.d1 >= S::kGrooveTrigger && m.d1 < S::kGrooveTrigger + 4) {
+      ++ons;
+    } else if (m.status == 0x8F && m.d1 >= S::kGrooveTrigger && m.d1 < S::kGrooveTrigger + 4) {
+      ++offs;
+    }
+  }
+  TEST_ASSERT_EQUAL_UINT8(4, values);
+  TEST_ASSERT_EQUAL_UINT8(4, ons);
+  TEST_ASSERT_EQUAL_UINT8(4, offs);
+  TEST_ASSERT_EQUAL_UINT8(64, want[1]);  // 50 % at the fader's middle
+  // A fader's travel to its value, inside the settle time (500 ms from the write; ~405 ms have passed): not a move.
+  gS.input(0xBF, S::kGrooveCc + 1, 0, gUs / 1000);    // the bank's report
+  gS.input(0xBF, S::kGrooveCc + 1, 20, gUs / 1000);   // travel
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveA().amount);
+  ms(kSettle);
+  gS.input(0xBF, S::kGrooveCc + 1, 127, gUs / 1000);  // a hand, after it landed
+  TEST_ASSERT_EQUAL_UINT8(100, gS.grooveA().amount);
+}
+
 void test_the_groove_window_sets_a_groove() {
   recordBar({{130, 60}});
   const uint8_t undo0 = gE.history().undoDepth(0);
@@ -2470,6 +2509,7 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
   gS.input(0xBF, S::kGrooveCc + 3, 0, gUs / 1000);    // the DROID's report of F4 as the bank opens: nothing
   TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
+  ms(kSettle);                                         // E9.8b-3c: the motors land on A / B first
   gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23) at the top: B's amount 100 %
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
@@ -2599,6 +2639,7 @@ void test_the_groove_window_compares_a_b_and_off() {
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
   gS.input(0xBF, S::kGrooveCc + 3, 0, gUs / 1000);    // the bank's report: not a move
+  ms(kSettle);                                         // E9.8b-3c: the motors land on A / B first
   gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23): B's amount 100 % — kept, A still heard
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
@@ -2751,6 +2792,7 @@ int main(int, char**) {
   RUN_TEST(test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove);
   RUN_TEST(test_a_groove_is_built_in_grains_and_switches_on_the_next_beat);
   RUN_TEST(test_a_stale_groove_build_is_dropped);
+  RUN_TEST(test_the_groove_faders_follow_a_and_b_on_opening);
   RUN_TEST(test_the_groove_window_sets_a_groove);
   RUN_TEST(test_the_groove_window_opens_by_its_note_and_by_notelen_with_play);
   RUN_TEST(test_auto_grooves_an_overdub);

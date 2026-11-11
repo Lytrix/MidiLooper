@@ -1,3 +1,9 @@
+**2026-11-11 — E9.8b-3c GROOVE motor feedback; the cycle length saved (`feature/engine-sets-browser`).** Opening the
+GROOVE window moves the DROID's faders to A's and B's values (CC 20–23 then clear notes 102–105 on channel 16), their
+travel not read as moves; `droid/midilooper_v1.ini`'s GROOVE bank now takes `startvalue` / `clear` (load the updated
+patch). The global cycle's bars are saved with the surface state (no control for it yet). Device `60b478fd…`: the 12
+motor messages seen on USB. Native suite green.
+
 **2026-11-11 — engine timing under deep overdubs at 300 BPM (`feature/engine-sets-browser`).** A 30-overdub stress
 on one slot (300 BPM, seven tracks playing) now stays well inside both budgets: the worst grain 713 → 489 µs (g = 810)
 and the non-engine stretch 1,627 → 955 µs (B_max = 2,000), 30 of 30 overdubs, no hang. Commits: `eca1ff1a` stepped

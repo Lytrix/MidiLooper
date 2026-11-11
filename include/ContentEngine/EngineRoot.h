@@ -188,10 +188,10 @@ constexpr size_t kRam2Budget = 160232u;  // measured (owner 2026-11-11: + 136 B 
                                           // + 1,248 B late-join state, + 248 B gesture state
 static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
 #if defined(__arm__)
-static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 448u,
+static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 456u,
               "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
               "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
-              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding) (ARM)");
+              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding), plus the engine settings (E9.8b-3c: + 8 B with padding) (ARM)");
 #endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
               "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");
@@ -397,7 +397,9 @@ class EngineRoot {
   /// The surface's state (selected track and slots, `ProductionPersistence::kStateBytes`): saved like a slot.
   void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
     if (card_ != nullptr) p_->persistence.setSurfaceState(s, nowUs);
-  }
+  }  /// E9.8b-3c: the engine's settings saved with the surface state (the GROOVE cycle's bars).
+  void setEngineSettings(uint8_t cycleBars, uint32_t nowUs) { p_->persistence.setSettings(cycleBars, nowUs); }
+
 
   // ---- Milestone library (DEC-258) ---------------------------------------------------------------------------------
   /// Opens the library file at `path` (`sectors` long) and reads its index; `create` creates and preallocates it when

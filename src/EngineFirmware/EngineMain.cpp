@@ -1795,6 +1795,7 @@ bool applySavedSelection() {
     if (state[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
   for (uint8_t t = 0; t < kTrackCount; ++t)  // DEC-293: the muted tracks
     gEngine.control().setMute(t, (state[ProductionPersistence::kStateBytes - 1] >> t & 1u) != 0, micros());
+  if (const uint8_t bars = gEngine.persistence().restoredCycleBars()) gSurface.setCycleBars(bars);  // E9.8b-3c
   return true;
 }
 // After boot load: without a saved selection, each track's first slot with content (slots T x 8 .. T x 8 + 7); the
@@ -1813,6 +1814,7 @@ void saveSelection(uint32_t nowUs) {
     if (gEngine.control().muted(t)) mutes |= static_cast<uint8_t>(1u << t);
   state[ProductionPersistence::kStateBytes - 1] = mutes;
   gEngine.setSurfaceState(state, nowUs);
+  gEngine.setEngineSettings(gSurface.cycleBars(), nowUs);  // E9.8b-3c: the GROOVE cycle's bars
 }
 
 void selectFirstSlots() {

@@ -255,6 +255,7 @@ class Surface {
   static constexpr uint8_t kFineCc = 100;        // LOOP_EDIT's F3: CC 100 on channel 16 (the fine tempo)
   static constexpr uint8_t kStartTrigger = 100, kLengthTrigger = 101;  // channel 16 notes: F1 / F2 `clear`
   static constexpr uint8_t kFineTrigger = 1, kCoarseTrigger = 2;       // channel 15 notes: F3 / F4 `clear`
+  static constexpr uint8_t kGrooveTrigger = 102;  // E9.8b-3c: channel 16 notes 102–105, the GROOVE bank's F1–F4 `clear`
   static constexpr uint32_t kCoarseMinBpm = 20, kCoarseMaxBpm = 300;
   static constexpr uint32_t kPopupMs = 3000, kPopupTapMs = 300;  // the popup hides; a single press is not a double
   static constexpr uint32_t kPopupCancelMs = 600;                 // a long press in the popup cancels it
@@ -535,6 +536,7 @@ class Surface {
       faderSeen_ = static_cast<uint8_t>(faderSeen_ | (1u << field));
       return true;
     }
+    if (landing(field, ms)) return true;  // E9.8b-3c: its motor's travel to the value written, not a move
     const Heard col = columnOf(field);
     groove::Settings& g = columnSettings(col);
     const groove::Settings before = g;
@@ -544,6 +546,25 @@ class Surface {
     grooveField_ = field;
     if (g.tmpl != before.tmpl || g.amount != before.amount) grooveChanged(col, ms);
     return true;
+  }
+  /// E9.8b-3c: a field's value on its fader (the inverse of `grooveFader`: a template's band centre; a file template,
+  /// which no fader position names, at the bottom).
+  static uint8_t grooveCc(uint8_t field, const groove::Settings& g) {
+    if (field == kFieldGrooveA || field == kFieldGrooveB) {
+      if (g.tmpl >= groove::kTemplateCount) return 0;
+      const uint32_t v = (static_cast<uint32_t>(g.tmpl) * 128u + 64u) / groove::kTemplateCount;
+      return static_cast<uint8_t>(v > 127 ? 127 : v);
+    }
+    return static_cast<uint8_t>((static_cast<uint32_t>(g.amount) * 127u + 50u) / 100u);
+  }
+  /// E9.8b-3c (owner: "the bank's faders to the A / B values on opening"): each of F1–F4 to its field's value — the
+  /// value on its CC, then its `clear` trigger note (`droid/midilooper_v1.ini`, the GROOVE bank). Its travel is not a
+  /// move for `kMotorSettleMs` (`landing`).
+  void parkGrooveFaders(uint32_t ms) {
+    loopMotorCount_ = 0;
+    for (uint8_t f = 0; f < kGrooveFields; ++f)
+      loopWrite(f, 0xB0 | kProgramChannel, static_cast<uint8_t>(kGrooveCc + f), grooveCc(f, columnSettings(columnOf(f))),
+                kProgramChannel, static_cast<uint8_t>(kGrooveTrigger + f), ms);
   }
   // ---- Compare (DEC-294, DEC-295) -----------------------------------------------------------------------------------
   static constexpr uint32_t kBarTicks = EditSurface<Engine>::kBar;
@@ -778,6 +799,7 @@ class Surface {
     grooveSet_ = grooveA_;
     heard_ = packed != 0 ? Heard::A : Heard::Off;
     faderSeen_ = 0;
+    parkGrooveFaders(nowMs_);
     cycling_ = false;
     grooveAt_ = 0;
     leaveVisit();
