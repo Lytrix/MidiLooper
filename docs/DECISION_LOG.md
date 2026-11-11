@@ -16708,5 +16708,6 @@ was `EngineFirmware`). Files and their types renamed: `Writer` → `CaptureWrite
 The renames ride the legacy retirement (NAMING.md § Migration policy: a retirement or extraction is the vehicle).
 
 **Evidence:** moves and includes byte-identical (`eaed506c…`); the type renames change only the linker's veneer
-order (sizes identical); native 544 passed.
+order (sizes identical); native 544 passed. Device `31140291…`: boot clean, the 300 BPM 30-overdub stress at the
+earlier figures (worst grain 480 µs, non-engine 861 µs, 30 of 30).
 
