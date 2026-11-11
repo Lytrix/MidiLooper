@@ -16599,4 +16599,12 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   go dim → running → bright → off. Full native 4,546 passed. Device image `ef5ddcde…` (`crash=0`, flashed by HalfKay
   after the board ignored the reboot request): T8 S8 cycling — A's bar bracketed and filling, the dots running while
   B's turn builds a bar ahead; the visit undone afterwards.
+- **Amendment 4 (owner 2026-11-11: "if I change a value in the groove template it also switches to that template
+  immediately … you will hear intermediate grooves which defeat the a/b purpose"):** a change no longer makes its
+  column heard. The column heard is rebuilt once the change settles (fine-tuning what plays); the other keeps its new
+  values silently until PLAY/STOP switches to it or its cycle turn comes (a turn already asked for is asked again).
+  Applying keeps what plays. Native: the window test changes B while OFF plays (nothing built, still 130), steps to B
+  (144), then changes the heard B (the dots run); the compare test changes B while A plays (still 137), then PLAY/STOP
+  → B 144. Full native 4,546 passed. Device image `b3c417fc…` (`crash=0`, uploaded without a press — the Teensy Loader's
+  Auto had been off): on T8 S8 B scrolled to LAID BACK while A played — no build, no undo step.
 

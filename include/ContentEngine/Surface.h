@@ -496,7 +496,14 @@ class Surface {
     return f == kFieldGrooveA || f == kFieldAmountA ? Heard::A : Heard::B;
   }
   groove::Settings& columnSettings(Heard h) { return h == Heard::A ? grooveA_ : grooveSet_; }
+  /// A value changed (DEC-295 am. 4, owner: "you will hear intermediate grooves which defeat the a/b purpose"): only the
+  /// column heard is rebuilt (once settled); the other is kept silently until PLAY/STOP or its cycle turn plays it — a
+  /// turn already asked for is asked again with the new values.
   void grooveChanged(Heard col, uint32_t ms) {
+    if (col != grooveHeard()) {
+      if (cycling_) cycleAsked_ = 0xFFFFFFFFu;
+      return;
+    }
     groovePending_ = true;
     pendingCol_ = col;
     groovePendingMs_ = ms;
@@ -608,8 +615,7 @@ class Surface {
     if (groove_) {
       if (groovePending_ && ms - groovePendingMs_ >= kLengthSettleMs) {
         groovePending_ = false;
-        if (!cycling_) heard_ = pendingCol_;  // the one changed is heard
-        if (grooveHeard() == pendingCol_) playHeard(pendingCol_);  // cycling: in its turn now, else its next turn
+        if (grooveHeard() == pendingCol_) playHeard(pendingCol_);  // still the one heard (cycling: still its turn)
       }
       serviceCycle();
       return;  // DEC-292 (owner: "browsing for different grooves to try them out"): open until closed
@@ -775,7 +781,7 @@ class Surface {
   void closeGroove() {
     if (cycling_) stopCycle();  // DEC-294: what plays now stays; a turn built for later is dropped
     grooveAt_ = 0;
-    if (groovePending_) playHeard(heard_ = pendingCol_);  // a change still settling is kept, and heard
+    if (groovePending_ && grooveHeard() == pendingCol_) playHeard(pendingCol_);  // a change still settling is kept
     groovePending_ = false;
     groove_ = false;
     if (e_->grooveState() == Engine::Groove::State::Waiting) e_->grooveCancel();  // waiting for room: given up

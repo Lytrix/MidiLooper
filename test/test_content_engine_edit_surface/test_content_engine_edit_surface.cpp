@@ -2447,6 +2447,20 @@ void test_the_groove_window_sets_a_groove() {
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
   TEST_ASSERT_EQUAL_UINT8(3, gS.grooveField());  // B's amount selected
+  // DEC-295 am. 4: B is not heard — kept silently, nothing built, OFF still heard.
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveDots());
+  EXPECT_ALL(positions(true, 60, 768), 130);
+  tap(S::kPlayStopNote);  // OFF → A
+  ms(450);
+  tap(S::kPlayStopNote);  // A → B: heard
+  ms(450);
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
+  EXPECT_ALL(positions(true, 60, 768), 144);
+  // Now B is heard: a change to it is built once settled.
+  gS.input(0xBF, S::kGrooveCc + 3, 108, gUs / 1000);  // 85 %
   const uint8_t settling = gS.grooveProgress();
   TEST_ASSERT_TRUE(settling <= 25);  // DEC-292: the bar starts at once
   TEST_ASSERT_EQUAL_UINT8(1, gS.grooveDots());  // DEC-295 am. 3: the dots dim while it settles …
@@ -2460,7 +2474,8 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_TRUE(bright);
   ms(S::kDotsDoneMs + 10);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveDots());
-  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat — the changed one heard
+  gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // back to 100 %
+  run(gUs + 4 * 768 * kTick);  // settles, builds, switches on a beat
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
@@ -2557,11 +2572,15 @@ void test_the_groove_window_compares_a_b_and_off() {
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
   gS.input(0xBF, S::kGrooveCc + 3, 0, gUs / 1000);    // the bank's report: not a move
-  gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23): B's amount 100 % → 144, heard
+  gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23): B's amount 100 % — kept, A still heard
+  run(gUs + 2 * 768 * kTick);
+  TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  EXPECT_ALL(positions(true, 60, 768), 137);
+  tap(S::kPlayStopNote);  // PLAY/STOP: A → B, 144
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
   EXPECT_ALL(positions(true, 60, 768), 144);
-  tap(S::kPlayStopNote);  // PLAY/STOP: B → OFF
+  tap(S::kPlayStopNote);  // B → OFF
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   EXPECT_ALL(positions(true, 60, 768), 130);
