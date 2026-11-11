@@ -1,3 +1,5 @@
+**2026-11-11 — MidiLooper Manual (documentation).** [Offline website and maintenance instructions](handbook/README.md). Includes step-by-step performance and library controls, controller programming, OLED images and a source-backed review of implementation gaps.
+
 **2026-11-10 — Fixed-memory engine: performance and step surface (DEC-273–278; owner-confirmed on the device).**
 On `feature/engine-sets-browser` (not merged). The screen opens on the saved selection and a queued slot's roll shows
 at once with its playhead parked; a global launch quantisation (`!ENGINE launch-q 16|8|4|bar`, EEPROM) and a slot's

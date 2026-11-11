@@ -4,6 +4,8 @@
 
 # Documentation index
 
+**For players:** the [MidiLooper Manual](handbook/README.md) covers setup, recording, overdubbing, switching slots, undo, note editing, saving sets and mapping a controller. It includes a device capture, firmware-rendered examples and source-backed implementation notes.
+
 The **story and layout** of the looper start at the **[root `README.md`](../README.md)** (elevator pitch → how to play → reference grid → technical links).
 
 **Firmware versions:** v1 = `main`, v2 = `midi-faders`, v3 = `dev` (default). See [**BRANCHING.md**](BRANCHING.md). Control-surface guides are **v3 only**.

@@ -1,0 +1,62 @@
+<h2 id="wire-a-controller">Connect a controller and a sound source</h2>
+<p>The looper records MIDI notes and other MIDI messages. The receiving instrument produces the sound. Connect the looper’s DIN MIDI OUT to a synthesizer’s MIDI IN, or route the Teensy’s USB MIDI output to a software instrument. Listen through the synthesizer’s audio output or your computer’s audio interface. For a first test, select track 1 and set the instrument to receive on MIDI channel 1.</p>
+<ul>
+  <li><strong>Computer or DAW.</strong> Connect the Teensy’s USB device port to your computer. In your DAW, choose the Teensy as the MIDI destination for keyboard notes, sequencer tracks or control-pad messages. To play a software instrument from the looper, select the Teensy as that instrument track’s MIDI input.</li>
+  <li><strong>Standalone controller.</strong> Plug a compatible USB MIDI controller into the Teensy’s USB host port. For a controller with 5-pin DIN connectors, connect its MIDI OUT to the looper’s MIDI IN. To receive LED or motorized-fader feedback over DIN, also route the looper’s MIDI OUT to the controller’s MIDI IN.</li>
+  <li><strong>MIDI channels and outputs.</strong> Send your keyboard or sequencer performance on channels 1–12. The looper reserves channels 13–16 for its control surface on every MIDI input. During playback, it transmits recorded MIDI messages through DIN OUT and the USB device port. The USB host port returns MIDI feedback to the controller. Track 1 transmits on channel 1, track 2 on channel 2, and so on through track 8.</li>
+</ul>
+
+<h2 id="program-first-pads">Program your first pads</h2>
+<ol>
+  <li>In your controller’s editor, create a preset. Set each pad to <strong>momentary</strong>, choose MIDI note messages and enter the note number directly. On <strong>channel 16</strong>, send Note On with velocity 100 when you press the pad and Note Off when you release it. Note On with velocity 0 also works as a release.</li>
+  <li>Assign <kbd>Record</kbd> to 36, <kbd>Transport</kbd> to 39 and <kbd>Next track</kbd> to 37. For direct selection, assign two more pads to 60 and 61 for tracks 1 and 2. Save the preset on the controller.</li>
+  <li>In performance mode with the track row set to select, tap the pad assigned to note 61. Track 2 should be highlighted on the OLED. Tap the pad assigned to note 60 to return to track 1.</li>
+  <li>Play a key on the keyboard with its transmit channel set to 1. You should hear the synthesizer play that note. Now select track 2 and set the synthesizer’s receive channel to 2. Play the same key again. The looper’s MIDI thru sends the note on the selected track’s output channel.</li>
+</ol>
+<p>The supplied DROID patch assigns performance buttons, switches fader banks and receives MIDI feedback. Tapping <kbd>PLAY/STOP</kbd> sends note 39 for global transport. Holding it sends note 43 for GROOVE. To move down in the saved-loop picker, assign a spare momentary pad to note 40 on channel 16. For another controller, save the assignments below as a preset or use a MIDI router to translate its messages. The looper uses fixed MIDI assignments and has no on-device MIDI Learn function. <a href="assets/midilooper_v1.ini" download>Download the DROID patch (.ini)</a>.</p>
+
+<h2 id="button-numbers">MIDI note assignments for buttons and pads</h2>
+<p>Send these Note On and Note Off messages <strong>from the controller to the looper on channel 16</strong>. The looper recognizes taps and holds. Double-tapping <kbd>Record</kbd> sends two press-and-release pairs for note 36.</p>
+<table>
+  <thead><tr><th scope="col">MIDI note</th><th scope="col">Control</th><th scope="col">Use in performance</th></tr></thead>
+  <tbody>
+    <tr><td>0–15</td><td>Steps 1–16</td><td>Restart at that sixteenth-note position in the current bar.</td></tr>
+    <tr><td>17–24</td><td>Bars 1–8</td><td>Restart at a bar in the current eight-bar page.</td></tr>
+    <tr><td>35</td><td><kbd>NOTELEN</kbd> / <kbd>ADD</kbd></td><td>Switch between the two remembered ranges. Double-tap for the full loop.</td></tr>
+    <tr><td>36</td><td><kbd>Record</kbd></td><td>Arm or finish a take, or overdub a playing loop. Double-tap to undo, triple-tap to redo.</td></tr>
+    <tr><td>37</td><td><kbd>Next track</kbd> / <kbd>TRK</kbd></td><td>Select the next track. Hold to open the sets browser when the SD card library is available.</td></tr>
+    <tr><td>38</td><td><kbd>Edit</kbd></td><td>Tap to switch the track row between select and mute. Hold for 0.6 seconds and release before 1.5 seconds to enter or cycle editors. Hold for 1.5 seconds to leave editing.</td></tr>
+    <tr><td>39</td><td><kbd>Global transport</kbd></td><td>Start or stop the transport when using the internal clock. This is the DROID's Play/Stop tap.</td></tr>
+    <tr><td>40</td><td><kbd>Track play/stop</kbd></td><td>Play or stop the selected track. In the saved-loop picker this button moves the cursor down.</td></tr>
+    <tr><td>43</td><td><kbd>Groove</kbd></td><td>Dedicated trigger used by the DROID patch's long Play/Stop press. Opens GROOVE on a loop with content or closes the window.</td></tr>
+    <tr><td>50–57</td><td>Slots 1–8</td><td>Choose a variation on the selected track or arm an empty slot.</td></tr>
+    <tr><td>60–67</td><td>Tracks 1–8</td><td>Select a track, or toggle its mute when the track row is in mute mode.</td></tr>
+  </tbody>
+</table>
+
+<h2 id="fader-banks">Fader banks</h2>
+<p>Each fader sends a MIDI message <strong>from the controller to the looper</strong>. For a Control Change (CC) assignment, choose the CC number shown and set its value range to 0–127. For Pitch Bend, use the full 14-bit range. Depending on the controller editor, the range reads 0–16383 with centre 8192, or −8192 to +8191 with centre 0.</p>
+<table>
+  <thead><tr><th scope="col">Control</th><th scope="col">NOTE_EDIT</th><th scope="col">LOOP_EDIT</th><th scope="col">GROOVE</th></tr></thead>
+  <tbody>
+    <tr><th scope="row">F1</th><td>Pitch Bend, ch 16. Select a note or empty sixteenth-note step.</td><td>Pitch Bend, ch 16. Move the loop start.</td><td>CC 20, ch 16. Groove A template.</td></tr>
+    <tr><th scope="row">F2</th><td>Pitch Bend, ch 14. Adjust the note’s start or end in coarse steps.</td><td>CC 101, ch 16. Set loop length. Pitch Bend on ch 14 also works.</td><td>CC 21, ch 16. Groove A amount.</td></tr>
+    <tr><th scope="row">F3</th><td>CC 2, ch 15. Fine adjustment of the note's start or end.</td><td>CC 100, ch 16. Fine tempo in 0.1 BPM steps around centre.</td><td>CC 22, ch 16. Groove B template.</td></tr>
+    <tr><th scope="row">F4</th><td>CC 3, ch 15. Pitch, or velocity while holding <kbd>NOTELEN</kbd>.</td><td>Pitch Bend, ch 15. Set tempo from 20 to 300 BPM in 1 BPM steps.</td><td>CC 23, ch 16. Groove B amount.</td></tr>
+  </tbody>
+</table>
+<p>The looper sends <strong>Program Change on channel 16</strong> to select a fader bank on the controller. The MIDI program numbers are 0 for the default/loop bank, 1 for note editing and 2 for groove. If your controller requires manual bank selection, recall the matching preset when you switch modes. In GROOVE, the first CC value from each fader establishes its starting position. The next movement adjusts the selected groove parameter. When following external MIDI Clock, adjust the tempo on the device sending the clock.</p>
+
+<h2 id="feedback">MIDI feedback for LEDs and motorized faders</h2>
+<p>Route MIDI from the looper back to the controller. Set its LEDs to respond to note messages on <strong>channel 15</strong>. Note On velocity sets the brightness and Note Off turns the LED off. Assign notes 0–15 to step content, 16–31 to playback position, 39 to transport, 40–47 to bars, 50–57 to slots and 60–67 to tracks. For the bar 1 pad, transmit note 17 on channel 16 when pressed and configure its LED to respond to note 40 on channel 15.</p>
+<p>For its motorized faders, DROID receives Pitch Bend or CC for position, plus separate note messages to trigger motor movement. A pad controller can use the LED assignments independently. In NOTE_EDIT, DROID uses notes 1 and 2 on channel 15 for both motor triggers and step LEDs. If you build a custom preset, check which controls will respond to these messages. <a href="REPO/include/ContentEngine/EditSurface.h#L58">Note-edit motor feedback</a>.</p>
+
+<h2 id="troubleshoot">When a control does something unexpected</h2>
+<ul>
+  <li><strong>A control pad plays a synth note.</strong> Check its transmit channel in a MIDI monitor. Set control pads to channel 16 and your keyboard’s performance zone to one of channels 1–12.</li>
+  <li><strong>One tap mutes a track.</strong> Tap <kbd>Edit</kbd> once to switch the track row back to selection. Try pad 61 again.</li>
+  <li><strong>A tap behaves like a hold or fires only every other time.</strong> Check for one Note On at press and one Note Off at release. Turn off latch/toggle mode and controller-generated repeats.</li>
+  <li><strong>The OLED responds, but there is no sound.</strong> Match the synth’s MIDI receive channel to the selected track. Verify that Note On messages arrive at the synth’s MIDI IN or at your DAW’s instrument track. Then check that the instrument’s audio output reaches your headphones or monitors.</li>
+  <li><strong>The bars light in the wrong places.</strong> Configure independent send and receive notes for the bar pads. Their input and feedback ranges differ.</li>
+</ul>
+<p><a href="REPO/include/ContentEngine/Surface.h#L240">Engine button and fader definitions</a> · <a href="REPO/include/ContentEngine/Surface.h#L1800">LED assignments</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L233">Input routing</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L177">Playback outputs</a>.</p>

@@ -1,0 +1,36 @@
+<h2 id="tracks-and-slots">Choose where the next part will play</h2>
+<p>Each of the eight tracks has eight loop slots and plays one slot at a time. Put a verse bass line in slot 1 and a chorus bass line in slot 2 of the same track to switch between them. Put the chords on another track to hear the chords and bass together.</p>
+<ol>
+  <li>Tap the bass track’s button in track select mode, or tap <kbd>TRK</kbd> to move to the next track. Check the <strong>TRACK</strong> number on the OLED.</li>
+  <li>While the verse plays, tap the chorus slot. Its button flashes and its notes appear on the piano roll. The countdown shows how much of the verse remains.</li>
+  <li>The chorus begins when the verse loop ends. To bring the chorus in sooner, double-tap its slot button. It starts on the next division of the launch grid. The chords on the other track carry on.</li>
+</ol>
+<figure class="screen"><img src="assets/engine-playing.png" width="1024" height="256" loading="lazy" alt="Playing screen with track 1 and slot 1 selected, a vertical playhead in a two-bar piano roll and a play triangle below."><figcaption><strong>Firmware-rendered example.</strong> The play triangle shows that this sample two-bar part is running. Check TRACK and SLOT here before choosing another part.</figcaption></figure>
+<p>With the global transport stopped, tap a slot containing a loop to select it for the next start. With the clock running and that track stopped, the same tap starts its loop on the launch grid. Tapping the currently playing slot mutes or unmutes its track if no other slot is waiting to play. Tapping an empty slot arms it for recording.</p>
+
+<h2 id="launch-grid">Set the launch grid</h2>
+<p>The launch grid sets when a queued loop can start. By default, a double-tapped slot starts on the next sixteenth note. To choose a grid for all tracks, send one of these commands over USB serial.</p>
+<ul>
+  <li><code>!ENGINE launch-q 16</code> selects sixteenth notes.</li>
+  <li><code>!ENGINE launch-q 8</code> selects eighth notes.</li>
+  <li><code>!ENGINE launch-q 4</code> selects quarter notes.</li>
+  <li><code>!ENGINE launch-q bar</code> selects the downbeat of each bar.</li>
+</ul>
+<p>The looper remembers the setting after power-off. A single tap from a playing loop still waits for loop end.</p>
+<p>To jump within a playing loop, tap one of the 16 step buttons for a sixteenth-note position in the current bar. The eight bar buttons jump to bars in the current group of eight. The jump takes effect on the next grid division. If you shortened the loop, expand its range before jumping to a recorded bar outside it.</p>
+
+<h2 id="mute-solo-stop">Mute, solo or stop</h2>
+<ul>
+  <li><strong>Mute.</strong> Double-tap a track button to mute or unmute it. To mute several parts, tap <kbd>EDIT</kbd> once. The eight track buttons now mute and unmute with one tap each. A bright track LED means it contains a loop and is unmuted, a dim LED means it contains a loop and is muted, and a dark LED means it is empty. Tap <kbd>EDIT</kbd> again to select tracks.</li>
+  <li><strong>Solo.</strong> Hold a track button for about 0.6 seconds and release. Hold it again to cancel its solo. More than one track can be soloed.</li>
+  <li><strong>Stop one track.</strong> Tap the track play/stop control (MIDI note number 40 on channel 16). Tap again to start its selected loop on the launch grid.</li>
+  <li><strong>Stop all tracks.</strong> Tap global transport (MIDI note number 39 on channel 16). With internal clock, the next start plays the selected loop on each unmuted track and starts an armed take.</li>
+</ul>
+<p>When an external sequencer supplies MIDI Clock, global transport stops the looper’s tracks while the sequencer keeps running. Tap it again to rejoin on the next downbeat. If the external transport has stopped, starting the looper locally uses the next incoming clock pulse as the downbeat.</p>
+
+<h2 id="copy-a-variation">Make a variation and keep the original</h2>
+<ol>
+  <li>Hold the slot button for the loop you want to copy for 0.6 seconds. Its LED pulses and the <strong>COPY</strong> window opens.</li>
+  <li>Release the button. Choose another track if needed, then tap the slot where the copy should go. Choose an empty slot for a new variation. If the slot already holds a loop, the copy replaces it. Its LED flashes three times.</li>
+  <li>Edit or overdub the copied loop to make a variation. To undo the paste, double-tap <kbd>REC</kbd> on the slot you copied to. To cancel before pasting, tap the original slot once or wait five seconds.</li>
+</ol>

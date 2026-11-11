@@ -1,3 +1,5 @@
+**2026-11-11 — illustrated player’s manual.** The [offline website](../handbook/dist/index.html) documents the engine at `d61d8d62`. It includes the controller map, record/edit/library walkthroughs, one read-only OLED capture and nine software-rendered examples. Desktop search, mobile navigation, internal links and source excerpts were checked.
+
 **2026-11-11 — DEC-254 merged into `feature/engine-sets-browser`; E9.8b-3b closed.** `feature/engine-per-slot-history`
 (E4.6b–e, the store rename, the LED-stage fix, `!ENGINE end` as REC, `ENGINE_TIMING.md`) merged (`f2c3d9d5`; the code
 identical to the tested branch: native 4,564, device `f90715c7…`). The design notes found uncommitted in the main checkout

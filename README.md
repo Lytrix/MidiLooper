@@ -2,6 +2,8 @@
 
 # Midi Looper Droid
 
+[Illustrated player’s manual](docs/handbook/README.md) · [Open the offline website](docs/handbook/dist/index.html)
+
 ![Teensy MIDI looper with DROID controls](Images/midilooper_droid.jpg)
 
 A hands-on, eight-track MIDI looper for Teensy 4.1, with eight loop slots per track, a 192 PPQN clock, a piano roll on a 256×64 OLED, and hands-on MIDI control. Record, overdub, switch loops, edit notes and reshape loop boundaries while playing. The DROID button grid and four motorized faders shown above are one implementation of the MIDI controller interface.
