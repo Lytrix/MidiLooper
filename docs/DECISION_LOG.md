@@ -16891,3 +16891,63 @@ comment-only and keeps the image byte-identical.
 - `LibraryLoader` (sets browser slice 2a, DEC-259; get a loop DEC-270 with the get-a-loop plan § 6.2 fix 1: a read must
   not take what live takes rely on; staging DEC-261). `LibraryWriter`, `SetLibraryFormat`: sets browser slice 1c
   (DEC-258), the trash DEC-268, the working set DEC-269.
+
+### Engine root
+
+- `EngineRoot` (fixed-memory-engine E9.2, plan § 3 and § 4; DEC-183 regions not zeroed; init in the E5.3 order;
+  windows plan § 9.1, checkpoints plan § 7.2, g measured in E5.8, B_max plan § 7.4; the late join an owner ruling of
+  2026-11-05; the display and NOTE_EDIT jobs E9.5 / E9.6; the worker scratch and persistence jobs E9.7, owner
+  2026-11-05; the preview roll the get-a-loop plan § 6.2 fix 2; the settings word E9.8b-3c; approval "once,
+  remembered by the folder" owner 2026-11-05).
+- `EngineCore` (E1, plan revision 3 § 4 / § 5; the composer budget E3.3, the dirty-pitch mask owner 2026-11-11;
+  checkpoint retention owner decision 2026-11-05, E6.2d). `EngineConfig` (plan revision 3 § 2 and § 4, § 5.1 / § 5.2;
+  the preview partition owner 2026-11-09, 8,192 rows, plan § 6.2 fix 1; the history depth "limit 99, shared, oldest
+  evicted" owner 2026-11-05, later per slot with cold steps by DEC-254; continuous limits owner 2026-11-05; OUT-POLY a
+  ratified end-state constant; the window buffer kept pending E3 qualification). `WorkerScheduler` (E5.2, plan
+  revision 3 § 7.5; classes an owner ruling of 2026-11-05).
+- **The budget ledger** as the code carried it until this cleanup (each budget line names what grew and why):
+
+```text
+// Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
+// windows budgeted, checkpoint and tile sweeps independent). PSRAM: pool with free stack and owner tags 4,193,216;
+// windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
+// tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
+// (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
+// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
+// reader and slot-file load job; DEC-261: its staged states; DEC-269: + 16 B the working set in the writer's two index
+// headers; DEC-270: + 8 B the got state and its slots; + 3,752 B (host) the get's state reader: one sector, the
+// run directory's kinds and row counts, the current state's run list — plan §6.2 fix 1; + 206,160 B (host) the
+// get-a-loop preview partition, owner 2026-11-09: 8,192 rows — 199 pool pages with their tags, and the per-run tables
+// of 63 preview descriptors; + 4,112 B the preview roll's tile slot, its 64 density tiles — plan §6.2 fix 2). The
+// line is the host's 64-bit layout; the Teensy's is a few hundred bytes below it. RAM2: the
+// engine's tables,
+// writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
+// a budget change and must update the plan.
+constexpr size_t kPsramBudget = 7593224u;  // owner 2026-11-11: + 8 B the groove request.s columns; owner 2026-11-11: + 304 B the composers. dirty-pitch masks (19 x 16 B); owner 2026-11-11: + 152 B the cold starts. stepped bind (checkpoint position); DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
+                                           // aside until the target); DEC-254 (E4.6c): + 347,648 B — the cold tier (64 x 99 cold state
+                                           // descriptors, 8,192 run-reference chunks, an 8,192-record directory);
+                                           // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),
+                                           // each run's record sector / serial / save state, the save FIFO state;
+                                           // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
+                                           // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
+                                           // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
+                                           // run lists and source list; DEC-290: + 224 B the request's template table and label
+constexpr size_t kRam2Budget = 160232u;  // measured (owner 2026-11-11: + 136 B the jobs. stepped-bind flags and the composers. bind state; DEC-254 E4.6e: + 8 B SlotUndoHistory's pressure counter; E4.6c: + 16 B SlotUndoHistory's cold sink and counters; DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
+                                          // + 1,248 B late-join state, + 248 B gesture state
+
+static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 456u,
+              "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
+              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
+              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding), plus the engine settings (E9.8b-3c: + 8 B with padding) (ARM)");
+```
+
+### Display
+
+- `DisplayTiles` (E7, E7.2 sweeps as jobs, plan revision 3 § 9.3, invariant I6; empty slots E9.6; pickups E9.8j;
+  the stepped bind owner 2026-11-11, DEC-297): the overlay draws at any scale because, as in the legacy firmware, a
+  first take's view grows with the current tick (owner 2026-11-06). The preview request pins: get-a-loop plan § 6.2
+  fix 2.
+- `PianoRollRender` (E9.6, plan § 9.3 "DisplayManager: banded draw / DMA"): the geometry is the legacy
+  `DisplayManager`'s; the first-pixel brightness owner 2026-11-08 (notes touching on a pitch read as one).
+- `StatusView` (E9.8k; owner 2026-11-06, mock-up "B2 round 6"): the save dots follow the legacy
+  `resolveDeferredSaveDisplayStatus`, the countdown the legacy `ticksToLaunchCountdown…`, the tempo the legacy `120.0`.

@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The content engine's storage core at production capacity (fixed-memory-engine milestone E1): page pool, global run
+// The content engine's storage core at production capacity: page pool, global run
 // and manifest tables and the row-reservation ledger, plus the conservation check and the region census.
 //
 // Placement: the pool is one fixed object for EXTMEM and the tables are fixed objects for RAM2 (DMAMEM); neither region
@@ -54,7 +54,7 @@ bool checkConservation(const Pool& pool, const Runs& runs, const Manifests& mani
   return pool.freeCount() + held + other == Pool::kPageCount;
 }
 
-/// Production capacities (plan revision 3 § 4, § 5).
+/// Production capacities.
 using ProductionPool = PagePool<Config::kPageCount, Config::kRowsPerPage>;
 using ProductionRuns = RunTable<Config::kRunCount + Config::kPreviewRuns, ProductionPool, Config::kInlinePagesPerRun, 8,
                                 Config::kPreviewRuns>;
@@ -75,7 +75,7 @@ constexpr RegionBytes productionRegions() {
           ProductionManifests::tableBytes(), sizeof(ProductionReservations)};
 }
 
-// Budget pins (plan revision 3 § 4.1 / § 4.2). A change here is a budget change and must update the plan clause.
+// Budget pins. A change here is a budget change (the commit names what grew and by how much).
 static_assert(ProductionPool::storageBytes() == 4380672u,
               "page pool data is 4,278 x 1 KiB (one writer, two edit runs, the 199-page preview partition)");
 static_assert(ProductionPool::metadataBytes() <= 17114u, "free stack + owner tags");
@@ -84,25 +84,25 @@ static_assert(sizeof(ProductionManifests::Manifest) <= 148u, "RAM2 budget assume
 static_assert(ProductionRuns::kMaxPagesPerRun >= Config::kContentQuotaPages,
               "one run may hold the whole content quota through its directory pages");
 
-/// Composition (E3.3): 18 compose cursors (16 playback + 2 display) at <= 12 KiB each (221,184 B budget); the edit-hide
+/// Composition: 18 compose cursors (16 playback + 2 display) at <= 12 KiB each (221,184 B budget); the edit-hide
 /// index is shared per manifest identity, one store of 18 slots (each cursor pins at most one), not per cursor.
 using ProductionComposer = SpanWindowComposer<ProductionPool, ProductionRuns>;
 using ProductionEditIndex = EditIndexStore<ProductionPool, ProductionRuns>;
 constexpr uint8_t kComposeCursors = 18;
-// 12 KiB + 16 B (owner 2026-11-11): the mask of pitches whose occluder row was raised (`SpanWindowComposer::dirty_`), so a bind
+// 12 KiB + 16 B: the mask of pitches whose occluder row was raised (`SpanWindowComposer::dirty_`), so a bind
 // clears and a checkpoint scans only those rows.
 static_assert(sizeof(ProductionComposer) <= 12304u, "a compose cursor stays within its 12 KiB + 16 B budget");
 static_assert(kComposeCursors * sizeof(ProductionComposer) <= 221472u, "compose cursors fit the 221,472 B budget");
 static_assert(ProductionEditIndex::kSlots >= kComposeCursors, "every cursor can pin a distinct identity: Busy is unreachable");
 static_assert(ProductionEditIndex::kPages == Config::kIndexReservePages,
-              "the shared index is exactly the pool's edit-index partition (E5.3)");
+              "the shared index is exactly the pool's edit-index partition");
 static_assert(sizeof(ProductionEditIndex) <= 4096u, "the store object holds headers and page lists only");
-/// Init order (E5.3): pool, then the edit-index store (takes its partition, tagged kOwnerIndex), then the reservation
+/// Init order: pool, then the edit-index store (takes its partition, tagged kOwnerIndex), then the reservation
 /// ledger with only the compaction partition as fixed reserve: the index pages are already off the free stack.
 constexpr uint32_t kLedgerFixedReservePages = Config::kCompactionReservePages;
 
-/// Restart checkpoints (E5): one table per slot, 8 checkpoints at 8-bar spacing (plan § 4.1: 262,144 B).
-// Restart checkpoints (owner decision 2026-11-05, E6.2d): per slot the current source's set and one historical set
+/// Restart checkpoints: one table per slot, 8 checkpoints at 8-bar spacing (262,144 B).
+// Restart checkpoints: per slot the current source's set and one historical set
 // (least recently used), 8 checkpoints each; about 416 KB intended.
 using ProductionCheckpoints = CheckpointTable<ProductionComposer::Checkpoint, Config::kSlotCount, 8, 2>;
 static_assert(sizeof(ProductionCheckpoints) <= 425984u, "checkpoint sets fit the owner's ~416 KB PSRAM budget");

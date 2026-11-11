@@ -1,22 +1,22 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The content engine at production capacity, as one root (fixed-memory-engine E9.2, plan § 3 and § 4).
+// The content engine at production capacity, as one root.
 //
 // * Placement: two region structs the integration defines once — `EnginePsram` in EXTMEM (page bodies, windows,
 //   compose cursors, checkpoint sets, tiles, the E: log: bodies written before read, or large) and `EngineRam2` in
-//   DMAMEM (tables, writer, tracks, scheduler). Neither region is zeroed at reset (DEC-183): `EngineRoot::init` writes
-//   every field the engine reads before writing, in the E5.3 order, and nothing relies on zero.
+//   DMAMEM (tables, writer, tracks, scheduler). Neither region is zeroed at reset: `EngineRoot::init` writes
+//   every field the engine reads before writing, pool first, and nothing relies on zero.
 // * `census(out)` reports every region member's size (`#CAP,MEM_REGION` rows on the device).
 // * Main loop: `submitJobs` once per pass (playback windows and transitions per track on its own timeline, reclaim,
 //   one checkpoint sweep), then `runGrain` while the pass has time. The Clock calls `transport().tick` per track.
 // * Checkpoint sweeps (background, one at a time): each playing track's slot current, once, when the table holds no
-//   set for it and every run it lists has sealed — never a provisional source (E9.1b) or a state still waiting for
-//   its completion (E9.1), whose rows may still grow under their identity.
-// * Clock path (E9.3, plan § 9.2): `clockTick` plays every track and routes its events into the output hub on the
+//   set for it and every run it lists has sealed — never a provisional source or a state still waiting for
+//   its completion, whose rows may still grow under their identity.
+// * Clock path: `clockTick` plays every track and routes its events into the output hub on the
 //   track's ports (`ClockOutput`); gestures that end notes (`stop`, `undo`, `redo`, a live NoteOn) route theirs too.
 //   The caller puts each port's `transmit` result on the wire: port 0 DIN, 1 USB device, 2 USB host.
-// Display tiles and the edit writer are placed and initialised here; their jobs are wired by E9.5 and E9.6.
+// Display tiles and the edit writer are placed and initialised here, with their jobs.
 // No allocation.
 
 #pragma once
@@ -48,9 +48,9 @@
 namespace ContentEngine {
 
 constexpr uint8_t kTrackCount = 8;
-constexpr uint32_t kWindowTicks = 1536;              // 2 bars of 4/4 at 192 PPQN (plan § 9.1)
-constexpr uint32_t kCheckpointSpacing = 4 * kWindowTicks;  // 8 bars (plan § 7.2)
-constexpr uint32_t kGrainUs = 810;                   // measured worst grain g (E5.8)
+constexpr uint32_t kWindowTicks = 1536;              // 2 bars of 4/4 at 192 PPQN
+constexpr uint32_t kCheckpointSpacing = 4 * kWindowTicks;  // 8 bars
+constexpr uint32_t kGrainUs = 810;                   // measured worst grain g
 
 using ProductionWindow = SpanWindow<Config::kWindowEntries>;
 using ProductionHistory = SlotUndoHistory<ProductionManifests, ProductionRuns>;
@@ -66,14 +66,14 @@ using ProductionSweep =
     CheckpointSweep<ProductionComposer, ProductionCheckpoints, ProductionWindow, ProductionManifests, ProductionRuns>;
 using ProductionTransport = SlotTransport<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory,
                                           ProductionTrack, kTrackCount>;
-// Plan §6.2 fix 2: one tile slot past the 64 working-set slots is the get-a-loop preview's (`kPreviewSlot`).
+// One tile slot past the 64 working-set slots is the get-a-loop preview's (`kPreviewSlot`).
 using ProductionTiles = TileStore<Config::kSlotCount + 1>;
 using ProductionOverlay = LiveOverlay<>;
 using ProductionEditWriter = NoteEditWriter<ProductionPool, ProductionRuns, ProductionManifests, ProductionHistory>;
 using ProductionHub = MidiOutputHub<>;
 using ProductionDisplayComposer = SpanWindowComposer<ProductionPool, ProductionRuns, 64, 48>;  // every effective note (piano roll)
-// DEC-287: the groove builder — the extraction composer (DEC-286: 128 voices, 128 open), its window, its row buffer.
-using ProductionExtraction = ProductionComposer;  // one code copy: `extractAll` sets its limits (DEC-287)
+// The groove builder — the extraction composer (128 voices, 128 open), its window, its row buffer.
+using ProductionExtraction = ProductionComposer;  // one code copy: `extractAll` sets its limits
 constexpr uint16_t kGrooveWindowEntries = 1024;
 constexpr uint32_t kGrooveRows = 8192;
 using ProductionGroove = GrooveBuilder<ProductionPool, ProductionRuns, ProductionReservations, ProductionEditIndex,
@@ -96,9 +96,9 @@ constexpr uint8_t kPortDin = 0, kPortUsbDevice = 1, kPortUsbHost = 2;
 using ProductionControl =
     TrackControl<ProductionTransport, ProductionOutput, ProductionEmit, kTrackCount, Config::kMaxSoundingPerTrack>;
 constexpr uint32_t kTicksPerBar = 768;  // 4/4 at 192 PPQN (the runtime value comes from the time signature)
-constexpr uint32_t kTicksPerBeat = 192;  // a quarter at 192 PPQN (DEC-292: a groove is heard from the next one)
+constexpr uint32_t kTicksPerBeat = 192;  // a quarter at 192 PPQN (a groove is heard from the next one)
 constexpr uint32_t kLaunchGridTicks = 48;  // a 16th
-constexpr uint32_t kLateJoinTicks = 24;     // owner ruling 2026-11-05: a late join at most a 32nd ...
+constexpr uint32_t kLateJoinTicks = 24;     // a late join at most a 32nd ...
 constexpr uint32_t kLateJoinUs = 25000;     // ... and at most 25 ms after the boundary
 
 /// EXTMEM.
@@ -112,23 +112,23 @@ struct EnginePsram {
   ProductionTiles tiles;
   ProductionOverlay overlay;
   EditChange editLog[Config::kEditLogEntries];
-  // E9.5: the display cursor and scratch window (the 18th cursor and the 2nd sweep window: the NOTE_EDIT gather now,
-  // shared with the tile sweep in E9.6), and the gathered selection (from the worker-scratch line).
+  // The display cursor and scratch window (the 18th cursor and the 2nd sweep window: the NOTE_EDIT gather,
+  // shared with the tile sweep), and the gathered selection (from the worker-scratch line).
   ProductionDisplayComposer displayComposer;
   ProductionWindow displayWindow;
   EditNote editGather[Config::kEditSelection];
   uint16_t editGatherRuns[Config::kEditSelection];
-  // E9.7: the worker scratch line — save, load and V1-import chunks (its 1 KiB merge heap is the V1 importer's held-note
+  // The worker scratch line — save, load and V1-import chunks (its 1 KiB merge heap is the V1 importer's held-note
   // heap, inside `persistence`).
   uint8_t persistScratch[3][ProductionPersistence::kChunk];
-  // E9.7 (owner 2026-11-05): the save / load / import jobs' state, touched only in persistence grains.
+  // The save / load / import jobs' state, touched only in persistence grains.
   ProductionPersistence persistence;
-  // DEC-258: the milestone library's writer (its whole-set snapshot, slot-file job and sector) and its save chunk.
+  // The milestone library's writer (its whole-set snapshot, slot-file job and sector) and its save chunk.
   ProductionLibrary libraryWriter;
   uint8_t libraryScratch[ProductionPersistence::kSector];  // the writer's, then the load's (one runs at a time)
-  // DEC-259: loading a milestone and returning (its blob reader and slot-file load job).
+  // Loading a milestone and returning (its blob reader and slot-file load job).
   ProductionSetLoad setLoad;
-  // DEC-287: the groove builder (its extraction composer, window and row buffer).
+  // The groove builder (its extraction composer, window and row buffer).
   ProductionExtraction grooveComposer;
   SpanWindow<kGrooveWindowEntries> grooveWindow;
   PassEvent grooveRows[kGrooveRows];
@@ -160,43 +160,26 @@ struct EngineRam2 {
   ProductionDisplayJobs displayJobs;
 };
 
-// Budgets (plan § 4.1 / § 4.2, restated from the E9.2 census on the Teensy; owner 2026-11-05: two sweep scratch
-// windows budgeted, checkpoint and tile sweeps independent). PSRAM: pool with free stack and owner tags 4,193,216;
-// windows with headers 1,183,392; 18 compose cursors 221,184; 2 sweep scratch windows 98,616; checkpoint sets 417,284;
-// tiles with headers 602,416; overlay 9,744; worker scratch 50,176 (E9.7); E: log 20,480; NOTE_EDIT selection 9,216
-// (owner 2026-11-05: its own line, one selection owner); persistence job state 7,224 (owner 2026-11-05); the milestone
-// library writer 4,200 with its 512 B save chunk (DEC-258: its whole-set snapshot and slot-file job); the set load 4,560 (DEC-259: its blob
-// reader and slot-file load job; DEC-261: its staged states; DEC-269: + 16 B the working set in the writer's two index
-// headers; DEC-270: + 8 B the got state and its slots; + 3,752 B (host) the get's state reader: one sector, the
-// run directory's kinds and row counts, the current state's run list — plan §6.2 fix 1; + 206,160 B (host) the
-// get-a-loop preview partition, owner 2026-11-09: 8,192 rows — 199 pool pages with their tags, and the per-run tables
-// of 63 preview descriptors; + 4,112 B the preview roll's tile slot, its 64 density tiles — plan §6.2 fix 2). The
-// line is the host's 64-bit layout; the Teensy's is a few hundred bytes below it. RAM2: the
-// engine's tables,
-// writer, edit writer, tracks, scheduler and jobs, transport and output hub as measured on the Teensy. A change here is
-// a budget change and must update the plan.
-constexpr size_t kPsramBudget = 7593224u;  // owner 2026-11-11: + 8 B the groove request.s columns; owner 2026-11-11: + 304 B the composers. dirty-pitch masks (19 x 16 B); owner 2026-11-11: + 152 B the cold starts. stepped bind (checkpoint position); DEC-254 (E4.6d): + 448 B the fetch's state (its runs, the states kept
-                                           // aside until the target); DEC-254 (E4.6c): + 347,648 B — the cold tier (64 x 99 cold state
-                                           // descriptors, 8,192 run-reference chunks, an 8,192-record directory);
-                                           // DEC-254 (E4.6b): + 45,760 B — the run-once store's cluster map (32 KiB),
-                                           // each run's record sector / serial / save state, the save FIFO state;
-                                           // DEC-287: + 161,784 B — the groove builder (its extraction cursor 12,280 B, a
-                                           // 1,024-entry window, 8,192 rows = 131,072 B, its lent 128-instance open list) and each
-                                           // compose cursor's lent-list pointer (DEC-286); DEC-288: + 832 B the background job's
-                                           // run lists and source list; DEC-290: + 224 B the request's template table and label
-constexpr size_t kRam2Budget = 160232u;  // measured (owner 2026-11-11: + 136 B the jobs. stepped-bind flags and the composers. bind state; DEC-254 E4.6e: + 8 B SlotUndoHistory's pressure counter; E4.6c: + 16 B SlotUndoHistory's cold sink and counters; DEC-275, a step or bar restart: + 96 B each track's launch start and join, the transport's launch positions, the queued seek's position; plan §6.2 fix 2: + 72 B the display jobs' preview slot and request pins; DEC-271: + 8 B the audition's slot, track, preview state; + 32 B each track's beat-line join grid; get-a-loop preview, plan §6.2 fix 1: + 5,440 B its 63 run descriptors and their ledger and free-list entries; sets browser slice 4: + 8 B the save suggestion's evidence counters; DEC-261: + 16 B a set switch's staged launches; DEC-257: + 4,104 B the loop-length fit builder's scratch, 256 lookups and 128 open notes; NOTE_EDIT edit joins: + 32 B counters; E9.8k: + 64 B track activity levels for the screen; E9.8j: + 520 B pre-roll notes, pickups and tick-0 notes shown; E9.8i: + 104 B trimmed Record Stop state; E4.7: + 136 B history pressure counters; E9.7b: + 8 B track output channels; E9.6: + 2,376 B display jobs; E9.5: + 1,024 B NOTE_EDIT; E9.4): + 64 B job boundaries, + 1,160 B output and thru keys,
-                                          // + 1,248 B late-join state, + 248 B gesture state
-static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit plan § 4.1");
+// Budgets: the engine's PSRAM and RAM2 regions, as measured. PSRAM is the host's 64-bit layout (the Teensy's is a
+// few hundred bytes below it): the page pool with its free stack and owner tags, the span windows, 18 compose cursors,
+// two sweep scratch windows (checkpoint and tile sweeps run independently), checkpoint sets, tiles, the overlay,
+// worker scratch, the E: log, the NOTE_EDIT selection, persistence (with the cold tier and the store's cluster map),
+// the library writer and loader, the get-a-loop preview partition and the groove builder. RAM2 is the Teensy's: the
+// engine's tables, writer, edit writer, tracks, scheduler and jobs, transport and output hub.
+// A change here is a budget change: the commit names what grew and by how much (the ledger up to 2026-11-12 is in
+// DEC-298 § Engine root).
+constexpr size_t kPsramBudget = 7593224u;
+constexpr size_t kRam2Budget = 160232u;
+static_assert(sizeof(EnginePsram) <= kPsramBudget, "the engine's PSRAM regions fit their budget");
 #if defined(__arm__)
 static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u + 456u,
-              "persistence state (7,776 B line: + 552 B its per-run tables over the 63 preview descriptors, plan §6.2 "
-              "fix 1) plus the V1 importer in the worker scratch's 1 KiB merge heap, plus the run-once store's cluster "
-              "map and per-run tables (DEC-254, E4.6b: + 45,752 B), plus the cold tier (E4.6c: + 347,648 B), plus the fetch (E4.6d: + 440 B), plus the store-rename count (+ 8 B with padding), plus the engine settings (E9.8b-3c: + 8 B with padding) (ARM)");
+              "persistence state plus the V1 importer's 1 KiB merge heap, the run-once store's cluster map and per-run "
+              "tables, the cold tier and the fetch (ARM)");
 #endif
 static_assert(sizeof(EnginePsram::editGather) + sizeof(EnginePsram::editGatherRuns) == 9216u,
-              "the NOTE_EDIT selection line (owner 2026-11-05): 512 notes x 16 B + their runs x 2 B");
+              "the NOTE_EDIT selection line: 512 notes x 16 B + their runs x 2 B");
 #if defined(__arm__)
-static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit plan § 4.2 (ARM layout)");
+static_assert(sizeof(EngineRam2) <= kRam2Budget, "the engine's RAM2 regions fit their budget (ARM layout)");
 #endif
 
 class EngineRoot {
@@ -213,7 +196,7 @@ class EngineRoot {
     uint32_t sweepsEnded;  // every sweep that ended, any status
   };
 
-  /// `blockUs`: B_max, the longest non-engine block of the main loop (plan § 7.4). False when a fixed partition does
+  /// `blockUs`: B_max, the longest non-engine block of the main loop. False when a fixed partition does
   /// not fit (the edit index's pages): a build error in practice.
   CE_COLD __attribute__((noinline)) bool init(EnginePsram& psram, EngineRam2& ram2, uint32_t blockUs) {  // boot only: in flash
     p_ = &psram;
@@ -224,7 +207,7 @@ class EngineRoot {
     if (!r_->index.init(p_->pool, r_->runs)) return false;  // the index partition leaves the free stack first
     r_->reservations.init(p_->pool, r_->runs, kLedgerFixedReservePages, Config::kPreviewPages);
     r_->history.init(r_->manifests, r_->runs);
-    pressureFloor_ = Config::kContentQuotaPages / 8;  // DEC-254 (E4.6e)
+    pressureFloor_ = Config::kContentQuotaPages / 8;
     pressureUs_ = 0;
     r_->ids.init(1);
     r_->writer.init(p_->pool, r_->runs, r_->reservations, r_->ids);
@@ -288,7 +271,7 @@ class EngineRoot {
     r_->jobs.service(now, nowUs, usPerTick);
     r_->reclaim.submitIfPending(r_->scheduler);
     if (!sweeping_) startSweep(nowUs);
-    // NOTE_EDIT (E9.5): the gather and the rebuild are transition-class (an edit is heard at once).
+    // NOTE_EDIT: the gather and the rebuild are transition-class (an edit is heard at once).
     uint8_t id;
     if (!gatherLive_ && r_->noteEdit.gatherPending() &&
         r_->scheduler.submit(JobSpec{JobClass::Transition, nowUs, kEditGrains, &gatherStep, this}, id))
@@ -299,16 +282,16 @@ class EngineRoot {
     serviceDisplay(clock);
     if (card_ != nullptr) {
       const uint8_t editing = r_->noteEdit.editing() ? r_->noteEdit.slot() : ProductionTransport::kNoSlot;
-      // While a milestone writes, no save starts (DEC-258: the slots' saves follow it; the card has one stream).
+      // While a milestone writes, no save starts (the slots' saves follow it; the card has one stream).
       if (!libraryWorking()) p_->persistence.service(nowUs, r_->transport.writingSlot(), editing);
       if (!persistLive_ && (p_->persistence.pending() || libraryWorking()) &&
           r_->scheduler.submit(JobSpec{JobClass::Persistence, nowUs, kPersistGrains, &persistStep, this}, id))
         persistLive_ = true;
       uint8_t fs;
       ManifestId floor;
-      if (p_->persistence.takeFetch(fs, floor))  // DEC-254 (E4.6d): a fetched undo, applied as an undo
+      if (p_->persistence.takeFetch(fs, floor))  // a fetched undo, applied as an undo
         r_->control.fetched(fs, floor, clock, nowUs, usPerTick);
-      // DEC-254 (E4.6e): the content pool short — the oldest card-held undo step leaves PSRAM (at most one each
+      // The content pool short — the oldest card-held undo step leaves PSRAM (at most one each
       // `kPressureUs`, so the reclaim of its pages is seen before the next).
       if (p_->persistence.storeReady() && !p_->persistence.booting() &&
           r_->reservations.contentFreePages() < pressureFloor_ && nowUs - pressureUs_ >= kPressureUs) {
@@ -322,13 +305,13 @@ class EngineRoot {
       r_->output.route(buf, r_->transport.follow(slot, clock, buf, kGestureEmits), nowUs, usPerTick);
     }
   }
-  /// The Clock tick `clock` at `nowUs`: the gestures due (E9.4), then every track plays; its events go to the hub on
+  /// The Clock tick `clock` at `nowUs`: the gestures due, then every track plays; its events go to the hub on
   /// its ports.
   void clockTick(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
-    // A live load at the switch point (DEC-260): every playing track stops before this tick plays.
+    // A live load at the switch point: every playing track stops before this tick plays.
     if (p_->setLoad.waiting() && r_->control.switchPoint(switchAt_, clock)) switchSet(clock, nowUs, usPerTick);
     r_->control.beforeTick(clock, nowUs, usPerTick);
-    // Bounded late join (owner ruling 2026-11-05): the earlier of 24 ticks and 25 ms at this tempo.
+    // Bounded late join: the earlier of 24 ticks and 25 ms at this tempo.
     const uint32_t lateTicks = usPerTick == 0 ? 0 : (kLateJoinUs / usPerTick < kLateJoinTicks ? kLateJoinUs / usPerTick : kLateJoinTicks);
     for (uint8_t t = 0; t < kTrackCount; ++t) r_->tracks[t].setLateJoinLimit(lateTicks);
     ProductionEmit buf[kTickEmits];
@@ -362,7 +345,7 @@ class EngineRoot {
     r_->output.route(buf, n, nowUs, usPerTick);
     return r;
   }
-  /// A live NoteOn on the writing track (the played note itself goes out through the input path, E9.4).
+  /// A live NoteOn on the writing track (the played note itself goes out through the input path).
   ProductionTransport::Result noteOn(uint32_t clock, uint8_t channel, uint8_t pitch, uint8_t velocity, uint32_t nowUs,
                                      uint32_t usPerTick) {
     ProductionEmit buf[Config::kMaxSoundingPerTrack];
@@ -372,22 +355,22 @@ class EngineRoot {
     return r;
   }
 
-  // ---- Persistence (E9.7) -------------------------------------------------------------------------------------------
+  // ---- Persistence -------------------------------------------------------------------------------------------
   /// The card. Probes the remembered approval (the engine folder); nothing is written until `approveSaving`.
   void attachCard(CardIo& card) {
     card_ = &card;
     p_->persistence.init(card, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
                          p_->persistScratch[0], p_->persistScratch[1], p_->persistScratch[2], v1Layout_);
     p_->persistence.probe();
-    r_->history.attachCold(&p_->persistence);  // DEC-254 (E4.6c): demoted states go to the cold tier
+    r_->history.attachCold(&p_->persistence);  // demoted states go to the cold tier
     p_->setLoad.bind(card, p_->libraryWriter, p_->pool, r_->runs, r_->manifests, r_->history, r_->reservations, r_->ids,
                      p_->libraryScratch, &clearSet, this);
   }
-  /// DEC-254 (E4.6e): below this many free content pages the oldest card-held undo step leaves PSRAM (tests set it).
+  /// Below this many free content pages the oldest card-held undo step leaves PSRAM (tests set it).
   void setPressureFloor(uint32_t pages) { pressureFloor_ = pages; }
   /// Tests: the `MidiEvent` layout V1 files were written with (the Teensy's by default).
   void setV1Layout(MidiEventLayout l) { v1Layout_ = l; }
-  /// The owner approved saving on the device (owner 2026-11-05: once, remembered by the folder).
+  /// The owner approved saving on the device (once, remembered by the folder).
   bool approveSaving() { return card_ != nullptr && p_->persistence.approve(); }
   /// Loads every slot that has an engine file (before playing; nothing is written).
   void startBootLoad() {
@@ -397,11 +380,12 @@ class EngineRoot {
   /// The surface's state (selected track and slots, `ProductionPersistence::kStateBytes`): saved like a slot.
   void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
     if (card_ != nullptr) p_->persistence.setSurfaceState(s, nowUs);
-  }  /// E9.8b-3c: the engine's settings saved with the surface state (the GROOVE cycle's bars).
+  }
+  /// The engine's settings saved with the surface state (the GROOVE cycle's bars).
   void setEngineSettings(uint8_t cycleBars, uint32_t nowUs) { p_->persistence.setSettings(cycleBars, nowUs); }
 
 
-  // ---- Milestone library (DEC-258) ---------------------------------------------------------------------------------
+  // ---- Milestone library ---------------------------------------------------------------------------------
   /// Opens the library file at `path` (`sectors` long) and reads its index; `create` creates and preallocates it when
   /// missing — the caller allows that only while stopped with saving approved (file-system work of seconds).
   bool openLibrary(const char* path, bool create, bool& created) {
@@ -415,14 +399,14 @@ class EngineRoot {
     return p_->libraryWriter.beginMilestone(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), m,
                                             p_->libraryScratch);
   }
-  /// Starts publishing a trash, restore or empty-trash record (DEC-268; `LibraryWriter::beginMark`). The working set is
+  /// Starts publishing a trash, restore or empty-trash record (`LibraryWriter::beginMark`). The working set is
   /// not touched.
   ProductionLibrary::Result markLibrary(uint8_t kind, uint16_t set, uint32_t target, uint32_t wallTime) {
     if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginMark(kind, set, target, wallTime);
   }
-  /// Starts naming `set` (base `base`) as the working set in the library's index header (DEC-269;
-  /// `LibraryWriter::beginWorking`): after a load or return, so the next boot starts in it.
+  /// Starts naming `set` (base `base`) as the working set in the library's index header
+  /// (`LibraryWriter::beginWorking`): after a load or return, so the next boot starts in it.
   ProductionLibrary::Result publishWorking(uint16_t set, uint32_t base) {
     if (card_ == nullptr || p_->persistence.booting() || p_->setLoad.busy()) return ProductionLibrary::Result::Busy;
     return p_->libraryWriter.beginWorking(set, base);
@@ -433,12 +417,12 @@ class EngineRoot {
     return p_->libraryWriter.beginCheckpoint(p_->pool, r_->runs, r_->manifests, r_->history, r_->ids.peek(), c,
                                              p_->libraryScratch);
   }
-  /// Get a loop (DEC-270; the caller checked `loadRefusal`): starts reading slot `from` of milestone `index` for slot
+  /// Get a loop (the caller checked `loadRefusal`): starts reading slot `from` of milestone `index` for slot
   /// `into` — nothing changes until `placeGot`.
   ProductionSetLoad::Result getLoop(uint16_t index, uint8_t from, uint8_t into, bool preview = false) {
     return p_->setLoad.beginGet(index, from, into, preview);
   }
-  /// Get a loop's audition (DEC-271): the preview state a get read (`getLoop(…, preview)`) auditioned on slot `into`
+  /// Get a loop's audition: the preview state a get read (`getLoop(…, preview)`) auditioned on slot `into`
   /// — heard from the next boundary when its track plays that slot, else a silent preview. Refused or nothing read:
   /// released, nothing changes.
   ProductionTransport::Result auditionGot(uint8_t into, uint32_t clock) {
@@ -449,14 +433,14 @@ class EngineRoot {
     return r;
   }
   ProductionTransport::Result auditionCancel(uint32_t clock) { return r_->transport.auditionCancel(clock); }
-  /// DEC-272 (the picker): `m`, a preview state the owner holds (one reference, now the audition's), auditioned on slot
-  /// `into`; refused: released.
+  /// The get-a-loop picker: `m`, a preview state the owner holds (one reference, now the audition's), auditioned on
+  /// slot `into`; refused: released.
   ProductionTransport::Result auditionStartWith(uint8_t into, ManifestId m, uint32_t clock) {
     const auto r = r_->transport.auditionStart(static_cast<uint8_t>(into / 8), into, m, clock);
     if (r != ProductionTransport::Result::Ok) r_->manifests.release(m, r_->runs);
     return r;
   }
-  /// DEC-272: an empty loop of `ticks` on slot `slot` — a filled one too — one undo step.
+  /// An empty loop of `ticks` on slot `slot` — a filled one too — one undo step.
   ProductionTransport::Result emptyLoop(uint8_t slot, uint32_t ticks, uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
     ProductionEmit buf[kGestureEmits];
     uint8_t n;
@@ -482,7 +466,7 @@ class EngineRoot {
   }
   bool auditioning() const { return r_->transport.auditioning(); }
   bool auditionSounding() const { return r_->transport.auditionSounding(); }
-  /// Diagnostics (plan §6.2 fixes 1–2): the state a preview get read shown as the preview roll, then let go at once —
+  /// Diagnostics : the state a preview get read shown as the preview roll, then let go at once —
   /// the pinned request, then its sweep, hold it until the tiles are swept; its pages return through reclaim.
   void showGotPreview() {
     const ManifestId m = p_->setLoad.takeGot();
@@ -503,8 +487,8 @@ class EngineRoot {
     return r;
   }
   ProductionLibrary& library() { return p_->libraryWriter; }
-  /// Why a load or return cannot start now (DEC-259), or nullptr.
-  /// `keep`: the get that KEEPs an audition (DEC-271), the one library job an open audition allows.
+  /// Why a load or return cannot start now, or nullptr.
+  /// `keep`: the get that KEEPs an audition, the one library job an open audition allows.
   const char* loadRefusal(bool keep = false) const {
     if (card_ == nullptr || !p_->libraryWriter.mounted()) return "LIBRARY NOT READY";
     if (!keep && r_->transport.auditioning()) return "AUDITION OPEN";
@@ -515,21 +499,21 @@ class EngineRoot {
   }
   /// Loads milestone `index` (the caller checked `loadRefusal`): the working set becomes the checkpoint `c`, then is
   /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends. `live` (the
-  /// clock runs, DEC-260): the set plays on until the switch point, where every playing track stops; the loaded set's
+  /// clock runs): the set plays on until the switch point, where every playing track stops; the loaded set's
   /// tracks resume together at the first bar after the load (a short gap).
-  /// A live load stages the playing tracks' destination slots first (DEC-261): those switch without a gap.
+  /// A live load stages the playing tracks' destination slots first: those switch without a gap.
   ProductionSetLoad::Result loadMilestone(uint16_t index, const ProductionLibrary::Checkpoint& c, bool live = false) {
     return p_->setLoad.beginLoad(index, c, live, live ? stageMask() : 0);
   }
   ProductionSetLoad::Result returnToCheckpoint(bool live = false) {
     return p_->setLoad.beginReturn(live, live ? stageMask() : 0);
   }
-  /// Staging on (default) or off (every live switch takes the gap; diagnostics, DEC-261).
+  /// Staging on (default) or off (every live switch takes the gap; diagnostics).
   void setStaging(bool on) { staging_ = on; }
   bool staging() const { return staging_; }
   /// The tracks a live switch took over seamlessly (bit t), until they follow the loaded set.
   uint8_t stagedTracks() const { return stagedPlaying_; }
-  /// The global switch point (DEC-260): the next bar, or the selected track's loop end.
+  /// The global switch point: the next bar, or the selected track's loop end.
   void setSwitchAt(ProductionControl::SwitchAt at) { switchAt_ = at; }
   ProductionControl::SwitchAt switchAt() const { return switchAt_; }
   /// The switch, now (the clock stopped while a live load waited for it).
@@ -544,7 +528,7 @@ class EngineRoot {
   /// autosave goes on meanwhile).
   bool libraryWorking() const { return p_->libraryWriter.busy() || (p_->setLoad.busy() && !p_->setLoad.waiting()); }
 
-  // ---- Display (E9.6) ---------------------------------------------------------------------------------------------
+  // ---- Display ---------------------------------------------------------------------------------------------
   /// The slot the piano roll shows and the one after it (both get span tiles; focus is swept first).
   void setDisplayFocus(uint8_t slot, uint8_t successor) {
     p_->tiles.setDetail(0, slot);
@@ -553,7 +537,7 @@ class EngineRoot {
     // Detail tiles now show this slot: sweep it again for them (its density tiles stay meanwhile).
     p_->tiles.setWanted(slot, 0);
   }
-  /// Get a loop's preview roll (plan §6.2 fix 2): the tile slot past the working set's, drawn like any slot.
+  /// Get a loop's preview roll: the tile slot past the working set's, drawn like any slot.
   static constexpr uint8_t kPreviewSlot = Config::kSlotCount;
   /// `m` swept into the preview slot's tiles (a request pinned until its sweep takes over, so its owner may release it
   /// meanwhile), focused, with the successor's detail tiles borrowed while it shows. The previous preview's tiles go
@@ -607,11 +591,11 @@ class EngineRoot {
   const ProductionHub& hub() const { return r_->hub; }
   ProductionOutput& output() { return r_->output; }
   ProductionControl& control() { return r_->control; }
-  /// Groove (DEC-287, DEC-288): starts the slot's groove build per `q` (amount 0: its removal), in the background.
+  /// Groove: starts the slot's groove build per `q` (amount 0: its removal), in the background.
   ProductionTransport::Result grooveStart(uint8_t slot, const GrooveRequest& q) {
     return r_->control.grooveStart(p_->groove, slot, q);
   }
-  /// One groove grain; a ready build published so the tracks playing the slot follow from the next beat (DEC-292; was a
+  /// One groove grain; a ready build published so the tracks playing the slot follow from the next beat (was a
   /// bar line two bars ahead — seconds before a change was heard; stopped: at once). Ok: published this call (one undo
   /// step; `replace` as resize). `want` (ahead of `tick`): the tick asked for instead — a cycle turn's bar line.
   ProductionTransport::Result grooveService(uint32_t tick, bool running, uint32_t nowUs, uint32_t usPerTick,
@@ -620,8 +604,8 @@ class EngineRoot {
       p_->groove.step();
     if (p_->groove.state() != ProductionGroove::State::Ready) return ProductionTransport::Result::NoChange;
     uint32_t at = tick;
-    if (running) at = (tick / kTicksPerBeat + 1) * kTicksPerBeat;  // DEC-292: the next beat (as a resize, at once)
-    if (running && want > tick) at = want;  // DEC-295 am. 3: a cycle turn, built a bar ahead, on its bar line
+    if (running) at = (tick / kTicksPerBeat + 1) * kTicksPerBeat;  // the next beat (as a resize, at once)
+    if (running && want > tick) at = want;  // a cycle turn, built a bar ahead, on its bar line
     const auto r = r_->control.grooveFinish(p_->groove, at, nowUs, usPerTick, replace);
     if (r == ProductionTransport::Result::Ok) groovePublishedAt_ = at;
     return r;
@@ -631,7 +615,7 @@ class EngineRoot {
   /// The groove job's state and its last build's grains (diagnostics, the window's `…` / TOO BIG).
   ProductionGroove::State grooveState() const { return p_->groove.state(); }
   uint32_t grooveGrains() const { return p_->groove.grains(); }
-  /// The running build's progress in percent (DEC-292, the window's bar).
+  /// The running build's progress in percent (the window's bar).
   uint8_t grooveProgress() const { return p_->groove.progress(); }
   void grooveCancel() { p_->groove.cancel(); }
   ProductionNoteEdit& noteEdit() { return r_->noteEdit; }
@@ -700,7 +684,7 @@ class EngineRoot {
     }
     const uint8_t w = r_->transport.writingSlot();
     if (w != ProductionTransport::kNoSlot && w == p_->tiles.detailSlot(0)) {
-      if (overlaySlot_ != w) {  // a new take on the shown slot: its pre-roll (E9.8j) is shown at once
+      if (overlaySlot_ != w) {  // a new take on the shown slot: its pre-roll is shown at once
         p_->overlay.clear();
         const auto& c = r_->control;
         if (c.pickupTrack() == r_->transport.writingTrack()) {
@@ -778,7 +762,7 @@ class EngineRoot {
       if (staging_ && r_->transport.playing(t)) mask = static_cast<uint8_t>(mask | (1u << t));
     return mask;
   }
-  /// The switch point of a live load: a track whose staged launch is ready takes it now, at its position 0 (DEC-261);
+  /// The switch point of a live load: a track whose staged launch is ready takes it now, at its position 0;
   /// any other playing track stops (its notes end) for the gap. Each keeps its slot for a load that changes nothing.
   /// Then the load clears and reads.
   void switchSet(uint32_t clock, uint32_t nowUs, uint32_t usPerTick) {
@@ -837,7 +821,7 @@ class EngineRoot {
     }
     switched_ = 0;
   }
-  /// A load's clear (DEC-259): the tracks reset, then every slot's history forgotten. Refused while a take or an edit is
+  /// A load's clear: the tracks reset, then every slot's history forgotten. Refused while a take or an edit is
   /// open (the caller checked; a session would refuse its slot).
   static bool clearSet(void* ctx) {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
@@ -849,7 +833,7 @@ class EngineRoot {
   }
   static JobStep persistStep(void* ctx) {
     EngineRoot& e = *static_cast<EngineRoot*>(ctx);
-    // A milestone or a load waits for a save already on the card, then has the card to itself (DEC-258); a load drives
+    // A milestone or a load waits for a save already on the card, then has the card to itself; a load drives
     // its own checkpoint write.
     if (e.p_->persistence.onCard() || !e.libraryWorking()) {
       if (e.p_->persistence.step()) return JobStep::Continue;
@@ -880,22 +864,22 @@ class EngineRoot {
   EngineRam2* r_ = nullptr;
   bool sweeping_ = false;
   bool gatherLive_ = false, rebuildLive_ = false, persistLive_ = false;
-  uint32_t groovePublishedAt_ = 0;  // DEC-288
-  // DEC-260: the set switch point; the tracks a live load stopped (bit t) and the slots they played.
+  uint32_t groovePublishedAt_ = 0;
+  // The set switch point; the tracks a live load stopped (bit t) and the slots they played.
   ProductionControl::SwitchAt switchAt_ = ProductionControl::SwitchAt::NextBar;
   uint8_t switched_ = 0;
   uint8_t switchedSlot_[kTrackCount] = {};
-  // DEC-261: staging on; the staged launches made; the tracks that switched to staged content.
+  // Staging on; the staged launches made; the tracks that switched to staged content.
   bool staging_ = true, stagedLaunched_ = false;
   uint8_t stagedPlaying_ = 0;
   CardIo* card_ = nullptr;
   MidiEventLayout v1Layout_ = kTeensyMidiEvent;
   static constexpr uint32_t kPressureUs = 50000;
-  uint32_t pressureFloor_ = Config::kContentQuotaPages / 8;  // DEC-254 (E4.6e): ~26,000 rows of headroom
+  uint32_t pressureFloor_ = Config::kContentQuotaPages / 8;  // ~26,000 rows of headroom
   uint32_t pressureUs_ = 0;
   static constexpr uint32_t kPersistGrains = 2000;
   uint8_t overlaySlot_ = 0xFF;   // the slot whose take the overlay shows (0xFF: none)
-  bool previewShown_ = false;                              // plan §6.2 fix 2: the preview roll shows
+  bool previewShown_ = false;                              // the preview roll shows
   uint8_t previewDetailWas_ = ProductionTiles::kNone;      // the detail slot it borrowed
   uint32_t overlayUntil_ = 0;    // cleared once the slot's tiles show this identity
   static constexpr uint32_t kEditGrains = 2000;  // a gather composes up to two loops; a rebuild <= 24 grains (§ 8.4)

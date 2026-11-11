@@ -1,11 +1,11 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Engine worker scheduler (fixed-memory-engine E5.2, plan revision 3 § 7.5). The main loop calls `runGrain` once per
+// Engine worker scheduler. The main loop calls `runGrain` once per
 // turn; it runs exactly one grain of one job and returns, so MIDI service, NoteOff service and display drawing run
 // between any two grains (a grain is the only non-preemptible engine unit; the Clock ISR still preempts it).
 //
-// Classes (owner ruling 2026-11-05): Hard (accepted Stop / edit sealing, publication obligations, steady playback
+// Classes: Hard (accepted Stop / edit sealing, publication obligations, steady playback
 // windows) never depends on spare capacity; Transition (preparing a newly selected source: Undo, Redo, slot switch,
 // edit commit) has bounded progress and priority over soft work; soft is Display, Persistence and Background
 // (speculative preparation, checkpoint sweeps, reclamation, compaction).
@@ -81,7 +81,7 @@ class WorkerScheduler {
   }
   bool live(uint8_t id) const { return id < MaxJobs && jobs_[id].live; }
 
-  /// The class of the last grain run (diagnostics: each class's worst grain, DEC-254's timing gate).
+  /// The class of the last grain run (diagnostics: each class's worst grain, `!ENGINE take`).
   JobClass lastClass() const { return lastClass_; }
   /// Runs one grain at time `nowUs`. Returns the job id run, or kNoJob when idle.
   uint8_t runGrain(uint32_t nowUs) {
