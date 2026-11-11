@@ -38,3 +38,13 @@ the depth; the save dots may later show a fetch).
 
 Undo past the hot floor on a slot with cold steps: the fetch time, the worst persistence grain (≤ ~0.9 ms), no tick
 lateness beyond a run without it.
+
+## Evidence (2026-11-11)
+
+- Native: `test_undo_fetches_the_cold_state_below` (switch, depth, three presses one switch, redo back),
+  `test_a_damaged_record_refuses_the_fetch` (the rows' CRC), `test_a_change_on_the_slot_cancels_the_fetch` (a commit
+  keeps without switching; a clear cancels), `test_a_big_run_is_fetched_in_small_grains` (an 800-row take, ≤ 4 sectors a
+  step); mutations (no switch, 32-sector grains, no rows CRC) each caught. Full native 4,559.
+- Device `4a3e4f71…`: a take and two overdubs left 4 cold steps on T2 S3; undone to the hot floor and four more presses —
+  four fetches, each in place within one serial poll (≤ 0.6 s), 0 / 0 / 1 / 2 sectors read, the worst persistence grain
+  337 µs; T2 S3 redone to its top, the test slot undone.

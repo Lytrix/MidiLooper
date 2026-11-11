@@ -1,3 +1,8 @@
+**2026-11-11 — E4.6d undo into cold steps (branch `feature/engine-per-slot-history`).** An undo past a slot's hot steps
+fetches the cold one from the card in ≤ 4-sector grains while the slot plays, then switches as an undo; more presses
+reach deeper, switched once. Native 4,559 passed; device: four fetches on T2 S3, each in place within one poll, worst
+persistence grain 337 µs. Next: E4.6e (boot loads hot states only; rows pressure).
+
 **2026-11-11 — E4.6c cold undo states (branch `feature/engine-per-slot-history`).** A full hot table demotes the oldest
 saved undo step to a cold tier (PSRAM descriptors + each copy's cold record on the card) instead of forgetting it; a
 slot keeps 99 states and forgets only its own oldest; the UNDO level counts cold steps; undo into a cold step is E4.6d.

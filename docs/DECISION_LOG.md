@@ -14822,6 +14822,19 @@ table — `demoted=1`, `evicted_undo=0` (only an old redo branch dropped, as des
 83 µs; after a reboot every slot's UNDO / REDO level unchanged. RAM1: `setup()` and the library service from flash
 (1,316 B left in the last bank).
 
+### E4.6d — the fetch (2026-11-11)
+
+Built as `docs/Plans/e46d_fetch.md`: an undo at a slot's oldest hot state with cold states below asks a fetch; the
+slot keeps playing; presses meanwhile reach deeper and only the final target is switched to (owner). Runs in PSRAM are
+reused, the others admitted and read from their records in grains of at most four sectors (header and rows' CRC
+checked); the fetched states are promoted (`History::promote`, room made on other slots only) and switched to as an
+undo (`SlotTransport::fetched`) if the slot is still where the presses were made. A damaged record refuses by name; a
+clear or set load cancels; a commit meanwhile keeps the states without switching. Eviction now judges the undo / redo
+side by position. Native: 5 fetch tests, 3 mutations caught; full native 4,559. Device (`4a3e4f71…`, `crash=0`): T2 S3
+(4 cold steps) undone past its hot states — each fetch in place within one 0.4–0.6 s serial poll, 0–2 sectors read, the
+worst persistence grain 337 µs (a sector read); the slot redone to its top afterwards. RAM1: the set-load and browser
+services from flash (2,068 B left in the last bank).
+
 ### Alternatives considered
 
 | Alternative | Why not |
