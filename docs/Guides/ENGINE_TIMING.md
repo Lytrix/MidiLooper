@@ -119,13 +119,27 @@ the other (about two a loop), sampled every 3 or 6:
 |---|---|---|---|---|---|---|---|---|---|
 | 12 overdubs | 12 → 9 | 10 | 443 µs | ≤ 110 µs | ≤ 415 µs | ≤ 788 µs | 2,058 µs | 2,805–2,816 pages | no |
 | 30 overdubs | 30 → 22 | 23 | 581 µs | ≤ 439 µs | ≤ 549 µs | ≤ 1,264 µs | 3,281 µs | 2,810–2,844 pages | no |
+| 30 overdubs, `end` as REC (`f90715c7…`) | **30 → 30** | 31 | 686 µs | ≤ 579 µs | ≤ 790 µs | ≤ 1,664 µs | 4,257 µs | 2,812–2,882 pages | no |
 
 - Every grain stayed under g = 810 µs and the non-engine stretch under B_max; no clock gap; the hot table stayed full
   (98–99) with `evicted_undo=0` (older steps went cold on the card, none forgotten); content memory flat.
-- The refused overdubs were `Busy` (one writer): sent the moment the previous one ended, before it was released.
-- Costs grow with the slot: from the take to the 23rd step the worst grain went 341 → 581 µs, `leds` 20 → 439 µs (the
-  512-row scan step) and `screen` 235 → 549 µs. A much larger slot is where g would be reached first; re-measure if
-  slots grow well past this (about 23 layered passes of 4 bars).
+- The refused overdubs in the first two runs were the test's: the serial `!ENGINE end` ended every take at the next
+  bar, so an overdub sent within that wait found the writer still busy (`Busy`). REC on the DROID ends an overdub at
+  once (`Surface::endTake`); `!ENGINE end` now does the same (a Record take still at the bar), and all 30 were taken.
+- **Grain cost grows with the slot's layers** (third run, worst per class after N overdubs):
+
+  | Overdubs | transition | background | display | hard |
+  |---|---|---|---|---|
+  | 6 | 382 µs | 327 µs | 355 µs | 173 µs |
+  | 18 | 546 µs | 591 µs | 495 µs | 393 µs |
+  | 30 | 686 µs | 673 µs | 632 µs | 542 µs |
+
+  About 12 µs more a layer: a grain's work is counted in rows, but each row costs more as the composer merges more
+  runs. Extrapolated, g = 810 µs is reached at about 40 layers on one slot, while a state may hold 63 runs (60
+  committed). **Open:** count the run merge as work (or merge older overdub layers) before slots that deep are used;
+  the non-engine stretch follows the same trend (1,664 µs at 31 steps).
+- `leds` (the 512-row scan step) and `screen` grow with the slot too: 20 → 579 µs and 231 → 790 µs from the take to
+  the 31st step.
 - Afterwards the test steps were undone (the slot empty again, its steps as redo).
 
 A pass longer than a tick (`Worst pass`) is not lateness on its own: it holds up to 8 grains with the due ticks played

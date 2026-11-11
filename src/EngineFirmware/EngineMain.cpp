@@ -1395,8 +1395,11 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
   } else if (std::strcmp(verb, "overdub") == 0) {
     c.selectTrack(static_cast<uint8_t>(a));
     report(verb, static_cast<uint8_t>(c.startOverdub(static_cast<uint8_t>(a), gLastTick)));
-  } else if (std::strcmp(verb, "end") == 0) {  // end T: a take ends at the bar
-    report(verb, static_cast<uint8_t>(c.queueStop(static_cast<uint8_t>(a), gLastTick)));
+  } else if (std::strcmp(verb, "end") == 0) {  // end T: as REC (`Surface::endTake`) — a Record take at the bar, an overdub at once
+    const auto& x = gEngine.transport();
+    const bool overdub = x.mode() == ProductionTransport::Mode::Overdubbing && x.writingTrack() == a;
+    report(verb, static_cast<uint8_t>(overdub ? c.stopNow(gLastTick, nowUs, us)
+                                              : c.queueStop(static_cast<uint8_t>(a), gLastTick)));
   } else if (std::strcmp(verb, "undo") == 0) {
     report(verb, static_cast<uint8_t>(c.undo(static_cast<uint8_t>(a), gLastTick, nowUs, us)));
   } else if (std::strcmp(verb, "redo") == 0) {
