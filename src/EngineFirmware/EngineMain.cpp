@@ -1123,7 +1123,7 @@ void serviceWorking(uint32_t nowUs) {
   Serial.printf("#ENGINE,working,begin,set=%u,base=%lu\n", gSet, static_cast<unsigned long>(gBase));
 }
 /// A library job's end, reported once.
-void serviceLibrary() {
+FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the library's card steps from flash (RAM1 room)
   const ProductionLibrary::Status st = gEngine.library().status();
   if (st == gLibraryWas) return;
   gLibraryWas = st;
@@ -1601,6 +1601,12 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
     for (uint32_t& m : gClassGrainMaxUs) m = 0;
     {  // DEC-254 (E4.6b): the run-once store
       const auto& ps = gEngine.persistence().stats();
+      const auto& hs = gEngine.history().stats();
+      Serial.printf("#ENGINE,cold,states=%u,demoted=%lu,slot_depth=%lu,undo_at_cold=%lu,loaded=%lu,bad=%lu,restarts=%lu\n",
+                    gEngine.persistence().coldTier().total(), static_cast<unsigned long>(hs.demoted),
+                    static_cast<unsigned long>(hs.slotDepth), static_cast<unsigned long>(hs.undoAtCold),
+                    static_cast<unsigned long>(ps.coldLoaded), static_cast<unsigned long>(ps.coldBad),
+                    static_cast<unsigned long>(ps.coldRestarts));
       Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
                     "migrated_slots=%lu,clusters=%lu\n",
                     static_cast<unsigned long>(ps.runsWritten), static_cast<unsigned long>(ps.runSectors),
@@ -2045,7 +2051,7 @@ extern "C" FLASHMEM void startup_early_hook(void) {
 
 extern "C" FLASHMEM void startup_middle_hook(void) { phase(kPhaseClocks); }
 
-void setup() {
+FLASHMEM void setup() {  // DEC-254: once at boot, from flash (RAM1 room)
   phase(kPhaseSetup);
   gResetCause = SRC_SRSR;
   SRC_SRSR = gResetCause;  // write-one-to-clear: the next boot reports its own cause

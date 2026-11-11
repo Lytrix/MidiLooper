@@ -979,7 +979,8 @@ void test_a_run_no_copy_lists_is_reclaimed_at_boot() {
   const uint32_t session = gA.persistence().runAreaClusters();
   bootB();
   TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
-  TEST_ASSERT_EQUAL_UINT32(slotClusters(gB, 0), gB.persistence().runAreaClusters());  // B's only
+  constexpr uint32_t kColdRegion = 2u * 64u * ProductionPersistence::kColdSectors / runstore::kCluster;  // E4.6c
+  TEST_ASSERT_EQUAL_UINT32(slotClusters(gB, 0) + kColdRegion, gB.persistence().runAreaClusters());  // B's only
   TEST_ASSERT_TRUE(gB.persistence().runAreaClusters() < session);
 }
 
@@ -1044,6 +1045,60 @@ void test_the_dec253_store_is_migrated() {
   }
 }
 
+
+// DEC-254 (E4.6c): past the hot table a slot's oldest saved steps go cold — still counted — and survive a reboot (the
+// cold record after the hot copy); a damaged cold record loads no cold step (the hot ones still load).
+static void manyStates(EngineRoot& e, uint8_t slot, uint16_t n) {
+  for (uint16_t k = 0; k < n; ++k) {
+    TEST_ASSERT_EQUAL(R::Ok, e.control().resize(slot, ((k % 3) + 2) * kBar, gClock, us(gClock), kUsPerTick));
+    run(e, gClock + 2);
+    if (k % 20 == 19) run(e, gClock + kSettleTicks + 50);  // saved: their runs on the card
+  }
+  run(e, gClock + kSettleTicks + 50);
+}
+void test_cold_states_survive_a_reboot() {
+  gA.approveSaving();
+  record(gA, 0, 0, 60);
+  record(gA, 1, 9, 72);
+  run(gA, gClock + kSettleTicks + 50);
+  manyStates(gA, 0, 60);  // two busy slots past the shared table: slot 0's oldest (saved) steps go cold
+  manyStates(gA, 9, 70);
+  manyStates(gA, 0, 1);  // a change on slot 0: its save lists its cold steps in the cold record
+  const uint8_t cold = gA.history().coldCount(0), depth = gA.history().undoDepth(0);
+  TEST_ASSERT_TRUE(gA.history().stats().demoted > 0);
+  TEST_ASSERT_EQUAL_UINT32(0, gA.history().stats().evictedUndo);  // nothing forgotten
+  TEST_ASSERT_TRUE(cold > 0);
+  TEST_ASSERT_EQUAL_UINT8(62, depth);  // all of slot 0's steps: the take, 61 lengths, the empty slot below
+  TEST_ASSERT_TRUE(gA.persistence().savedCurrent(0));
+  bootB();
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT8(cold, gB.history().coldCount(0));
+  TEST_ASSERT_TRUE(gB.persistence().stats().coldLoaded >= cold);  // from the cold records (slot 9 may have one too)
+  TEST_ASSERT_EQUAL_UINT8(depth, gB.history().undoDepth(0));
+  const auto& ta = gA.persistence().coldTier();
+  const auto& tb = gB.persistence().coldTier();
+  for (uint8_t k = 0; k < cold; ++k) {  // the same states, oldest first, with the same run records
+    const uint16_t a = ta.at(0, k), b = tb.at(0, k);
+    TEST_ASSERT_EQUAL_UINT32(ta.revision(a), tb.revision(b));
+    TEST_ASSERT_EQUAL_UINT32(ta.loop(a), tb.loop(b));
+    TEST_ASSERT_EQUAL_UINT8(ta.runCount(a), tb.runCount(b));
+    for (uint8_t i = 0; i < ta.runCount(a); ++i) TEST_ASSERT_EQUAL_UINT32(ta.run(a, i).sector, tb.run(b, i).sector);
+  }
+  // The cold record damaged: no cold step loads, the hot states do.
+  const int c = laterCopy(0);
+  TEST_ASSERT_TRUE(c >= 0);
+  const uint32_t at = ProductionPersistence::coldSector(0, static_cast<uint8_t>(c));
+  TEST_ASSERT_NOT_NULL(gCard.sector(at));
+  gCard.sector(at)[20] ^= 0x10;
+  TEST_ASSERT_TRUE(gA.init(gPsramA, gRam2A, 2000));
+  gA.attachCard(gCard);
+  gA.startBootLoad();
+  run(gA, gClock + 30);
+  TEST_ASSERT_EQUAL_UINT32(0, gA.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT32(1, gA.persistence().stats().coldBad);
+  TEST_ASSERT_EQUAL_UINT8(0, gA.history().coldCount(0));
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -1083,6 +1138,7 @@ int main(int, char**) {
   RUN_TEST(test_a_damaged_run_record_fails_by_name);
   RUN_TEST(test_a_run_no_copy_lists_is_reclaimed_at_boot);
   RUN_TEST(test_the_dec253_store_is_migrated);
+  RUN_TEST(test_cold_states_survive_a_reboot);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

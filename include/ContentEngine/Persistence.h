@@ -43,6 +43,7 @@
 
 #include <cstdint>
 
+#include "ContentEngine/ColdTier.h"
 #include "ContentEngine/RunStore.h"
 #include "ContentEngine/SetFile.h"
 #include "ContentEngine/V1Import.h"
@@ -95,7 +96,7 @@ struct CardIo {
 };
 
 template <typename Card, typename Pool, typename Runs, typename Manifests, typename HistoryT, uint8_t Slots>
-class Persistence {
+class Persistence : public ColdSink {
  public:
   static constexpr const char* kFolder = "/MidiLooper/engine";
   static constexpr uint32_t kSettleUs = 2000000;  // 2 s without a change
@@ -121,6 +122,15 @@ class Persistence {
   static constexpr uint32_t kCopySectors = 1 + (kRecordBodyBytes + kSector - 1) / kSector;  // header + body
   static constexpr uint32_t kRunAreaBase = 2 + 2u * Slots * kCopySectors;
   static constexpr uint32_t kStoreSectors = kRunAreaBase + runstore::kAreaSectors;
+  // DEC-254 (E4.6c): each state-record copy's cold record — the slot's cold states, in the run area's last region
+  // (never taken for runs): magic "MLK1", the copy's sequence, the count, per state its revision, loop length and run
+  // records (sector, rows, kind), then a CRC-32. A copy without one (E4.6b) has no cold states.
+  static constexpr uint32_t kColdMaxBytes = 10 + 99u * (9u + 9u * Config::kRunsPerManifest) + 4;
+  static constexpr uint32_t kColdSectors = (kColdMaxBytes + kSector - 1) / kSector;
+  static constexpr uint32_t kColdBase = runstore::kAreaSectors - 2u * Slots * kColdSectors;
+  static_assert(kColdBase % runstore::kCluster == 0, "the cold region starts on a cluster");
+  static constexpr uint32_t kColdMagic = 0x314B4C4Du;  // "MLK1"
+  static uint32_t coldSector(uint8_t s, uint8_t c) { return kRunAreaBase + kColdBase + (2u * s + c) * kColdSectors; }
   using Reservations = RowReservations<Pool, Runs>;
 
   // A save's body into the store, and a load's bytes out of it (or out of a file of before the store), through one
@@ -193,6 +203,10 @@ class Persistence {
     uint32_t storeFull;      // saves refused: no contiguous room in the run area
     uint32_t badRun;         // run records that failed their check on load
     uint32_t migratedSlots;  // slots carried from the DEC-253 store into the run-once store
+    // DEC-254 (E4.6c): the cold tier.
+    uint32_t coldLoaded;     // cold states read at boot
+    uint32_t coldBad;        // cold records that failed their check (the slot's cold states not loaded)
+    uint32_t coldRestarts;   // saves restarted: the slot's cold states changed while they were written
   };
   using Import = ResolvedImport<Pool, Runs, Manifests, HistoryT, /*held*/ 64>;
   using Reader = Lsv1Reader<Card, Import>;
@@ -240,7 +254,9 @@ class Persistence {
     stats_ = Stats{};
     legacy_ = migrate_ = false;
     pendSector_ = runstore::kNoSector;
+    coldTier_.clear();
     clusters_.clear();
+    clusters_.reserve(kColdBase, 2u * Slots * kColdSectors);
     for (auto& c : cardRun_) c = runstore::CardRun{};
   }
 
@@ -512,6 +528,7 @@ class Persistence {
     bool created = false;
     legacy_ = false;
     clusters_.clear();
+    clusters_.reserve(kColdBase, 2u * Slots * kColdSectors);
     store_ = card_->openStore(kStoreFile, kStoreSectors, true, created);
     if (store_ && created) {
       for (uint32_t i = 0; i < kSector; ++i) buf[i] = 0;
@@ -761,7 +778,21 @@ class Persistence {
       }
       return true;
     }
-    // The header, last, with the next sequence: the copy is the current one once it is written.
+    if (sealStage_ == 1) {  // E4.6c: the copy's cold record, before its header seals the copy
+      coldBegin(s);
+      sealStage_ = 3;
+      return true;
+    }
+    if (sealStage_ == 3) {
+      const int8_t r = coldStep(s);
+      if (r < 0) {
+        ++stats_.coldRestarts;
+        return recordSaveFailed(s);
+      }
+      if (r > 0) sealStage_ = 4;
+      return true;
+    }
+    // The header, last, with the next sequence: the copy is the current one once it is written (stage 4).
     uint8_t* b = sectorBuf();
     for (uint32_t i = 0; i < kSector; ++i) b[i] = 0;
     putWords(b, kCopyMagic, s, savingSeq_, ioBytes_);
@@ -771,6 +802,150 @@ class Persistence {
     sealStage_ = 2;
     return true;
   }
+  // ---- DEC-254 (E4.6c): the cold tier -------------------------------------------------------------------------------
+ public:
+  bool demote(uint8_t slot, ManifestId m) override {
+    if (!store_ || legacy_) return false;
+    const auto& d = manifests_->manifest(m);
+    cold::CardRunRef refs[Manifests::kMaxRuns];
+    for (uint8_t i = 0; i < d.runCount; ++i) {
+      const RunId id = d.runs[i];
+      const runstore::CardRun& c = cardRun_[id];
+      if (c.serial == 0 || c.serial != runs_->run(id).serial) return false;  // not on the card yet: forgotten
+      refs[i].sector = c.sector;
+      refs[i].rows = runs_->run(id).rowCount;
+      refs[i].kind = runs_->run(id).kind;
+    }
+    return coldTier_.push(slot, d.revision, d.loopLengthTicks, refs, d.runCount);
+  }
+  uint8_t coldCount(uint8_t slot) const override { return coldTier_.count(slot); }
+  void dropOldestCold(uint8_t slot) override { coldTier_.dropOldest(slot); }
+  void clearCold(uint8_t slot) override { coldTier_.clearSlot(slot); }
+  const cold::ColdTier<Slots>& coldTier() const { return coldTier_; }
+
+ private:
+  void coldBegin(uint8_t s) {
+    coldSt_ = coldTier_.first(s);
+    coldLeft_ = coldTier_.count(s);
+    coldEpoch_ = coldTier_.epoch(s);
+    coldPhase_ = 0;
+    coldRun_ = 0;
+    itemLen_ = itemPos_ = 0;
+    coldFill_ = 0;
+    coldOut_ = 0;
+    coldCrc_ = 0;
+  }
+  void item32(uint32_t v) {
+    runstore::put32(item_ + itemLen_, v);
+    itemLen_ = static_cast<uint8_t>(itemLen_ + 4);
+  }
+  /// The cold record's bytes until a sector is to be written: 1 done, 0 more to come, -1 the slot's cold states changed.
+  int8_t coldStep(uint8_t s) {
+    while (pendSector_ == runstore::kNoSector) {
+      if (itemPos_ == itemLen_) {
+        if (coldTier_.epoch(s) != coldEpoch_) return -1;
+        itemLen_ = itemPos_ = 0;
+        if (coldPhase_ == 0) {
+          item32(kColdMagic);
+          item32(savingSeq_);
+          item_[itemLen_++] = coldLeft_;
+          item_[itemLen_++] = 0;
+          coldPhase_ = 1;
+        } else if (coldPhase_ == 1) {
+          if (coldLeft_ == 0 || coldSt_ == cold::kNone) {
+            item32(coldCrc_);
+            coldPhase_ = 3;
+          } else {
+            item32(coldTier_.revision(coldSt_));
+            item32(coldTier_.loop(coldSt_));
+            item_[itemLen_++] = coldTier_.runCount(coldSt_);
+            coldRun_ = 0;
+            coldPhase_ = 2;
+          }
+        } else if (coldPhase_ == 2) {
+          if (coldRun_ < coldTier_.runCount(coldSt_)) {
+            const cold::CardRunRef r = coldTier_.run(coldSt_, coldRun_++);
+            item32(r.sector);
+            item32(r.rows);
+            item_[itemLen_++] = r.kind;
+          } else {
+            coldSt_ = coldTier_.next(coldSt_);
+            --coldLeft_;
+            coldPhase_ = 1;
+            continue;
+          }
+        } else {  // done: the last, partial sector
+          if (coldFill_ != 0) {
+            for (uint32_t i = coldFill_; i < kSector; ++i) runBuf()[i] = 0;
+            pend(coldSector(s, savingCopy_) + coldOut_++, runBuf());
+            coldFill_ = 0;
+            return 0;
+          }
+          return 1;
+        }
+      }
+      const uint8_t v = item_[itemPos_++];
+      if (coldPhase_ != 3) coldCrc_ = crc32Update(coldCrc_, &v, 1);  // the CRC item is not in its own check
+      runBuf()[coldFill_++] = v;
+      if (coldFill_ == kSector) {
+        if (coldOut_ >= kColdSectors) return -1;
+        pend(coldSector(s, savingCopy_) + coldOut_++, runBuf());
+        coldFill_ = 0;
+      }
+    }
+    return 0;
+  }
+  /// Slot `s`'s copy `c` cold record (sequence `seq`): `mark` holds its runs' extents (boot), else its states go below
+  /// the slot's (checked first: a record failing its check loads nothing).
+  void readCold(uint8_t s, uint8_t c, uint32_t seq, bool mark) {
+    uint8_t* b = importScratch_;
+    for (uint8_t pass = mark ? 1 : 0; pass < 2; ++pass) {
+      uint32_t next = coldSector(s, c), at = kSector, crc = 0;
+      const auto get = [&](uint8_t* d, uint8_t n, bool sum) {
+        for (uint8_t i = 0; i < n; ++i) {
+          if (at == kSector) {
+            if (next >= coldSector(s, c) + kColdSectors || !card_->readSector(next++, b)) return false;
+            at = 0;
+          }
+          d[i] = b[at++];
+          if (sum) crc = crc32Update(crc, d + i, 1);
+        }
+        return true;
+      };
+      uint8_t h[10];
+      if (!get(h, 10, true) || runstore::get32(h) != kColdMagic || runstore::get32(h + 4) != seq) return;
+      const uint8_t count = h[8];
+      if (count > 99) return;
+      uint16_t after = cold::kNone;
+      for (uint8_t k = 0; k < count; ++k) {
+        uint8_t st[9];
+        if (!get(st, 9, true) || st[8] > Manifests::kMaxRuns) return;
+        cold::CardRunRef refs[Manifests::kMaxRuns];
+        for (uint8_t i = 0; i < st[8]; ++i) {
+          uint8_t r[9];
+          if (!get(r, 9, true)) return;
+          refs[i].sector = runstore::get32(r);
+          refs[i].rows = runstore::get32(r + 4);
+          refs[i].kind = r[8];
+          if (mark) clusters_.mark(refs[i].sector, refs[i].rows);
+        }
+        if (pass == 1 && !mark) {
+          after = coldTier_.insertAfter(s, after, runstore::get32(st), runstore::get32(st + 4), refs, st[8]);
+          if (after == cold::kNone) return;
+          ++stats_.coldLoaded;
+        }
+      }
+      if (pass == 0) {  // the check, before anything is taken
+        uint8_t t[4];
+        const uint32_t want = crc;
+        if (!get(t, 4, false) || runstore::get32(t) != want) {
+          ++stats_.coldBad;
+          return;
+        }
+      }
+    }
+  }
+
   bool recordSaveFailed(uint8_t s) {
     save_.cancel();
     saving_ = kNone;
@@ -904,7 +1079,11 @@ class Persistence {
     }
     if (!legacy_)  // DEC-254: what either valid copy lists stays held (a boot may fall back to the other)
       for (uint8_t c = 0; c < 2; ++c)
-        if (valid[c]) markCopy(s, c, bytes_[c]);
+        if (valid[c]) {
+          copySeq_[c] = seq[c];
+          markCopy(s, c, bytes_[c]);
+          readCold(s, c, seq[c], true);
+        }
     if (!valid[0] && !valid[1]) return false;
     for (uint8_t c = 0; c < 2; ++c)
       if (valid[c] && static_cast<int32_t>(seq[c] - nextSeq_) >= 0) nextSeq_ = seq[c] + 1;
@@ -1031,11 +1210,13 @@ class Persistence {
     loading_ = kNone;
     if (fromStore_) {
       if (st == Load::Status::Done) {
-        if (!legacy_)  // DEC-254: the loaded runs are on the card, in the records the state record names
+        if (!legacy_) {  // DEC-254: the loaded runs are on the card, in the records the state record names
           for (uint16_t i = 0; i < ldCount_; ++i) {
             const RunId id = load_.directoryRun(i);
             cardRun_[id] = runstore::CardRun{runSector_[i], runs_->run(id).serial};
           }
+          readCold(s, loadingCopy_, copySeq_[loadingCopy_], false);  // E4.6c: below the hot states
+        }
         ++stats_.loads;
         saved_[s] = seen_[s] = fingerprint(s);  // what the store holds
       } else if (altValid_) {  // the later copy failed its CRC: the earlier one
@@ -1168,6 +1349,13 @@ class Persistence {
   bool runWrite_[Runs::kRunCount] = {};
   runstore::CardRun cardRun_[Runs::kRunCount];
   runstore::ClusterMap clusters_;
+  // DEC-254 (E4.6c): the cold tier and the cold record being written.
+  cold::ColdTier<Slots> coldTier_;
+  uint16_t coldSt_ = cold::kNone, coldEpoch_ = 0;
+  uint8_t coldLeft_ = 0, coldPhase_ = 0, coldRun_ = 0, itemLen_ = 0, itemPos_ = 0;
+  uint8_t item_[16] = {};
+  uint16_t coldFill_ = 0;
+  uint32_t coldOut_ = 0, coldCrc_ = 0, copySeq_[2] = {};
   Import import_;
   Reader reader_;
   Stats stats_{};

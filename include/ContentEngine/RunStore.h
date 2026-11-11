@@ -105,6 +105,14 @@ class ClusterMap {
     }
     return kNoSector;
   }
+  /// `sectors` area sectors from cluster-aligned `at` are held for good (the cold records' region, DEC-254 E4.6c).
+  void reserve(uint32_t at, uint32_t sectors) {
+    for (uint32_t c = at / kCluster; c < (at + sectors + kCluster - 1) / kCluster && c < kClusters; ++c)
+      if (!test(c)) {
+        set(c);
+        ++used_;
+      }
+  }
   uint32_t usedClusters() const { return used_; }
   bool held(uint32_t cluster) const { return cluster < kClusters && test(cluster); }
 
