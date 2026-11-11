@@ -833,13 +833,23 @@ class Persistence : public ColdSink {
     cold::CardRunRef refs[Manifests::kMaxRuns];
     for (uint8_t i = 0; i < d.runCount; ++i) {
       const RunId id = d.runs[i];
-      const runstore::CardRun& c = cardRun_[id];
-      if (c.serial == 0 || c.serial != runs_->run(id).serial) return false;  // not on the card yet: forgotten
-      refs[i].sector = c.sector;
+      const uint32_t at = cardSectorOf(id);
+      if (at == runstore::kNoSector) return false;  // not on the card yet: forgotten
+      refs[i].sector = at;
       refs[i].rows = runs_->run(id).rowCount;
       refs[i].kind = runs_->run(id).kind;
     }
     return coldTier_.push(slot, d.revision, d.loopLengthTicks, refs, d.runCount);
+  }
+  /// Run `id`'s record sector: known, or (E4.6e) one of the slot being loaded from its records — its own oldest
+  /// states may go cold while it loads, before the load maps its runs. kNoSector: not on the card.
+  uint32_t cardSectorOf(RunId id) const {
+    const runstore::CardRun& c = cardRun_[id];
+    if (c.serial != 0 && c.serial == runs_->run(id).serial) return c.sector;
+    if (loading_ != kNone && fromStore_ && !legacy_)
+      for (uint16_t i = 0; i < ldCount_; ++i)
+        if (load_.directoryRun(i) == id) return runSector_[i];
+    return runstore::kNoSector;
   }
   uint8_t coldCount(uint8_t slot) const override { return coldTier_.count(slot); }
   void dropOldestCold(uint8_t slot) override { coldTier_.dropOldest(slot); }

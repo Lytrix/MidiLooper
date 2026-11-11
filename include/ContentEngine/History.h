@@ -79,7 +79,11 @@ class History {
     uint32_t demoted;     // hot states moved to the cold tier (not forgotten)
     uint32_t slotDepth;   // steps a slot forgot at its own depth (kSlotDepth)
     uint32_t undoAtCold;  // undo presses at the hot floor with cold states below (the fetch is E4.6d)
+    uint32_t pressureDemoted;  // E4.6e: hot states demoted to make room in the content pool (never forgotten)
   };
+  /// E4.6e (rows pressure): the oldest undo step goes cold — only if it can (a slot's oldest hot state, on the card);
+  /// never forgotten. False: nothing to demote.
+  bool demoteOldest() { return evictOldest(kNone, true); }
   /// DEC-254: a slot's states, hot and cold, at most (with a cold tier attached).
   static constexpr uint8_t kSlotDepth = 99;
   /// The cold tier (nullptr: none — the shared table alone, E4).
@@ -484,7 +488,7 @@ class History {
   /// its redo chain. Lowest commit seq wins.
   /// `skip` (E4.6d): a slot whose states stay (a fetch promotes into it). The side (undo / redo) is by position: a
   /// promoted state's commit number is newer than the states above it. False: no candidate.
-  bool evictOldest(uint8_t skip = kNone) {
+  bool evictOldest(uint8_t skip = kNone, bool demoteOnly = false) {
     uint8_t bestSlot = kNone, best = kNone;
     bool bestUndo = false;
     for (uint8_t i = 0; i < Slots; ++i) {
@@ -509,6 +513,7 @@ class History {
     if (best == kNone) return false;
     Slot& s = slots_[bestSlot];
     const bool undoSide = bestUndo;
+    if (demoteOnly && (!undoSide || entries_[best].older != kNone)) return false;  // only a demotion, never a loss
     if (!undoSide) {
       lose(bestSlot, dropRedo(bestSlot));  // a redo chain cannot have a hole
       ++stats_.evictedRedo;
@@ -517,6 +522,7 @@ class History {
     const uint8_t older = entries_[best].older, newer = entries_[best].newer;
     // DEC-254 (E4.6c): the slot's oldest hot state goes cold when its runs are on the card — kept, not forgotten.
     const bool demote = older == kNone && cold_ != nullptr && cold_->demote(bestSlot, entries_[best].manifest);
+    if (demoteOnly && !demote) return false;
     entries_[newer].older = older;
     if (older == kNone) {
       s.oldest = newer;
@@ -527,6 +533,7 @@ class History {
     freeEntry(best);
     if (demote) {
       ++stats_.demoted;
+      if (demoteOnly) ++stats_.pressureDemoted;
       return true;
     }
     ++stats_.evictedUndo;

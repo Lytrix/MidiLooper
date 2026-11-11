@@ -1232,6 +1232,45 @@ void test_a_big_run_is_fetched_in_small_grains() {
   TEST_ASSERT_EQUAL_UINT16(gA.history().oldestHot(0), gA.history().current(0));
 }
 
+
+// DEC-254 (E4.6e): the content pool short — card-held undo steps leave PSRAM (made cold, never forgotten), at most one
+// each 50 ms; the UNDO levels stay.
+void test_pressure_makes_card_held_steps_cold() {
+  coldSlot(gA);
+  const uint8_t d0 = gA.history().undoDepth(0), d9 = gA.history().undoDepth(9);
+  const uint32_t demoted = gA.history().stats().demoted;
+  gA.setPressureFloor(0xFFFFFFFFu);  // always short
+  run(gA, gClock + 200);  // 200 ticks ≈ 208 ms: about four demotions
+  const uint32_t p = gA.history().stats().pressureDemoted;
+  TEST_ASSERT_TRUE(p >= 2 && p <= 6);
+  TEST_ASSERT_EQUAL_UINT32(demoted + p, gA.history().stats().demoted);
+  TEST_ASSERT_EQUAL_UINT32(0, gA.history().stats().evictedUndo);
+  TEST_ASSERT_EQUAL_UINT8(d0, gA.history().undoDepth(0));
+  TEST_ASSERT_EQUAL_UINT8(d9, gA.history().undoDepth(9));
+  gA.setPressureFloor(0);  // room again: no more
+  run(gA, gClock + 200);
+  TEST_ASSERT_EQUAL_UINT32(p, gA.history().stats().pressureDemoted);
+}
+
+// E4.6e: at boot the loading slot's own oldest step may have to make room (the table full of it): it goes cold — its
+// runs are known from the load in progress — and is not forgotten.
+void test_a_loading_slot_can_make_its_own_steps_cold() {
+  gA.approveSaving();
+  record(gA, 1, 9, 72);
+  run(gA, gClock + kSettleTicks + 50);
+  manyStates(gA, 9, 98);  // slot 9: 99 states, the whole table
+  TEST_ASSERT_EQUAL_UINT8(99, gA.history().heldStates());
+  record(gA, 0, 0, 60);   // slot 0's take: slot 9's oldest goes cold (slot 9's copy still lists it hot)
+  run(gA, gClock + kSettleTicks + 50);
+  TEST_ASSERT_EQUAL_UINT8(1, gA.history().coldCount(9));
+  const uint8_t depth = gA.history().undoDepth(9);
+  bootB();  // slot 0 loads first (its current only); slot 9's 99 overflow the table on its own last state
+  TEST_ASSERT_EQUAL_UINT32(0, gB.persistence().stats().loadFailed);
+  TEST_ASSERT_EQUAL_UINT32(0, gB.history().stats().evictedUndo);
+  TEST_ASSERT_EQUAL_UINT8(depth, gB.history().undoDepth(9));
+  TEST_ASSERT_EQUAL_UINT8(1, gB.history().coldCount(9));
+}
+
 void test_no_heap() {
   gA.approveSaving();
   const std::vector<Live> take = {{kBar + 10, kBar + 200, 60}};
@@ -1276,6 +1315,8 @@ int main(int, char**) {
   RUN_TEST(test_a_damaged_record_refuses_the_fetch);
   RUN_TEST(test_a_change_on_the_slot_cancels_the_fetch);
   RUN_TEST(test_a_big_run_is_fetched_in_small_grains);
+  RUN_TEST(test_pressure_makes_card_held_steps_cold);
+  RUN_TEST(test_a_loading_slot_can_make_its_own_steps_cold);
   RUN_TEST(test_no_heap);
   return UNITY_END();
 }

@@ -1602,8 +1602,11 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
     {  // DEC-254 (E4.6b): the run-once store
       const auto& ps = gEngine.persistence().stats();
       const auto& hs = gEngine.history().stats();
-      Serial.printf("#ENGINE,cold,states=%u,demoted=%lu,slot_depth=%lu,undo_at_cold=%lu,loaded=%lu,bad=%lu,restarts=%lu\n",
+      Serial.printf("#ENGINE,cold,states=%u,demoted=%lu,pressure=%lu,content_free=%lu,slot_depth=%lu,undo_at_cold=%lu,"
+                    "loaded=%lu,bad=%lu,restarts=%lu\n",
                     gEngine.persistence().coldTier().total(), static_cast<unsigned long>(hs.demoted),
+                    static_cast<unsigned long>(hs.pressureDemoted),
+                    static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
                     static_cast<unsigned long>(hs.slotDepth), static_cast<unsigned long>(hs.undoAtCold),
                     static_cast<unsigned long>(ps.coldLoaded), static_cast<unsigned long>(ps.coldBad),
                     static_cast<unsigned long>(ps.coldRestarts));
