@@ -521,6 +521,10 @@ class Surface {
   bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) {
     if (type != 0xB0 || channel != 15 || d1 < kGrooveCc || d1 >= kGrooveCc + kGrooveFields) return false;
     const uint8_t field = static_cast<uint8_t>(d1 - kGrooveCc);
+    if ((faderSeen_ & (1u << field)) == 0) {  // the DROID reports each fader as the bank opens: where it is, not a move
+      faderSeen_ = static_cast<uint8_t>(faderSeen_ | (1u << field));
+      return true;
+    }
     const Heard col = columnOf(field);
     groove::Settings& g = columnSettings(col);
     const groove::Settings before = g;
@@ -737,6 +741,7 @@ class Surface {
     }
     grooveSet_ = grooveA_;
     heard_ = packed != 0 ? Heard::A : Heard::Off;
+    faderSeen_ = 0;
     cycling_ = false;
     grooveAt_ = 0;
     leaveVisit();
@@ -2316,6 +2321,7 @@ class Surface {
   bool grooveAuto_ = false;                      // AUTO Q, the slot's (DEC-295: the title bar's checkbox)
   uint8_t cycleBars_ = 2;                        // the cycle's bars a turn: global, 2 by default (DEC-295)
   Heard pendingCol_ = Heard::B;                  // the one a settling change is to
+  uint8_t faderSeen_ = 0;                        // the GROOVE bank's faders reported since the window opened (bit f)
   uint32_t cycleStart_ = 0, cycleAsked_ = 0;     // the cycle's first bar line; the turn last asked for
   uint32_t grooveAt_ = 0;                        // a turn's bar line its build waits for (0: none) — asked within the
                                                  // beat before it, so the next beat (DEC-292) is that bar line

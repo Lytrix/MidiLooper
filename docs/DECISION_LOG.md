@@ -16582,5 +16582,10 @@ highlight moving, NOTELEN → AUTO Q ticked, PLAY/STOP → kept, applied.
   (`kGrooveCc`): F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount — the fields' own order. The loop-edit
   bank's pitch bends and CCs are not the window's any more. No motor feedback yet: the DROID keeps the bank's own fader
   positions. Native: the bank test opens the window (program 2), sets all four by CC, ignores a pitch bend, and returns
-  to the loop-edit bank. Full native 4,546 passed. Device: pending (the board did not take the upload).
+  to the loop-edit bank. Full native 4,546 passed. Device image `6e7ccf96…` (`crash=0`): opening sent program 2,
+  applying program 0; CC 21 / 22 set A's amount and B's groove — and B's amount went to 0: the DROID reports each
+  fader's place as the bank opens. So the first CC of each fader after the window opens is taken as its place, not a
+  move (`faderSeen_`); a move's following CCs act. Native: the bank test's reports change nothing, then the moves do.
+  Device image `65c54eea…` (`crash=0`): opening and applying on T1 S3 left its runs unchanged. (The test's groove on
+  T1 S3 from `6e7ccf96…` was undone over serial.)
 

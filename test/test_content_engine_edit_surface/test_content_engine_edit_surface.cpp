@@ -321,7 +321,13 @@ void test_the_droid_fader_bank_follows_note_edit() {
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.bank(p));
   TEST_ASSERT_EQUAL_UINT8(S::kGrooveBank, p);
-  // Its faders are CCs 20–23 on channel 16 in the fields' order: A's groove, A's amount, B's groove, B's amount.
+  // As the bank opens the DROID reports each fader's place (device, 2026-11-11: B's amount went to 0): not a move.
+  const uint8_t a0 = gS.grooveA().amount, b0 = gS.grooveSettings().amount;
+  for (uint8_t f = 0; f < 4; ++f) gS.input(0xBF, static_cast<uint8_t>(S::kGrooveCc + f), 0, gUs / 1000);
+  TEST_ASSERT_EQUAL_UINT8(a0, gS.grooveA().amount);
+  TEST_ASSERT_EQUAL_UINT8(b0, gS.grooveSettings().amount);
+  TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
+  // Then its faders are CCs 20–23 on channel 16 in the fields' order: A's groove, A's amount, B's groove, B's amount.
   gS.input(0xBF, S::kGrooveCc + 0, 127, gUs / 1000);
   TEST_ASSERT_EQUAL_UINT8(ContentEngine::groove::kTemplateCount - 1, gS.grooveA().tmpl);
   gS.input(0xBF, S::kGrooveCc + 1, 0, gUs / 1000);
@@ -2435,6 +2441,8 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::Off);
   TEST_ASSERT_EQUAL_UINT8(0, gS.grooveField());
+  gS.input(0xBF, S::kGrooveCc + 3, 0, gUs / 1000);    // the DROID's report of F4 as the bank opens: nothing
+  TEST_ASSERT_EQUAL_UINT8(50, gS.grooveSettings().amount);
   gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23) at the top: B's amount 100 %
   ms(10);
   TEST_ASSERT_EQUAL_UINT8(100, gS.grooveSettings().amount);
@@ -2537,6 +2545,7 @@ void test_the_groove_window_compares_a_b_and_off() {
   ms(50);
   TEST_ASSERT_TRUE(gS.grooveOpen());
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::A);
+  gS.input(0xBF, S::kGrooveCc + 3, 0, gUs / 1000);    // the bank's report: not a move
   gS.input(0xBF, S::kGrooveCc + 3, 127, gUs / 1000);  // F4 (CC 23): B's amount 100 % → 144, heard
   run(gUs + 2 * 768 * kTick);
   TEST_ASSERT_TRUE(gS.grooveHeard() == S::Heard::B);
