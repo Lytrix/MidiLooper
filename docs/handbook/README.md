@@ -14,7 +14,7 @@ The reference revision in the builder pins the excerpts and controller download 
 
 ## Image provenance
 
-The hardware photographs come from the repository’s `Images/midilooper.jpg` and `Images/midilooper_droid.jpg`. They show prototype hardware. The live screen, `oled-performance.png`, is the attached Teensy’s complete 256 × 64 framebuffer from 11 November 2026, exported via `!ENGINE fbdump` and rendered at 4× with `scripts/render_display_dump.py`.
+The hardware photographs come from the repository’s `Images/midilooper.jpg` and `Images/midilooper_droid.jpg`. They show prototype hardware. The live screen, `oled-performance.png`, is the attached Teensy’s complete 256 × 64 framebuffer from 11 November 2026, exported via `!ENGINE fbdump` and rendered at 4× with `scripts/render_display_dump.py --panel`. For all ten screens, this option uses the yellow-green palette from `docs/Plans/images/groove_cycle_bars_mockup.png` and adds six native pixels of black margin around the 256 × 64 active area. The PNGs include that margin when opened at full size.
 
 All nine `engine-*.png` images are example frames drawn on a computer with the actual engine renderer, SSD1322 graphics and device fonts using sample notes and library entries. Each example was checked against the manual’s firmware revision. Labels in the manual identify the live capture and the software-rendered examples.
 

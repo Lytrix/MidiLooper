@@ -1,18 +1,31 @@
 <section class="hero" aria-labelledby="hero-title">
   <div class="hero-photo" role="img" aria-label="DROID control surface beside the looper’s OLED"></div>
   <div class="hero-copy"><p class="eyebrow hero-tag"><i></i>Instrument documentation</p><h1 id="hero-title">MidiLooper<br>Manual<span>.</span></h1>
-    <p>A hands-on guide to the eight-track MIDI looper. Record a phrase, overdub a part and edit the loop while it plays.</p>
+    <p>An eight-track Teensy MIDI looper.</p>
     <a class="start-button" href="first-recording.html">Record your first loop <span aria-hidden="true">→</span></a>
   </div><span class="photo-label">DROID reference setup</span>
 </section>
-<div class="specs" aria-label="Instrument specifications"><div><b>8</b><span>Tracks</span></div><div><b>8</b><span>Slots per track</span></div><div><b>192</b><span>Ticks per quarter note</span></div><div><b>256 × 64</b><span>OLED pixels</span></div></div>
+<dl class="specs" aria-label="Instrument specifications">
+  <div><dt>Tracks</dt><dd>8</dd></div>
+  <div><dt>Loop slots per track</dt><dd>8</dd></div>
+  <div><dt><a href="overdub-undo.html#older-undo-steps">Undos per slot</a></dt><dd>Up to 99</dd></div>
+  <div><dt><a href="setup.html#first-save">Optional autosave</a></dt><dd>microSD</dd></div>
+  <div><dt>Ticks per quarter note</dt><dd>192</dd></div>
+  <div><dt>SSD1322 OLED</dt><dd>256 × 64</dd></div>
+  <div><dt>External PSRAM</dt><dd>8 MB</dd></div>
+  <div><dt><a href="setup.html#din-midi">External MIDI interface option</a></dt><dd>8 in / 8 out</dd></div>
+</dl>
 <section class="home-section" aria-labelledby="quick-guides"><div class="section-head"><h2 id="quick-guides">Quick guides</h2><span class="section-rule"></span></div>
 <div class="guide-grid">
   <a class="guide-card" href="overdub-undo.html"><div class="card-art art-roll" aria-hidden="true"><div class="roll-graphic"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><b></b></div></div><div class="card-copy"><span class="eyebrow">Performance</span><h3>Overdub &amp; undo <span>↗</span></h3><p>Overdub a second part, undo the take and bring it back.</p></div></a>
   <a class="guide-card" href="library.html"><div class="card-art art-library" aria-hidden="true"><div class="stage-graphic"><b></b><b></b><b></b><b></b><i></i></div></div><div class="card-copy"><span class="eyebrow">Set library</span><h3>Save &amp; recall <span>↗</span></h3><p>Save a version of your set or recall one of its loops.</p></div></a>
   <a class="guide-card" href="midi-controls.html"><div class="card-art art-faders" aria-hidden="true"><div class="fader-graphic"><i></i><i></i><i></i><i></i></div></div><div class="card-copy"><span class="eyebrow">Control surface</span><h3>Map a controller <span>↗</span></h3><p>Map MIDI notes, faders and LED feedback on your controller.</p></div></a>
 </div></section>
-<section class="home-section instrument-story" aria-labelledby="instrument-goal"><div class="section-head"><h2 id="instrument-goal">What the looper is for</h2><span class="section-rule"></span></div>
-<p>Play a bass line into track 1 and let it repeat. Add a countermelody on track 2. Try a different bass line in another slot, then switch between the two while the melody keeps going. The looper records the notes and their timing. On playback it sends MIDI messages to your synths or software instruments.</p>
-<p>Each of the eight tracks can play one of its eight slots. A slot holds a phrase and its undo history. A <em>set</em> contains all eight tracks. A <em>milestone</em> is a saved version of the set that you can recall later. Capturing an entire jam as a song arrangement is a longer-term project goal.</p></section>
-<section class="home-section display-feature"><div><p class="eyebrow">From the device</p><h2>Read the OLED</h2><p>Find the selected slot, read the piano roll and recognize a completed save.</p><a class="text-action" href="screens.html">Open the screen guide <span>→</span></a></div><a href="screens.html" class="oled-feature-image" aria-label="See the live device capture in the screen guide"><img src="assets/oled-performance.png" width="1024" height="256" alt="Captured OLED screen stopped on track 2 slot 7"></a></section>
+<section class="home-section instrument-story" aria-labelledby="instrument-goal"><div class="section-head"><h2 id="instrument-goal">Keep playing, keep the vibe</h2><span class="section-rule"></span></div>
+<p>The inspiration was Cubase on an Atari. You sat down, the ideas went straight in, and the machine seemed to disappear. That’s the feeling behind MidiLooper. “One hand on the device, attention on the music.”</p>
+<p>When a loop comes round and you can already hear the next part in your head, hit Record and play it. If the loop felt better before the overdub, undo it while you listen. Bring it back if you miss it. The dream is to catch a whole jam that way and shape it into a song while you can still feel what made it work.</p>
+<p>Each track plays one of its eight loop slots. A slot keeps its loop and undo history. A <em>set</em> holds all eight tracks. Save a <em>milestone</em> when you hear a version of the set you want to come back to.</p></section>
+<section class="home-section instrument-story" aria-labelledby="hardware-requirements"><div class="section-head"><h2 id="hardware-requirements">Hardware requirements</h2><span class="section-rule"></span></div>
+<p>The reference instrument uses a Teensy 4.1, 8 MB of external PSRAM, a 256 × 64 SSD1322 OLED and a microSD card for saving. A push encoder adjusts notes and groove settings. A MIDI controller supplies the recording and transport buttons. The DROID setup adds a grid and four motorized faders.</p>
+<p><a class="text-action" href="setup.html#din-midi">MIDI circuit schematic <span aria-hidden="true">→</span></a> <a class="text-action" href="setup.html#hardware">Display, encoder and button wiring <span aria-hidden="true">→</span></a></p></section>
+<section class="home-section display-feature"><div><p class="eyebrow">From the device</p><h2>Read the OLED</h2><p>Find the selected slot, read the piano roll and recognize a completed save.</p><a class="text-action" href="screens.html">Open the screen guide <span>→</span></a></div><a href="screens.html" class="oled-feature-image" aria-label="See the live device capture in the screen guide"><img src="assets/oled-performance.png" width="1072" height="304" alt="Captured OLED screen stopped on track 2 slot 7"></a></section>

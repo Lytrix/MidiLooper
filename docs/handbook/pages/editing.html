@@ -7,22 +7,22 @@
   <li><strong>Select the note.</strong> The dotted bracket marks your position on the piano roll. Tap the step button for the note’s sixteenth-note position in that bar. If several notes start on the same step, tap it again to select the next one. F1 also selects notes.</li>
   <li><strong>Adjust pitch and timing.</strong> F4 changes pitch. To move the note’s start, use F2 to choose the sixteenth-note position and F3 to nudge it earlier or later. To shorten or lengthen it, tap <kbd>NOTELEN</kbd> with the note selected. F2 and F3 now move the end of the note. Tap <kbd>NOTELEN</kbd> again to edit its start.</li>
   <li><strong>Set velocity.</strong> Hold <kbd>NOTELEN</kbd> and move F4 to change the note’s MIDI velocity. A velocity of zero mutes the note. Raise it again to hear the note play.</li>
-  <li><strong>Keep the edit.</strong> While editing, double-tap <kbd>REC</kbd> to undo or triple-tap to redo. When the phrase sounds right, hold <kbd>EDIT</kbd> for 1.5 seconds. All the note edits made during that visit now count as one undo step on this slot.</li>
+  <li><strong>Keep the edit.</strong> While editing, double-tap <kbd>REC</kbd> to undo or triple-tap to redo. When the loop sounds right, hold <kbd>EDIT</kbd> for 1.5 seconds. All the note edits made during that visit now count as one undo step on this slot.</li>
 </ol>
-<figure class="screen"><img src="assets/engine-note-edit.png" width="1024" height="256" loading="lazy" alt="Selected MIDI note 72, labeled C4 on the OLED, with velocity 104 and a duration of 230 ticks."><figcaption><strong>Firmware-rendered example.</strong> The note starts on beat 3 of bar 1. LENGTH gives its duration in ticks, with 192 ticks per quarter note.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-note-edit.png" width="1072" height="304" loading="lazy" alt="Selected MIDI note 72, labeled C4 on the OLED, with velocity 104 and a duration of 230 ticks."><figcaption><strong>Firmware-rendered example.</strong> The note starts on beat 3 of bar 1. LENGTH gives its duration in ticks, with 192 ticks per quarter note.</figcaption></figure>
 <p>To use the rotary encoder, push it to choose pitch, start position, duration or velocity. Turn it to change the underlined value. Holding a step button while turning the encoder edits the note on that step.</p>
 
 <h2 id="add-delete-copy">Add, delete or copy notes</h2>
 <p>Tap an empty step to add a sixteenth note at MIDI note number 60, velocity 80. The OLED calls MIDI note 60 <strong>C3</strong>. At an empty bracket, tapping <kbd>NOTELEN</kbd> adds a thirty-second note. Double-tap a step that contains notes to delete the selected note on that step.</p>
 <p>To copy a bar, hold its bar button until <strong>COPY</strong> opens, then release. Tap the destination bar once to replace its notes, or double-tap to add the copied notes to the notes already there. To copy one note, hold its step button without editing, release when COPY opens and choose a destination step. Pasting beyond the loop end extends the loop to the end of that bar. Tap the original bar or step once to cancel copying, or double-tap it to clear it.</p>
 
-<h2 id="set-the-play-range">Loop a section of the phrase</h2>
+<h2 id="set-the-play-range">Set the loop start and end</h2>
 <ol>
   <li>Enter LOOP_EDIT on a recorded loop. To hear bars 2–4, hold bar button 2 and tap bar button 4. The range includes both ends. Holding 4 and tapping 2 selects the same range.</li>
   <li>Choose another range, such as bars 1–2. The bar numbers still refer to your original recording. Tap <kbd>NOTELEN</kbd> to alternate between the two ranges. Double-tap it to play the full loop.</li>
   <li>To loop a single bar, double-tap its bar button. To repeat a single sixteenth note’s worth of time, double-tap its step button. Hold one step and tap another to repeat everything between them. The brackets around the progress bar mark the range. Notes outside it are still there when you lengthen the loop.</li>
 </ol>
-<figure class="screen"><img src="assets/engine-loop-edit.png" width="1024" height="256" loading="lazy" alt="Loop editor showing START 1.1, LENGTH 2 and BPM 120.0 below the two-bar piano roll."><figcaption><strong>Firmware-rendered example.</strong> START, LENGTH and BPM identify LOOP_EDIT. This sample loop starts on the first beat and runs for two bars.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-loop-edit.png" width="1072" height="304" loading="lazy" alt="Loop editor showing START 1.1, LENGTH 2 and BPM 120.0 below the two-bar piano roll."><figcaption><strong>Firmware-rendered example.</strong> START, LENGTH and BPM identify LOOP_EDIT. This sample loop starts on the first beat and runs for two bars.</figcaption></figure>
 <p>F1 moves the loop start in sixteenth-note steps. With F2, choose a loop length and let the fader rest. The shortest settings are a sixteenth note, an eighth note, a quarter note, half a bar and three beats. Longer settings are 1–16 bars, then 32, 64, 96 and 128 bars. F4 sets the internal tempo from 20 to 300 BPM in whole beats per minute. F3 adjusts it in tenths of a BPM. With external MIDI Clock, set the tempo on the device sending clock.</p>
 
 <h2 id="start-with-a-length">Start with a fixed-length loop</h2>

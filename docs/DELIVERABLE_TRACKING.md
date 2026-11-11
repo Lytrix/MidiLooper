@@ -1,4 +1,4 @@
-**2026-11-11 — MidiLooper Manual (documentation).** [Offline website and maintenance instructions](handbook/README.md). Includes step-by-step performance and library controls, controller programming, OLED images and a source-backed review of implementation gaps.
+**2026-11-11 — MidiLooper Manual (documentation).** [Offline website and maintenance instructions](handbook/README.md). Includes step-by-step performance and library controls, controller programming, hardware requirements and MIDI wiring, panel-colored OLED captures and a source-backed review of implementation gaps.
 
 **2026-11-10 — Fixed-memory engine: performance and step surface (DEC-273–278; owner-confirmed on the device).**
 On `feature/engine-sets-browser` (not merged). The screen opens on the saved selection and a queued slot's roll shows

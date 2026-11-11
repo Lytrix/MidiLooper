@@ -6,7 +6,7 @@
   <li>Finish your take or leave NOTE_EDIT. Watch the four dots above the tempo. Dim dots mean a save is waiting. A moving dot means the looper is writing to the card. Four bright dots flash when the save is complete. A dimmer flash signals a failed save. In the sets browser, the save row reads <strong>UNSAVED</strong> or <strong>SAVED</strong>, with the time if the clock is set.</li>
 </ol>
 <p>At power-up the looper restores the last saved version of each slot from <code>/MidiLooper/engine/store.bin</code>. This file takes about 1 GiB and holds recent and older undo steps. Saved milestones and the recovery checkpoint share a second 1 GiB file, <code>/MidiLooper/library/library.bin</code>. Allow room for both and leave the card in place until the save finishes.</p>
-<figure class="screen"><img src="assets/engine-sets.png" width="1024" height="256" loading="lazy" alt="SETS screen with SAVE SET highlighted above the list of saved sets."><figcaption>FROM B01 tells you the current set started from Building 01. With SAVE SET highlighted, press TRK to save the version you’re playing now. Firmware-rendered example.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-sets.png" width="1072" height="304" loading="lazy" alt="SETS screen with SAVE SET highlighted above the list of saved sets."><figcaption>FROM B01 tells you the current set started from Building 01. With SAVE SET highlighted, press TRK to save the version you’re playing now. Firmware-rendered example.</figcaption></figure>
 
 <h2 id="save-a-milestone">Save a version of the whole set</h2>
 <p>The sets browser is available once the looper has opened the card’s library. If holding <kbd>Next Track</kbd> mutes the selected track instead, hold it again to restore the previous mute setting. Check the card and saving setup above. The USB serial command <code>!ENGINE library</code> reports whether the library is mounted.</p>
@@ -15,7 +15,7 @@
   <li>In <strong>SAVE CURRENT</strong>, press <kbd>REC</kbd> to move up or <kbd>EDIT</kbd> to move down. Label this version as <strong>SKETCH</strong>, <strong>BUILDING</strong>, <strong>EXPLORATION</strong>, <strong>TAKE</strong>, <strong>ARRANGEMENT</strong>, or <strong>FINAL</strong>. Choose <strong>AS NEW SET</strong> to take the same loops in a different direction under a new set number.</li>
   <li>Press <kbd>TRK</kbd> once. For example, <strong>SAVED SET 2 T01</strong> confirms the first Take in set 2. Saving another Take makes T02. You can still load T01.</li>
 </ol>
-<figure class="screen"><img src="assets/engine-save.png" width="1024" height="256" loading="lazy" alt="SAVE CURRENT screen with BUILDING B02 highlighted beside the earlier B01 and S01 stages."><figcaption>Press TRK to save Building B02. The earlier Building B01 and Sketch S01 stay in set 1. Firmware-rendered example.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-save.png" width="1072" height="304" loading="lazy" alt="SAVE CURRENT screen with BUILDING B02 highlighted beside the earlier B01 and S01 stages."><figcaption>Press TRK to save Building B02. The earlier Building B01 and Sketch S01 stay in set 1. Firmware-rendered example.</figcaption></figure>
 <p>Each milestone keeps all 64 slots, the selected track and slots, the tempo and the undo steps still in memory when you press Save. Older undo steps held only on the card are outside both milestones and recovery checkpoints. If you overdub again after saving, that performance becomes part of the current set. Hold a button to leave the browser.</p>
 
 <h2 id="load-a-set">Load a saved set</h2>
@@ -24,7 +24,7 @@
   <li>Under <strong>LOAD SET</strong>, use <kbd>EDIT</kbd> to move down to the set you want. Press <kbd>TRK</kbd> to see its saved stages, newest first.</li>
   <li>Under <strong>LOAD STAGE</strong>, check the stage number and date, then press <kbd>TRK</kbd>. The performance screen flashes <strong>LOADED SET</strong> with the set and stage you chose.</li>
 </ol>
-<figure class="screen"><img src="assets/engine-stages.png" width="1024" height="256" loading="lazy" alt="Set 1 with Sketch S01 highlighted below Building B01."><figcaption>Sketch S01 is highlighted. Press TRK once to load that version of set 1. Firmware-rendered example.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-stages.png" width="1072" height="304" loading="lazy" alt="Set 1 with Sketch S01 highlighted below Building B01."><figcaption>Sketch S01 is highlighted. Press TRK once to load that version of set 1. Firmware-rendered example.</figcaption></figure>
 <p>Loading a set replaces the loops and undo history on all eight tracks. Before switching, the looper saves one <strong>recovery checkpoint</strong> so you can return to the set you were playing. Send <code>!ENGINE return</code> in the USB serial monitor to recall it. The next set you load replaces that checkpoint. To keep a version for future sessions, save it as a milestone.</p>
 <p>If the transport is running, the looper prepares the incoming loops and switches in time. Send <code>!ENGINE switch-at bar</code> to change sets on the next bar line, or <code>!ENGINE switch-at loop</code> to wait for the end of the selected track’s loop. If an incoming track needs more time to load, you may hear a gap of about one bar on that track.</p>
 
@@ -37,7 +37,7 @@
 </ol>
 <p>On this screen, <strong>PLY</strong> means note 40. The supplied DROID patch sends note 39 from its global Play/Stop button. To move down through the tracks, assign a spare pad to note 40 on channel 16, with Note On when pressed and Note Off when released.</p>
 <p>The extra column on the left offers empty loops of different lengths. Choose a length and press <kbd>TRK</kbd> to load it. The looper asks for confirmation if the chosen track and slot already hold a loop.</p>
-<figure class="screen"><img src="assets/engine-picker.png" width="1024" height="256" loading="lazy" alt="Loop picker with an empty four-bar loop selected and INTO 2-1 above the preview."><figcaption>INTO 2-1 means track 2, slot 1 will receive the loop. The highlighted 4 selects an empty four-bar loop. The two lit slots to its right contain loops from Building B01. Firmware-rendered example.</figcaption></figure>
+<figure class="screen"><img src="assets/engine-picker.png" width="1072" height="304" loading="lazy" alt="Loop picker with an empty four-bar loop selected and INTO 2-1 above the preview."><figcaption>INTO 2-1 means track 2, slot 1 will receive the loop. The highlighted 4 selects an empty four-bar loop. The two lit slots to its right contain loops from Building B01. Firmware-rendered example.</figcaption></figure>
 
 <h2 id="trash-and-restore">Trash and restore saved stages</h2>
 <p>In a set’s stage list, double-press <kbd>TRK</kbd> on a milestone to move it to the trash immediately. On <strong>MOVE SET TO TRASH</strong> the same gesture moves every visible stage of that set. Watch for <strong>IN TRASH</strong>. Triple-press <kbd>TRK</kbd> immediately afterward to bring back the last stage or set you trashed.</p>

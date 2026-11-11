@@ -22,12 +22,12 @@ GROUPS = [
     ("Getting started", [
         ("index", "Overview", "book", "Overview", "An illustrated player's guide to the Teensy 4.1 MIDI looper."),
         ("setup", "Hardware & setup", "plug", "Hardware & setup", "Connect a keyboard, controller and sound source. Check the MIDI route and prepare the card before your first take."),
-        ("first-recording", "Your first loop", "record", "Record your first loop", "Record a phrase into an empty slot, finish the take on a downbeat and listen as it loops."),
+        ("first-recording", "Your first loop", "record", "Record your first loop", "Record a loop into an empty slot, finish the take on a downbeat and listen to it repeat."),
     ]),
     ("Playing & editing", [
         ("overdub-undo", "Overdub & undo", "layers", "Overdub & undo", "Try a second part over a playing loop. Step back through that take or return to an earlier version of the selected slot."),
         ("switching", "Switching loops", "switch", "Switching loops", "Switch to a variation at the end of a loop, or launch it on the next sixteenth note while the other tracks play."),
-        ("editing", "Notes & loop ranges", "sliders", "Edit notes & loop ranges", "Move a note, adjust its velocity or loop a few bars of a longer phrase. The original bars stay available inside the slot."),
+        ("editing", "Notes & loop ranges", "sliders", "Edit notes & loop ranges", "Move a note, adjust its velocity or repeat a few bars from a longer loop. The original bars stay available inside the slot."),
         ("groove", "Groove & quantize", "wave", "Groove & quantize", "Compare two groove templates with your original timing. Adjust the amount of swing or quantization while the loop plays."),
     ]),
     ("Library & controls", [

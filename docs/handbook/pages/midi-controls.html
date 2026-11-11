@@ -3,12 +3,13 @@
 <ul>
   <li><strong>Computer or DAW.</strong> Connect the Teensy’s USB device port to your computer. In your DAW, choose the Teensy as the MIDI destination for keyboard notes, sequencer tracks or control-pad messages. To play a software instrument from the looper, select the Teensy as that instrument track’s MIDI input.</li>
   <li><strong>Standalone controller.</strong> Plug a compatible USB MIDI controller into the Teensy’s USB host port. For a controller with 5-pin DIN connectors, connect its MIDI OUT to the looper’s MIDI IN. To receive LED or motorized-fader feedback over DIN, also route the looper’s MIDI OUT to the controller’s MIDI IN.</li>
-  <li><strong>MIDI channels and outputs.</strong> Send your keyboard or sequencer performance on channels 1–12. The looper reserves channels 13–16 for its control surface on every MIDI input. During playback, it transmits recorded MIDI messages through DIN OUT and the USB device port. The USB host port returns MIDI feedback to the controller. Track 1 transmits on channel 1, track 2 on channel 2, and so on through track 8.</li>
+  <li><strong>MIDI inputs and outputs.</strong> The looper receives MIDI through DIN IN, USB from a computer or the Teensy’s USB host port. It sends loop playback and live MIDI thru to DIN OUT and back to the computer over USB. The USB host port receives notes and controls from a connected MIDI controller and sends LED and motorized-fader feedback back to it.</li>
+  <li><strong>MIDI channels.</strong> Play on any of channels 1–12. Channels 13–16 are reserved for looper controls. Live notes follow the selected track. If a take is open, the track recording or overdubbing receives them even if you select another track. Each track transmits on its own channel, from track 1 on channel 1 to track 8 on channel 8.</li>
 </ul>
 
 <h2 id="program-first-pads">Program your first pads</h2>
 <ol>
-  <li>In your controller’s editor, create a preset. Set each pad to <strong>momentary</strong>, choose MIDI note messages and enter the note number directly. On <strong>channel 16</strong>, send Note On with velocity 100 when you press the pad and Note Off when you release it. Note On with velocity 0 also works as a release.</li>
+  <li>In your controller’s editor, create a preset. Set each pad to <strong>momentary</strong>, choose MIDI note messages and enter the note number directly. On <strong>channel 16</strong>, send Note On when you press the pad and Note Off when you release it. Note On with velocity 0 also works as a release.</li>
   <li>Assign <kbd>Record</kbd> to 36, <kbd>Transport</kbd> to 39 and <kbd>Next track</kbd> to 37. For direct selection, assign two more pads to 60 and 61 for tracks 1 and 2. Save the preset on the controller.</li>
   <li>In performance mode with the track row set to select, tap the pad assigned to note 61. Track 2 should be highlighted on the OLED. Tap the pad assigned to note 60 to return to track 1.</li>
   <li>Play a key on the keyboard with its transmit channel set to 1. You should hear the synthesizer play that note. Now select track 2 and set the synthesizer’s receive channel to 2. Play the same key again. The looper’s MIDI thru sends the note on the selected track’s output channel.</li>
@@ -57,6 +58,6 @@
   <li><strong>One tap mutes a track.</strong> Tap <kbd>Edit</kbd> once to switch the track row back to selection. Try pad 61 again.</li>
   <li><strong>A tap behaves like a hold or fires only every other time.</strong> Check for one Note On at press and one Note Off at release. Turn off latch/toggle mode and controller-generated repeats.</li>
   <li><strong>The OLED responds, but there is no sound.</strong> Match the synth’s MIDI receive channel to the selected track. Verify that Note On messages arrive at the synth’s MIDI IN or at your DAW’s instrument track. Then check that the instrument’s audio output reaches your headphones or monitors.</li>
-  <li><strong>The bars light in the wrong places.</strong> Configure independent send and receive notes for the bar pads. Their input and feedback ranges differ.</li>
+  <li><strong>A DROID LED stays dark or the wrong pad lights.</strong> Adjust the LED assignment in <a href="assets/midilooper_v1.ini" download>midilooper_v1.ini</a>, then reload the patch on DROID. For bar LEDs, check the note numbers under <code>[midiin]</code> and the physical LED outputs under <code>[copy]</code>.</li>
 </ul>
 <p><a href="REPO/include/ContentEngine/Surface.h#L240">Engine button and fader definitions</a> · <a href="REPO/include/ContentEngine/Surface.h#L1800">LED assignments</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L233">Input routing</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L177">Playback outputs</a>.</p>

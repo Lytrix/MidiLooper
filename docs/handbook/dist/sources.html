@@ -36,7 +36,51 @@
   80  // Continuous controllers (owner decisions 2026-11-05, MidiClass.h): at most 64 values per track per tick, recorded
   81  // (the writer) and played (the composer leaves later ones out of the window). Device: a controller message on 3 ports
   82  // costs ~0.5 us, so 64 per track take ~31 us per tick and ~250 us for 8 tracks (~24 % of a 1.04 ms tick at 300 BPM).
-  83  constexpr uint8_t kMaxContinuousPerTick = 64;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2117"><h3>Hardware setup</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2117</code></p><details><summary>Read the excerpt</summary><pre><code>2116    gBootStartUs = micros();
+  83  constexpr uint8_t kMaxContinuousPerTick = 64;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2112"><h3>Firmware port setup</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2112</code></p><details><summary>Read the excerpt</summary><pre><code>2111    phase(kPhaseDisplay);
+2112    Serial8.begin(31250);
+2113    Serial8.addMemoryForWrite(gDinTx, sizeof gDinTx);
+2114    gHost.begin();
+2115    phase(kPhasePorts);
+2116    gBootStartUs = micros();
+2117    if (gCard.begin()) {
+2118      gEngine.attachCard(gCard);
+2119      gEngine.startBootLoad();
+2120    } else {
+2121      Serial.println(&quot;#CAP,BOOT,card,absent&quot;);
+2122      // Why: the card&#x27;s own error, then the partition table (sector 0) when the card answered.</code></pre></details></section><section class="evidence" id="include-Globals-h-L45"><h3>Base-module pin assignments</h3><p><code>include/Globals.h · line 45</code></p><details><summary>Read the excerpt</summary><pre><code>  44  // MIDI transport notes 36–39 align numerically by convention; namespaces differ (MIDI vs pinMode).
+  45  namespace Buttons {
+  46    constexpr int ENCODER_PIN_A = 29;
+  47    constexpr int ENCODER_PIN_B = 30;
+  48    constexpr int ENCODER_BUTTON_PIN = 31;
+  49    constexpr int BUTTON_A_PIN = 36;  // Record / play / delete action family
+  50    constexpr int BUTTON_B_PIN = 37;  // Track select / mute / delete action family
+  51    constexpr int BUTTON_C_PIN = 38;  // Loop / note edit mode switch (NOTE_EDIT_MODE)
+  52    constexpr int BUTTON_D_PIN = 39;  // Play / stop transport action family
+  53    // Legacy aliases (same pins as BUTTON_A/B)
+  54    const int PLAY   = BUTTON_A_PIN;
+  55    const int RECORD = BUTTON_B_PIN;</code></pre></details></section><section class="evidence" id="lib-SSD1322_OLED-include-SSD1322_Config-h-L9"><h3>OLED signal pins</h3><p><code>lib/SSD1322_OLED/include/SSD1322_Config.h · line 9</code></p><details><summary>Read the excerpt</summary><pre><code>   8  // Display Configuration
+   9  struct SSD1322_CONFIG {
+  10      // Pin Configuration
+  11      int OLED_CS_PIN = 10;
+  12      int OLED_DC_PIN = 9;
+  13      int OLED_RESET_PIN = 8;
+  14      int OLED_CLOCK_PIN = 13;
+  15      int OLED_DATA_PIN = 11;  // MOSI
+  16
+  17      // Display Dimensions
+  18      int OLED_WIDTH = 256;
+  19      int OLED_HEIGHT = 64;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L308"><h3>Encoder wiring</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 308</code></p><details><summary>Read the excerpt</summary><pre><code> 307
+ 308  // ---- The GPIO encoder (surface slice E; legacy pins `Buttons::ENCODER_PIN_A/B`, `ENCODER_BUTTON_PIN`) ------------------
+ 309  // Quadrature on 29 / 30 (the Encoder library&#x27;s interrupts, four counts a detent, as legacy `GpioButtonManager`), the push
+ 310  // on 31 to ground (pull-up), debounced: a level held `kEncoderDebounceMs` is taken.
+ 311  constexpr uint8_t kEncoderPinA = 29, kEncoderPinB = 30, kEncoderButtonPin = 31;
+ 312  constexpr uint32_t kEncoderDebounceMs = 5;
+ 313  Encoder gEncoder(kEncoderPinA, kEncoderPinB);
+ 314  long gEncoderDetents = 0;
+ 315  bool gEncoderDown = false, gEncoderRaw = false;
+ 316  uint32_t gEncoderRawMs = 0;
+ 317  void serviceEncoder(uint32_t ms) {
+ 318    const long detents = gEncoder.read() / 4;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2117"><h3>Hardware setup</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2117</code></p><details><summary>Read the excerpt</summary><pre><code>2116    gBootStartUs = micros();
 2117    if (gCard.begin()) {
 2118      gEngine.attachCard(gCard);
 2119      gEngine.startBootLoad();
@@ -58,18 +102,7 @@
  184    if (n != 0) {
  185      usbMIDI.send_now();
  186      gLastUsbTxUs = micros();
- 187    }</code></pre></details></section><section class="evidence" id="lib-SSD1322_OLED-include-SSD1322_Config-h-L9"><h3>OLED pins</h3><p><code>lib/SSD1322_OLED/include/SSD1322_Config.h · line 9</code></p><details><summary>Read the excerpt</summary><pre><code>   8  // Display Configuration
-   9  struct SSD1322_CONFIG {
-  10      // Pin Configuration
-  11      int OLED_CS_PIN = 10;
-  12      int OLED_DC_PIN = 9;
-  13      int OLED_RESET_PIN = 8;
-  14      int OLED_CLOCK_PIN = 13;
-  15      int OLED_DATA_PIN = 11;  // MOSI
-  16
-  17      // Display Dimensions
-  18      int OLED_WIDTH = 256;
-  19      int OLED_HEIGHT = 64;</code></pre></details></section><section class="evidence" id="platformio-ini-L277"><h3>Engine build</h3><p><code>platformio.ini · line 277</code></p><details><summary>Read the excerpt</summary><pre><code> 276  ;   pio run -e teensy41-engine -t upload
+ 187    }</code></pre></details></section><section class="evidence" id="platformio-ini-L277"><h3>Engine build</h3><p><code>platformio.ini · line 277</code></p><details><summary>Read the excerpt</summary><pre><code> 276  ;   pio run -e teensy41-engine -t upload
  277  [env:teensy41-engine]
  278  extends = env:teensy41
  279  extra_scripts =

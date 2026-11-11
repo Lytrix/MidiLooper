@@ -1,14 +1,14 @@
-<h2 id="add-an-overdub">Add another phrase to a playing loop</h2>
+<h2 id="add-an-overdub">Overdub a part while the loop plays</h2>
 <ol>
   <li>Select the track that is playing your recorded loop. Confirm its <strong>TRACK</strong> and <strong>SLOT</strong> numbers on the performance screen.</li>
-  <li>Tap <kbd>REC</kbd> once. The original phrase keeps playing and <strong>ODUB</strong> appears on the OLED. Play a new part over it. You can add more notes each time the loop repeats.</li>
-  <li>Tap <kbd>REC</kbd> again to finish the overdub, even halfway through a bar. The track continues playing the original phrase and the new notes at the same loop length.</li>
+  <li>Tap <kbd>REC</kbd> once. The loop keeps playing and <strong>ODUB</strong> appears on the OLED. Play a new part over it. You can add more notes each time the loop repeats.</li>
+  <li>Tap <kbd>REC</kbd> again to finish the overdub, even halfway through a bar. You hear the new notes on each repeat. The loop stays the same length.</li>
 </ol>
 <p>If the track is stopped, tapping <kbd>REC</kbd> on a slot that contains a loop starts playback first. Tap it again while the loop plays to overdub. A long press of <kbd>REC</kbd> clears the selected slot.</p>
 
 <h2 id="undo-and-redo">Hear the loop with and without your change</h2>
 <ul>
-  <li><strong>Double-tap <kbd>REC</kbd></strong> on the selected slot to undo its most recent change. After finishing an overdub, this returns to the phrase that was playing before the overdub.</li>
+  <li><strong>Double-tap <kbd>REC</kbd></strong> on the selected slot to undo its most recent change. After finishing an overdub, you’ll hear the loop as it sounded before you added the new part.</li>
   <li><strong>Triple-tap <kbd>REC</kbd></strong> to bring the overdub back. Make the three taps in quick succession. If you make a new change to the slot after undoing, its earlier redos are discarded.</li>
   <li><strong>Read the undo count.</strong> <strong>UNDO</strong> shows how many steps you can undo on the selected slot. <strong>ODUB</strong> counts undo steps in the current overdub, and <strong>EDIT</strong> counts steps in the current note edit.</li>
 </ul>
@@ -18,6 +18,6 @@
 <p>Undo follows the selected slot. For example, to undo a bass overdub recorded on track 1, slot 4, select track 1 and its fourth slot first. After copying a loop, undo the paste on the slot you copied it to. After clearing a slot, double-tap <kbd>REC</kbd> there to restore the loop if that undo step is still available.</p>
 <h2 id="older-undo-steps">Reach an older step on the card</h2>
 <p>Each slot keeps up to 99 versions of its loop, counting the current version and those available on the card. The looper holds 99 versions in memory for all tracks combined. With card saving enabled, it can recall older versions from the card as well. The <strong>UNDO</strong> count includes the steps you can reach in both places. When a slot reaches its limit, its oldest version gives way to the next change.</p>
-<p>Double-tap <kbd>REC</kbd> as usual. If the looper needs an older take from the card, the current phrase keeps playing until that version is ready. If you ask for several more undo steps while it loads, playback switches once to the last version you chose.</p>
-<p>If memory fills before the card has saved a change, that undo step can be lost. If the looper cannot read the older version or has too little memory to play it, you keep hearing the current phrase. Clearing the slot or loading a set cancels the recall.</p>
+<p>Double-tap <kbd>REC</kbd> as usual. If the looper needs an older take from the card, the current loop keeps playing until that version is ready. If you ask for several more undo steps while it loads, playback switches once to the last version you chose.</p>
+<p>If memory fills before the card has saved a change, that undo step can be lost. If the looper cannot read the older version or has too little memory to play it, the current loop keeps playing. Clearing the slot or loading a set cancels the recall.</p>
 <aside class="tip"><strong>Which undo steps come back?</strong> Reopening the autosaved working set after power-up restores recent versions and older steps saved on the card. Loading a milestone restores the arrangement and whichever steps were in memory when you saved it. A milestone leaves out versions that were already held only on the card.</aside>

@@ -1,6 +1,6 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
-**2026-11-11 — documentation website (owner request, delivered locally).** The [player’s manual](../handbook/README.md) follows the current engine. Its controller and library findings are documentation review items. Firmware work continues under its existing scope.
+**2026-11-11 — documentation website (owner request, delivered locally).** The [player’s manual](../handbook/README.md) follows the current engine. The owner’s overview, controller, hardware and screen-presentation comments are incorporated. Its controller and library findings are documentation review items. Firmware work continues under its existing scope.
 
 **2026-11-11 — card-history representation direction (design only).** For E9.8b-3b — undo-depth sizing, the owner
 favors option 2 and clarifies that development storage may be rebuilt with no migration required. Recommend the
