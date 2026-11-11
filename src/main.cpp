@@ -1,8 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The engine firmware (fixed-memory-engine E9.8a; owner 2026-11-06: boot first, then delete). Built only in the
-// `teensy41-engine` env (`ENGINE_FIRMWARE`), which leaves the legacy sources out; the legacy firmware is unchanged.
+// The engine firmware: the `teensy41-capture-serial` env (`teensy41-engine` the same build; `ENGINE_FIRMWARE`).
 //
 // One main loop, no interrupts of its own:
 // 1. Input, bounded a pass: DIN (Serial8, 31,250 baud), USB device and USB host MIDI. Clock, Start, Stop, Continue go
@@ -11,28 +10,27 @@
 // 2. Every tick the clock has due, in order (`EngineClock::due`, at most `kCatchUp` a pass): `EngineRoot::clockTick`.
 // 3. The jobs (`submitJobs`) and worker grains while the scheduler grants them.
 // 4. Each port's due messages to the wire: DIN and USB device. The USB host port is the DROID's: it gets only the
-//    surface's LED feedback (as the legacy firmware, which never sends playback there) — the host driver's
-//    `write_packed` spins until the DROID takes a packet, so playback bursts there hung the loop. Every host send is
-//    admitted first (`hostSend`, `HostTx.h`): dropped when both transmit buffers are full, and the LED stage waits.
-// 5. The control surface (E9.8b-1, `ControlSurface`): the DROID control plane (channels 13–16, never recorded nor thru) as
-//    the legacy gesture map, and its LEDs (channel 15 notes on every port, as the legacy firmware) paced at one message
-//    a millisecond (the DROID host's gap); the DROID's fader bank (Program Change 1 / 0 on channel 16, every port) follows
-//    NOTE_EDIT, so its faders send the note-edit messages (E9.8k). Serial commands (`!ENGINE ...`, `!STOP_STATUS`,
-//    `!REBOOT`) remain.
-// 6. The screen (E9.8c, `OledScreen`): a frame every 33 ms when the previous DMA transfer is done; each track shows
-//    its selected slot; NOTE_EDIT (E9.8b-2) shows its frozen window, bracket and selected note (start, pitch, velocity,
-//    length in the status band, E9.8k).
+//    surface's LED feedback, never playback — the host driver's `write_packed` spins until the DROID takes a packet, so
+//    a playback burst there hangs the loop. Every host send is admitted first (`hostSend`,
+//    `UsbHostTransmitAdmission.h`): dropped when both transmit buffers are full, and the LED stage waits.
+// 5. The control surface (`ControlSurface`): the DROID control plane (channels 13–16, never recorded nor thru) as the
+//    DROID patch's gesture map, and its LEDs (channel 15 notes on every port) paced at one message a millisecond (the
+//    DROID host's gap); the DROID's fader bank (Program Change 1 / 0 on channel 16, every port) follows NOTE_EDIT, so
+//    its faders send the note-edit messages. Serial commands (`!ENGINE ...`, `!STOP_STATUS`, `!REBOOT`) remain.
+// 6. The screen (`OledScreen`): a frame every 33 ms when the previous DMA transfer is done; each track shows its
+//    selected slot; NOTE_EDIT shows its frozen window, bracket and selected note (start, pitch, velocity, length in the
+//    status band).
 // Breadcrumbs (`CrashReport.breadcrumb`, kept across a warm reset): the main-loop stage and the last tick, printed at
 // the next boot (`#CAP,…,DIAG,prev_crumbs,…`), so a hang can be placed after a reset.
 // Boot proof on USB serial: `#CAP,<us>,DIAG,boot_reset,crash=<0|1>`, the memory census, and once the card's slots are
 // loaded `#CAP,<us>,BOOT,load,ok,...` with every outcome named. Nothing is written to the card before the owner
 // approves saving (`!ENGINE approve-saving`, typed by the owner; remembered by the engine folder).
-// Wall-clock time (sets browser slice 1; owner 2026-11-08: real dates only): the Teensy RTC, valid only per
-// `wallclock::valid` (never the firmware's build time). The Teensy loader sets the RTC to the computer's **local** time at
-// every upload (measured 2026-11-08: one hour ahead of UTC in CET), so the RTC is read as local time and the shown offset
-// (minutes, EEPROM bytes 0–3: 'T', 'Z', the offset) defaults to 0. `!ENGINE time` reports it, `!ENGINE time <unix>`
-// sets the clock, `!ENGINE tz <minutes>` the offset (`scripts/engine_set_time.py` sets local time and offset 0, as the
-// loader does); reported at boot as `#ENGINE,time,...`.
+// Wall-clock time (real dates only): the Teensy RTC, valid only per `wallclock::valid` (never the firmware's build
+// time). The Teensy loader sets the RTC to the computer's **local** time at every upload (in CET one hour ahead of
+// UTC), so the RTC is read as local time and the shown offset (minutes, EEPROM bytes 0–3: 'T', 'Z', the offset)
+// defaults to 0. `!ENGINE time` reports it, `!ENGINE time <unix>` sets the clock, `!ENGINE tz <minutes>` the offset
+// (`scripts/engine_set_time.py` sets local time and offset 0, as the loader does); reported at boot as
+// `#ENGINE,time,...`.
 
 #if defined(ENGINE_FIRMWARE)
 
@@ -67,7 +65,7 @@ Teensy::SdCardIo gCard;
 Teensy::OledScreen gDisplay;
 ControlSurface<EngineRoot> gSurface;
 uint32_t gLastLedUs = 0;
-constexpr uint32_t kLedGapUs = 1000;  // the DROID USB host drops packets closer than ~1 ms (legacy MIN_PACKET_GAP)
+constexpr uint32_t kLedGapUs = 1000;  // the DROID USB host drops packets closer than ~1 ms
 USBHost gHost;
 MIDIDevice_BigBuffer gHostMidi(gHost);
 // The host driver's transmit state is private; an explicit instantiation may name private members, so these tags read
@@ -130,8 +128,8 @@ constexpr uint8_t kInputPerPass = 32;     // messages a port a pass
 constexpr uint8_t kSendPerPass = 32;      // messages a port a pass
 // The watchdog's timeout: no pass and no boot phase takes this long (the longest, `!ENGINE cardfree`, ~1 s).
 constexpr uint32_t kWatchdogS = 4;
-// DIN's transmit buffer beyond the core's 40 bytes: a pass's 32 messages per port, the LEDs, bank and motor feedback
-// (3 bytes each) fit, so `Serial8.write` stores and returns instead of waiting for the 31,250-baud line (320 us a byte).
+// DIN's transmit buffer beyond the core's 40 bytes: a pass's 32 messages per port, the LEDs, bank and motor feedback (3
+// bytes each) fit, so `Serial8.write` stores and returns instead of waiting for the 31,250-baud line (320 us a byte).
 DMAMEM uint8_t gDinTx[512];
 bool reportBootReset();
 void crumb(uint32_t stage);
@@ -149,7 +147,7 @@ uint32_t gStageAtUs = 0, gStage = 0;
 // been quiet for `kHeartbeatUs`. Without it, Ableton's USB stream (clock and notes) stalled while the Teensy sent
 // nothing — a late pulse paused the ticks, so the port went quiet — until the clock timeout resumed output: every gap
 // ended one pulse after the timeout (500 ms → 518 ms gaps, 250 ms → 268 ms). With it: no gap in a 4-minute
-// record / overdub run (owner 2026-11-06, "rock stable").
+// record / overdub run ("rock stable").
 constexpr uint32_t kHeartbeatUs = 20000;
 uint32_t gLastUsbTxUs = 0, gHeartbeats = 0;
 uint32_t gPassMaxUs = 0, gPulses = 0, gTimeouts = 0;  // diagnostics (`!ENGINE take`)
@@ -305,8 +303,8 @@ void pollInput(uint32_t nowUs) {
   }
 }
 
-// ---- The GPIO encoder (surface slice E; legacy pins `Buttons::ENCODER_PIN_A/B`, `ENCODER_BUTTON_PIN`) ------------------
-// Quadrature on 29 / 30 (the Encoder library's interrupts, four counts a detent, as legacy `GpioButtonManager`), the push
+// ---- The GPIO encoder (pins 29 / 30 and the push on 31) -----------------------------------------------------
+// Quadrature on 29 / 30 (the Encoder library's interrupts, four counts a detent), the push
 // on 31 to ground (pull-up), debounced: a level held `kEncoderDebounceMs` is taken.
 constexpr uint8_t kEncoderPinA = 29, kEncoderPinB = 30, kEncoderButtonPin = 31;
 constexpr uint32_t kEncoderDebounceMs = 5;
@@ -330,8 +328,8 @@ void serviceEncoder(uint32_t ms) {
   }
 }
 
-// ---- Serial commands (until the surface is wired, E9.8b) ---------------------------------------------------------------
-char gLine[160];  // a `file-data` line: 64 bytes in hex (owner 2026-11-10: grooves to the card)
+// ---- Serial commands (until the surface is wired) ---------------------------------------------------------------
+char gLine[160];  // a `file-data` line: 64 bytes in hex (grooves to the card)
 uint8_t gLineLength = 0;
 
 // ---- Wall-clock time -------------------------------------------------------------------------------------------------
@@ -347,7 +345,7 @@ void storeTzOffset(int16_t minutes) {
   EEPROM.update(2, static_cast<uint8_t>(gTzOffset & 0xFF));
   EEPROM.update(3, static_cast<uint8_t>((gTzOffset >> 8) & 0xFF));
 }
-// The global set switch point (DEC-260), kept in EEPROM bytes 4-5 ('W', 0 next bar / 1 loop end).
+// The global set switch point, kept in EEPROM bytes 4-5 ('W', 0 next bar / 1 loop end).
 void loadSwitchAt() {
   if (EEPROM.read(4) != 'W') return;
   gEngine.setSwitchAt(EEPROM.read(5) == 1 ? ProductionControl::SwitchAt::LoopEnd : ProductionControl::SwitchAt::NextBar);
@@ -357,7 +355,7 @@ void storeSwitchAt(ProductionControl::SwitchAt at) {
   EEPROM.update(4, 'W');
   EEPROM.update(5, at == ProductionControl::SwitchAt::LoopEnd ? 1 : 0);
 }
-// The global launch quantisation (surface slice B: 1/16 default, 1/8, 1/4, bar), kept in EEPROM bytes 6-7 ('L', the
+// The global launch quantisation (1/16 default, 1/8, 1/4, bar), kept in EEPROM bytes 6-7 ('L', the
 // divisions of a bar: 16, 8, 4 or 1). A slot's double press launches at the next step; a queued switch shows it.
 constexpr uint8_t kLaunchDivisions[] = {16, 8, 4, 1};
 bool launchDivisionValid(uint32_t d) {
@@ -400,7 +398,7 @@ void reportTime() {
                 static_cast<unsigned long>(raw), wallclock::valid(raw) ? 1u : 0u, gTzOffset, stamp,
                 static_cast<unsigned long>(gLastSaveWall), saved);
 }
-/// A completed store write (a slot copy) is stamped with the wall time: `SAVED 14:32` (sets browser slice 1).
+/// A completed store write (a slot copy) is stamped with the wall time: `SAVED 14:32`.
 void stampSaves() {
   const uint32_t saves = gEngine.persistence().stats().saves;
   if (saves == gSavesSeen) return;
@@ -408,26 +406,26 @@ void stampSaves() {
   gLastSaveWall = wallTime();
 }
 
-// ---- The milestone library (DEC-258, sets browser slice 1c) ----------------------------------------------------------
+// ---- The milestone library ----------------------------------------------------------
 constexpr const char* kLibraryFolder = "/MidiLooper/library";
 constexpr const char* kLibraryFile = "/MidiLooper/library/library.bin";
 ProductionLibrary::Status gLibraryWas = ProductionLibrary::Status::Idle;
 bool gLibraryCheckpoint = false;  // the job running writes the checkpoint (else a milestone)
 uint32_t gLibraryStartUs = 0;
-// The working set's base milestone (its sequence; 0: none) and set number (DEC-259): a save's parent, a load's
-// checkpoint. Kept on the card in the library's index header (DEC-269): a save names them; after a load or return
+// The working set's base milestone (its sequence; 0: none) and set number: a save's parent, a load's
+// checkpoint. Kept on the card in the library's index header: a save names them; after a load or return
 // `gWorkingOwed` until a header naming them is published; a boot starts in the ones the header names.
 uint32_t gBase = 0;
 uint16_t gSet = 1;
 bool gWorkingOwed = false;
 ProductionSetLoad::Status gLoadWas = ProductionSetLoad::Status::Idle;
-// The sets browser (slice 3) and the library's index in memory (4,096 records, PSRAM). `gBrowserOp`: the request it
+// The sets browser and the library's index in memory (4,096 records, PSRAM). `gBrowserOp`: the request it
 // made that is under way (its end answers the browser).
 EXTMEM ProductionBrowser gBrowser;
 enum class BrowserOp : uint8_t { None, Save, Load, Return, Mark };
 BrowserOp gBrowserOp = BrowserOp::None;
 bool gBrowserReady = false;
-// Slice 4: the counters at the base milestone (or the boot) — what happened since is the save suggestion's evidence.
+// The counters at the base milestone (or the boot) — what happened since is the save suggestion's evidence.
 struct Evidence {
   uint32_t commits = 0, records = 0, recordsWithOthers = 0, explore = 0;
 };
@@ -438,10 +436,10 @@ Evidence evidenceNow() {
 }
 /// The working set's base moved (a milestone saved, loaded or returned to): evidence counts from here.
 void resetEvidence() { gEvidenceAt = evidenceNow(); }
-uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work (DEC-260)
+uint32_t gLoadGrainMaxUs = 0;  // the worst grain while a load or milestone had card work
 uint32_t gLoadPhaseMaxUs[3] = {};  // the worst grain by the load's phase before it: checkpoint / stage, clear, read
 uint8_t gSwitchedWas = 0;      // the tracks a live load stopped, as last reported
-uint8_t gStagedWas = 0;        // the tracks it switched without a gap, as last reported (DEC-261)
+uint8_t gStagedWas = 0;        // the tracks it switched without a gap, as last reported
 
 /// The tempo in tenths of a BPM (as LOOP_EDIT shows it).
 uint16_t tempoTenthsNow() {
@@ -479,7 +477,7 @@ void reportLibrary(const char* why) {
                 static_cast<unsigned long>(library::kLogSectors - h.appendSector),
                 static_cast<unsigned long>(hasCheckpoint ? cp.sequence : 0));
 }
-/// Opens the library; creating (preallocating 1 GiB) only while stopped, no take open, saving approved (DEC-258).
+/// Opens the library; creating (preallocating 1 GiB) only while stopped, no take open, saving approved.
 /// The index into memory (once, when the library opens): records in card order, so a browser row's record is its card
 /// index; one that does not read keeps its place (shown as set 00).
 void loadIndex() {
@@ -491,7 +489,7 @@ void loadIndex() {
     if (!l.readRecord(i, r)) r = library::Record{};
     gBrowser.add(r);
   }
-  // The working set the card's header names (DEC-269), else the newest shown milestone's set.
+  // The working set the card's header names, else the newest shown milestone's set.
   const ProductionBrowser::Working w = gBrowser.bootWorking(l.header());
   gSet = w.set;
   gBase = w.base;
@@ -523,7 +521,7 @@ void listMilestones() {
     }
     char stamp[24];
     wallclock::formatStamp(r.wallTime, gTzOffset, stamp, sizeof stamp);
-    if (r.kind != library::kMilestone) {  // DEC-268
+    if (r.kind != library::kMilestone) {
       static const char* const kKinds[] = {"", "trash", "restore", "empty-trash"};
       Serial.printf("#ENGINE,ms,i=%u,%s=SET %02u,target=%lu,seq=%lu,in_trash=%u,time=%s\n", i, kKinds[r.kind], r.set,
                     static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence),
@@ -539,7 +537,7 @@ void listMilestones() {
   }
   reportLibrary("list");
 }
-/// Starts saving the whole set as milestone `stage` `number` of `set` (DEC-258). nullptr, or why not (nothing written).
+/// Starts saving the whole set as milestone `stage` `number` of `set`. nullptr, or why not (nothing written).
 const char* beginMilestone(library::Stage stage, uint16_t set, uint8_t number, uint32_t nowUs) {
   auto& l = gEngine.library();
   if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) return "STOP THE TAKE FIRST";
@@ -561,13 +559,13 @@ const char* beginMilestone(library::Stage stage, uint16_t set, uint8_t number, u
                 static_cast<unsigned long>(l.published().logSectors));
   return nullptr;
 }
-/// Starts a trash-side record (DEC-268): `kind` library::kTrash with `index` a stage (the browser's record, card order)
+/// Starts a trash-side record: `kind` library::kTrash with `index` a stage (the browser's record, card order)
 /// or kNone for every stage of `set`; kRestore with `index` the trash record; kEmptyTrash. The working set and what
 /// plays are not touched. nullptr, or why not (nothing written).
 const char* beginMark(uint8_t kind, uint16_t set, uint16_t index, uint32_t nowUs) {
   if (!gEngine.library().mounted()) return "LIBRARY NOT READY";
   if (gEngine.libraryBusy()) return "BUSY";
-  if (gEngine.auditioning()) return "AUDITION OPEN";  // DEC-271: its source stays as it is
+  if (gEngine.auditioning()) return "AUDITION OPEN";  // its source stays as it is
   const uint32_t target = index == ProductionBrowser::kNone ? 0 : gBrowser.record(index).sequence;
   const ProductionLibrary::Result r = gEngine.markLibrary(kind, set, target, wallTime());
   if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
@@ -600,7 +598,7 @@ ProductionLibrary::Checkpoint checkpointNow() {
   surfaceNow(c.surface);
   return c;
 }
-/// checkpoint: replaces the recovery checkpoint with the whole set as it is now (diagnostics until loading, DEC-258).
+/// checkpoint: replaces the recovery checkpoint with the whole set as it is now (diagnostics until loading).
 void saveCheckpoint(uint32_t nowUs) {
   if (gEngine.transport().writingSlot() != ProductionTransport::kNoSlot) {
     Serial.println("#ENGINE,checkpoint,refused,why=STOP THE TAKE FIRST");
@@ -616,7 +614,7 @@ void saveCheckpoint(uint32_t nowUs) {
   Serial.println("#ENGINE,checkpoint,begin");
 }
 /// Starts loading milestone `index` (card order) or, `load` false, returning to the checkpoint; while playing it waits
-/// for the switch point (DEC-260 / 261). nullptr, or why not (nothing changed).
+/// for the switch point. nullptr, or why not (nothing changed).
 const char* beginLoad(bool load, uint16_t index, uint32_t nowUs) {
   if (const char* why = gEngine.loadRefusal()) return why;
   const bool live = gClock.running();
@@ -643,12 +641,12 @@ void startLoad(const char* verb, const char* arg, uint32_t nowUs) {
   if (const char* why = beginLoad(load, load ? static_cast<uint16_t>(std::atoi(arg)) : 0, nowUs))
     Serial.printf("#ENGINE,%s,refused,why=%s\n", verb, why);
 }
-// Get a loop (DEC-270): the slot a get places into, and the slots named track-slot (`2-3`: track 2, its third slot).
+// Get a loop: the slot a get places into, and the slots named track-slot (`2-3`: track 2, its third slot).
 uint8_t gGetInto = 0;
 uint8_t gGetFrom = 0;
-// What a get is for: a placed copy; a preview read reported and dropped (diagnostics); an audition (DEC-271); the copy
+// What a get is for: a placed copy; a preview read reported and dropped (diagnostics); an audition; the copy
 // that KEEPs it.
-// DEC-272, the picker: the loop under its cursor read as a preview (PickPreview), the copy its USE places (PickUse).
+// The get-a-loop picker: the loop under its cursor read as a preview (PickPreview), the copy its USE places (PickUse).
 enum class GetFor : uint8_t { Place, Preview, Audition, Keep, PickPreview, PickUse };
 GetFor gGetFor = GetFor::Place;
 uint16_t gGetIndex = 0;
@@ -660,8 +658,8 @@ bool parseSlot(const char* a, uint8_t& s) {
   return true;
 }
 /// get <stage index> <from track-slot> <into track-slot> [preview]: that slot of a saved stage onto a slot of the
-/// working set, one undo step; nothing else changes (the working set's base included). `preview` (diagnostics, plan
-/// §6.2 fix 1): read into the preview partition, reported, then dropped — nothing placed.
+/// working set, one undo step; nothing else changes (the working set's base included). `preview` (diagnostics):
+/// read into the preview partition, reported, then dropped — nothing placed.
 void startGet(char* arg, uint32_t nowUs, GetFor purpose = GetFor::Place) {
   char* from = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
   char* into = from != nullptr ? std::strchr(from + 1, ' ') : nullptr;
@@ -699,11 +697,11 @@ void startGet(char* arg, uint32_t nowUs, GetFor purpose = GetFor::Place) {
                 b, static_cast<unsigned>(purpose), static_cast<unsigned long>(gEngine.reservations().contentFreePages()),
                 static_cast<unsigned long>(gEngine.reservations().previewFreePages()));
 }
-// ---- Get a loop's picker (DEC-272) -------------------------------------------------------------------------------------
+// ---- Get a loop's picker -------------------------------------------------------------------------------------
 // The preview: the picker generation seen and since when (a read waits for the cursor to rest), the one being read, the
 // state read for it (held until auditioned or dropped); an audition asked for before its preview was ready.
 constexpr uint32_t kPreviewRestMs = 150;
-bool gPickSquares = false;  // the picker's empty slots as dim squares (`!ENGINE pick-squares 1`; owner: compare)
+bool gPickSquares = false;  // the picker's empty slots as dim squares (`!ENGINE pick-squares 1`, for comparison)
 uint32_t gPickGenSeen = 0, gPickGenSinceMs = 0, gPickGenReading = 0, gPickHeldGen = 0, gPickAuditionGen = 0;
 uint32_t gPickReadGen = 0;  // the generation whose preview was read (shown, maybe auditioned): not read again
 ManifestId gPickHeld = kNoManifest;
@@ -841,13 +839,13 @@ void pickRequest(const ProductionBrowser::Request& q, uint32_t nowUs) {
       return;
   }
 }
-/// A get's end (DEC-270): placed on its slot, or nothing changed.
+/// A get's end: placed on its slot, or nothing changed.
 void endGet(ProductionSetLoad::Status st, unsigned long ms) {
   const library::Record& r = gEngine.setLoad().record();
   char from[6], into[6], line[48];
   slotName(gGetFrom, from, sizeof from);
   slotName(gGetInto, into, sizeof into);
-  if (gGetFor == GetFor::PickPreview) {  // DEC-272: kept only for the position it was read for
+  if (gGetFor == GetFor::PickPreview) {  // kept only for the position it was read for
     gPickReading = false;
     const uint32_t gen = gPickGenReading;
     gPickGenReading = 0;
@@ -945,12 +943,12 @@ void applyLoaded(const library::BlobHeader& b) {
     if (b.surface[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(b.surface[1 + t] % 8));
 }
 /// A load's or return's end, reported once.
-FLASHMEM __attribute__((noinline)) void serviceLoad() {  // DEC-254: from flash (RAM1 room)
+FLASHMEM __attribute__((noinline)) void serviceLoad() {  // from flash (RAM1 room)
   // The clock stopped while a live load waited for its switch point: it switches now.
   if (!gClock.running() && gEngine.setLoad().waiting()) gEngine.switchNow(gLastTick, micros(), gClock.usPerTick());
   const uint8_t gapped = gEngine.switchedTracks(), staged = gEngine.stagedTracks();
   if (gapped != gSwitchedWas || staged != gStagedWas) {
-    // The switch point: `staged` tracks took the loaded set there without a gap (DEC-261), `gapped` ones stopped; then
+    // The switch point: `staged` tracks took the loaded set there without a gap, `gapped` ones stopped; then
     // the staged ones follow the loaded states (`followed`) and the gapped ones resume from the next bar line (`at=`).
     if ((gSwitchedWas | gStagedWas) == 0)
       Serial.printf("#ENGINE,switch,tick=%lu,staged=%02x,gapped=%02x\n", static_cast<unsigned long>(gLastTick), staged,
@@ -1033,8 +1031,8 @@ FLASHMEM __attribute__((noinline)) void serviceLoad() {  // DEC-254: from flash 
                 static_cast<unsigned long>(gLoadPhaseMaxUs[2]));
   reportLibrary(verb);
 }
-/// The browser (slice 3): kept current while closed, and what it asks carried out.
-FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC-254: from flash (RAM1 room)
+/// The browser: kept current while closed, and what it asks carried out.
+FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // from flash (RAM1 room)
   if (!gBrowserReady) return;
   library::CheckpointHeader cp{};
   const bool hasCheckpoint = gEngine.library().checkpoint(cp);
@@ -1103,7 +1101,7 @@ FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC
   }
   if (why != nullptr) gBrowserOp = BrowserOp::None;
 }
-/// After a load or return (DEC-269): the working set named in the index header once the library is free. A refusal
+/// After a load or return: the working set named in the index header once the library is free. A refusal
 /// other than busy is reported and dropped (the next save names it).
 void serviceWorking(uint32_t nowUs) {
   if (!gWorkingOwed || gEngine.libraryBusy()) return;
@@ -1123,7 +1121,7 @@ void serviceWorking(uint32_t nowUs) {
   Serial.printf("#ENGINE,working,begin,set=%u,base=%lu\n", gSet, static_cast<unsigned long>(gBase));
 }
 /// A library job's end, reported once.
-FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the library's card steps from flash (RAM1 room)
+FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // the library's card steps from flash (RAM1 room)
   const ProductionLibrary::Status st = gEngine.library().status();
   if (st == gLibraryWas) return;
   gLibraryWas = st;
@@ -1131,7 +1129,7 @@ FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the libr
   if (st != ProductionLibrary::Status::Done && st != ProductionLibrary::Status::Failed) return;
   const bool ok = st == ProductionLibrary::Status::Done;
   const unsigned long ms = static_cast<unsigned long>((micros() - gLibraryStartUs) / 1000);
-  if (gEngine.library().workingJob()) {  // DEC-269: the header alone; failed, the previous one stays current
+  if (gEngine.library().workingJob()) {  // the header alone; failed, the previous one stays current
     const library::IndexHeader& h = gEngine.library().header();
     Serial.printf("#ENGINE,working,%s,set=%u,base=%lu,ms=%lu\n", ok ? "done" : "failed", h.workingSet,
                   static_cast<unsigned long>(h.workingBase), ms);
@@ -1139,7 +1137,7 @@ FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the libr
   }
   if (gLibraryCheckpoint) {
     Serial.printf("#ENGINE,checkpoint,%s,ms=%lu\n", ok ? "done" : "failed", ms);
-  } else if (gEngine.library().published().kind != library::kMilestone) {  // DEC-268: the working set untouched
+  } else if (gEngine.library().published().kind != library::kMilestone) {  // the working set untouched
     const library::Record& r = gEngine.library().published();
     Serial.printf("#ENGINE,mark,%s,kind=%u,set=%u,target=%lu,seq=%lu,ms=%lu\n", ok ? "done" : "failed", r.kind, r.set,
                   static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence), ms);
@@ -1198,7 +1196,7 @@ FLASHMEM __attribute__((noinline)) void serviceLibrary() {  // DEC-254: the libr
   reportLibrary(ok ? "saved" : "failed");
 }
 
-// ---- Files to the card's groove folder (owner 2026-11-10: "create the folder and move these to the SD card via
+// ---- Files to the card's groove folder ("create the folder and move these to the SD card via
 // python") ----------------------------------------------------------------------------------------------------------
 // `file-open <path>` (under /GROOVES/ only, no "..": the folder and its parents made), `file-data <hex>` (appended; each
 // acknowledged with the bytes so far, the host's pacing), `file-close <crc32 hex>` (closed; the CRC of what was written
@@ -1209,9 +1207,9 @@ uint32_t gPutBytes = 0, gPutCrc = 0;
 bool groovePath(const char* p) {
   return p != nullptr && std::strncmp(p, "/GROOVES/", 9) == 0 && std::strstr(p, "..") == nullptr && std::strlen(p) < 120;
 }
-uint32_t gClassGrainMaxUs[5] = {};  // DEC-254: the worst grain of each job class (hard, transition, display, persistence,
+uint32_t gClassGrainMaxUs[5] = {};  // the worst grain of each job class (hard, transition, display, persistence,
                                    // background), reset by `!ENGINE take`
-// E9.8b-3b (undo-depth sizing): undo-history births since boot — counted per minute (the busiest kept) and by what made
+// Undo-depth sizing: undo-history births since boot — counted per minute (the busiest kept) and by what made
 // each one (a run the slot's previous state did not have: its kind; none: a state with fewer runs, e.g. a clear).
 // Diagnostics only: one compare a main-loop pass, a scan of the 99 entries per birth. `!ENGINE history-cost`.
 namespace births {
@@ -1260,7 +1258,7 @@ FLASHMEM void count(uint32_t born) {
 }
 }  // namespace births
 
-FLASHMEM void reportHistoryCost() {  // E9.8b-3b: `!ENGINE history-cost`
+FLASHMEM void reportHistoryCost() {  // `!ENGINE history-cost`
   const auto c = ContentEngine::historyCost(gEngine.history(), gEngine.manifests(), gEngine.runs(),
                                               ContentEngine::Config::kSlotCount);
   const auto& hs = gEngine.history().stats();
@@ -1345,14 +1343,14 @@ void report(const char* what, uint8_t result) {
   Serial.printf("#ENGINE,%s,result=%u,tick=%lu\n", what, result, static_cast<unsigned long>(gLastTick));
 }
 
-FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  // DEC-254: serial commands from flash (RAM1 room)
+FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  // serial commands from flash (RAM1 room)
   const uint32_t us = gClock.usPerTick();
   if (std::strcmp(line, "!STOP_STATUS") == 0) {
     Serial.printf("#STOP_STATUS,state=%s\n", gClock.running() ? "RUNNING" : "STOPPED");
     return;
   }
   if (std::strcmp(line, "!REBOOT") == 0) {
-    if (gClock.running()) return;  // stopped only, as the legacy firmware
+    if (gClock.running()) return;  // stopped only
     Serial.println("[Engine] host-requested reboot");
     Serial.flush();
     delay(20);
@@ -1438,7 +1436,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
     reportTime();
   } else if (std::strcmp(verb, "approve-saving") == 0) {  // the owner's decision, typed by the owner
     report(verb, gEngine.approveSaving() ? 0 : 1);
-    if (!gEngine.library().mounted()) openLibrary("approved");  // right after the approval, when stopped (DEC-258)
+    if (!gEngine.library().mounted()) openLibrary("approved");  // right after the approval, when stopped
   } else if (std::strcmp(verb, "library") == 0) {  // the milestone library's state
     reportLibrary("status");
   } else if (std::strcmp(verb, "library-open") == 0) {  // opens it, creating it when stopped and approved
@@ -1448,7 +1446,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
     saveMilestone(arg, nowUs);
   } else if (std::strcmp(verb, "milestones") == 0) {
     listMilestones();
-  } else if (std::strcmp(verb, "trash") == 0) {  // trash <set> [index]: the set's stages, or stage `index` (DEC-268)
+  } else if (std::strcmp(verb, "trash") == 0) {  // trash <set> [index]: the set's stages, or stage `index`
     const uint16_t set = static_cast<uint16_t>(arg != nullptr ? std::atoi(arg) : 0);
     const char* at = arg != nullptr ? std::strchr(arg, ' ') : nullptr;
     const uint16_t index = at != nullptr ? static_cast<uint16_t>(std::atoi(at + 1)) : ProductionBrowser::kNone;
@@ -1468,29 +1466,29 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
     if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
   } else if (std::strcmp(verb, "checkpoint") == 0) {
     saveCheckpoint(nowUs);
-  } else if (std::strcmp(verb, "switch-at") == 0) {  // switch-at bar|loop: where a live load switches (DEC-260)
+  } else if (std::strcmp(verb, "switch-at") == 0) {  // switch-at bar|loop: where a live load switches
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeSwitchAt(ProductionControl::SwitchAt::NextBar);
     if (arg != nullptr && std::strcmp(arg, "loop") == 0) storeSwitchAt(ProductionControl::SwitchAt::LoopEnd);
     Serial.printf("#ENGINE,switch-at,%s\n", switchAtName());
-  } else if (std::strcmp(verb, "launch-q") == 0) {  // launch-q 16|8|4|bar: the launch quantisation (slice B, EEPROM)
+  } else if (std::strcmp(verb, "launch-q") == 0) {  // launch-q 16|8|4|bar: the launch quantisation (EEPROM)
     if (arg != nullptr && std::strcmp(arg, "bar") == 0) storeLaunchGrid(1);
     else if (arg != nullptr && launchDivisionValid(static_cast<uint32_t>(a)) && a != 1) storeLaunchGrid(static_cast<uint8_t>(a));
     Serial.printf("#ENGINE,launch-q,%s\n", launchGridName());
-  } else if (std::strcmp(verb, "groove") == 0) {  // groove TEMPLATE AMOUNT [SCOPE]: the shown slot (DEC-287, slice 2)
+  } else if (std::strcmp(verb, "groove") == 0) {  // groove TEMPLATE AMOUNT [SCOPE]: the shown slot
     ContentEngine::groove::Settings s;
     s.tmpl = static_cast<uint8_t>(a);
     s.amount = static_cast<uint8_t>(b > 100 ? 100 : b < 0 ? 0 : b);
     const char* third = second != nullptr ? std::strchr(second + 1, ' ') : nullptr;
     s.scope = static_cast<uint8_t>(third != nullptr ? std::atoi(third + 1) : 0);
     const uint8_t slot = gSurface.shown(c.selectedTrack());
-    const auto r = gSurface.applyGroove(slot, s);  // started: built in the background (DEC-288)
+    const auto r = gSurface.applyGroove(slot, s);  // started: built in the background
     Serial.printf("#ENGINE,groove,slot=%u,template=%u,amount=%u,scope=%u,result=%u\n", slot, s.tmpl, s.amount, s.scope,
                   static_cast<unsigned>(r));
   } else if (std::strcmp(verb, "groove-status") == 0) {  // the groove job: state, grains, the last switch tick
     Serial.printf("#ENGINE,groove-status,state=%u,grains=%lu,at=%lu,tick=%lu\n",
                   static_cast<unsigned>(gEngine.grooveState()), static_cast<unsigned long>(gEngine.grooveGrains()),
                   static_cast<unsigned long>(gEngine.groovePublishedAt()), static_cast<unsigned long>(gLastTick));
-  } else if (std::strcmp(verb, "leds") == 0) {  // leds: the bar and step LEDs wanted, the shown slot's frame (DEC-283)
+  } else if (std::strcmp(verb, "leds") == 0) {  // leds: the bar and step LEDs wanted, the shown slot's frame
     uint8_t want[128] = {};
     gSurface.ledsWanted(gLastTick, millis(), want);
     const uint8_t t = gEngine.control().selectedTrack(), slot = gSurface.shown(t);
@@ -1500,7 +1498,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                   static_cast<unsigned long>(start));
     for (uint8_t i = 0; i < 8; ++i) Serial.printf("%u%s", want[40 + i], i < 7 ? "/" : ",steps=");
     for (uint8_t i = 0; i < 16; ++i) Serial.printf("%u%s", want[i], i < 15 ? "/" : "\n");
-  } else if (std::strcmp(verb, "track") == 0) {  // track T: its playing and queued slots (diagnostics, slice B)
+  } else if (std::strcmp(verb, "track") == 0) {  // track T: its playing and queued slots (diagnostics)
     const uint8_t t = static_cast<uint8_t>(a);
     if (t >= kTrackCount) return;
     const auto& x = gEngine.transport();
@@ -1535,12 +1533,12 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
       }
       Serial.println("#ENGINE,dump,end");
     }
-  } else if (std::strcmp(verb, "switch-stage") == 0) {  // switch-stage 0|1: staged (gapless) live switches (DEC-261)
+  } else if (std::strcmp(verb, "switch-stage") == 0) {  // switch-stage 0|1: staged (gapless) live switches
     if (arg != nullptr) gEngine.setStaging(a != 0);
     Serial.printf("#ENGINE,switch-stage,%u\n", gEngine.staging() ? 1u : 0u);
-  } else if (std::strcmp(verb, "get") == 0) {  // get <index> <T-S> <T-S>: a loop from a saved stage (DEC-270)
+  } else if (std::strcmp(verb, "get") == 0) {  // get <index> <T-S> <T-S>: a loop from a saved stage
     startGet(arg, nowUs);
-  } else if (std::strcmp(verb, "audition") == 0) {  // audition <index> <T-S> <T-S>: heard on the slot, not kept (DEC-271)
+  } else if (std::strcmp(verb, "audition") == 0) {  // audition <index> <T-S> <T-S>: heard on the slot, not kept
     startGet(arg, nowUs, GetFor::Audition);
   } else if (std::strcmp(verb, "audition-keep") == 0) {  // the auditioned loop read again as content and kept
     if (!gEngine.auditioning()) {
@@ -1553,7 +1551,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
       snprintf(again, sizeof again, "%u %s %s", gGetIndex, f, t);
       startGet(again, nowUs, GetFor::Keep);
     }
-  } else if (std::strcmp(verb, "preview-tiles") == 0) {  // the preview roll's tiles, bar by bar (plan §6.2 fix 2)
+  } else if (std::strcmp(verb, "preview-tiles") == 0) {  // the preview roll's tiles, bar by bar
     const auto& t = gEngine.tiles();
     Serial.printf("#ENGINE,preview,shown=%u,detail1=%u,wanted=%lu\n", gEngine.previewShown() ? 1 : 0, t.detailSlot(1),
                   static_cast<unsigned long>(t.wanted(EngineRoot::kPreviewSlot)));
@@ -1565,7 +1563,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
   } else if (std::strcmp(verb, "preview-hide") == 0) {
     gEngine.hidePreview();
     Serial.println("#ENGINE,preview,hidden");
-  } else if (std::strcmp(verb, "pick-squares") == 0) {  // pick-squares 1 / 0: the picker's empty slots (DEC-272)
+  } else if (std::strcmp(verb, "pick-squares") == 0) {  // pick-squares 1 / 0: the picker's empty slots
     gPickSquares = a != 0;
     Serial.printf("#ENGINE,pick,squares=%u\n", gPickSquares ? 1 : 0);
   } else if (std::strcmp(verb, "audition-cancel") == 0) {
@@ -1602,7 +1600,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                   static_cast<unsigned long>(gClassGrainMaxUs[2]), static_cast<unsigned long>(gClassGrainMaxUs[3]),
                   static_cast<unsigned long>(gClassGrainMaxUs[4]));
     for (uint32_t& m : gClassGrainMaxUs) m = 0;
-    {  // DEC-254 (E4.6b): the run-once store
+    {  // the run-once store
       const auto& ps = gEngine.persistence().stats();
       const auto& hs = gEngine.history().stats();
       Serial.printf("#ENGINE,cold,states=%u,demoted=%lu,pressure=%lu,content_free=%lu,slot_depth=%lu,undo_at_cold=%lu,"
@@ -1651,9 +1649,9 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                   h == kNoManifest ? 0u : 1u, gEngine.overlay().count(),
                   static_cast<unsigned long>(gEngine.overlay().dropped()), static_cast<unsigned long>(gDisplay.frames()),
                   gEngine.tiles().detailSlot(0));
-  } else if (std::strcmp(verb, "history-cost") == 0) {  // E9.8b-3b: undo-depth sizing (diagnostics; changes nothing)
+  } else if (std::strcmp(verb, "history-cost") == 0) {  // undo-depth sizing (diagnostics; changes nothing)
     reportHistoryCost();
-  } else if (std::strcmp(verb, "history") == 0) {  // history pressure (E4.7, diagnostics; changes nothing)
+  } else if (std::strcmp(verb, "history") == 0) {  // history pressure (diagnostics; changes nothing)
     const auto& h = gEngine.history();
     const auto& hs = h.stats();
     Serial.printf("#ENGINE,history,held=%u,high_water=%u,depth=%u,evicted_undo=%lu,evicted_redo=%lu,dropped_redo=%lu,"
@@ -1680,7 +1678,7 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
       ++spread[n == 0 ? 0 : n == 1 ? 1 : n == 2 ? 2 : n <= 4 ? 3 : n <= 8 ? 4 : n <= 16 ? 5 : 6];
     }
     Serial.println();
-    Serial.print("#ENGINE,history_cold");  // DEC-254 (E4.6c): slot:cold steps, where any
+    Serial.print("#ENGINE,history_cold");  // slot:cold steps, where any
     for (uint8_t s = 0; s < ContentEngine::Config::kSlotCount; ++s)
       if (h.coldCount(s) != 0) Serial.printf(",%u:%u", s, h.coldCount(s));
     Serial.println();
@@ -1783,7 +1781,7 @@ void pollSerial(uint32_t nowUs) {
 }
 
 void selectFirstSlots();
-// Slice A (owner 2026-11-10: boot shows the last selected slot, no switch on screen): the saved selection applied as
+// Boot shows the last selected slot, no switch on screen: the saved selection applied as
 // soon as the boot load's first grain has read it, before the performance screen draws its first frame.
 bool gSelectionKnown = false;
 /// The saved selection (selected track, each track's slot), once read; false: none yet (or none saved).
@@ -1793,9 +1791,9 @@ bool applySavedSelection() {
   gEngine.control().selectTrack(state[0]);
   for (uint8_t t = 0; t < kTrackCount; ++t)
     if (state[1 + t] / 8 == t) gSurface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
-  for (uint8_t t = 0; t < kTrackCount; ++t)  // DEC-293: the muted tracks
+  for (uint8_t t = 0; t < kTrackCount; ++t)  // the muted tracks
     gEngine.control().setMute(t, (state[ProductionPersistence::kStateBytes - 1] >> t & 1u) != 0, micros());
-  if (const uint8_t bars = gEngine.persistence().restoredCycleBars()) gSurface.setCycleBars(bars);  // E9.8b-3c
+  if (const uint8_t bars = gEngine.persistence().restoredCycleBars()) gSurface.setCycleBars(bars);
   return true;
 }
 // After boot load: without a saved selection, each track's first slot with content (slots T x 8 .. T x 8 + 7); the
@@ -1809,12 +1807,12 @@ void saveSelection(uint32_t nowUs) {
   uint8_t state[ProductionPersistence::kStateBytes];
   state[0] = gEngine.control().selectedTrack();
   for (uint8_t t = 0; t < kTrackCount; ++t) state[1 + t] = gSurface.selectedSlot(t);
-  uint8_t mutes = 0;  // DEC-293
+  uint8_t mutes = 0;
   for (uint8_t t = 0; t < kTrackCount; ++t)
     if (gEngine.control().muted(t)) mutes |= static_cast<uint8_t>(1u << t);
   state[ProductionPersistence::kStateBytes - 1] = mutes;
   gEngine.setSurfaceState(state, nowUs);
-  gEngine.setEngineSettings(gSurface.cycleBars(), nowUs);  // E9.8b-3c: the GROOVE cycle's bars
+  gEngine.setEngineSettings(gSurface.cycleBars(), nowUs);  // the GROOVE cycle's bars
 }
 
 void selectFirstSlots() {
@@ -1893,7 +1891,8 @@ void phase(uint32_t p) {
 }
 
 /// Resets the board now: the given stage stays as the last crumb; nothing runs after the request (it takes effect some
-/// time after the write — the loop used to run on, its card, USB and PSRAM traffic cut off wherever the reset landed);
+/// time after the write, so the loop must not run on: its card, USB and PSRAM traffic would be cut off wherever the
+/// reset lands);
 /// the watchdog backs it up.
 [[noreturn]] void quietReboot(uint32_t stage) {
   crumb(stage);
@@ -1905,9 +1904,9 @@ void phase(uint32_t p) {
   }
 }
 
-// The USB device's health (the watchdog cannot see it: the loop runs on). Wedged twice on 2026-11-09 during reboot
-// soaks: the loop and the surface ran, but the host's open of the serial port and its writes blocked and the uploader
-// could not reboot the board (the 2026-11-08/09 incidents). Every `kUsbCheckMs` the live USB state goes to breadcrumbs
+// The USB device's health (the watchdog cannot see it: the loop runs on). A wedged USB device keeps the loop and the
+// surface running while the host's open of the serial port and its writes block and the uploader cannot reboot the
+// board. Every `kUsbCheckMs` the live USB state goes to breadcrumbs
 // 4–6, so the boot after a PROGRAM press shows it (`usbState`); a wedge the board can see itself, held for
 // `kUsbWedgedChecks` checks, is recorded as stage `kUsbWedged` and, while stopped, resets the board.
 constexpr uint32_t kUsbCheckMs = 250;
@@ -1991,10 +1990,10 @@ namespace {
 
 /// The boot's reset rows (also `!ENGINE boot`, for a host that opened the port after the boot printed them): the reset
 /// cause, and the previous boot's last main-loop stage and tick and how far it booted (bitmask, stage, tick, phase) —
-/// where a hang stopped it. A stage with phase < kPhaseLoop is the boot before that one's (the hang came before the loop).
-/// c4–c6: after a watchdog reset where it hung — PC, LR, exception number (0: the main loop; 16 + IRQ: a handler), or
-/// the USB state if interrupts were off (the warning never ran); otherwise the last USB state (`usbState`), the
-/// wedge's with stage 12 (`kUsbWedged`).
+/// where a hang stopped it. A stage with phase < kPhaseLoop is the boot before that one's (the hang came before the
+/// loop). c4–c6: after a watchdog reset where it hung — PC, LR, exception number (0: the main loop; 16 + IRQ: a
+/// handler), or the USB state if interrupts were off (the warning never ran); otherwise the last USB state
+/// (`usbState`), the wedge's with stage 12 (`kUsbWedged`).
 bool reportBootReset() {
   const bool crashed = static_cast<bool>(CrashReport);
   Serial.printf("#CAP,%lu,DIAG,boot_reset,crash=%u,cause=%lx,watchdog=%u\n", static_cast<unsigned long>(micros()),
@@ -2016,13 +2015,13 @@ void crumb(uint32_t stage) {
   CrashReport.breadcrumb(2, gLastTick);
 }
 
-/// One worker grain; its time counts towards a load's worst grain while the library has card work (DEC-260).
+/// One worker grain; its time counts towards a load's worst grain while the library has card work.
 bool timedGrain() {
   const bool working = gEngine.libraryWorking();
   const uint8_t phase = gEngine.setLoad().phase() >= 4 ? 2 : gEngine.setLoad().phase() >= 2 ? 1 : 0;
   const uint32_t t = micros();
   const bool ran = gEngine.runGrain(t);
-  if (ran) {  // DEC-254's timing gate: each job class's worst single grain
+  if (ran) {  // each job class's worst single grain (`!ENGINE take`)
     const uint32_t d = micros() - t;
     const uint8_t c = static_cast<uint8_t>(gEngine.scheduler().lastClass());
     if (c < 5 && d > gClassGrainMaxUs[c]) gClassGrainMaxUs[c] = d;
@@ -2069,7 +2068,7 @@ extern "C" FLASHMEM void startup_early_hook(void) {
 
 extern "C" FLASHMEM void startup_middle_hook(void) { phase(kPhaseClocks); }
 
-FLASHMEM void setup() {  // DEC-254: once at boot, from flash (RAM1 room)
+FLASHMEM void setup() {  // once at boot, from flash (RAM1 room)
   phase(kPhaseSetup);
   gResetCause = SRC_SRSR;
   SRC_SRSR = gResetCause;  // write-one-to-clear: the next boot reports its own cause
@@ -2078,7 +2077,7 @@ FLASHMEM void setup() {  // DEC-254: once at boot, from flash (RAM1 room)
   WDOG1_WICR = kWicrWie | kWicrWtis | 1;  // the warning 0.5 s before the reset
   NVIC_ENABLE_IRQ(IRQ_WDOG1);
   attachInterruptVector(IRQ_USB1, usbIsrCounted);
-  // The title first (owner 2026-11-10): before the wait for USB serial (up to 3 s without a host), until the boot load
+  // The title first: before the wait for USB serial (up to 3 s without a host), until the boot load
   // has ended.
   gDisplay.begin();
   gDisplay.drawTitle();
@@ -2102,7 +2101,7 @@ FLASHMEM void setup() {  // DEC-254: once at boot, from flash (RAM1 room)
     Serial.printf("#CAP,MEM_REGION,%s,%s,%u\n", r == EngineRoot::Region::Psram ? "psram" : "ram2", name,
                   static_cast<unsigned>(bytes));
   });
-  // Each track plays on its own MIDI channel, track n on channel n (legacy `TrackManager` default), whatever channel a
+  // Each track plays on its own MIDI channel, track n on channel n, whatever channel a
   // note was recorded on; live thru follows the selected track's channel.
   for (uint8_t t = 0; t < kTrackCount; ++t) gEngine.output().setChannel(t, static_cast<uint8_t>(t + 1));
   gClock.init(kDefaultTempo, kTicksPerBar);
@@ -2188,7 +2187,7 @@ void loop() {
     gBootReported = true;
     reportBootLoad();
     restoreSelection();
-    openLibrary("boot");  // created here only once saving is approved (boot is stopped, DEC-258)
+    openLibrary("boot");  // created here only once saving is approved (boot is stopped)
   } else if (!gBootReported && !gCard.ready()) {
     gBootReported = true;
   }
@@ -2196,7 +2195,7 @@ void loop() {
   serviceEncoder(millis());
   gSurface.service(millis(), gLastTick, micros());
   if (gBootReported) saveSelection(micros());  // saved once settled, after approval
-  if (gBootReported) births::watch(millis());   // E9.8b-3b
+  if (gBootReported) births::watch(millis());
   stampSaves();
   serviceLibrary();
   serviceLoad();
@@ -2215,11 +2214,11 @@ void loop() {
   for (uint8_t t = 0; t < kTrackCount; ++t) gDisplay.show(t, gSurface.shown(t), gSurface.shownQueued(t), gSurface.shownQueuedPosition(t));
   Teensy::EditView ev;
   const auto& ed = gSurface.edit();
-  ev.copy = static_cast<uint8_t>(gSurface.copyMode());  // DEC-279 amendment 1: copy mode's window
+  ev.copy = static_cast<uint8_t>(gSurface.copyMode());  // copy mode's window
   ev.copySlot = gSurface.copySourceSlot();
   ev.copyBar = gSurface.copySourceBar();
   ev.copyPaste = static_cast<uint8_t>(gSurface.pasteMode());
-  {  // DEC-282: the progress bar's frame — the stored loop, the current one bracketed in it
+  {  // the progress bar's frame — the stored loop, the current one bracketed in it
     const uint8_t t = gEngine.control().selectedTrack();
     uint32_t scale = 0, start = 0, known = 0;
     if (gSurface.loopFrame(gSurface.shown(t), scale, start, known)) {
@@ -2237,21 +2236,21 @@ void loop() {
   ev.popupLoop = gSurface.popupLoop();
   ev.popupChoice = ev.popup ? gSurface.popupChoice() : 0xFF;
   ev.popupRanges = ev.popup ? gSurface.popupRanges() : 0;
-  ev.groove = gSurface.grooveOpen();  // DEC-289
+  ev.groove = gSurface.grooveOpen();
   if (ev.groove) {
     const auto& g = gSurface.grooveSettings();
     ev.grooveSlot = gSurface.grooveWindowSlot();
     ev.grooveField = gSurface.grooveField();
     ev.grooveTemplate = g.tmpl;
     ev.grooveAmount = g.amount;
-    ev.grooveAuto = gSurface.grooveAuto();  // DEC-295: AUTO Q, the window's
+    ev.grooveAuto = gSurface.grooveAuto();  // AUTO Q, the window's
     ev.grooveState = static_cast<uint8_t>(gEngine.grooveState());
-    ev.grooveProgress = gSurface.grooveProgress();  // DEC-292
-    ev.grooveATemplate = gSurface.grooveA().tmpl;  // DEC-294
+    ev.grooveProgress = gSurface.grooveProgress();
+    ev.grooveATemplate = gSurface.grooveA().tmpl;
     ev.grooveAAmount = gSurface.grooveA().amount;
     ev.grooveHeard = static_cast<uint8_t>(gSurface.grooveHeard());
     ev.grooveCycling = gSurface.cycling();
-    ev.grooveDots = gSurface.grooveDots();  // DEC-295 am. 3
+    ev.grooveDots = gSurface.grooveDots();
     ev.grooveCycleBars = gSurface.cycleBars();
     ev.grooveTurnPos = gSurface.cycleTurnPos();
   }
@@ -2278,7 +2277,7 @@ void loop() {
   }
   crumb(kScreen);
   if (!gSelectionKnown && (applySavedSelection() || gBootReported)) gSelectionKnown = true;
-  // The title stays until the boot load has ended; the first frame then opens on the saved selection (DEC-273).
+  // The title stays until the boot load has ended; the first frame then opens on the saved selection.
   if (gSelectionKnown && gBootReported) gDisplay.service(gEngine, gClock, gLastTick, millis(), ev);
   crumb(kIdle);
   checkUsb(millis());

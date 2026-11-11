@@ -17033,3 +17033,70 @@ static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u 
   owner 2026-11-10: a long press always exits a window; trash is destructive
 ## UsbHostTransmitAdmission.h
 ```
+
+### Teensy and main
+
+- `main.cpp` (built first only in `teensy41-engine` beside the unchanged legacy firmware; E9.8a clock, E9.8b surface,
+  E9.8c screen, E9.8k status, E4.6b–c store, E4.7 pressure, E9.8b-3b undo-depth sizing, E9.8b-3c settings; surface
+  slices A / B / E, sets browser slices 2–4, the get-a-loop plan § 6.2 fixes 1–2): the USB host carries only the
+  surface's feedback, as the legacy firmware never sent playback there (playback bursts hung the loop); the encoder on
+  the legacy pins `Buttons::ENCODER_PIN_A/B`, `ENCODER_BUTTON_PIN`, four counts a detent as `GpioButtonManager`; the
+  RTC measured 2026-11-08 one hour ahead of UTC in CET; the USB device wedged twice on 2026-11-09 during reboot soaks
+  (the 2026-11-08 / 09 incidents) — hence the USB health check; `!REBOOT` stopped only, as the legacy firmware.
+- `OledScreen` (E9.8c, E9.8k status band mock-up "B2 round 6" owner 2026-11-06; NOTE_EDIT view E9.8b-2; the sets
+  browser slice 3; staged frames DEC-297, the roll alone 534 µs in one pass at 30 layers): the first DMA frame left the
+  panel blank (measured 2026-11-06); the playhead tore (owner 2026-11-08) until page flip; the legacy track letters
+  (`trackStateToLetter`, pulse 4–10, now 7–13 "readable at its darkest"), save dots, thin tenths dot, `drawBootScreen`
+  title (v0.6 legacy, v0.7 engine) and `!FB_DUMP` format; popups and windows per owner reports 2026-11-08 to 11
+  (DEC-284 am. 1 / 3, DEC-295 and am. 3, mockup B with amendments 1–2, layout A of the get-a-loop mockups).
+- `SdCardIo` (E9.8a, E9.8g, E9.8h; owner 2026-11-05): `writeSector` waited 1.6–8.2 ms on the owner's card.
+- The owner reports these comments carried, as harvested:
+
+```text
+## OledScreen.h
+  stages: E9.8c, E9.8k, E9.8b-2, slice 3, slice C, slice E, sets browser slice 3
+  legacy: !FB_DUMP, 120.0, 4, auto, drawBootScreen, showed, state, thin, track
+  owner 2026-11-06: mock-up "B2 round 6"
+  owner 2026-11-08
+  owner 2026-11-06: too crowded; BARS and the position say where the page is
+  owner 2026-11-08: the playhead tore while the panel scanned a frame being written; no tear with them
+  owner 2026-11-10: legacy showed v0.6; the engine is v0.7
+  owner 2026-11-10: the raster-bar title flickered on the panel — too much of it lit — so a light raster: thin
+  owner 2026-11-08: the playhead tore part of the loop — the panel scanning rows while a frame is written
+  owner 2026-11-09: a long bar dims toward its right end
+  owner 2026-11-11: a frame is drawn over several passes — the tracks and the slot's grid, the roll in `kRollB
+  owner 2026-11-09: a window over the performance screen, as the length popup; time down the list — year and m
+  owner 2026-11-09: the day reads with the month (`NOV 9`, the gap of `2026 NOV`
+  owner 2026-11-09: `[REC]↑ [EDT]↓`
+  owner 2026-11-09
+  owner 2026-11-09: one line — the moves, the actions, and the trash on the right DEC-268: the target exactly
+  owner 2026-11-10: every bar for now
+  owner 2026-11-08: "a shadow border and look/feel the same like cubase/atari", the main screen around it
+  owner 2026-11-08: "the screen gets all dimmed"
+  owner 2026-11-10: "show all possible lengths in the popup to cycle through"
+  owner 2026-11-10: "long press on play/stop"
+  owner 2026-11-10: layout A, the small font
+  owner 2026-11-11: "better spaced similar to the load/save window"; static, only the highlight moves
+  owner 2026-11-10: mockup B; amendment 1
+  owner 2026-11-10: its own minimal state
+  owner 2026-11-10: a double press of the source
+  owner 2026-11-10: it closes by itself
+  owner 2026-11-08: readable at its darkest
+  owner 2026-11-10
+  owner 2026-11-08: a muted note The cell F2 / F3 or F4 edits pulses (owner 2026-11-08
+  owner 2026-11-08: F3 sets tenths
+## SdCardIo.h
+  stages: E9.8a, E9.8g, E9.8h
+  owner 2026-11-05
+## main.cpp
+  stages: E4.7, E4.6b, E4.6c, E9.8a, E9.8b, E9.8c, E9.8k, E9.8b-1, E9.8b-2, slice 2, slice 3, slice B, E9.8b-3b, E9.8b-3c, surface slice B, surface slice E, sets browser slice 1, sets browser slice 1c
+  plan: plan §6.2
+  legacy: GpioButtonManager, MIN_PACKET_GAP, TrackManager, firmware, gesture, pins, sources
+  owner 2026-11-06: boot first, then delete
+  owner 2026-11-08: real dates only
+  owner 2026-11-06
+  owner 2026-11-10: grooves to the card
+  owner 2026-11-10: "create the folder and move these to the SD card via python"
+  owner 2026-11-10: boot shows the last selected slot, no switch on screen
+  owner 2026-11-10
+```
