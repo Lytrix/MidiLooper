@@ -1,7 +1,7 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// The engine's Clock (fixed-memory-engine E9.8a): which tick is due, from the internal tempo or an external MIDI clock.
+// The engine's Clock: which tick is due, from the internal tempo or an external MIDI clock.
 //
 // Ticks are the engine's (192 per quarter, `kTicksPerPulse` = 8 per MIDI clock pulse). The main loop asks `due` each
 // pass and plays every tick it returns, in order, at most `kCatchUp` a pass (a long block is caught up over the
@@ -10,19 +10,18 @@
 // * External: a MIDI clock pulse at tick 8k makes ticks up to 8k due at once; between pulses ticks are spread over the
 //   last measured pulse interval, but never past 8k + 7 before the next pulse arrives (the clock never runs ahead of
 //   its source). MIDI Start: the next bar line, held there until the first
-//   pulse (as the legacy `ClockManager` holds tick 0); Stop: no tick due; Continue: running from where it stopped.
+//   pulse; Stop: no tick due; Continue: running from where it stopped.
 // * Tick numbers only rise and a running clock never skips one (a late clock catches up `kCatchUp` ticks a pass): the
 //   engine's tracks, jobs and queued gestures key on them. A start — `start` or MIDI Start — moves on to the next bar
 //   line (`barTicks`) instead of going back to 0, so the bar grid is where the song starts; nothing plays meanwhile.
 // * The source is the external clock while pulses arrive (a pulse within `kExternalTimeoutUs`); without them, internal
 //   — and a running clock keeps running on the internal clock at the last external tempo, following the pulses again
-//   when they come back (no tick skipped), as the legacy `ClockManager` (owner 2026-11-06: a half-second gap in the
-//   source's clock froze the take).
-// * Tempo, as the legacy `ClockManager`: the span of the last 24 pulse intervals (25 arrival times — one beat), so
+//   when they come back (no tick skipped): a gap in the source's clock must not freeze a take.
+// * Tempo: the span of the last 24 pulse intervals (25 arrival times — one beat), so
 //   pulses that arrive bunched (USB delivers several in one packet: intervals of 0) do not move it; a new span within
-//   2.5 % of the tempo is blended in at 2 % (legacy: within 3 BPM, 2 %), else taken as it is — except while a gap (an
+//   2.5 % of the tempo is blended in at 2 %, else taken as it is — except while a gap (an
 //   interval over three pulse periods) is inside the span: the tempo holds until the span has passed it. A span outside
-//   1–300 BPM is ignored (legacy `setBpmFloat`'s range): a flood of pulses (a MIDI feedback loop in the host) cannot
+//   1–300 BPM is ignored: a flood of pulses (a MIDI feedback loop in the host) cannot
 //   set a tempo of thousands of BPM.
 // No allocation; O(1) a call.
 
@@ -87,8 +86,8 @@ class EngineClock {
     pulseLimit_ = next_;
     holdForPulse_ = true;  // the bar's first tick at the first pulse
   }
-  /// A local start under a stopped external clock (DEC-276 amendment 2): pulses arrive but no Start — the next bar's
-  /// first tick at the next pulse, as a Start would.
+  /// A local start under a stopped external clock (DEC-276, external-clock local stop / start): pulses arrive but no
+  /// Start — the next bar's first tick at the next pulse, as a Start would.
   void startOnPulse() {
     if (!external_ || running_) return;
     running_ = true;
@@ -131,7 +130,7 @@ class EngineClock {
   bool due(uint32_t nowUs, uint32_t& tick, uint8_t& count) {
     if (external_ && static_cast<int32_t>(nowUs - lastPulseUs_) > static_cast<int32_t>(kExternalTimeoutUs)) {
       timeoutAgeUs_ = nowUs - lastPulseUs_;  // the source went away: internal
-      if (running_ && !holdForPulse_) {  // keep running at the last external tempo (legacy)
+      if (running_ && !holdForPulse_) {  // keep running at the last external tempo
         internalUsPerTick_ = usPerTick();
         lastTickUs_ = nowUs - internalUsPerTick_;  // the tick due next is due now
       } else {

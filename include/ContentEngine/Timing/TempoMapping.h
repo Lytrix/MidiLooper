@@ -12,11 +12,10 @@
  * @namespace TempoMapping
  * @brief Pure fader <-> BPM mappings for the loop-edit tempo fader.
  *
- * Two mappings live here while the tempo fader moves from the 7-bit CC to the 14-bit pitchbend (owner decision
- * 2026-10-11; `DEC-108` item 7 revised to the enforced **1–300 BPM** range):
+ * Two mappings, for a 7-bit CC fader and a 14-bit pitchbend fader (DEC-108, tempo range 1–300 BPM):
  *
- * * **CC (legacy, retired by the same slice):** one CC step is exactly one BPM over `TEMPO_MIN_BPM..TEMPO_MAX_BPM`
- *   = 60..187, so the motor fader has a detent per BPM. 128 steps cannot span 1–300 at 0.1, which is why it goes.
+ * * **CC:** one CC step is exactly one BPM over `TEMPO_MIN_BPM..TEMPO_MAX_BPM` = 60..187, so the motor fader has a
+ *   detent per BPM; 128 steps cannot span 1–300 at 0.1.
  * * **Pitchbend (the tempo fader):** 16,384 wire values span **1..300 BPM at a 0.1 quantum** — 2,991 positions,
  *   5.5 wire values per position, monotonic with no gaps. 0.1 is the declared quantum because an external MIDI
  *   clock can also only be estimated to that resolution.
@@ -26,7 +25,7 @@
  */
 namespace TempoMapping {
 
-// --- Legacy CC fader mapping (loop-edit CC 102; retired when the pitchbend fader lands) ------------------------
+// --- CC fader mapping (one BPM a step) -----------------------------------------------------------------------
 constexpr float TEMPO_MIN_BPM = 60.0f;
 constexpr float TEMPO_MAX_BPM = 187.0f;  // 128 steps: 127 CC values above the minimum
 constexpr uint8_t TEMPO_CC_MAX = 127;

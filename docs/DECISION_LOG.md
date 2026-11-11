@@ -16765,3 +16765,30 @@ mutation).
 
 **Open:** composing itself still grows about 12 µs a layer in `hard` and `display` (g near 55–60 layers, close to the
 63-run ceiling); LEDs and screen about 9 and 12 µs a layer (about 1.6 ms at 63 layers).
+
+## DEC-298 — Comment history moved out of the engine's code (code hygiene, stage B)
+
+**Date:** 2026-11-12. **Owner:** "comments are now overloaded with DEC numbers, for a normal reader this works
+confusing" (2026-11-11); "ideally it is not deleted but moved to a logical location for agents to read up if
+needed"; then "yes implement as such" for [CODE_HYGIENE.md § 4–5](Authority/CODE_HYGIENE.md#4-where-the-rest-goes).
+
+**Decision:** code comments keep only timeless rules; each area folder's `AGENTS.md` holds its invariants, traps and
+rejected approaches (≤ 120 lines); the history the comments held and no other entry did — owner reports, dates,
+provenance from the retired legacy runtime, stage IDs — is kept here, per folder. Every commit of the move is
+comment-only and keeps the image byte-identical.
+
+### Timing
+
+- `EngineClock` (E9.8a): its external-clock behaviour follows the retired legacy `ClockManager` — Start held at the
+  bar's first tick until the first pulse (legacy: tick 0), the tempo as the span of the last 24 pulse intervals, a new
+  span blended in at 2 % (legacy: within 3 BPM, 2 %; the engine: within 2.5 %), the 1–300 BPM estimate range (legacy
+  `setBpmFloat`), and continuing at the last external tempo when pulses stop. Owner 2026-11-06: a half-second gap in
+  the source's clock froze a take — hence the clock keeps running through a gap. DEC-276 amendment 2: a local start
+  under a stopped external clock.
+- `WallClock` (sets browser slice 1, owner 2026-11-08: "real dates only"): the RTC holds local time as the Teensy
+  loader sets it at upload (measured 2026-11-08). The legacy `RtcTime` substituted the build time, which made dates
+  look real when they were not; the engine never does. `dayOf` serves the browser's timeline (slice 5).
+- `TempoMapping`: owner decision 2026-10-11 moved the tempo fader from the 7-bit CC (60–187 BPM, one BPM a step) to
+  the 14-bit pitchbend (1–300 BPM at 0.1), DEC-108 item 7 revised. The CC mapping was to be retired by that slice; on
+  2026-11-12 no engine file or test includes `TempoMapping.h` (a candidate for removal in the cleanup's dead-code
+  stage).

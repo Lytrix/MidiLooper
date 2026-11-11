@@ -1,12 +1,12 @@
 //  Copyright (c)  2025 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
-// Wall-clock time for the engine's milestones and saves (sets browser slice 1; owner 2026-11-08: real dates only).
+// Wall-clock time for the engine's milestones and saves: real dates only.
 //
-// * A time is a Unix-style second count from the RTC — local time on this board, as the Teensy loader sets it at upload
-//   (measured 2026-11-08). It is **valid** only within [`kFirstValid`, `kLastValid`]: a clock
-//   that lost its battery reads near 0, and the engine never substitutes the firmware's build time (legacy `RtcTime`
-//   did, which made its dates look real when they were not). An invalid time is shown as `TIME NOT SET`.
+// * A time is a Unix-style second count from the RTC — local time on this board, as the Teensy loader sets it at
+//   upload. It is **valid** only within [`kFirstValid`, `kLastValid`]: a clock that lost its battery reads near 0,
+//   and the engine never substitutes the firmware's build time (that makes dates look real when they are not). An
+//   invalid time is shown as `TIME NOT SET`.
 // * Shown with the owner's offset in minutes (`kMinOffset`–`kMaxOffset`; 0 while the RTC already holds local time).
 // * `local` breaks a time into its calendar fields (days-from-civil, no tables); `formatStamp` writes "8 NOV 2026 14:20"
 //   and `formatDay` "8 NOV". No allocation, no library time functions.
@@ -54,7 +54,7 @@ inline Local local(uint32_t unix, int16_t offsetMinutes) {
 }
 
 /// The day number (days since 1970-01-01) of a calendar date (H. Hinnant's days_from_civil): month starts for the
-/// browser's timeline (slice 5).
+/// browser's timeline.
 inline int64_t dayOf(int64_t y, int64_t m, int64_t d) {
   y -= m <= 2 ? 1 : 0;
   const int64_t era = (y >= 0 ? y : y - 399) / 400;
