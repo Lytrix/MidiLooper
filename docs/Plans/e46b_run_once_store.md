@@ -52,3 +52,14 @@ Non-goals: per-slot depth, cold states, fetch, pressure, library (milestone) for
 Boot (`crash=0`, `BOOT,load,ok`), migration of the owner's set, a save after an overdub writing only the new run
 (`!ENGINE` store stats), and timing: the worst persistence step no worse than today's worst pass (~0.9 ms) during a
 dense overdub with saves.
+
+## Evidence (2026-11-11)
+
+- Native: `test_each_run_is_written_once`, `test_a_damaged_run_record_fails_by_name`,
+  `test_a_run_no_copy_lists_is_reclaimed_at_boot`, `test_the_dec253_store_is_migrated`, and the 16 earlier persistence
+  tests on the new layout; mutations (every run written, no rows CRC, no boot marking) each caught. Full native 4,551.
+- Device `953d7297…`: migration — 29 slots loaded from `store.bin`, 27 saved into `store2.bin` (235 runs, 948 sectors,
+  `save_failed=0`); reboot → loaded from `store2.bin` (273 clusters, history unchanged).
+- Device `dea5111b…` (per-class grain timing in `!ENGINE take`): a take saved during playback — persistence's worst
+  grain **94 µs**; the pass's other grains (transition 603, background 370, display 330 µs) unchanged in kind.
+- Finding for E4.6d: the boot load's grains (32 sectors) reach 31 ms; a fetch while playing needs a few sectors a grain.

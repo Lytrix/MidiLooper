@@ -1209,6 +1209,8 @@ uint32_t gPutBytes = 0, gPutCrc = 0;
 bool groovePath(const char* p) {
   return p != nullptr && std::strncmp(p, "/GROOVES/", 9) == 0 && std::strstr(p, "..") == nullptr && std::strlen(p) < 120;
 }
+uint32_t gClassGrainMaxUs[5] = {};  // DEC-254: the worst grain of each job class (hard, transition, display, persistence,
+                                   // background), reset by `!ENGINE take`
 // E9.8b-3b (undo-depth sizing): undo-history births since boot — counted per minute (the busiest kept) and by what made
 // each one (a run the slot's previous state did not have: its kind; none: a state with fewer runs, e.g. a clear).
 // Diagnostics only: one compare a main-loop pass, a scan of the 99 entries per birth. `!ENGINE history-cost`.
@@ -1592,6 +1594,11 @@ FLASHMEM __attribute__((noinline)) void command(char* line, uint32_t nowUs) {  /
                   static_cast<unsigned long>(ct.exists), static_cast<unsigned long>(ct.openRead),
                   static_cast<unsigned long>(ct.sectorRead), static_cast<unsigned long>(ct.sectorWrite),
                   static_cast<unsigned long>(ct.store), gEngine.persistence().stats().store);
+    Serial.printf("#ENGINE,grain_worst,hard=%lu,transition=%lu,display=%lu,persistence=%lu,background=%lu\n",
+                  static_cast<unsigned long>(gClassGrainMaxUs[0]), static_cast<unsigned long>(gClassGrainMaxUs[1]),
+                  static_cast<unsigned long>(gClassGrainMaxUs[2]), static_cast<unsigned long>(gClassGrainMaxUs[3]),
+                  static_cast<unsigned long>(gClassGrainMaxUs[4]));
+    for (uint32_t& m : gClassGrainMaxUs) m = 0;
     {  // DEC-254 (E4.6b): the run-once store
       const auto& ps = gEngine.persistence().stats();
       Serial.printf("#ENGINE,runstore,runs_written=%lu,run_sectors=%lu,runs_kept=%lu,store_full=%lu,bad_run=%lu,"
@@ -1991,6 +1998,11 @@ bool timedGrain() {
   const uint8_t phase = gEngine.setLoad().phase() >= 4 ? 2 : gEngine.setLoad().phase() >= 2 ? 1 : 0;
   const uint32_t t = micros();
   const bool ran = gEngine.runGrain(t);
+  if (ran) {  // DEC-254's timing gate: each job class's worst single grain
+    const uint32_t d = micros() - t;
+    const uint8_t c = static_cast<uint8_t>(gEngine.scheduler().lastClass());
+    if (c < 5 && d > gClassGrainMaxUs[c]) gClassGrainMaxUs[c] = d;
+  }
   if (ran && working) {
     const uint32_t d = micros() - t;
     if (d > gLoadGrainMaxUs) gLoadGrainMaxUs = d;

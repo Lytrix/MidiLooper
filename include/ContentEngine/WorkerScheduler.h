@@ -81,6 +81,8 @@ class WorkerScheduler {
   }
   bool live(uint8_t id) const { return id < MaxJobs && jobs_[id].live; }
 
+  /// The class of the last grain run (diagnostics: each class's worst grain, DEC-254's timing gate).
+  JobClass lastClass() const { return lastClass_; }
   /// Runs one grain at time `nowUs`. Returns the job id run, or kNoJob when idle.
   uint8_t runGrain(uint32_t nowUs) {
     for (auto& j : jobs_)
@@ -91,6 +93,7 @@ class WorkerScheduler {
     const uint8_t id = pick(nowUs);
     if (id == kNoJob) return kNoJob;
     Job& j = jobs_[id];
+    lastClass_ = j.spec.cls;
     ++report_.grains;
     switch (j.spec.cls) {
       case JobClass::Hard: ++report_.hardGrains; break;
@@ -204,6 +207,7 @@ class WorkerScheduler {
   uint32_t sinceDisplay_ = 0, sincePersist_ = 0, sinceTransition_ = 0;
   uint8_t lastBackground_ = MaxJobs - 1;
   Report report_{};
+  JobClass lastClass_ = JobClass::Background;
 };
 
 }  // namespace ContentEngine

@@ -1,3 +1,8 @@
+**2026-11-11 — DEC-254 approved; E4.6b the run-once store (branch `feature/engine-per-slot-history`).** `store2.bin`:
+each run written once as its own record, per-slot A / B state records, a 1 GiB run area reclaimed at boot; the DEC-253
+`store.bin` migrated (read only, left on the card). Native 4,551 passed; device: 27 slots migrated and reloaded, a take
+saved while playing wrote its 2 runs only, the worst persistence grain 94 µs. Next: E4.6c per-slot depth 99.
+
 **2026-11-11 — E9.8b-3b undo-depth sizing, part 1: the cost measured.** The 99 is one pool for all 64 slots. On the
 owner's set (`958a4649…`): 99 states (26 currents), the history alone pins 137 runs (60 % of the 227 in use, 285 of 512
 free) and 7,722 rows (limit 131,072); a manifest 148 B, a run 80 B. Run descriptors bind, not memory; a depth of ~200

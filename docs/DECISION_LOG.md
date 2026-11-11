@@ -14758,9 +14758,9 @@ Supersedes: E9.7a's `.tmp` + rename save and `surface.mls` writes (design.md E9.
 **Owner:** `ContentEngine::History` (per-slot depth, hot / cold state, fetch); `ContentEngine::Persistence` (the card's
 run and state records). OpenSpec: [`fixed-memory-engine`](../openspec/changes/fixed-memory-engine/design.md) E4.6.
 Builds on DEC-252 (one bounded content engine) and DEC-253 (the store).
-**Status:** Deferred by owner (2026-11-06) — kept as a proposed future extension, not rejected. No implementation,
-no storage-format migration under DEC-254 until the fixed-memory engine and the A / B persistence are
-device-qualified; then the owner reassesses from history-pressure diagnostics (below) whether useful undo is lost.
+**Status:** **Approved by owner 2026-11-11** ("ok implement this a new branch"; the run-once store chosen over
+extending the slot copies: "I choose DEC-254's run-once store"). Deferred 2026-11-06 until then. Built in stages on
+`feature/engine-per-slot-history`: E4.6b done (below); E4.6c–e follow.
 
 ### Reassessment
 
@@ -14795,6 +14795,20 @@ device-qualified; then the owner reassesses from history-pressure diagnostics (b
 - **Without the card** (no card, or saving not approved): today's behaviour, the shared 99 in PSRAM.
 - **Boot** loads each slot's current state (and its hot steps); deeper states are listed from their state records,
   not loaded. The full 99 steps survive a reboot.
+
+### E4.6b — the run-once store (2026-11-11)
+
+Built as `docs/Plans/e46b_run_once_store.md`: `store2.bin` — two state-record copies a slot (the slot stream without
+its rows; each directory entry names its run record) and a 1 GiB run area of run records (header "MLR1" written last,
+the rows' CRC-32), 8-sector clusters; `SaveJob` / `LoadJob` unchanged behind a splitting sink and a record source;
+`RunId` → (record, serial); the cluster map rebuilt at boot from both copies of every slot (reclaim at boot); the
+DEC-253 `store.bin` read once to migrate (left on the card). Native: run-once, a damaged record by name, reclaim,
+migration (3 mutations caught); full native 4,551 passed. Device (`953d7297…` / `dea5111b…`, `crash=0`, `BOOT,load,ok`):
+29 slots loaded from `store.bin`, 27 with history migrated (235 runs, 948 sectors, 0 failed); after a reboot the set
+loaded from `store2.bin` (the same 273 clusters, the same history); a take saved during playback wrote its 2 runs
+only, an overdub's save its new runs only. **Timing:** the worst persistence grain 94 µs (the gate: no worse than
+today's worst pass, ~0.9 ms); the boot load's grains reach 31 ms (32 sectors a grain, before playback) — E4.6d's fetch
+must read in smaller grains. RAM1: the serial command handler moved to flash (13,248 B free).
 
 ### Alternatives considered
 
