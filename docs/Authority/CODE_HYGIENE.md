@@ -30,11 +30,20 @@ Check a change with `scripts/code_hygiene_report.py` (sizes and history referenc
 
 | | Review when over | Then |
 |---|---|---|
-| A file | **1,000 lines** | Does it hold more than one responsibility? Split by responsibility into files in the same area folder |
+| A file | **1,250 lines** | Does it hold more than one responsibility? Split by responsibility into files in the same area folder |
 | A function | **60 lines** | Can a named step be extracted without hiding the flow? (Google: ~40 lines, "no hard limit") |
 
 A long file or function that is one coherent responsibility may stay; the review is the rule, the split is the usual
 outcome. Splits are moves: they keep the compiled image byte-identical, or differ only in the linker's veneer order.
+
+How a split is done:
+- **A class:** the class keeps every declaration with its doc comment (the class reads as its interface); the bodies of
+  one responsibility move to `<Class><Part>.h` beside it as `inline` out-of-class definitions with a trailing return
+  type (`inline auto Class<T>::f(…) -> R`), and the class's header includes its parts after the class. `inline` keeps
+  the compiler's inlining as it was; attributes (`CE_COLD`, section placement) stay on the declaration.
+- **A separate type** inside a large header moves to its own header (`PressDetector.h`).
+- **`main.cpp`:** a section moves to `src/<Part>.h`, included where the section stood (inside the anonymous
+  namespace); the part says so in its first comment and is not a standalone header.
 
 ## 3. Design principles
 

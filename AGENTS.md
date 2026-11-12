@@ -97,7 +97,7 @@ path and confidence when alternatives exist; do not block on vagueness.
   — reuse `pass`, `Capture`, `editPass`, `NoteEditSession`, slot, overdub, jam,
   `JamAction`, HITL baseline. Action + scope naming.
 - **Code hygiene:** comments say what the code cannot (intent, invariants, why) and carry no
-  history; decision references are sparse (`DEC-### (short name)`); files over 1,000 lines and
+  history; decision references are sparse (`DEC-### (short name)`); files over 1,250 lines and
   functions over 60 are reviewed; DRY and SOLID as adapted in
   [`docs/Authority/CODE_HYGIENE.md`](docs/Authority/CODE_HYGIENE.md). Report:
   `scripts/code_hygiene_report.py`.

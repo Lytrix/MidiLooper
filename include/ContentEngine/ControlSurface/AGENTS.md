@@ -6,7 +6,9 @@ behaviour is `docs/Guides/ENGINE_UI_UX_GUIDE.md`; the DROID patch is `droid/midi
 
 ## Owns
 - `ControlSurface`: the DROID control plane (MIDI channels 13–16) → gestures, windows (GROOVE, length popup, copy,
-  sets browser), LEDs and motor faders. `NoteEditSurface`: NOTE_EDIT's faders, buttons and encoder. `SetBrowser`: the
+  sets browser), LEDs and motor faders; its bodies are split by responsibility into `ControlSurfaceGroove.h`,
+  `ControlSurfaceLoopEdit.h`, `ControlSurfaceCopy.h` and `ControlSurfaceLeds.h` (declarations stay in the class).
+  `PressDetector`: short / double / triple / long presses. `NoteEditSurface`: NOTE_EDIT's faders, buttons and encoder. `SetBrowser`: the
   sets browser's model. `UsbHostTransmitAdmission`: whether a USB host write returns at once.
 
 ## Invariants

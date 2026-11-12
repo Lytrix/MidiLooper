@@ -6,7 +6,8 @@ the undo store are described for people in `docs/Guides/ENGINE_STORAGE.md`.
 
 ## Owns
 - `Persistence`: approval, autosave, the run-once store (`store.bin`), the surface state and settings sectors, boot
-  load, migration, the cold tier and fetches. `RunStore`: the store's run area. `SlotFile`: the slot stream format
+  load, migration, the cold tier and fetches; bodies in `PersistenceSaving.h` (saving, cold tier, fetch) and
+  `PersistenceLoading.h` (loading). `RunStore`: the store's run area. `SlotFile`: the slot stream format
   (save / load jobs). `SetLibraryFormat`, `LibraryWriter`, `LibraryLoader`: the milestone library (`library.bin`),
   loads, get a loop. `V1Import`: reading V1 slot files.
 

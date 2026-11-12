@@ -6,7 +6,8 @@ these lines: DEC-298 (comment history, moved) § Teensy and main in the decision
 ## Owns
 - `main.cpp`: the engine firmware's one implementation file — the main loop (input, due ticks, jobs and grains, port
   output, the control surface, the screen), the serial commands (`!ENGINE …`, `!STOP_STATUS`, `!REBOOT`), boot,
-  breadcrumbs, the watchdog and the USB health check, wall-clock time.
+  breadcrumbs, the watchdog and the USB health check, wall-clock time. Two sections live in parts included in place:
+  `LibraryOperations.h` (milestones, loads, get a loop, the picker, the working set) and `SerialCommands.h`.
 
 ## Invariants
 - One main loop, no interrupts of its own. A tick waits at most one grain plus the non-engine stretch (B_max).

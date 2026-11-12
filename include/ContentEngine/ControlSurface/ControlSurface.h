@@ -100,128 +100,13 @@
 
 #include <cstdint>
 
+#include "ContentEngine/ControlSurface/PressDetector.h"
 #include "ContentEngine/ControlSurface/SetBrowser.h"
 #include "ContentEngine/ControlSurface/NoteEditSurface.h"
 #include "ContentEngine/Timing/EngineClock.h"
 
 namespace ContentEngine {
 
-enum class Press : uint8_t { Short, Double, Triple, Long };
-
-template <uint8_t N>
-class PressDetector {
- public:
-  struct Timing {
-    uint16_t doubleMs = 300, tripleMs = 400, longMs = 600, debounceMs = 0;
-    bool triple = false;  // the button has a triple action: a double waits for the triple window
-  };
-
-  void init() {
-    for (uint8_t b = 0; b < N; ++b) {
-      timing_[b] = Timing{};
-      state_[b] = State{};
-    }
-    head_ = count_ = 0;
-  }
-  void configure(uint8_t b, Timing t) { timing_[b] = t; }
-
-  void down(uint8_t b, uint32_t ms) {
-    State& s = state_[b];
-    if (s.pressed) {  // a second NoteOn: re-arm
-      s.start = ms;
-      return;
-    }
-    if (timing_[b].debounceMs != 0 && s.released && ms - s.lastRelease < timing_[b].debounceMs) return;
-    s.pressed = true;
-    s.start = ms;
-  }
-  void up(uint8_t b, uint32_t ms) {
-    State& s = state_[b];
-    if (!s.pressed) return;  // its press was never seen: no gesture
-    s.pressed = false;
-    s.released = true;
-    s.lastRelease = ms;
-    if (s.consumed) {  // used with another control: no gesture, and no tap for a double
-      s.consumed = false;
-      idle(s);
-      return;
-    }
-    const Timing& t = timing_[b];
-    if (ms - s.start >= t.longMs) {
-      idle(s);
-      push(b, Press::Long);
-      return;
-    }
-    if (s.tap == Tap::PendingDouble && ms - s.secondTap <= t.tripleMs) {
-      idle(s);
-      push(b, Press::Triple);
-    } else if (s.tapped && ms - s.lastTap <= t.doubleMs) {
-      if (!t.triple) {
-        idle(s);
-        push(b, Press::Double);
-      } else {
-        s.secondTap = ms;
-        s.tap = Tap::PendingDouble;
-        s.expire = ms + t.tripleMs;
-      }
-    } else {
-      s.tapped = true;
-      s.lastTap = ms;
-      s.tap = Tap::PendingShort;
-      s.expire = ms + t.doubleMs;
-    }
-  }
-  /// The next gesture due at `ms`, if any.
-  bool next(uint32_t ms, uint8_t& b, Press& p) {
-    for (uint8_t i = 0; i < N && count_ < kQueue; ++i) {
-      State& s = state_[i];
-      if (s.tap == Tap::Idle || static_cast<int32_t>(ms - s.expire) < 0) continue;
-      const Press q = s.tap == Tap::PendingShort ? Press::Short : Press::Double;
-      idle(s);
-      push(i, q);
-    }
-    if (count_ == 0) return false;
-    b = queue_[head_].b;
-    p = queue_[head_].p;
-    head_ = static_cast<uint8_t>((head_ + 1) % kQueue);
-    --count_;
-    return true;
-  }
-  bool pressed(uint8_t b) const { return state_[b].pressed; }
-  /// How long `b` has been held at `ms` (0: not pressed).
-  uint32_t heldMs(uint8_t b, uint32_t ms) const { return state_[b].pressed ? ms - state_[b].start : 0; }
-  /// The held press of `b` was used with another control: its release is no gesture.
-  void consume(uint8_t b) {
-    if (state_[b].pressed) state_[b].consumed = true;
-  }
-
- private:
-  static constexpr uint8_t kQueue = 8;
-  enum class Tap : uint8_t { Idle, PendingShort, PendingDouble };
-  struct State {
-    bool pressed = false, released = false, tapped = false, consumed = false;
-    Tap tap = Tap::Idle;
-    uint32_t start = 0, lastRelease = 0, lastTap = 0, secondTap = 0, expire = 0;
-  };
-  struct Event {
-    uint8_t b;
-    Press p;
-  };
-  static void idle(State& s) {
-    s.tapped = false;
-    s.tap = Tap::Idle;
-  }
-  void push(uint8_t b, Press p) {
-    if (count_ == kQueue) return;  // a burst of more than 8 gestures in one pass: the rest are dropped
-    queue_[(head_ + count_) % kQueue] = Event{b, p};
-    ++count_;
-  }
-
-  Timing timing_[N];
-  State state_[N];
-  Event queue_[kQueue];
-  uint8_t head_ = 0, count_ = 0;
-};
 
 template <typename Engine>
 class ControlSurface {
@@ -479,83 +364,28 @@ class ControlSurface {
   // Fields: A's groove, A's amount, B's groove, B's amount (AUTO Q: TRK, the title bar's checkbox). REC / EDIT move
   // up / down as in the load / save window, the encoder's push down, its turn the value; the GROOVE fader bank (program 2):
   // F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount — CC 20–23 on channel 16.
-  void nextGrooveField(int8_t d) {
-    grooveField_ = static_cast<uint8_t>((grooveField_ + kGrooveFields + d) % kGrooveFields);
-  }
+  void nextGrooveField(int8_t d);
   /// What is heard: OFF (no groove), A or B — two grooves, both edited in the window.
   enum class Heard : uint8_t { Off, A, B };
-  static Heard columnOf(uint8_t f) {
-    return f == kFieldGrooveA || f == kFieldAmountA ? Heard::A : Heard::B;
-  }
+  static Heard columnOf(uint8_t f);
   groove::Settings& columnSettings(Heard h) { return h == Heard::A ? grooveA_ : grooveSet_; }
   /// A value changed: only the column heard is rebuilt (an intermediate groove heard would defeat the A / B
   /// comparison) (once settled); the other is kept silently until PLAY/STOP or its cycle turn plays it — a
   /// turn already asked for is asked again with the new values.
-  void grooveChanged(Heard col, uint32_t ms) {
-    if (col != grooveHeard()) {
-      if (cycling_) cycleAsked_ = 0xFFFFFFFFu;
-      return;
-    }
-    groovePending_ = true;
-    pendingCol_ = col;
-    groovePendingMs_ = ms;
-  }
+  void grooveChanged(Heard col, uint32_t ms);
   /// AUTO Q (TRK in the window): the slot's, kept with what plays.
-  void toggleAutoQ(uint32_t ms) {
-    grooveAuto_ = !grooveAuto_;
-    if (grooveHeard() != Heard::Off) grooveChanged(grooveHeard(), ms);
-  }
-  void grooveNudge(int32_t d, uint32_t ms) {
-    const Heard col = columnOf(grooveField_);
-    groove::Settings& g = columnSettings(col);
-    if (grooveField_ == kFieldGrooveA || grooveField_ == kFieldGrooveB) {
-      const int32_t n = groove::kTemplateCount;
-      g.tmpl = g.tmpl >= n ? groove::kStraight : static_cast<uint8_t>((g.tmpl + n + d % n) % n);  // a file's: the list
-    } else {
-      const int32_t a = static_cast<int32_t>(g.amount) + d * 5;
-      g.amount = static_cast<uint8_t>(a < 0 ? 0 : a > 100 ? 100 : a);
-    }
-    grooveChanged(col, ms);
-  }
+  void toggleAutoQ(uint32_t ms);
+  void grooveNudge(int32_t d, uint32_t ms);
   /// The GROOVE bank's faders (CC 20–23 on channel 16): F1 A's groove, F2 A's amount, F3 B's groove, F4 B's amount.
   /// True: taken. The fields are in the same order (A's groove, A's amount, B's groove, B's amount).
-  bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) {
-    if (type != 0xB0 || channel != 15 || d1 < kGrooveCc || d1 >= kGrooveCc + kGrooveFields) return false;
-    const uint8_t field = static_cast<uint8_t>(d1 - kGrooveCc);
-    if ((faderSeen_ & (1u << field)) == 0) {  // the DROID reports each fader as the bank opens: where it is, not a move
-      faderSeen_ = static_cast<uint8_t>(faderSeen_ | (1u << field));
-      return true;
-    }
-    if (landing(field, ms)) return true;  // its motor's travel to the value written, not a move
-    const Heard col = columnOf(field);
-    groove::Settings& g = columnSettings(col);
-    const groove::Settings before = g;
-    const uint32_t v = d2 & 0x7F;
-    if (field == kFieldGrooveA || field == kFieldGrooveB) g.tmpl = static_cast<uint8_t>(v * groove::kTemplateCount / 128);
-    else g.amount = static_cast<uint8_t>((v * 100 + 63) / 127);
-    grooveField_ = field;
-    if (g.tmpl != before.tmpl || g.amount != before.amount) grooveChanged(col, ms);
-    return true;
-  }
+  bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms);
   /// A field's value on its fader (the inverse of `grooveFader`: a template's band centre; a file template,
   /// which no fader position names, at the bottom).
-  static uint8_t grooveCc(uint8_t field, const groove::Settings& g) {
-    if (field == kFieldGrooveA || field == kFieldGrooveB) {
-      if (g.tmpl >= groove::kTemplateCount) return 0;
-      const uint32_t v = (static_cast<uint32_t>(g.tmpl) * 128u + 64u) / groove::kTemplateCount;
-      return static_cast<uint8_t>(v > 127 ? 127 : v);
-    }
-    return static_cast<uint8_t>((static_cast<uint32_t>(g.amount) * 127u + 50u) / 100u);
-  }
+  static uint8_t grooveCc(uint8_t field, const groove::Settings& g);
   /// Each of F1–F4 to its field's value on opening — the
   /// value on its CC, then its `clear` trigger note (`droid/midilooper_v1.ini`, the GROOVE bank). Its travel is not a
   /// move for `kMotorSettleMs` (`landing`).
-  void parkGrooveFaders(uint32_t ms) {
-    loopMotorCount_ = 0;
-    for (uint8_t f = 0; f < kGrooveFields; ++f)
-      loopWrite(f, 0xB0 | kProgramChannel, static_cast<uint8_t>(kGrooveCc + f), grooveCc(f, columnSettings(columnOf(f))),
-                kProgramChannel, static_cast<uint8_t>(kGrooveTrigger + f), ms);
-  }
+  void parkGrooveFaders(uint32_t ms);
   // ---- Compare -----------------------------------------------------------------------------------
   static constexpr uint32_t kBarTicks = NoteEditSurface<Engine>::kBar;
   /// The cycle's bars a turn: a global setting, no control yet.
@@ -563,118 +393,28 @@ class ControlSurface {
   void setCycleBars(uint8_t b) { cycleBars_ = b == 0 ? 1 : b; }
   bool cycling() const { return cycling_; }
   /// What is heard now: cycling, A or B by the turn (A from its first bar line); else the last choice.
-  Heard grooveHeard() const {
-    if (!cycling_ || tick_ < cycleStart_) return heard_;
-    const uint32_t turn = (tick_ - cycleStart_) / (static_cast<uint32_t>(cycleBars_) * kBarTicks);
-    return (turn & 1u) == 0 ? Heard::A : Heard::B;
-  }
+  Heard grooveHeard() const;
   const groove::Settings& grooveA() const { return grooveA_; }
   bool grooveAuto() const { return grooveAuto_; }
   /// The settings a choice builds: A's or B's (OFF: none) over the whole loop, with the slot's AUTO Q.
-  groove::Settings settingsOf(Heard h) const {
-    groove::Settings x = h == Heard::B ? grooveSet_ : grooveA_;
-    if (h == Heard::Off) x.amount = 0;
-    x.scope = groove::kFull;
-    x.autoGroove = grooveAuto_;
-    return x;
-  }
-  void playHeard(Heard h, uint32_t at = 0) {
-    const groove::Settings x = settingsOf(h);
-    const bool file = x.tmpl == groove::kFileTemplate && x.amount != 0;
-    grooveAt_ = at;
-    applyGroove(grooveWin_, x, file ? &grooveATable_ : nullptr, file ? grooveALabel_ : nullptr,
-                static_cast<uint8_t>(static_cast<uint8_t>(h) + 1));
-  }
-  void stopCycle() {
-    heard_ = grooveHeard();  // stopped where it is: what plays stays
-    cycling_ = false;
-    if (grooveAt_ != 0 && e_->grooveState() != Engine::Groove::State::Idle) e_->grooveCancel();  // a later turn's
-    grooveAt_ = 0;
-    if (grooveToHear_) playHeard(heard_);  // the next turn already published for its bar line: replaced by this one
-  }
+  groove::Settings settingsOf(Heard h) const;
+  void playHeard(Heard h, uint32_t at = 0);
+  void stopCycle();
   /// ADD (NOTELEN) in the window (as NOTELEN's ranges in performance: single A ↔ B, double FULL): single A ↔ B (from
   /// OFF: A; cycling: keeps the one playing), double OFF (and stops a cycle), hold the cycle on / off — A and B taking
   /// turns of `cycleBars` bars from the next bar line.
-  void grooveCompare(Press p) {
-    if (p == Press::Long) {
-      if (cycling_) {
-        stopCycle();
-      } else {
-        cycling_ = true;
-        cycleStart_ = (tick_ / kBarTicks + 1) * kBarTicks;
-        cycleAsked_ = 0xFFFFFFFFu;
-      }
-      return;
-    }
-    if (p == Press::Double) {
-      if (cycling_) stopCycle();
-      heard_ = Heard::Off;
-    } else if (p == Press::Short) {
-      if (cycling_) {
-        stopCycle();
-        return;
-      }
-      heard_ = heard_ == Heard::A ? Heard::B : Heard::A;
-    } else {
-      return;
-    }
-    groovePending_ = false;  // the values stay; what plays is the one chosen
-    playHeard(heard_);
-  }
+  void grooveCompare(Press p);
   /// The cycle's next turn built a bar ahead (time for a long loop's build) and switched in on its bar
   /// line.
-  void serviceCycle() {
-    if (!cycling_ || !clock_->running()) return;
-    const uint32_t len = static_cast<uint32_t>(cycleBars_) * kBarTicks;
-    const uint32_t k = tick_ < cycleStart_ ? 0 : (tick_ - cycleStart_) / len + 1;  // the turn starting next
-    const uint32_t at = cycleStart_ + k * len;
-    if (k == cycleAsked_ || at - tick_ > kBarTicks) return;
-    cycleAsked_ = k;
-    playHeard((k & 1u) == 0 ? Heard::A : Heard::B, at);
-  }
-  void serviceGroove(uint32_t ms) {
-    if (groove_) {
-      if (groovePending_ && ms - groovePendingMs_ >= kLengthSettleMs) {
-        groovePending_ = false;
-        if (grooveHeard() == pendingCol_) playHeard(pendingCol_);  // still the one heard (cycling: still its turn)
-      }
-      serviceCycle();
-      return;  // open until closed (DEC-292: groove browsing)
-    }
-    // AUTO ("at loop wrap everything is quantized"): a grooved shown slot whose groove asks for it,
-    // with an overdub pass after its groove pass, is grooved again (the overdub folded in) — once per state.
-    const uint8_t slot = shownSlot(selected());
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest || transport().writingSlot() == slot || edit_.editing() || loopEdit_ ||
-        e_->grooveState() != Engine::Groove::State::Idle)
-      return;
-    const auto& d = e_->manifests().manifest(c);
-    if (d.identity == autoTried_) return;
-    const groove::Settings g = groove::Settings::unpack(transport().window(slot).groove);
-    if (g.amount == 0 || !g.autoGroove) return;
-    bool afterGroove = false, overdub = false;
-    for (uint8_t i = 0; i < d.runCount; ++i) {
-      const uint8_t k = e_->runs().run(d.runs[i]).kind;
-      if (k == RunKind::kGroove) afterGroove = true, overdub = false;
-      else if (afterGroove && k == RunKind::kOverdub) overdub = true;
-    }
-    if (!overdub) return;
-    autoTried_ = d.identity;  // once per state, whatever the outcome
-    leaveVisit();
-    applyGroove(slot, g);
-  }
+  void serviceCycle();
+  void serviceGroove(uint32_t ms);
 
   // ---- Copy mode ------------------------------------------------------------------------------
   enum class Copy : uint8_t { None, Slot, Bar, Note };
   static constexpr uint32_t kCopyHoldMs = 600, kFlashMs = 100;  // the hold that starts it; a flash's half period
   static constexpr uint32_t kCopyIdleMs = 5000, kCopyDoubleMs = 300;  // the countdown; the source's double press
   /// The countdown left (ms; the whole while the source is still held), for the window's line.
-  uint32_t copyMsLeft(uint32_t ms) const {
-    if (copy_ == Copy::None) return 0;
-    if (copyHolding_) return kCopyIdleMs;
-    const int32_t left = static_cast<int32_t>(copyUntil_ - ms);
-    return left > 0 ? static_cast<uint32_t>(left) : 0;
-  }
+  uint32_t copyMsLeft(uint32_t ms) const;
   Copy copyMode() const { return copy_; }
   /// A bar / step paste: chosen by the target's press (Ask), or by REC (Replace) / EDIT (Merge).
   enum class PasteMode : uint8_t { Ask, Replace, Merge };
@@ -691,41 +431,7 @@ class ControlSurface {
   /// `table` / `label`: a groove file's template; nullptr with `kFileTemplate`: the one stored with the state.
   typename Engine::Transport::Result applyGroove(uint8_t slot, const groove::Settings& s,
                                                  const groove::Table* table = nullptr, const char* label = nullptr,
-                                                 uint8_t heard = 0) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return Engine::Transport::Result::Empty;
-    beyondEnd(c);
-    const LoopWindow w = transport().window(slot);
-    GrooveRequest q;
-    q.settings = s;
-    if (s.tmpl != groove::kFileTemplate) {
-      q.table = groove::builtin(s.tmpl);
-    } else if (table != nullptr) {
-      q.table = *table;
-      for (uint8_t k = 0; label != nullptr && k < 20 && label[k] != 0; ++k) q.label[k] = label[k];
-    } else {  // the state's own (a regroove, AUTO)
-      const LoopWindow sw = transport().window(slot);
-      if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, q.table, q.label))
-        return Engine::Transport::Result::Refused;
-    }
-    q.frame = frame_;
-    q.start = frameStart_;
-    if (s.scope == groove::kRangeA) {
-      q.scopeStart = w.aStart;
-      q.scopeLength = w.aLength;
-    } else if (s.scope == groove::kRangeB) {
-      q.scopeStart = w.bStart;
-      q.scopeLength = w.bLength;
-    }
-    if (heard != 0) {  // from the GROOVE window: its columns stored with the state
-      q.columnA = grooveA_.pack();
-      q.columnB = grooveSet_.pack();
-      q.heard = heard;
-    }
-    if (grooveSlot_ != slot) visitState_ = 0;  // a new visit: its first publish is a step
-    grooveSlot_ = slot;
-    return e_->grooveStart(slot, q);
-  }
+                                                 uint8_t heard = 0);
   // ---- The GROOVE window (PLAY/STOP's long press) --------------------------------------------------------------------------
   /// Fields: template, amount, scope (FULL / A / B), AUTO. F1 amount, F2 template, F3 scope, F4 AUTO (the loop-edit
   /// fader bank); the encoder's turn the selected field, its push (or PLAY/STOP's press) the next; a long press of any
@@ -739,199 +445,37 @@ class ControlSurface {
   bool grooveOpen() const { return groove_; }
   /// How far a change is from being heard, in percent (0xFF: nothing under way) — settling (0–25), building
   /// (25–75), then until the beat it switches on (75–100).
-  uint8_t grooveProgress() const {
-    if (groovePending_) {
-      const uint32_t t = nowMs_ - groovePendingMs_;
-      return static_cast<uint8_t>((t >= kLengthSettleMs ? kLengthSettleMs : t) * 25 / kLengthSettleMs);
-    }
-    const auto st = e_->grooveState();
-    if (st == Engine::Groove::State::Waiting || st == Engine::Groove::State::Building || st == Engine::Groove::State::Ready)
-      return static_cast<uint8_t>(25 + e_->grooveProgress() / 2);
-    if (grooveSwitchAt_ > tick_ && grooveSwitchAt_ > grooveSwitchFrom_ && clock_->running())
-      return static_cast<uint8_t>(75 + 25 * (tick_ - grooveSwitchFrom_) / (grooveSwitchAt_ - grooveSwitchFrom_));
-    return 0xFF;
-  }
+  uint8_t grooveProgress() const;
   uint8_t grooveField() const { return grooveField_; }
   /// The save dots' states: 0 none, 1 a change settling (dim), 2 building or waiting for its bar line /
   /// beat (one running), 3 heard in the last `kDotsDoneMs` (bright).
   static constexpr uint32_t kDotsDoneMs = 800;
-  uint8_t grooveDots() const {
-    if (groovePending_) return 1;
-    const auto st = e_->grooveState();
-    if (st == Engine::Groove::State::Waiting || st == Engine::Groove::State::Building ||
-        st == Engine::Groove::State::Ready || grooveToHear_)
-      return 2;
-    if (grooveHeardMs_ != 0 && nowMs_ - grooveHeardMs_ < kDotsDoneMs) return 3;
-    return 0;
-  }
+  uint8_t grooveDots() const;
   /// How far the cycle's current turn is, in 1/1000 (0 before its first bar line).
-  uint16_t cycleTurnPos() const {
-    if (!cycling_ || tick_ < cycleStart_) return 0;
-    const uint32_t len = static_cast<uint32_t>(cycleBars_) * kBarTicks;
-    return static_cast<uint16_t>((tick_ - cycleStart_) % len * 1000 / len);
-  }
+  uint16_t cycleTurnPos() const;
   const groove::Settings& grooveSettings() const { return grooveSet_; }
   uint8_t grooveWindowSlot() const { return grooveWin_; }
-  void openGroove(uint8_t slot) {
-    if (slot >= Config::kSlotCount || empty(slot) || browsing()) return;
-    groove_ = true;
-    grooveWin_ = slot;
-    grooveField_ = kFieldGrooveA;
-    const uint32_t packed = transport().window(slot).groove;
-    if (packed != 0) {  // A the slot's groove, B a copy to change
-      grooveA_ = groove::Settings::unpack(packed);
-    } else {  // 1/16 by default, 50 %
-      grooveA_ = groove::Settings{};
-      grooveA_.tmpl = groove::kStraight;
-      grooveA_.amount = 50;
-    }
-    grooveAuto_ = grooveA_.autoGroove;
-    grooveALabel_[0] = 0;
-    if (grooveA_.tmpl == groove::kFileTemplate) {
-      const LoopWindow sw = transport().window(slot);
-      if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, grooveATable_, grooveALabel_))
-        grooveA_.tmpl = groove::kStraight;
-    }
-    grooveSet_ = grooveA_;
-    heard_ = packed != 0 ? Heard::A : Heard::Off;
-    restoreColumns(slot, packed);
-    openedA_ = grooveA_.pack();  // as opened: `closeGroove` stores the columns only when a visit changed them
-    openedB_ = grooveSet_.pack();
-    openedHeard_ = static_cast<uint8_t>(static_cast<uint8_t>(heard_) + 1);
-    faderSeen_ = 0;
-    parkGrooveFaders(nowMs_);
-    cycling_ = false;
-    grooveAt_ = 0;
-    leaveVisit();
-    groovePending_ = false;
-  }
+  void openGroove(uint8_t slot);
   /// The columns stored with the slot: A, B and the column heard, when the heard one is still what
   /// the slot plays (else the slot's groove as A, as before, B kept). A column naming a file template not stored with
   /// the slot is straight.
-  void restoreColumns(uint8_t slot, uint32_t packed) {
-    const LoopWindow w = transport().window(slot);
-    if (w.heard == 0) return;
-    groove::Settings a = groove::Settings::unpack(w.columnA), b = groove::Settings::unpack(w.columnB);
-    const auto fileless = [&](groove::Settings& g) {
-      if (g.tmpl == groove::kFileTemplate && (packed == 0 || groove::Settings::unpack(packed).tmpl != groove::kFileTemplate))
-        g.tmpl = groove::kStraight;
-    };
-    fileless(a);
-    fileless(b);
-    grooveSet_ = b;
-    const Heard h = static_cast<Heard>(w.heard - 1);
-    const groove::Settings played = groove::Settings::unpack(packed);
-    const auto plays = [&](groove::Settings g) {  // as `settingsOf` built it: the whole loop, the slot's AUTO Q
-      g.scope = groove::kFull;
-      g.autoGroove = played.autoGroove;
-      return g.pack() == packed;
-    };
-    const bool matches = h == Heard::Off ? packed == 0 || played.amount == 0 : plays(h == Heard::A ? a : b);
-    if (!matches) return;  // the slot's groove changed outside the window: A is it, B kept
-    grooveA_ = a;
-    heard_ = h;
-  }
-  void toggleGroove() {
-    if (groove_) closeGroove();
-    else openGroove(shownSlot(selected()));
-  }
-  void closeGroove() {
-    if (cycling_) stopCycle();  // what plays now stays; a turn built for later is dropped
-    grooveAt_ = 0;
-    if (groovePending_ && grooveHeard() == pendingCol_) playHeard(pendingCol_);  // a change still settling is kept
-    groovePending_ = false;
-    groove_ = false;
-    if (e_->grooveState() == Engine::Groove::State::Waiting) e_->grooveCancel();  // waiting for room: given up
-    // The columns as left are stored with the slot — now, replacing this visit's own state, or once a build still
-    // under way is published.
-    // Only a visit that changed A, B or the column heard: opening and closing alone is no step.
-    columnsSlot_ = grooveWin_;
-    columnsA_ = grooveA_.pack();
-    columnsB_ = grooveSet_.pack();
-    columnsHeard_ = static_cast<uint8_t>(static_cast<uint8_t>(heard_) + 1);
-    columnsOwed_ = columnsA_ != openedA_ || columnsB_ != openedB_ || columnsHeard_ != openedHeard_;
-    if (columnsOwed_ && e_->grooveState() == Engine::Groove::State::Idle) writeColumns(visitState_);
-    leaveVisit();
-  }
-  void writeColumns(uint32_t replace) {
-    columnsOwed_ = false;
-    control().setColumns(columnsSlot_, columnsA_, columnsB_, columnsHeard_, tick_, us_, us(), replace);
-  }
+  void restoreColumns(uint8_t slot, uint32_t packed);
+  void toggleGroove();
+  void closeGroove();
+  void writeColumns(uint32_t replace);
 
   /// Ends the groove visit (the GROOVE window closed): the next setting is an undo step of its own.
-  void leaveVisit() {
-    visitState_ = 0;
-    grooveSlot_ = 0xFF;
-  }
+  void leaveVisit();
   /// Is the slot's loop its whole stored loop (true without content)?
-  bool isFull(uint8_t slot) {
-    if (slot >= Config::kSlotCount) return true;
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return true;
-    beyondEnd(c);
-    return frameStart_ == 0 && loopTicks(slot) == frame_;
-  }
-  bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known) {
-    if (slot >= Config::kSlotCount) return false;
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return false;
-    beyondScan(c, kScanRows / 2);  // the screen: in steps (the last state scanned until this one is done)
-    scale = frame_;
-    start = frameStart_;
-    known = absEnd_;
-    return true;
-  }
+  bool isFull(uint8_t slot);
+  bool loopFrame(uint8_t slot, uint32_t& scale, uint32_t& start, uint32_t& known);
   /// Diagnostics: full scans of a state's rows the LEDs made (one per new state; never per bar of playback).
   uint32_t rowScans() const { return rowScans_; }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
   typename NoteEditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
   /// Once per main-loop pass: the gestures due, at the last played tick.
-  void service(uint32_t ms, uint32_t lastTick, uint32_t nowUs) {
-    tick_ = lastTick;
-    us_ = nowUs;
-    nowMs_ = ms;
-    if (edit_.editing() && !edit_.velocityMode() && press_.heldMs(kLength, ms) >= kVelocityHoldMs) {
-      press_.consume(kLength);  // a long hold: velocity mode, F4's motor to the velocity
-      edit_.velocityBegin(ms, true);
-    }
-    serviceCopy(ms);
-    // EDIT held `kEditExitMs` leaves the edit modes at once; its release is then no press.
-    if ((edit_.editing() || edit_.entering() || loopEdit_) && press_.pressed(kEditMode) &&
-        press_.heldMs(kEditMode, ms) >= kEditExitMs) {
-      press_.consume(kEditMode);
-      leaveEdit();
-    }
-    if (columnsOwed_ && !groove_ && e_->grooveState() == Engine::Groove::State::Idle) {  // after the visit's last build:
-      const ManifestId c = transport().contentOf(columnsSlot_);                              // folded into its state
-      writeColumns(c == kNoManifest ? 0 : e_->manifests().manifest(c).identity);
-    }
-    if (e_->grooveService(lastTick, clock_->running(), nowUs, us(), visitState_, grooveAt_) ==
-        Engine::Transport::Result::Ok) {
-      grooveAt_ = 0;
-      visited(grooveSlot_);  // a groove published; this visit's next one replaces it
-      grooveSwitchFrom_ = lastTick;  // the window's progress runs on to the beat it is heard on
-      grooveSwitchAt_ = e_->groovePublishedAt();
-      grooveToHear_ = true;
-    }
-    if (grooveToHear_ && (!clock_->running() || lastTick >= grooveSwitchAt_)) {  // heard — the dots lit
-      grooveToHear_ = false;
-      grooveHeardMs_ = ms == 0 ? 1 : ms;
-    }
-    serviceGroove(ms);
-    for (uint8_t k = 0; k < 16 && lockStep_ == 0xFF && edit_.editing(); ++k)
-      if (press_.heldMs(kStep0 + k, ms) >= kLockMs) {  // the parameter lock (an empty step: nothing, no gesture)
-        lockStep_ = k;
-        edit_.lockBegin(k, ms);
-      }
-    uint8_t b;
-    Press p;
-    while (press_.next(ms, b, p)) dispatch(b, p);
-    edit_.service(ms);
-    settleLength(ms);
-    settleStart(ms);
-    servicePopup(ms);
-  }
+  void service(uint32_t ms, uint32_t lastTick, uint32_t nowUs);
   const NoteEditSurface<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
@@ -944,49 +488,15 @@ class ControlSurface {
   /// none).
   uint8_t popupChoice() const { return popupChoice_; }
   /// The remembered ranges the popup offers: bit 0 A, bit 1 B.
-  uint8_t popupRanges() {
-    if (transport().contentOf(popupSlot_) == kNoManifest) return 0;
-    const LoopWindow w = transport().window(popupSlot_);
-    return static_cast<uint8_t>((w.aLength != 0 ? 1 : 0) | (w.bLength != 0 ? 2 : 0));
-  }
-  uint32_t popupLoop() const {
-    if (pendingLoop_ != 0) return pendingLoop_;
-    const ManifestId c = e_->transport().contentOf(popupSlot_);
-    return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
-  }
+  uint8_t popupRanges();
+  uint32_t popupLoop() const;
   /// LOOP_EDIT's loop start in the stored loop (F1's pending one while it settles).
-  uint32_t loopStart() {
-    return startPending_ ? pendingStart_ : e_->transport().window(shownSlot(selected())).start;
-  }
+  uint32_t loopStart();
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
-  bool motor(uint32_t ms, typename NoteEditSurface<Engine>::MotorMsg& m) {
-    if (edit_.motor(ms, m)) return true;
-    if (loopPark_) parkLoopFaders(ms);
-    for (uint8_t i = 0; i < loopMotorCount_; ++i) {  // the first one due, in queue order
-      if (static_cast<int32_t>(ms - loopMotor_[i].at) < 0) continue;
-      m = loopMotor_[i].m;
-      for (uint8_t k = i; k + 1 < loopMotorCount_; ++k) loopMotor_[k] = loopMotor_[k + 1];
-      --loopMotorCount_;
-      return true;
-    }
-    return false;
-  }
+  bool motor(uint32_t ms, typename NoteEditSurface<Engine>::MotorMsg& m);
 
   /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
-  void transportStarted(uint32_t firstTick) {
-    auto& x = transport();
-    for (uint8_t t = 0; t < kTracks; ++t) {
-      const uint8_t armed = control().queuedRecordSlot(t);
-      if (armed != 0xFF) {
-        control().queueRecord(t, armed, firstTick - 1);
-        continue;
-      }
-      // Every track not muted and not playing starts its selected slot on the first tick.
-      const uint8_t slot = selectedSlot(t);
-      if (x.playing(t) || x.writingTrack() == t || control().muted(t) || empty(slot)) continue;
-      control().queueSwitch(t, slot, Engine::Control::Quantize::NextGrid, firstTick - 1, false);  // not a gesture
-    }
-  }
+  void transportStarted(uint32_t firstTick);
 
   /// The engine slot a track has selected (its slot button's), for the screen.
   uint8_t selectedSlot(uint8_t t) const { return static_cast<uint8_t>(t * kSlotsPerTrack + slot_[t]); }
@@ -999,48 +509,20 @@ class ControlSurface {
   bool shownQueued(uint8_t t) { return control().switchQueued(t); }
   /// The loop position a queued switch starts at (a step or bar button's; 0: the loop start).
   uint32_t shownQueuedPosition(uint8_t t) { return control().queuedPosition(t); }
-  void setBrowser(ProductionBrowser* b) {
-    browser_ = b;
-    if (b != nullptr) b->setNewLoopBars(kNewLoopBars);  // the picker starts on the preset closest to it
-  }
+  void setBrowser(ProductionBrowser* b);
   bool browsing() const { return browser_ != nullptr && browser_->isOpen(); }
 
   /// The DROID's fader bank when it is to change (F2–F4 sent the loop-edit bank's messages in
   /// NOTE_EDIT — the DROID switches banks on a Program Change on channel 16, which the engine never sent): the
   /// note-edit bank while a NOTE_EDIT session is open (at the session's opening), else the loop-edit bank;
   /// the first call (boot) sends the current one, so the DROID follows a restart too. False: no change.
-  bool bank(uint8_t& program) {
-    const uint8_t want = groove_ ? kGrooveBank : edit_.editing() ? kNoteEditBank : kLoopEditBank;
-    if (want == bankSent_) return false;
-    bankSent_ = want;
-    program = want;
-    return true;
-  }
+  bool bank(uint8_t& program);
 
   /// The LEDs wanted now, every note (diagnostics: `!ENGINE leds`).
-  void ledsWanted(uint32_t lastTick, uint32_t ms, uint8_t* want) {
-    desired(lastTick, ms, want);
-    copyLeds(ms, want);
-  }
+  void ledsWanted(uint32_t lastTick, uint32_t ms, uint8_t* want);
   /// The LED changes (channel 15 notes), at most `max`: `send(note, velocity)`, velocity 0 = off.
   template <typename Send>
-  uint8_t leds(uint32_t lastTick, uint32_t ms, Send send, uint8_t max) {
-    uint8_t want[128] = {};
-    desired(lastTick, ms, want);
-    copyLeds(ms, want);
-    uint8_t n = 0;
-    for (uint8_t note = 0; note < 128 && n < max; ++note) {
-      if (sent_[note] == want[note]) continue;
-      if (sent_[note] == 0xFF && want[note] == 0) {  // never lit: nothing to clear
-        sent_[note] = 0;
-        continue;
-      }
-      send(note, want[note]);
-      sent_[note] = want[note];
-      ++n;
-    }
-    return n;
-  }
+  uint8_t leds(uint32_t lastTick, uint32_t ms, Send send, uint8_t max);
 
  private:
   using X = typename Engine::Transport;
@@ -1319,270 +801,65 @@ class ControlSurface {
   }
   /// The edit button's long press: from performance NOTE_EDIT, or LOOP_EDIT when
   /// the shown slot has no notes to edit; then NOTE ↔ LOOP (NOTE only on content; CC later). Held `kEditExitMs`: leave.
-  void cycleEdit(uint8_t t) {
-    if (edit_.active()) {
-      edit_.leave();
-      enterLoopEdit();
-      return;
-    }
-    loopEdit_ = false;
-    enterEdit(t);
-    if (!edit_.active()) enterLoopEdit();
-  }
-  void enterLoopEdit() {
-    loopEdit_ = true;
-    rangeSteps_ = rangeBars_ = 0;  // no range from before
-    rangeTapNote_ = 0xFF;
-    visitState_ = 0;   // a new visit: its first change is a step
-    loopPark_ = true;  // every fader to its value, at the next motor pass
-    pendingLoop_ = 0;
-    startPending_ = false;
-    coarseBpm_ = static_cast<uint16_t>(tempoTenths() / 10);
-  }
+  void cycleEdit(uint8_t t);
+  void enterLoopEdit();
   /// LOOP_EDIT's motor faders (`droid/midilooper_v1.ini`, the loop bank): a value, then its `clear` trigger note on
   /// and, after `kMotorGateMs`, off. F1 the loop start (pitch bend channel 16, note 100 channel 16), F2 the length
   /// (CC 101 channel 16, note 101 channel 16), F3 the fine tempo (CC 100 channel 16, note 1 channel 15), F4 the coarse
   /// tempo (pitch bend channel 15, note 2 channel 15). A fader's own messages are not moves for `kMotorSettleMs`.
-  void loopWrite(uint8_t fader, uint8_t status, uint8_t d1, uint8_t d2, uint8_t trigStatus, uint8_t trigNote, uint32_t ms) {
-    if (loopMotorCount_ + 3 > kLoopMotorQueue) return;
-    loopMotor_[loopMotorCount_++] = LoopMotor{{status, d1, d2}, ms};
-    loopMotor_[loopMotorCount_++] = LoopMotor{{static_cast<uint8_t>(0x90 | trigStatus), trigNote, 127}, ms};
-    loopMotor_[loopMotorCount_++] =
-        LoopMotor{{static_cast<uint8_t>(0x80 | trigStatus), trigNote, 0}, ms + NoteEditSurface<Engine>::kMotorGateMs};
-    loopWrittenMs_[fader] = ms;
-  }
-  void parkLoopFaders(uint32_t ms) {
-    loopPark_ = false;
-    loopMotorCount_ = 0;
-    const ManifestId c = transport().contentOf(shownSlot(selected()));
-    {  // the start: its place in the stored loop, F1's travel over the frame's 16ths
-      uint16_t wire = 0;
-      if (c != kNoManifest) {
-        beyondEnd(c);
-        const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth, k = frameStart_ / NoteEditSurface<Engine>::kSixteenth;
-        if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + (steps - 1) / 2) / (steps - 1));
-        parkedStart_ = static_cast<int32_t>(k);
-      }
-      loopWrite(0, 0xE0 | kProgramChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
-                kProgramChannel, kStartTrigger, ms);
-    }
-    const uint32_t loop = c == kNoManifest ? NoteEditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
-    parkedNotch_ = static_cast<int16_t>(positionOf(loop));
-    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
-    if (clock_->external()) return;
-    writeFine(static_cast<uint8_t>(64 + tempoTenths() % 10), ms);
-    const uint16_t wire = wireOfBpm(coarseBpm_);
-    loopWrite(3, 0xE0 | kTempoChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
-              kTempoChannel, kCoarseTrigger, ms);
-  }
-  void writeFine(uint8_t cc, uint32_t ms) {
-    loopWrite(2, 0xB0 | kProgramChannel, kFineCc, cc, kTempoChannel, kFineTrigger, ms);
-  }
+  void loopWrite(uint8_t fader, uint8_t status, uint8_t d1, uint8_t d2, uint8_t trigStatus, uint8_t trigNote, uint32_t ms);
+  void parkLoopFaders(uint32_t ms);
+  void writeFine(uint8_t cc, uint32_t ms);
   bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < NoteEditSurface<Engine>::kMotorSettleMs; }
   /// LOOP_EDIT's F1 (pitch bend on channel 16): the loop start in the stored loop,
   /// over its 16ths (absolute). Applied at rest (`setWindow`), one undo step a visit; not while its motor lands.
-  void startFader(int16_t pb, uint32_t ms) {
-    if (landing(0, ms)) return;
-    const ManifestId c = transport().contentOf(shownSlot(selected()));
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth;
-    const uint32_t k =
-        steps > 1 ? (static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) + 8191) / 16383 : 0;
-    // The motor's echo of its parked place — within a
-    // 16th of it, the fader's reading being coarser — is no move; the first other value is, and ends the guard.
-    if (parkedStart_ >= 0 && static_cast<int32_t>(k) - parkedStart_ <= 1 && parkedStart_ - static_cast<int32_t>(k) <= 1)
-      return;
-    parkedStart_ = -1;
-    pendingStart_ = k * NoteEditSurface<Engine>::kSixteenth;
-    startPending_ = true;
-    startMs_ = ms;
-  }
-  void settleStart(uint32_t ms) {
-    if (!startPending_ || ms - startMs_ < kLengthSettleMs) return;
-    startPending_ = false;
-    if (!loopEdit_) return;
-    const uint8_t slot = shownSlot(selected());
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return;
-    setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Keep);
-  }
+  void startFader(int16_t pb, uint32_t ms);
+  void settleStart(uint32_t ms);
   /// LOOP_EDIT's F2: the shown loop's length, 1–128 bars over the travel. Applied
   /// once the fader rests `kLengthSettleMs` (one undo step a move; the screen shows the pending length), not while its
   /// motor lands.
-  void lengthFader(int16_t pb, uint32_t ms) {
-    lengthAt(static_cast<uint8_t>((static_cast<int32_t>(pb) + 8192) * kLengthScaleCount / 16384), ms);
-  }
+  void lengthFader(int16_t pb, uint32_t ms);
   /// F2's travel (the motor holds 25 notches, and 1–8 bars over 128 steps was niggly): 25 positions —
   /// 1/16, 1/8, 1/4, 1/2, 3/4 bar, 1–16 bars, 32, 64, 96, 128 bars, over CC 101's 0–127 (the nearest notch: a
   /// notch's value is `round(notch × 127 / 24)`). The notch number sent as is saturates at CC 127
   /// past notch 0, so the patch scales it back to 0–1 (or the fader runs continuous).
   static constexpr uint8_t kLengthScaleCount = 25;
-  static uint32_t loopAt(uint8_t i) {
-    static constexpr uint16_t kFraction[5] = {48, 96, 192, 384, 576};  // ticks: 1/16 … 3/4 bar
-    static constexpr uint16_t kTail[4] = {32, 64, 96, 128};            // bars
-    const uint32_t bar = NoteEditSurface<Engine>::kBar;
-    return i < 5 ? kFraction[i] : i < 21 ? (i - 4u) * bar : kTail[i < kLengthScaleCount ? i - 21 : 3] * bar;
-  }
-  static uint8_t notchOfCc(uint8_t cc) {
-    return static_cast<uint8_t>(((cc & 0x7F) * (kLengthScaleCount - 1) + 63) / 127);
-  }
+  static uint32_t loopAt(uint8_t i);
+  static uint8_t notchOfCc(uint8_t cc);
   static uint8_t ccOfNotch(uint8_t i) { return static_cast<uint8_t>((i * 127 + (kLengthScaleCount - 1) / 2) / (kLengthScaleCount - 1)); }
   /// The position that puts F2 on `loop` ticks (a length off the scale: the position below it).
-  static uint8_t positionOf(uint32_t loop) {
-    uint8_t i = 0;
-    while (i + 1 < kLengthScaleCount && loopAt(static_cast<uint8_t>(i + 1)) <= loop) ++i;
-    return i;
-  }
+  static uint8_t positionOf(uint32_t loop);
   /// F2 at position `pos` (CC 101 on channel 16, the DROID's loop bank).
-  void lengthAt(uint8_t pos, uint32_t ms) {
-    if (landing(1, ms)) return;
-    if (parkedNotch_ >= 0 && pos == parkedNotch_) return;  // the parked notch echoed (a length off the scale parks below)
-    parkedNotch_ = -1;
-    pendingLoop_ = loopAt(pos);  // past the last notch: the last
-    pendingMs_ = ms;
-  }
-  void settleLength(uint32_t ms) {
-    if (pendingLoop_ == 0 || ms - pendingMs_ < kLengthSettleMs) return;
-    const uint32_t loop = pendingLoop_;
-    pendingLoop_ = 0;
-    if (!loopEdit_ && !popup_) return;
-    resizeTo(popup_ ? popupSlot_ : shownSlot(selected()), loop, Mark::Keep);
-    if (popup_) popupChoice_ = choiceOf(popupSlot_);
-  }
+  void lengthAt(uint8_t pos, uint32_t ms);
+  void settleLength(uint32_t ms);
   /// LOOP_EDIT's step / bar buttons: the first held is the range's anchor; another pressed while it is held
   /// sets the range (`loopRange`). A double press loops
   /// that one bar or 16th.
-  void rangeInput(uint8_t note, bool down, uint32_t ms) {
-    const bool bars = note >= kBarStepBase;
-    const uint8_t k = static_cast<uint8_t>(bars ? note - kBarStepBase : note);
-    uint16_t& held = bars ? rangeBars_ : rangeSteps_;
-    uint8_t& anchor = bars ? barAnchor_ : stepAnchor_;
-    const uint16_t bit = static_cast<uint16_t>(1u << k);
-    if (!down) {
-      held = static_cast<uint16_t>(held & ~bit);
-      return;
-    }
-    if (held != 0 && anchor != k) {
-      loopRange(bars, anchor, k);
-      rangeTapNote_ = 0xFF;
-    } else if (held == 0 && rangeTapNote_ == note && ms - rangeTapMs_ <= kCopyDoubleMs) {
-      loopRange(bars, k, k);
-      rangeTapNote_ = 0xFF;
-    } else {
-      anchor = k;
-      if (held == 0) {
-        rangeTapNote_ = note;
-        rangeTapMs_ = ms;
-      }
-    }
-    held = static_cast<uint16_t>(held | bit);
-  }
+  void rangeInput(uint8_t note, bool down, uint32_t ms);
   /// The range between buttons `a` and `b` (either way) as the shown loop: the left one's position
   /// its new start, the buttons covered its length. The buttons are absolute (DEC-283):
   /// bars of the stored loop's 8-bar page holding the playhead (stopped: the loop's
   /// start), 16ths of its bar. Refused when the start lies at or past the stored loop's end.
-  void loopRange(bool bars, uint8_t a, uint8_t b) {
-    const uint8_t t = selected(), slot = shownSlot(t);
-    auto& x = transport();
-    const ManifestId c = x.contentOf(slot);
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-    constexpr uint32_t kBar = NoteEditSurface<Engine>::kBar, kStep = NoteEditSurface<Engine>::kSixteenth;
-    const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
-    const uint32_t at = (frameStart_ + pos) % frame_;
-    const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;
-    const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
-    const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
-    if (start >= frame_) return;
-    setWindow(slot, start, length, Mark::Range, true);  // buttons past the stored loop's end lengthen it
-  }
+  void loopRange(bool bars, uint8_t a, uint8_t b);
   /// What a LOOP_EDIT change makes of the loop: a remembered range (the step / bar buttons), or
   /// nothing (F1, F2, the popup, NOTELEN).
   enum class Mark : uint8_t { Range, Keep };
   /// The loop `loop` ticks long from its start (F2, the popup).
-  void resizeTo(uint8_t slot, uint32_t loop, Mark mark) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    setWindow(slot, frameStart_, loop, mark);
-  }
+  void resizeTo(uint8_t slot, uint32_t loop, Mark mark);
   /// The shown loop becomes `length` ticks from `start` in the stored loop, in this visit's undo step: the content back
   /// to the whole stored loop, rotated there to the start (lossless: rotated at the frame's length), then cut to the
   /// length; a loop reaching past the stored loop's end wraps to its start. A loop longer than the stored loop — or,
   /// `grow`, one reaching past its end — makes it longer (rotated back to its start first, so the stored notes keep
   /// their places). `mark`: a range of the buttons (`Range`: the newest remembered range, the one playing before it the
   /// other) or not; the remembered ranges are kept with every state.
-  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest || length == 0) return false;
-    beyondEnd(c);
-    uint32_t frame = frame_, at = frameStart_;
-    const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-    if (start >= frame) return false;
-    LoopWindow marks = transport().window(slot);
-    if (mark == Mark::Range) {  // B the new range; A the one playing (when it was A or B), else B before
-      const bool wasA = marks.aLength != 0 && at == marks.aStart && loop == marks.aLength;
-      const bool wasB = marks.bLength != 0 && at == marks.bStart && loop == marks.bLength;
-      if (wasB || (!wasA && marks.bLength != 0)) {
-        marks.aStart = marks.bStart;
-        marks.aLength = marks.bLength;
-      }
-      marks.bStart = start;
-      marks.bLength = length;
-    }
-    if (start == at && length == loop) return false;
-    const auto ok = [&](typename X::Result r) {
-      if (r != X::Result::Ok) return false;
-      visited(slot);
-      return true;
-    };
-    if (loop != frame && !ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
-    if (length > frame || (grow && start + length > frame)) {  // longer: back to its start, then the frame grows
-      if (at != 0 && !ok(control().rotate(slot, frame - at, tick_, us_, us(), visitState_, &marks))) return false;
-      at = 0;
-      frame = start + length;
-      if (!ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
-    }
-    const uint32_t shift = (start + frame - at) % frame;
-    if (shift != 0 && !ok(control().rotate(slot, shift, tick_, us_, us(), visitState_, &marks))) return false;
-    if (length != frame && !ok(control().resize(slot, length, tick_, us_, us(), visitState_, &marks))) return false;
-    loopPark_ = true;  // the faders to the new start and length
-    return true;
-  }
+  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false);
   // ---- The remembered ranges (two custom loop lengths to switch between; a double press plays the whole loop) ----------------------------------------
-  uint32_t loopTicks(uint8_t slot) {
-    const ManifestId c = transport().contentOf(slot);
-    return c == kNoManifest ? 0 : e_->manifests().manifest(c).loopLengthTicks;
-  }
+  uint32_t loopTicks(uint8_t slot);
   /// NOTELEN's single press, in performance and LOOP_EDIT: the other remembered range — from B to A, from A to B, from
   /// anything else to B (or A, the only one); its own undo step, the edits made since kept.
-  void switchRange(uint8_t slot) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    const LoopWindow w = transport().window(slot);
-    const uint32_t loop = loopTicks(slot);
-    const bool onB = w.bLength != 0 && w.start == w.bStart && loop == w.bLength;
-    visitState_ = 0;  // its own step
-    if ((onB || w.bLength == 0) && w.aLength != 0)
-      setWindow(slot, w.aStart, w.aLength, Mark::Keep);
-    else if (w.bLength != 0)
-      setWindow(slot, w.bStart, w.bLength, Mark::Keep);
-    pendingStart_ = 0;
-    startPending_ = false;
-  }
+  void switchRange(uint8_t slot);
   /// NOTELEN's double press, in performance and LOOP_EDIT: the whole stored loop (its own undo step; the ranges kept).
-  void playFull(uint8_t slot) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    visitState_ = 0;
-    setWindow(slot, 0, frame_, Mark::Keep);
-    pendingStart_ = 0;
-    startPending_ = false;
-  }
+  void playFull(uint8_t slot);
 
   // ---- The length popup ---------------------------------------------------------------------------
   /// Opened by a long press on a slot (an empty one gets its empty loop first) or NOTELEN's in LOOP_EDIT, on `slot`;
@@ -1591,153 +868,35 @@ class ControlSurface {
   /// choices: FULL, the ranges A and B (each skipped while there is none), then 1–8, 16, 32, 64, 128 bars from the
   /// stored loop's start — trying a length keeps the ranges. F2 sets a length the same way. It hides `kPopupMs` after
   /// the last change; its changes are one undo step (a visit, as LOOP_EDIT's). F2's motor is parked on opening.
-  void openPopup(uint8_t slot, uint8_t button, uint32_t ms) {
-    if (empty(slot)) return;
-    popup_ = true;
-    popupSlot_ = slot;
-    popupButton_ = button;
-    popupTaps_ = 0;
-    popupHeld_ = false;
-    popupUntil_ = ms + kPopupMs;
-    visitState_ = 0;
-    popupChoice_ = choiceOf(slot);
-    const uint32_t loop = e_->manifests().manifest(transport().contentOf(slot)).loopLengthTicks;
-    loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
-  }
+  void openPopup(uint8_t slot, uint8_t button, uint32_t ms);
   /// A press of the popup's button: its release is a tap (the opening long press fired at its own release); held
   /// `kPopupCancelMs` it cancels (an Atari dialog's Cancel) — the loop back at the length it had when
   /// the popup opened (its one undo step undone), the popup closed.
-  void popupPress(bool down, uint32_t ms) {
-    popupUntil_ = ms + kPopupMs;
-    if (down) {
-      popupDownMs_ = ms;
-      popupHeld_ = true;
-      return;
-    }
-    if (popupHeld_ && ms - popupDownMs_ >= kPopupCancelMs) {
-      cancelPopup();
-      return;
-    }
-    popupHeld_ = false;
-    ++popupTaps_;
-    popupTapMs_ = ms;
-  }
-  void cancelPopup() {
-    pendingLoop_ = 0;
-    popupTaps_ = 0;
-    popupHeld_ = false;
-    const ManifestId c = transport().contentOf(popupSlot_);
-    if (visitState_ != 0 && c != kNoManifest && e_->manifests().manifest(c).identity == visitState_)
-      control().undo(popupSlot_, tick_, us_, us());
-    popup_ = false;
-    visitState_ = 0;
-  }
-  void servicePopup(uint32_t ms) {
-    if (!popup_) return;
-    if (popupTaps_ != 0 && ms - popupTapMs_ >= kPopupTapMs) {  // the burst is over
-      const bool back = popupTaps_ >= 2;
-      popupTaps_ = 0;
-      popupChoice_ = nextChoice(popupSlot_, back);
-      applyChoice(popupSlot_, popupChoice_);
-      popupUntil_ = ms + kPopupMs;
-    }
-    if (pendingLoop_ != 0) popupUntil_ = ms + kPopupMs;
-    if (popupTaps_ == 0 && static_cast<int32_t>(ms - popupUntil_) >= 0) {
-      popup_ = false;
-      visitState_ = 0;
-    }
-  }
+  void popupPress(bool down, uint32_t ms);
+  void cancelPopup();
+  void servicePopup(uint32_t ms);
   /// The popup's choices: FULL (the whole stored loop), the ranges A and B, then lengths in bars
   /// from the stored loop's start.
   static constexpr uint8_t kChoiceFull = 0, kChoiceA = 1, kChoiceB = 2, kChoiceCount = 15, kNoChoice = 0xFF;
-  static uint16_t choiceBars(uint8_t i) {
-    static constexpr uint16_t kBars[kChoiceCount - 3] = {1, 2, 3, 4, 5, 6, 7, 8, 16, 32, 64, 128};
-    return i >= 3 && i < kChoiceCount ? kBars[i - 3] : 0;
-  }
+  static uint16_t choiceBars(uint8_t i);
   /// The choice the slot's loop is now (kNoChoice: none of them).
-  uint8_t choiceOf(uint8_t slot) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return kNoChoice;
-    beyondEnd(c);
-    const LoopWindow w = transport().window(slot);
-    const uint32_t loop = loopTicks(slot), start = frameStart_;
-    if (start == 0 && loop == frame_) return kChoiceFull;
-    if (w.bLength != 0 && start == w.bStart && loop == w.bLength) return kChoiceB;
-    if (w.aLength != 0 && start == w.aStart && loop == w.aLength) return kChoiceA;
-    for (uint8_t i = 3; i < kChoiceCount; ++i)
-      if (start == 0 && loop == choiceBars(i) * NoteEditSurface<Engine>::kBar) return i;
-    return kNoChoice;
-  }
+  uint8_t choiceOf(uint8_t slot);
   /// The next choice after the popup's (`back`: the one before), a range skipped while there is none; from none, by the
   /// loop's length.
-  uint8_t nextChoice(uint8_t slot, bool back) {
-    const LoopWindow w = transport().window(slot);
-    uint8_t i = popupChoice_;
-    if (i == kNoChoice) {  // by length: the first numbered choice above it, or the last below it
-      const uint32_t loop = loopTicks(slot), bar = NoteEditSurface<Engine>::kBar;
-      if (back) {
-        for (uint8_t k = kChoiceCount; k-- > 3;)
-          if (choiceBars(k) * bar < loop) return k;
-        return kChoiceCount - 1;
-      }
-      for (uint8_t k = 3; k < kChoiceCount; ++k)
-        if (choiceBars(k) * bar > loop) return k;
-      return kChoiceFull;
-    }
-    do {
-      i = static_cast<uint8_t>(back ? (i + kChoiceCount - 1) % kChoiceCount : (i + 1) % kChoiceCount);
-    } while ((i == kChoiceA && w.aLength == 0) || (i == kChoiceB && w.bLength == 0));
-    return i;
-  }
-  void applyChoice(uint8_t slot, uint8_t i) {
-    const ManifestId c = transport().contentOf(slot);
-    if (c == kNoManifest) return;
-    beyondEnd(c);
-    const LoopWindow w = transport().window(slot);
-    if (i == kChoiceFull)
-      setWindow(slot, 0, frame_, Mark::Keep);
-    else if (i == kChoiceA && w.aLength != 0)
-      setWindow(slot, w.aStart, w.aLength, Mark::Keep);
-    else if (i == kChoiceB && w.bLength != 0)
-      setWindow(slot, w.bStart, w.bLength, Mark::Keep);
-    else if (choiceBars(i) != 0)
-      setWindow(slot, 0, choiceBars(i) * NoteEditSurface<Engine>::kBar, Mark::Keep);
-  }
+  uint8_t nextChoice(uint8_t slot, bool back);
+  void applyChoice(uint8_t slot, uint8_t i);
   /// One undo step a LOOP_EDIT visit (the steps exploded): a later change replaces the state the
   /// visit's last one made, while that is still the slot's current. Leaving LOOP_EDIT or switching track ends it.
   void visited(uint8_t slot) { visitState_ = e_->manifests().manifest(transport().contentOf(slot)).identity; }
   /// The internal tempo in tenths of a BPM.
-  uint32_t tempoTenths() const {
-    const uint64_t d = static_cast<uint64_t>(clock_->usPerTick()) * EngineClock::kTicksPerQuarter;
-    return static_cast<uint32_t>((600000000ull + d / 2) / d);
-  }
+  uint32_t tempoTenths() const;
   /// LOOP_EDIT's tempo, coarse and fine as NOTE_EDIT's position (the whole-range fader was too
   /// shallow to set exactly): F4 sets whole BPM, `kCoarseMinBpm`–`kCoarseMaxBpm` over its travel, and puts F3 back at
   /// its centre; F3 adds (CC 100 − 64) tenths. Not on an external clock, nor while a fader's motor lands.
-  static uint16_t bpmOfWire(uint32_t wire) {
-    return static_cast<uint16_t>(kCoarseMinBpm + (wire * (kCoarseMaxBpm - kCoarseMinBpm) + 8191) / 16383);
-  }
-  static uint16_t wireOfBpm(uint32_t bpm) {
-    if (bpm < kCoarseMinBpm) bpm = kCoarseMinBpm;
-    if (bpm > kCoarseMaxBpm) bpm = kCoarseMaxBpm;
-    return static_cast<uint16_t>((bpm - kCoarseMinBpm) * 16383 / (kCoarseMaxBpm - kCoarseMinBpm));
-  }
-  void coarseTempo(int16_t pb, uint32_t ms) {
-    if (clock_->external() || landing(3, ms)) return;
-    const uint16_t bpm = bpmOfWire(static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192));
-    if (bpm == coarseBpm_) return;
-    coarseBpm_ = bpm;
-    clock_->setTempo(bpm * 100u);
-    writeFine(64, ms);
-  }
-  void fineTempo(uint8_t cc, uint32_t ms) {
-    if (clock_->external() || landing(2, ms)) return;
-    int32_t tenths = static_cast<int32_t>(coarseBpm_) * 10 + static_cast<int32_t>(cc & 0x7F) - 64;
-    if (tenths < static_cast<int32_t>(kCoarseMinBpm) * 10) tenths = kCoarseMinBpm * 10;
-    if (tenths > static_cast<int32_t>(kCoarseMaxBpm) * 10) tenths = kCoarseMaxBpm * 10;
-    if (static_cast<uint32_t>(tenths) == tempoTenths()) return;
-    clock_->setTempo(static_cast<uint32_t>(tenths) * 10u);
-  }
+  static uint16_t bpmOfWire(uint32_t wire);
+  static uint16_t wireOfBpm(uint32_t bpm);
+  void coarseTempo(int16_t pb, uint32_t ms);
+  void fineTempo(uint8_t cc, uint32_t ms);
   void leaveEdit() {
     edit_.leave();
     loopEdit_ = false;
@@ -1859,92 +1018,7 @@ class ControlSurface {
   }
 
   // ---- LEDs -----------------------------------------------------------------------------------------------------
-  void desired(uint32_t lastTick, uint32_t ms, uint8_t* want) {
-    auto& x = transport();
-    auto& c = control();
-    const uint8_t t = c.selectedTrack();
-    for (uint8_t i = 0; i < kTracks; ++i) {
-      bool content = false;
-      for (uint8_t s = 0; s < kSlotsPerTrack && !content; ++s) content = !empty(static_cast<uint8_t>(i * kSlotsPerTrack + s));
-      // In mute mode the track LEDs show what sounds — unmuted with content full, muted dim, empty dark
-      want[kTrackBase + i] = trackMute_ ? (!content ? 0 : control().muted(i) ? 32 : 127)
-                                        : (i == t ? 127 : content ? 32 : 0);
-    }
-    if (clock_->running()) want[kTransportNote] = 127;
-    const bool blinkBright = (ms / 250) % 2 == 0;
-    for (uint8_t s = 0; s < kSlotsPerTrack; ++s) {
-      const uint8_t slot = static_cast<uint8_t>(t * kSlotsPerTrack + s);
-      uint8_t v;
-      if (x.writingSlot() == slot || c.queuedRecordSlot(t) == slot) {
-        v = 96;
-      } else if (c.queuedSwitchSlot(t) == slot) {
-        v = blinkBright ? 96 : 64;
-      } else if (s == slot_[t]) {
-        v = 127;
-      } else if (empty(slot)) {
-        v = 0;
-      } else if (x.playing(t) && x.playingSlot(t) == slot) {
-        v = c.muted(t) ? 16 : 48;
-      } else {
-        v = 32;
-      }
-      want[kSlotBase + s] = v;
-    }
-    // The shown slot's bar, steps and position.
-    uint8_t slot = selectedSlot(t);
-    if (x.writingTrack() == t) slot = x.writingSlot();
-    else if (x.playing(t)) slot = x.playingSlot(t);
-    const ManifestId m = x.contentOf(slot);
-    uint32_t loop = m == kNoManifest ? 0 : e_->manifests().manifest(m).loopLengthTicks;
-    uint32_t pos = 0;
-    bool moving = false;
-    if (x.writingSlot() == slot) {
-      pos = x.writePosition(lastTick);
-      moving = true;
-      if (loop == 0 || loop > 256 * kBar) loop = (pos / kBar + 1) * kBar;
-    } else if (x.playing(t) && x.playingSlot(t) == slot && loop != 0) {
-      pos = (lastTick - x.origin(t)) % loop;
-      moving = true;
-    }
-    if (loop == 0) return;
-    const uint32_t bars = (loop + kBar - 1) / kBar;
-    if (edit_.editing() && edit_.slot() == slot) {  // NOTE_EDIT: the bracket's bar and step (the step buttons')
-      pos = edit_.bracket() % loop;
-      moving = true;
-    }
-    if (m != kNoManifest && x.writingSlot() != slot && !(edit_.editing() && edit_.slot() == slot)) {
-      // The stored loop's bars, absolute (performance too)
-      loopEditLeds(m, loop, pos, moving, want);
-      return;
-    }
-    const uint32_t bar = pos / kBar;
-    for (uint8_t i = 0; i < 8 && i < bars; ++i) {
-      const auto* d = e_->tiles().densityTile(slot, i);
-      bool notes = false;
-      for (uint8_t k = 0; d != nullptr && k < 64 && !notes; ++k) notes = d->counts[k] != 0;
-      want[40 + i] = moving && bar == i ? 127 : notes ? 64 : 32;
-    }
-    // Notes kept past the loop's end (a shortening): their bars, and the last bar's 16ths, dim.
-    if (m != kNoManifest) {
-      beyondScan(m, kScanRows);  // the LEDs: in steps
-      for (uint8_t i = static_cast<uint8_t>(bars); i < 8; ++i)
-        if ((beyondBars_ >> i) & 1u) want[40 + i] = kBeyondLed;
-      if (bar == loop / kBar && loop % kBar != 0)
-        for (uint8_t k = static_cast<uint8_t>((loop % kBar + kSixteenth - 1) / kSixteenth); k < 16; ++k)
-          if ((beyondSteps_ >> k) & 1u) want[k] = kBeyondLed;
-    }
-    if (moving) want[16 + (pos % kBar) / kSixteenth] = 127;
-    if (bar >= 64) return;
-    const auto src = e_->tiles().drawSource(slot, static_cast<uint8_t>(bar));
-    using Kind = typename Engine::Tiles::Kind;
-    if (src.kind == Kind::Span) {
-      for (uint16_t i = 0; i < src.header->count; ++i) want[(src.span->segments[i].start % kBar) / kSixteenth] = 64;
-    } else if (src.kind == Kind::Dense) {
-      for (uint8_t col = 0; col < 32; ++col)
-        for (uint8_t k = 0; k < 16; ++k)
-          if (src.span->raster[col][k] != 0) want[col / 2] = 64;
-    }
-  }
+  void desired(uint32_t lastTick, uint32_t ms, uint8_t* want);
 
   Engine* e_ = nullptr;
   EngineClock* clock_ = nullptr;
@@ -2015,285 +1089,38 @@ class ControlSurface {
   uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)
   /// Starts copy mode from a held source, ends it on a long press of any other button, a source lock that changed its
   /// note, or NOTE_EDIT left.
-  void serviceCopy(uint32_t ms) {
-    if (exitButton_ != 0xFF && !press_.pressed(exitButton_)) exitButton_ = 0xFF;  // released: it may start one again
-    if (copy_ == Copy::None) {
-      for (uint8_t s = 0; s < kSlotsPerTrack && !browsing() && !popup_; ++s)
-        if (kSlot0 + s != exitButton_ && press_.heldMs(static_cast<uint8_t>(kSlot0 + s), ms) >= kCopyHoldMs) {
-          press_.consume(static_cast<uint8_t>(kSlot0 + s));  // no long press of its own
-          beginCopy(Copy::Slot, s, ms);
-          copySlot_ = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
-          return;
-        }
-      if (!edit_.editing()) return;
-      for (uint8_t bar = 0; bar < 8; ++bar)
-        if (((barsHeld_ >> bar) & 1u) && !((exitBars_ >> bar) & 1u) && ms - barDownMs_[bar] >= kCopyHoldMs) {
-          beginBarCopy(bar, ms);
-          return;
-        }
-      if (lockStep_ != 0xFF && edit_.locked() && !edit_.lockUsed() && kStep0 + lockStep_ != exitButton_ &&
-          press_.heldMs(static_cast<uint8_t>(kStep0 + lockStep_), ms) >= kCopyHoldMs && edit_.captureNote(edit_.selection())) {
-        beginCopy(Copy::Note, lockStep_, ms);
-        copyNote_ = edit_.selection();
-        copyEditSlot_ = edit_.slot();
-      }
-      return;
-    }
-    if (pending_.active) {  // the loop grew: the paste once NOTE_EDIT is back
-      pendingPaste(ms);
-      return;
-    }
-    if (targetTaps_ == 1 && ms - targetMs_ > kCopyDoubleMs) {  // a target pressed once: replace
-      targetTaps_ = 0;
-      pasteTo(targetButton_, false, ms);
-      return;
-    }
-    if (sourceTaps_ == 1 && ms - sourceTapMs_ > kCopyDoubleMs) {  // the source pressed once: cancelled
-      endCopy();
-      return;
-    }
-    if (selected() != copyTrack_) {  // a track switch: the countdown starts again
-      copyTrack_ = selected();
-      copyUntil_ = ms + kCopyIdleMs;
-    }
-    if (!copyHolding_ && static_cast<int32_t>(ms - copyUntil_) >= 0) {  // nothing pasted: the window closes
-      endCopy();
-      return;
-    }
-    if ((copy_ == Copy::Bar || copy_ == Copy::Note) && !edit_.active()) {  // NOTE_EDIT left (a switch re-enters it)
-      endCopy();
-      return;
-    }
-    if (copy_ == Copy::Note && copyHolding_ && edit_.lockUsed()) {  // it was a parameter lock after all
-      endCopy();
-      return;
-    }
-    for (uint8_t b = 0; b < kButtons; ++b) {  // a long press of anything else ends it, doing nothing else
-      if (copyHolding_ && b == sourceButton()) continue;
-      if (copy_ == Copy::Slot && press_.heldMs(b, ms) >= kCopyHoldMs &&
-          (b == kTrackSwitch || (b == sourceButton() && copySlot_ == selected() * kSlotsPerTrack + copyButton_))) {
-        // TRACK switch held, or the source held again: LOAD LOOP (its short press is the next track)
-        press_.consume(b);
-        exitButton_ = b;
-        loadLoop();
-        return;
-      }
-      if (copyTarget(b) && press_.heldMs(b, ms) >= kCopyHoldMs && reSource(b, ms)) return;
-      if (press_.heldMs(b, ms) >= kCopyHoldMs) {
-        press_.consume(b);
-        exitButton_ = b;  // the hold that ended it starts none until released
-        endCopy();
-        return;
-      }
-    }
-    for (uint8_t bar = 0; bar < 8 && edit_.editing(); ++bar)
-      if (((barsHeld_ >> bar) & 1u) && !(copyHolding_ && copy_ == Copy::Bar && bar == copyButton_) &&
-          ms - barDownMs_[bar] >= kCopyHoldMs) {
-        if (copy_ == Copy::Bar && (bar != copyButton_ || edit_.slot() != copyEditSlot_)) {  // another bar: the source now
-          beginBarCopy(bar, ms);
-          return;
-        }
-        exitBars_ = static_cast<uint8_t>(exitBars_ | (1u << bar));
-        endCopy();
-        return;
-      }
-  }
+  void serviceCopy(uint32_t ms);
   /// Another slot / step held in copy mode: it becomes the source — copy mode starts again from it.
   /// False: the source itself (on its own track), or a step with no note (the hold then ends copy mode).
-  bool reSource(uint8_t b, uint32_t ms) {
-    if (copy_ == Copy::Slot) {
-      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
-      const uint8_t slot = static_cast<uint8_t>(selected() * kSlotsPerTrack + s);
-      if (slot == copySlot_) return false;
-      press_.consume(b);
-      beginCopy(Copy::Slot, s, ms);
-      copySlot_ = slot;
-      return true;
-    }
-    const uint8_t k = static_cast<uint8_t>(b - kStep0);
-    if (k == copyButton_ && edit_.slot() == copyEditSlot_) return false;
-    const int16_t note = edit_.firstNoteAt(k);
-    if (note < 0 || !edit_.captureNote(note)) return false;
-    press_.consume(b);
-    beginCopy(Copy::Note, k, ms);
-    copyNote_ = note;
-    copyEditSlot_ = edit_.slot();
-    return true;
-  }
+  bool reSource(uint8_t b, uint32_t ms);
   /// Copy mode on bar `bar` of the edited slot (its notes captured as values; too many: no copy mode).
-  void beginBarCopy(uint8_t bar, uint32_t ms) {
-    const uint32_t start = edit_.barStart(bar);
-    if (!edit_.captureBar(start)) return;
-    beginCopy(Copy::Bar, bar, ms);
-    copyBar_ = start;
-    copyEditSlot_ = edit_.slot();
-  }
-  void beginCopy(Copy c, uint8_t button, uint32_t ms) {
-    copy_ = c;
-    copyButton_ = button;
-    copyHolding_ = true;
-    copyTrack_ = selected();
-    copyUntil_ = ms + kCopyIdleMs;
-    sourceTaps_ = 0;
-    targetTaps_ = 0;
-    pasteMode_ = PasteMode::Ask;
-    pending_ = Pending{};
-    noteBar_ = edit_.bracket() / NoteEditSurface<Engine>::kBar * NoteEditSurface<Engine>::kBar;  // the steps' bar
-  }
-  void endCopy() {
-    copy_ = Copy::None;
-    copyHolding_ = false;
-    sourceTaps_ = 0;
-    targetTaps_ = 0;
-    pending_ = Pending{};
-  }
+  void beginBarCopy(uint8_t bar, uint32_t ms);
+  void beginCopy(Copy c, uint8_t button, uint32_t ms);
+  void endCopy();
   /// The source's press-detector button (slots and steps; 0xFF for a bar).
-  uint8_t sourceButton() const {
-    return copy_ == Copy::Slot ? static_cast<uint8_t>(kSlot0 + copyButton_)
-           : copy_ == Copy::Note ? static_cast<uint8_t>(kStep0 + copyButton_)
-                                 : 0xFF;
-  }
+  uint8_t sourceButton() const;
   /// LOAD LOOP (copy mode on a slot: TRACK switch held, or the source held again): the get-a-loop picker for
   /// the source slot; copy mode ends.
-  void loadLoop() {
-    const uint8_t src = copySlot_;
-    endCopy();
-    if (browser_ == nullptr) return;
-    leaveEdit();
-    browser_->openPickerFromSlot(src, !empty(src));
-  }
+  void loadLoop();
   /// A slot (slot copy) or a step (note copy) button: a paste target.
-  bool copyTarget(uint8_t b) const {
-    return (copy_ == Copy::Slot && b >= kSlot0 && b < kSlot0 + kSlotsPerTrack) ||
-           (copy_ == Copy::Note && b >= kStep0 && b < kStep0 + 16);
-  }
+  bool copyTarget(uint8_t b) const;
   /// The release of `button` of kind `c`: the source's while still held (copy mode stays: true), or the source pressed
   /// again (copy mode ends: true). False: a target.
-  bool copyReleased(Copy c, uint8_t button, uint32_t ms) {
-    if (copy_ != c || button != copyButton_) return false;
-    if (c != Copy::Slot && edit_.slot() != copyEditSlot_) return false;  // another slot's bar / step: a target
-    if (c == Copy::Slot && copySlot_ != selected() * kSlotsPerTrack + button) return false;  // another track's slot
-    if (copyHolding_) {  // the hold that started it: the countdown runs from here
-      copyHolding_ = false;
-      copyUntil_ = ms + kCopyIdleMs;
-    } else if (sourceTaps_ == 1 && ms - sourceTapMs_ <= kCopyDoubleMs) {  // a double press: the source cleared
-      clearSource(ms);
-      endCopy();
-    } else {  // once: cancelled when no second press follows (`serviceCopy`)
-      sourceTaps_ = 1;
-      sourceTapMs_ = ms;
-    }
-    return true;
-  }
+  bool copyReleased(Copy c, uint8_t button, uint32_t ms);
   /// A bar / step target pressed: pasted at once in the mode REC / EDIT chose; else a second press
   /// within the double window merges, none replaces (`serviceCopy`).
-  void targetPress(uint8_t button, uint32_t ms) {
-    if (pasteMode_ != PasteMode::Ask) {
-      pasteTo(button, pasteMode_ == PasteMode::Merge, ms);
-      return;
-    }
-    if (targetTaps_ == 1 && button == targetButton_ && ms - targetMs_ <= kCopyDoubleMs) {
-      targetTaps_ = 0;
-      pasteTo(button, true, ms);
-      return;
-    }
-    if (targetTaps_ == 1) return;  // another target before the first one's window ended: that one is pending
-    targetTaps_ = 1;
-    targetButton_ = button;
-    targetMs_ = ms;
-  }
+  void targetPress(uint8_t button, uint32_t ms);
   /// The paste onto bar / step `button`: replacing what is there, or merged with it. Refused: copy mode stays.
-  void pasteTo(uint8_t button, bool merge, uint32_t ms) {
-    const bool bar = copy_ == Copy::Bar;
-    const uint32_t at = bar ? edit_.barStart(button) : noteBar_ + button * NoteEditSurface<Engine>::kSixteenth;
-    const uint8_t led = static_cast<uint8_t>(bar ? 40 + button : button);
-    if (at >= edit_.loop()) {  // past the loop's end: the loop grows to that bar's end, the paste follows
-      const uint32_t loop = (at / NoteEditSurface<Engine>::kBar + 1) * NoteEditSurface<Engine>::kBar;
-      const uint8_t slot = edit_.slot(), t = static_cast<uint8_t>(slot / kSlotsPerTrack);
-      edit_.leave();
-      if (control().resize(slot, loop, tick_, us_, us()) != X::Result::Ok) {
-        enterEditOn(t, slot);  // refused: back as it was, copy mode kept
-        return;
-      }
-      enterEditOn(t, slot);
-      pending_ = Pending{true, merge, at, led};
-      return;
-    }
-    const bool ok = bar ? edit_.copyBarAt(at, ms, merge) : edit_.copyNoteAt(at, ms, merge);
-    if (!ok) return;
-    flash(led, selected(), ms);
-    endCopy();  // done: the window closes
-  }
+  void pasteTo(uint8_t button, bool merge, uint32_t ms);
   /// The paste waiting for NOTE_EDIT to re-gather after the loop grew (`serviceCopy`).
-  void pendingPaste(uint32_t ms) {
-    if (!pending_.active) return;
-    if (!edit_.active()) {  // NOTE_EDIT did not come back: nothing to paste into
-      endCopy();
-      return;
-    }
-    if (!edit_.editing()) return;  // still gathering
-    pending_.active = false;
-    const bool ok = copy_ == Copy::Bar ? edit_.copyBarAt(pending_.at, ms, pending_.merge)
-                                       : edit_.copyNoteAt(pending_.at, ms, pending_.merge);
-    if (!ok) return;
-    flash(pending_.led, selected(), ms);
-    endCopy();
-  }
+  void pendingPaste(uint32_t ms);
   /// A double press of the source: the slot cleared, or the bar's / the source note's 16th's notes.
-  void clearSource(uint32_t ms) {
-    if (copy_ == Copy::Slot) {
-      if (control().clear(copySlot_, tick_, us_, us()) == X::Result::Ok) {
-        flash(static_cast<uint8_t>(kSlotBase + copyButton_), selected(), ms);
-        slot_[copySlot_ / kSlotsPerTrack] = copyButton_;  // selected: record's double undoes the clear
-      }
-    } else if (edit_.slot() != copyEditSlot_) {  // another slot's session: the source is not here
-      return;
-    } else if (copy_ == Copy::Bar) {
-      if (edit_.clearRange(copyBar_, NoteEditSurface<Engine>::kBar, ms))
-        flash(static_cast<uint8_t>(40 + copyButton_), selected(), ms);
-    } else if (copy_ == Copy::Note) {
-      EditNote n;
-      if (edit_.noteAt(copyNote_, n)) {
-        const uint32_t step = n.tick / NoteEditSurface<Engine>::kSixteenth * NoteEditSurface<Engine>::kSixteenth;
-        if (edit_.clearRange(step, NoteEditSurface<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
-      }
-    }
-  }
-  void paste(uint8_t b, uint32_t ms) {
-    if (copy_ == Copy::Slot) {
-      const uint8_t s = static_cast<uint8_t>(b - kSlot0);
-      if (control().copySlot(copySlot_, static_cast<uint8_t>(selected() * kSlotsPerTrack + s), tick_, us_, us()) ==
-          X::Result::Ok) {
-        flash(static_cast<uint8_t>(kSlotBase + s), selected(), ms);
-        slot_[selected()] = s;  // selected: record's double undoes the paste
-        endCopy();  // done: the window closes
-      }
-    } else if (copy_ == Copy::Note) {
-      targetPress(static_cast<uint8_t>(b - kStep0), ms);
-    }
-  }
-  void flash(uint8_t led, uint8_t track, uint32_t ms) {
-    flashLed_ = led;
-    flashTrack_ = track;
-    flashMs_ = ms;
-  }
+  void clearSource(uint32_t ms);
+  void paste(uint8_t b, uint32_t ms);
+  void flash(uint8_t led, uint8_t track, uint32_t ms);
   /// Copy mode's LEDs over the rest: the source pulsing (a slot on its own track), a paste's target flashing three
   /// times.
-  void copyLeds(uint32_t ms, uint8_t* want) {
-    const uint8_t t = selected();
-    if (copy_ != Copy::None) {
-      uint8_t led = 0xFF;
-      if (copy_ == Copy::Slot && copySlot_ / kSlotsPerTrack == t) led = static_cast<uint8_t>(kSlotBase + copyButton_);
-      else if (copy_ == Copy::Bar) led = static_cast<uint8_t>(40 + copyButton_);
-      else if (copy_ == Copy::Note) led = copyButton_;
-      if (led != 0xFF) want[led] = (ms / 250) % 2 == 0 ? 127 : 8;
-    }
-    if (flashLed_ != 0xFF) {
-      const uint32_t phase = (ms - flashMs_) / kFlashMs;
-      if (phase >= 6) flashLed_ = 0xFF;
-      else if (flashTrack_ == t) want[flashLed_] = phase % 2 == 0 ? 127 : 0;
-    }
-  }
+  void copyLeds(uint32_t ms, uint8_t* want);
   /// The bars (and the 16ths of the bar holding the loop's end) with a NoteOn stored at or past the loop's end, for a
   /// resized state (one with a fit run): its content rows scanned once a state. A take's notes played past
   /// its bar line count too.
@@ -2303,142 +1130,21 @@ class ControlSurface {
   /// The stored loop of state `m`: its notes past the loop's end, its frame and the bars and 16ths
   /// holding notes — scanned to the end now (gestures need the exact values).
   void beyondEnd(ManifestId m) { beyondScan(m, 0xFFFFFFFFu); }
-  /// The same in steps of at most `budget` rows (the LED stage over B_max at 300 BPM — a slot's whole state was scanned
-  /// in one main-loop pass whenever it changed). The LEDs and the screen advance it each pass and show the last state
+  /// The same in steps of at most `budget` rows: a large state scanned in one main-loop pass puts the LED stage over
+  /// B_max (DEC-297, deep-overdub timing). The LEDs and the screen advance it each pass and show the last state
   /// scanned until the new one is done; a scan restarts when its state changes. True: `m`'s values are in.
-  bool beyondScan(ManifestId m, uint32_t budget) {
-    const auto& d = e_->manifests().manifest(m);
-    if (d.identity == beyondIdentity_) return true;
-    Scan& w = scan_;
-    if (w.phase == 0 || w.identity != d.identity) {  // a new state: start over
-      w = Scan{};
-      w.identity = d.identity;
-      w.phase = 1;
-      for (uint8_t i = 0; i < d.runCount; ++i) w.fit |= e_->runs().run(d.runs[i]).kind == RunKind::kFit;
-      w.played = playedFrom(d);
-      w.loop = d.loopLengthTicks;
-    }
-    const uint32_t endBar = w.loop / kBar;
-    while (w.phase != 0) {
-      if (w.run >= d.runCount) {
-        if (w.phase == 1) {  // the stored loop — the window's frame, at least the stored notes' reach in whole bars
-          const LoopWindow lw = windowOf(e_->runs(), e_->pool(), d.runs, d.runCount, w.loop);
-          const uint32_t stored = (w.storedEnd + kBar - 1) / kBar * kBar;
-          w.frame = lw.frame > stored ? lw.frame : stored;
-          if (w.frame == 0) w.frame = kBar;
-          w.frameStart = lw.start % w.frame;
-          w.phase = 2;
-          w.run = 0;
-          w.row = 0;
-          continue;
-        }
-        beyondIdentity_ = w.identity;  // done: the new values at once
-        beyondBars_ = w.beyondBars;
-        beyondSteps_ = w.beyondSteps;
-        storedEnd_ = w.storedEnd;
-        frame_ = w.frame;
-        frameStart_ = w.frameStart;
-        absBars_ = w.absBars;
-        absEnd_ = w.absEnd > w.frame ? w.frame : w.absEnd;
-        for (uint8_t k = 0; k < 64; ++k) barSteps_[k] = w.barSteps[k];
-        ++rowScans_;
-        w.phase = 0;
-        return true;
-      }
-      const auto& run = e_->runs().run(d.runs[w.run]);
-      if (run.kind == RunKind::kFit || w.run < w.played) {  // a groove pass's sources are not played
-        ++w.run;
-        w.row = 0;
-        continue;
-      }
-      for (; w.row < run.rowCount; ++w.row) {
-        if (budget == 0) return false;
-        --budget;
-        const PassEvent& e = e_->runs().rowAt(d.runs[w.run], w.row, e_->pool());
-        if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
-        if (w.phase == 1) {
-          if (e.tick + 1 > w.storedEnd) w.storedEnd = e.tick + 1;  // the stored notes' reach (a NoteOff may wrap)
-          if (!w.fit || run.kind == RunKind::kEdit || e.tick < w.loop) continue;
-          const uint32_t bb = e.tick / kBar;
-          if (bb < 64) w.beyondBars |= 1ull << bb;
-          if (bb == endBar) w.beyondSteps = static_cast<uint16_t>(w.beyondSteps | (1u << ((e.tick % kBar) / kSixteenth)));
-        } else {
-          const uint32_t at = (e.tick + w.frameStart) % w.frame, bar = at / kBar;
-          if (bar < 64) {
-            w.absBars |= 1ull << bar;
-            w.barSteps[bar] = static_cast<uint16_t>(w.barSteps[bar] | (1u << ((at % kBar) / kSixteenth)));
-          }
-          if ((bar + 1) * kBar > w.absEnd) w.absEnd = (bar + 1) * kBar;
-        }
-      }
-      ++w.run;
-      w.row = 0;
-    }
-    return true;
-  }
+  bool beyondScan(ManifestId m, uint32_t budget);
   /// The first played run of state `d`: the groove pass when there is one (the runs before it are its
   /// sources, not played), else 0.
   template <typename D>
-  uint8_t playedFrom(const D& d) {
-    uint8_t p = 0;
-    for (uint8_t i = 0; i < d.runCount; ++i)
-      if (e_->runs().run(d.runs[i]).kind == RunKind::kGroove) p = i;
-    return p;
-  }
+  uint8_t playedFrom(const D& d);
   /// The 16ths of stored bar `bar` (counted from the stored loop's start) holding a NoteOn, for state `m`.
-  uint16_t absSteps(ManifestId m, uint32_t bar) {
-    const auto& d = e_->manifests().manifest(m);
-    if (bar < 64) return barSteps_[bar];  // built with the scan (`loopEditLeds` advanced it)
-    if (d.identity == stepsIdentity_ && bar == stepsBar_) return steps_;
-    stepsIdentity_ = d.identity;
-    stepsBar_ = bar;
-    ++rowScans_;
-    steps_ = 0;
-    const uint8_t played = playedFrom(d);
-    for (uint8_t i = 0; i < d.runCount; ++i) {
-      const auto& run = e_->runs().run(d.runs[i]);
-      if (run.kind == RunKind::kFit || i < played) continue;  // a groove pass's sources are not played
-      for (uint32_t r = 0; r < run.rowCount; ++r) {
-        const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
-        if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
-        const uint32_t a = (e.tick + frameStart_) % frame_;
-        if (a / kBar == bar) steps_ = static_cast<uint16_t>(steps_ | (1u << ((a % kBar) / kSixteenth)));
-      }
-    }
-    return steps_;
-  }
+  uint16_t absSteps(ManifestId m, uint32_t bar);
   /// LOOP_EDIT's bar and step LEDs: the stored loop's 8-bar page holding the playhead (stopped: the loop's start) and
   /// the 16ths of its bar — in the loop lit (notes brighter), outside it dark, its notes there dim; the playhead full.
-  void loopEditLeds(ManifestId m, uint32_t loop, uint32_t pos, bool moving, uint8_t* want) {
-    beyondScan(m, kScanRows);  // the LEDs: in steps
-    const uint32_t frame = frame_, start = frameStart_;
-    const uint32_t at = (start + (moving ? pos % loop : 0)) % frame;
-    const auto in = [&](uint32_t a) { return (a + frame - start) % frame < loop; };
-    const uint32_t page = at / (8 * kBar) * 8, bar = at / kBar;
-    for (uint8_t i = 0; i < 8; ++i) {
-      const uint32_t b = page + i, a = b * kBar;
-      if (a >= frame) {
-        want[40 + i] = 0;
-        continue;
-      }
-      const bool notes = b < 64 && ((absBars_ >> b) & 1u);
-      const bool inside = in(a) || in(a + kBar - 1 < frame ? a + kBar - 1 : frame - 1);
-      want[40 + i] = moving && b == bar ? 127 : inside ? (notes ? kLoopNotesLed : kLoopEmptyLed) : notes ? kBeyondLed : 0;
-    }
-    const uint16_t steps = absSteps(m, bar);
-    for (uint8_t k = 0; k < 16; ++k) {
-      const uint32_t a = bar * kBar + k * kSixteenth;
-      want[k] = a >= frame || !((steps >> k) & 1u) ? 0 : in(a) ? 64 : kBeyondLed;
-      want[16 + k] = 0;
-    }
-    if (moving) want[16 + (at % kBar) / kSixteenth] = 127;
-  }
+  void loopEditLeds(ManifestId m, uint32_t loop, uint32_t pos, bool moving, uint8_t* want);
   /// The step button held in NOTE_EDIT (the first; 0xFF: none).
-  uint8_t heldStep() const {
-    for (uint8_t k = 0; k < 16; ++k)
-      if (press_.pressed(static_cast<uint8_t>(kStep0 + k))) return k;
-    return 0xFF;
-  }
+  uint8_t heldStep() const;
   uint8_t sent_[128] = {};
   uint8_t bankSent_ = 0xFF;  // the DROID fader bank last sent (0xFF: none yet)
   bool loopEdit_ = false;    // LOOP_EDIT: the edit button's other mode
@@ -2496,3 +1202,8 @@ class ControlSurface {
 };
 
 }  // namespace ContentEngine
+
+#include "ContentEngine/ControlSurface/ControlSurfaceGroove.h"
+#include "ContentEngine/ControlSurface/ControlSurfaceLoopEdit.h"
+#include "ContentEngine/ControlSurface/ControlSurfaceCopy.h"
+#include "ContentEngine/ControlSurface/ControlSurfaceLeds.h"

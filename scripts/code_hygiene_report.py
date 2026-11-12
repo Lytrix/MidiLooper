@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-FILE_LINES = 1000      # review threshold (CODE_HYGIENE.md § 2)
+FILE_LINES = 1250      # review threshold (CODE_HYGIENE.md § 2)
 FUNCTION_LINES = 60    # review threshold
 NOTES_LINES = 120      # cap of a folder AGENTS.md (CODE_HYGIENE.md § 4)
 

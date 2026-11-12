@@ -4,7 +4,8 @@ Read before editing a file in this folder. Rules: [CODE_HYGIENE.md § 4–5](../
 History behind these lines: DEC-298 (comment history, moved) § Teensy and main in the decision log.
 
 ## Owns
-- The Teensy-only adapters (namespace `Teensy`): `OledScreen` (the SSD1322 panel: frames, windows, status band) and
+- The Teensy-only adapters (namespace `Teensy`): `OledScreen` (the SSD1322 panel: frames, windows, status band; bodies in `OledScreenBrowser.h` and
+  `OledScreenPerformance.h`) and
   `SdCardIo` (`CardIo` over the SD library). The engine never includes them; it builds and is tested natively.
 
 ## Invariants
