@@ -1,5 +1,9 @@
 ## Now implementing — Engine sets browser, slice 1 (2026-11-08)
 
+**2026-11-12 — `main.cpp` as setup / loop over modules (owner, with the reviewed refinements: ownership, explicit
+dependencies, unchanged order).** On `feature/delete-legacy` (`23e95d59`). Open: the occasional LED-stage spike
+(watch it in later stress runs; attribute with probes if it recurs); merging into `feature/engine-sets-browser`.
+
 **2026-11-12 — code hygiene stage C (owner: "Yes, stage C").** On `feature/delete-legacy`: DRY extractions in
 `SlotTransport` and the composer's `bindStep`; `TempoMapping.h` removed. Device-checked (`64d1dce9…`). Open: stage D
 — the six files over 1,000 lines; the merge into `feature/engine-sets-browser` waits for the owner.

@@ -1,3 +1,14 @@
+**2026-11-12 — `main.cpp` restructured; code hygiene stage D; DEC-299 (branch `feature/delete-legacy`).** Owner: "find
+the main.cpp hard to read". `main.cpp` (917 → 301 lines) is now `setup()` and a `loop()` of nine numbered stages over
+named modules in `src/` (namespace `firmware`): `MidiInput`, `MidiPorts`, `GpioEncoder`, `DeviceSettings`,
+`SavedSelection`, `ScreenView`, `BootHealth`, and the coordinators `LibraryOperations` and `SerialCommands`; shared
+parts in `Firmware.h` (`Firmware`, `Diagnostics`). Execution order unchanged; `FIRMWARE_COLD` keeps off-hot-path
+members in flash (RAM1 code 1.7 KB smaller). Stage D: the four files over 1,250 lines split (image byte-identical).
+DEC-299 records why the engine is header-only. Device `59513e00…`: boot clean; external clock Start/Stop and internal
+start/stop; playback on USB; the 300 BPM 30-overdub stress 30/30 in six runs (worst grain 493–563 µs). Open: an
+LED-stage sample of 1.4–2.3 ms in two of the eight runs on the new image (none in two on the previous one), not
+reproduced under temporary probes; the USB-serial wedge after a stop recurred once (the hang investigation's).
+
 **2026-11-12 — code hygiene stage C: repeated code extracted (branch `feature/delete-legacy`).** `SlotTransport`:
 the busy guard (9 copies → `slotBusy`), the content-run list (`contentRuns`), the fit-run-and-state tail of resize,
 setColumns, grooveFinish and rotate (`fittedState`), the commit-and-select step (`commitState`, 6 users) and the empty
