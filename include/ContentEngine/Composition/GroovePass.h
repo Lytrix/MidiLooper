@@ -44,7 +44,7 @@ struct GrooveRequest {
   groove::Settings settings;
   groove::Table table;  // the template's table (a built-in's, or a groove file's)
   char label[21] = {};  // a file template's name, stored with it
-  uint32_t frame = 0, start = 0;
+  uint32_t storedTicks = 0, start = 0;
   uint32_t scopeStart = 0, scopeLength = 0;  // used for scope A / B
   // The GROOVE window's columns, stored with the state (heard 0: not from the window, the base's kept).
   uint32_t columnA = 0, columnB = 0;
@@ -116,7 +116,7 @@ class GrooveBuilder {
     for (uint8_t i = 0; i < ac; ++i) after_[i] = after[i];
     ++generation_;
     if (q.settings.amount == 0) return state_ = State::Ready;
-    if (pc == 0 || q.frame == 0) return state_ = State::Failed;
+    if (pc == 0 || q.storedTicks == 0) return state_ = State::Failed;
     uint32_t rows = 0;
     for (uint8_t i = 0; i < pc; ++i) rows += runs_->run(prefix[i]).rowCount;
     reserve_ = rows < kRows ? rows : kRows;  // G's rows at most: the prefix's (every effective row comes from one)
@@ -182,7 +182,7 @@ class GrooveBuilder {
   uint8_t progress() const {
     if (state_ == State::Ready) return 100;
     if (state_ != State::Building) return 0;
-    const uint32_t windows = (q_.frame + kWindowTicks - 1) / kWindowTicks + 2;  // + prepare, shape
+    const uint32_t windows = (q_.storedTicks + kWindowTicks - 1) / kWindowTicks + 2;  // + prepare, shape
     const uint32_t rows = phase_ == Phase::Write ? rowCount_ : reserve_;
     const uint32_t total = windows + (rows + kWriteRows - 1) / kWriteRows;
     const uint32_t done = phase_ == Phase::Write ? windows + written_ / kWriteRows : grains_;
@@ -207,7 +207,7 @@ class GrooveBuilder {
         IndexLease lease;
         const IndexResult ir = index_->acquire(view, src_, pc_, lease);
         if (ir != IndexResult::Ready && ir != IndexResult::NotNeeded) return fail(State::Failed);
-        begun_ = c_->begin(src_, pc_, q_.frame, view);
+        begun_ = c_->begin(src_, pc_, q_.storedTicks, view);
         index_->release(lease);
         if (!begun_) return fail(State::Failed);
         phase_ = Phase::Extract;
@@ -226,7 +226,7 @@ class GrooveBuilder {
           phase_ = Phase::Shape;
           return state_;
         }
-        collect(q_.frame, false);
+        collect(q_.storedTicks, false);
         return state_;
       }
       case Phase::Shape: {
@@ -235,9 +235,9 @@ class GrooveBuilder {
         begun_ = false;
         if (overflow != 0) return fail(State::Failed);
         for (uint32_t i = 0; i < count_; ++i)  // still open after two cycles: held, ends a tick before its next start
-          if (rec_(i).isNote() && rec_(i).end == kOpen) rec_(i).end = rec_(i).start + q_.frame - 1;
+          if (rec_(i).isNote() && rec_(i).end == kOpen) rec_(i).end = rec_(i).start + q_.storedTicks - 1;
         moveAndResolve(q_);
-        if (!rows(q_.frame)) return fail(State::TooBig);
+        if (!rows(q_.storedTicks)) return fail(State::TooBig);
         phase_ = Phase::Write;
         return state_;
       }
@@ -313,21 +313,21 @@ class GrooveBuilder {
 
   bool inScope(const GrooveRequest& q, uint32_t abs) const {
     if (q.settings.scope == groove::kFull || q.scopeLength == 0) return true;
-    return (abs + q.frame - q.scopeStart) % q.frame < q.scopeLength;
+    return (abs + q.storedTicks - q.scopeStart) % q.storedTicks < q.scopeLength;
   }
 
   CE_COLD void moveAndResolve(const GrooveRequest& q) {
-    const uint32_t frame = q.frame;
+    const uint32_t storedTicks = q.storedTicks;
     for (uint32_t i = 0; i < count_; ++i) {
       Rec& x = rec_(i);
       if (x.event || x.fromEdit) continue;
-      const uint32_t abs = (x.start + q.start) % frame;
+      const uint32_t abs = (x.start + q.start) % storedTicks;
       if (!inScope(q, abs)) continue;
-      uint32_t to = groove::place(q.settings, q.table, abs, frame);
+      uint32_t to = groove::place(q.settings, q.table, abs, storedTicks);
       if (!inScope(q, to)) continue;  // a range's note stays inside its range
-      const int32_t d = groove::towards(abs, to, frame);
+      const int32_t d = groove::towards(abs, to, storedTicks);
       const uint32_t len = x.end - x.start;
-      x.start = groove::wrap(static_cast<int64_t>(x.start) + d, frame);
+      x.start = groove::wrap(static_cast<int64_t>(x.start) + d, storedTicks);
       x.end = x.start + len;
     }
     // Same pitch (and channel): sorted by (pitch, start, order).
@@ -363,7 +363,7 @@ class GrooveBuilder {
   /// G's rows: a NoteOn and a NoteOff a note (the NoteOff past the loop end when the note wraps), each event, sorted
   /// in tick order with NoteOffs first at a tick (DEC-244), into the buffer's top (`out_`, `rowCount_`): the records
   /// (at its start) are read before anything overwrites them. False: more rows than reserved or the buffer holds.
-  CE_COLD bool rows(uint32_t frame) {
+  CE_COLD bool rows(uint32_t storedTicks) {
     uint32_t n = 0;
     for (uint32_t i = 0; i < count_; ++i) n += rec_(i).event ? 1 : 2;
     if (n > reserve_ || n > kRows || 2 * count_ > kRows - n) return false;
@@ -384,7 +384,7 @@ class GrooveBuilder {
       off.noteId = x.noteId;
       off.status = static_cast<uint8_t>(0x80 | (x.status & 0x0F));
       off.data1 = x.data1;
-      off.origin = x.end - x.start >= frame ? kOriginHeldLoop : 0;
+      off.origin = x.end - x.start >= storedTicks ? kOriginHeldLoop : 0;
       out_[k++] = off;
     }
     heapSort(out_, k, before);

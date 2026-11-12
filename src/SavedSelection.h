@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // The surface's selection across a reboot: the selected track, each track's selected slot, the muted tracks and the
-// GROOVE cycle's bars, saved with the engine's surface state. At boot the saved selection is applied as soon as the
+// GROOVE cycle's bars, saved with the engine's saved selection. At boot the saved selection is applied as soon as the
 // boot load's first grain has read it, before the performance screen draws its first frame, so the screen opens on it
 // with no switch to see; without one, each track's first slot with content.
 
@@ -30,7 +30,7 @@ struct SavedSelection {
   bool applySaved() {
     using namespace ContentEngine;
     uint8_t state[ProductionPersistence::kStateBytes];
-    if (!engine.persistence().restoredSurfaceState(state) || state[0] >= kTrackCount) return false;
+    if (!engine.persistence().restoredSelection(state) || state[0] >= kTrackCount) return false;
     engine.control().selectTrack(state[0]);
     for (uint8_t t = 0; t < kTrackCount; ++t)
       if (state[1 + t] / 8 == t) surface.selectSlot(t, static_cast<uint8_t>(state[1 + t] % 8));
@@ -54,7 +54,7 @@ struct SavedSelection {
     for (uint8_t t = 0; t < kTrackCount; ++t)
       if (engine.control().muted(t)) mutes |= static_cast<uint8_t>(1u << t);
     state[ProductionPersistence::kStateBytes - 1] = mutes;
-    engine.setSurfaceState(state, nowUs);
+    engine.setSelectionState(state, nowUs);
     engine.setEngineSettings(surface.cycleBars(), nowUs);  // the GROOVE cycle's bars
   }
 

@@ -137,7 +137,7 @@ inline auto ControlSurface<Engine>::beginCopy(Copy c, uint8_t button, uint32_t m
   targetTaps_ = 0;
   pasteMode_ = PasteMode::Ask;
   pending_ = Pending{};
-  noteBar_ = edit_.bracket() / NoteEditSurface<Engine>::kBar * NoteEditSurface<Engine>::kBar;  // the steps' bar
+  noteBar_ = edit_.bracket() / ControlSurfaceNoteEdit<Engine>::kBar * ControlSurfaceNoteEdit<Engine>::kBar;  // the steps' bar
 }
 
 template <typename Engine>
@@ -209,10 +209,10 @@ inline auto ControlSurface<Engine>::targetPress(uint8_t button, uint32_t ms) -> 
 template <typename Engine>
 inline auto ControlSurface<Engine>::pasteTo(uint8_t button, bool merge, uint32_t ms) -> void {
   const bool bar = copy_ == Copy::Bar;
-  const uint32_t at = bar ? edit_.barStart(button) : noteBar_ + button * NoteEditSurface<Engine>::kSixteenth;
+  const uint32_t at = bar ? edit_.barStart(button) : noteBar_ + button * ControlSurfaceNoteEdit<Engine>::kSixteenth;
   const uint8_t led = static_cast<uint8_t>(bar ? 40 + button : button);
   if (at >= edit_.loop()) {  // past the loop's end: the loop grows to that bar's end, the paste follows
-    const uint32_t loop = (at / NoteEditSurface<Engine>::kBar + 1) * NoteEditSurface<Engine>::kBar;
+    const uint32_t loop = (at / ControlSurfaceNoteEdit<Engine>::kBar + 1) * ControlSurfaceNoteEdit<Engine>::kBar;
     const uint8_t slot = edit_.slot(), t = static_cast<uint8_t>(slot / kSlotsPerTrack);
     edit_.leave();
     if (control().resize(slot, loop, tick_, us_, us()) != X::Result::Ok) {
@@ -255,13 +255,13 @@ inline auto ControlSurface<Engine>::clearSource(uint32_t ms) -> void {
   } else if (edit_.slot() != copyEditSlot_) {  // another slot's session: the source is not here
     return;
   } else if (copy_ == Copy::Bar) {
-    if (edit_.clearRange(copyBar_, NoteEditSurface<Engine>::kBar, ms))
+    if (edit_.clearRange(copyBar_, ControlSurfaceNoteEdit<Engine>::kBar, ms))
       flash(static_cast<uint8_t>(40 + copyButton_), selected(), ms);
   } else if (copy_ == Copy::Note) {
     EditNote n;
     if (edit_.noteAt(copyNote_, n)) {
-      const uint32_t step = n.tick / NoteEditSurface<Engine>::kSixteenth * NoteEditSurface<Engine>::kSixteenth;
-      if (edit_.clearRange(step, NoteEditSurface<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
+      const uint32_t step = n.tick / ControlSurfaceNoteEdit<Engine>::kSixteenth * ControlSurfaceNoteEdit<Engine>::kSixteenth;
+      if (edit_.clearRange(step, ControlSurfaceNoteEdit<Engine>::kSixteenth, ms)) flash(copyButton_, selected(), ms);
     }
   }
 }
@@ -317,7 +317,7 @@ inline auto ControlSurface<Engine>::applyGroove(uint8_t slot, const groove::Sett
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return Engine::Transport::Result::Empty;
   beyondEnd(c);
-  const LoopWindow w = transport().window(slot);
+  const PlayWindow w = transport().playWindow(slot);
   GrooveRequest q;
   q.settings = s;
   if (s.tmpl != groove::kFileTemplate) {
@@ -326,12 +326,12 @@ inline auto ControlSurface<Engine>::applyGroove(uint8_t slot, const groove::Sett
     q.table = *table;
     for (uint8_t k = 0; label != nullptr && k < 20 && label[k] != 0; ++k) q.label[k] = label[k];
   } else {  // the state's own (a regroove, AUTO)
-    const LoopWindow sw = transport().window(slot);
+    const PlayWindow sw = transport().playWindow(slot);
     if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, q.table, q.label))
       return Engine::Transport::Result::Refused;
   }
-  q.frame = frame_;
-  q.start = frameStart_;
+  q.storedTicks = storedTicks_;
+  q.start = playStart_;
   if (s.scope == groove::kRangeA) {
     q.scopeStart = w.aStart;
     q.scopeLength = w.aLength;

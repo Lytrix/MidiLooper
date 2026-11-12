@@ -34,7 +34,7 @@ struct ScreenView {
     ev.copySlot = surface.copySourceSlot();
     ev.copyBar = surface.copySourceBar();
     ev.copyPaste = static_cast<uint8_t>(surface.pasteMode());
-    {  // the progress bar's frame — the stored loop, the current one bracketed in it
+    {  // the progress bar's extent — the stored loop, the current one bracketed in it
       const uint8_t t = fw.engine.control().selectedTrack();
       uint32_t scale = 0, start = 0, known = 0;
       if (surface.loopFrame(surface.shown(t), scale, start, known)) {

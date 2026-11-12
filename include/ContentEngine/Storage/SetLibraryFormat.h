@@ -5,21 +5,21 @@
 //
 // One preallocated file of `kSectors` × 512 B, read and written by sector only:
 //   sectors 0–1        the index header, A / B (`IndexHeader`): the valid one with the higher sequence is current
-//   sectors 2–513      `kIndexRecords` index records of 64 B, 8 a sector (`Record`), in publication order
+//   sectors 2–513      `kIndexEntries` index entries of 64 B, 8 a sector (`Entry`), in publication order
 //   two regions        the checkpoint, A / B (`kCheckpointSectors` each: a `CheckpointHeader` sector, then the set)
 //   the rest           the milestone log, append-only: each milestone a `BlobHeader` sector, then its slots' set files,
 //                      each starting on a sector
-// The trash (DEC-268, trash) is records too, each without a blob, published as a milestone's record and header are: a
-// trash record (`kind` kTrash) moves the milestone named by `parent` — or, `parent` 0, every shown milestone of its set
-// published before it — to the trash; a restore record (kRestore) takes the trash record named by `parent` back out; an
-// empty-trash record (kEmptyTrash) removes for good everything in the trash before it. Nothing already written is
+// The trash (DEC-268, trash) is entries too, each without a blob, published as a milestone's entry and header are: a
+// trash entry (`kind` kTrash) moves the milestone named by `parent` — or, `parent` 0, every shown milestone of its set
+// published before it — to the trash; a restore entry (kRestore) takes the trash entry named by `parent` back out; an
+// empty-trash entry (kEmptyTrash) removes for good everything in the trash before it. Nothing already written is
 // rewritten; a removed milestone's blob keeps its log space (reclaiming it would be compaction).
 // The index header also names the working set (DEC-269, named working set): its number and base milestone, in a block
 // after the header's own CRC with a CRC of its own — a header without it (older firmware) is still valid and names
-// none. A save sets it to the milestone; a load or return publishes a header with nothing else changed (no record), so
+// none. A save sets it to the milestone; a load or return publishes a header with nothing else changed (no entry), so
 // an interrupted write leaves the previous header, and the working set it names, current. It moves with the card.
-// A milestone is published in one order — blob, record, header (each programmed before the next) — so a header names
-// only complete milestones; records and log space past it are ignored and reused. Every structure carries a CRC-32.
+// A milestone is published in one order — blob, entry, header (each programmed before the next) — so a header names
+// only complete milestones; entries and log space past it are ignored and reused. Every structure carries a CRC-32.
 // `kMaxSetSectors` is the largest whole set (every content row, every run, every state, every slot), checked at compile
 // time against what the checkpoint regions and the log hold. No allocation.
 
@@ -35,11 +35,11 @@ namespace library {
 
 constexpr uint32_t kSector = 512;
 constexpr uint32_t kSectors = 2097152;  // 1 GiB
-constexpr uint32_t kIndexRecords = 4096;
-constexpr uint32_t kRecordBytes = 64;
-constexpr uint32_t kRecordsPerSector = kSector / kRecordBytes;
+constexpr uint32_t kIndexEntries = 4096;
+constexpr uint32_t kEntryBytes = 64;
+constexpr uint32_t kEntriesPerSector = kSector / kEntryBytes;
 constexpr uint32_t kHeaderSectors = 2;
-constexpr uint32_t kRecordSectors = kIndexRecords / kRecordsPerSector;
+constexpr uint32_t kEntrySectors = kIndexEntries / kEntriesPerSector;
 constexpr uint8_t kSlots = Config::kSlotCount;
 
 // The largest slot files of a whole set: every content row, each run once, every history state, a header and trailer
@@ -48,7 +48,7 @@ constexpr uint32_t kMaxSetBytes = kSlots * (24u + 4u) + Config::kRunCount * 8u +
                                   Config::kHistoryDepth * (9u + 2u * Config::kRunsPerManifest);
 constexpr uint32_t kMaxSetSectors = 1 + (kMaxSetBytes + kSector - 1) / kSector + kSlots;  // header, slots aligned
 constexpr uint32_t kCheckpointSectors = 1 + kMaxSetSectors;
-constexpr uint32_t kCheckpointBase = kHeaderSectors + kRecordSectors;
+constexpr uint32_t kCheckpointBase = kHeaderSectors + kEntrySectors;
 constexpr uint32_t kLogBase = kCheckpointBase + 2 * kCheckpointSectors;
 constexpr uint32_t kLogSectors = kSectors - kLogBase;
 static_assert(kMaxSetSectors == 4300, "DEC-258: the whole-set bound (2.2 MB) — revisit the decision if it moves");
@@ -81,7 +81,7 @@ constexpr uint32_t kHeaderMagic = 0x3142494Cu;  // "LIB1"
 
 struct IndexHeader {
   uint32_t sequence = 0;  // higher is newer; 0 with count 0: an empty library
-  uint16_t count = 0;     // published records
+  uint16_t count = 0;     // published entries
   uint32_t appendSector = 0;  // the log's next free sector, relative to `kLogBase`
   uint32_t nextSequence = 1;  // the next milestone's internal sequence (never reused)
   bool hasWorking = false;    // the working set below is named (else the boot falls back to a guess)
@@ -115,7 +115,7 @@ inline bool decode(const uint8_t* sector, IndexHeader& h) {
                  get16(sector + 28) != 0;
   h.workingSet = h.hasWorking ? get16(sector + 28) : 0;
   h.workingBase = h.hasWorking ? get32(sector + 30) : 0;
-  return h.count <= kIndexRecords && h.appendSector <= kLogSectors;
+  return h.count <= kIndexEntries && h.appendSector <= kLogSectors;
 }
 /// The current header from the two sector images: the valid one with the higher sequence; `which` its sector (0 / 1),
 /// so the next header goes to the other. Neither valid: an empty library, written first to sector 0.
@@ -134,10 +134,10 @@ inline IndexHeader currentHeader(const uint8_t* a, const uint8_t* b, uint8_t& wh
   return IndexHeader{};
 }
 
-// ---- Index records ------------------------------------------------------------------------------------------------
+// ---- Index entries ------------------------------------------------------------------------------------------------
 constexpr uint8_t kMilestone = 0, kTrash = 1, kRestore = 2, kEmptyTrash = 3;
 
-struct Record {
+struct Entry {
   uint32_t sequence = 0;        // internal, unique, never shown
   uint16_t set = 0;             // SET nn (1-based)
   Stage stage = Stage::Sketch;
@@ -146,15 +146,15 @@ struct Record {
   uint32_t wallTime = 0;        // RTC seconds (0: the clock was not valid)
   uint16_t tempoTenths = 0;
   uint8_t loops = 0;            // slots with content
-  uint8_t kind = 0;             // kMilestone, or a trash / restore / empty-trash record (byte 19, zero in older records)
+  uint8_t kind = 0;             // kMilestone, or a trash / restore / empty-trash entry (byte 19, zero in older entries)
   uint32_t shortestLoop = 0, longestLoop = 0;  // ticks (0: no loops)
   uint32_t logSector = 0;       // the blob, relative to `kLogBase`
   uint32_t logSectors = 0;
   uint8_t mosaic[16] = {};      // 64 slots, 2 bits each: 0 empty, 1–3 note-count terciles
 };
 
-inline void encode(const Record& r, uint8_t* out) {
-  for (uint32_t i = 0; i < kRecordBytes; ++i) out[i] = 0;
+inline void encode(const Entry& r, uint8_t* out) {
+  for (uint32_t i = 0; i < kEntryBytes; ++i) out[i] = 0;
   put32(out, r.sequence);
   put16(out + 4, r.set);
   out[6] = static_cast<uint8_t>(r.stage);
@@ -171,7 +171,7 @@ inline void encode(const Record& r, uint8_t* out) {
   for (int i = 0; i < 16; ++i) out[36 + i] = r.mosaic[i];
   put32(out + 60, crc32Update(0, out, 60));
 }
-inline bool decode(const uint8_t* in, Record& r) {
+inline bool decode(const uint8_t* in, Entry& r) {
   if (get32(in + 60) != crc32Update(0, in, 60) || get32(in) == 0) return false;
   r.sequence = get32(in);
   r.set = get16(in + 4);
@@ -192,19 +192,19 @@ inline bool decode(const uint8_t* in, Record& r) {
   if (r.kind != kMilestone) return r.logSectors == 0;
   return r.logSectors != 0 && r.logSector + r.logSectors <= kLogSectors;
 }
-/// Record `i`'s sector and its byte offset in that sector.
-inline uint32_t recordSector(uint16_t i) { return kHeaderSectors + i / kRecordsPerSector; }
-inline uint32_t recordOffset(uint16_t i) { return (i % kRecordsPerSector) * kRecordBytes; }
+/// Entry `i`'s sector and its byte offset in that sector.
+inline uint32_t entrySector(uint16_t i) { return kHeaderSectors + i / kEntriesPerSector; }
+inline uint32_t entryOffset(uint16_t i) { return (i % kEntriesPerSector) * kEntryBytes; }
 
 // ---- The blob header (a milestone's or a checkpoint's first sector) -----------------------------------------------
 constexpr uint32_t kBlobMagic = 0x31424C4Du;  // "MLB1"
-constexpr uint8_t kSurfaceBytes = 9;
+constexpr uint8_t kSelectionBytes = 9;
 
 struct BlobHeader {
   uint32_t sequence = 0;
   uint32_t noteIdHigh = 0;
   uint16_t tempoTenths = 0;
-  uint8_t surface[kSurfaceBytes] = {};
+  uint8_t selection[kSelectionBytes] = {};
   uint32_t slotBytes[kSlots] = {};  // each slot's set file (0: empty); slot k starts at the sector after k − 1's end
 };
 
@@ -214,7 +214,7 @@ inline void encode(const BlobHeader& h, uint8_t* sector) {
   put32(sector + 4, h.sequence);
   put32(sector + 8, h.noteIdHigh);
   put16(sector + 12, h.tempoTenths);
-  for (uint8_t i = 0; i < kSurfaceBytes; ++i) sector[14 + i] = h.surface[i];
+  for (uint8_t i = 0; i < kSelectionBytes; ++i) sector[14 + i] = h.selection[i];
   for (uint8_t s = 0; s < kSlots; ++s) put32(sector + 24 + 4u * s, h.slotBytes[s]);
   put32(sector + 24 + 4u * kSlots, crc32Update(0, sector, 24 + 4u * kSlots));
 }
@@ -224,7 +224,7 @@ inline bool decode(const uint8_t* sector, BlobHeader& h) {
   h.sequence = get32(sector + 4);
   h.noteIdHigh = get32(sector + 8);
   h.tempoTenths = get16(sector + 12);
-  for (uint8_t i = 0; i < kSurfaceBytes; ++i) h.surface[i] = sector[14 + i];
+  for (uint8_t i = 0; i < kSelectionBytes; ++i) h.selection[i] = sector[14 + i];
   for (uint8_t s = 0; s < kSlots; ++s) h.slotBytes[s] = get32(sector + 24 + 4u * s);
   return true;
 }
@@ -293,13 +293,13 @@ enum class Fit : uint8_t { Ok, IndexFull, LogFull, TooLarge };
 /// Whether a blob of `sectors` can be published after `h` (refused before anything is written).
 inline Fit fits(const IndexHeader& h, uint32_t sectors) {
   if (sectors > kMaxSetSectors) return Fit::TooLarge;
-  if (h.count >= kIndexRecords) return Fit::IndexFull;
+  if (h.count >= kIndexEntries) return Fit::IndexFull;
   if (sectors > kLogSectors - h.appendSector) return Fit::LogFull;
   return Fit::Ok;
 }
 
-/// The next stage number in `set` for `stage`: one past the highest published (records `r[0..n)`).
-inline uint8_t nextStageNumber(const Record* r, uint16_t n, uint16_t set, Stage stage) {
+/// The next stage number in `set` for `stage`: one past the highest published (entries `r[0..n)`).
+inline uint8_t nextStageNumber(const Entry* r, uint16_t n, uint16_t set, Stage stage) {
   uint8_t high = 0;
   for (uint16_t i = 0; i < n; ++i)
     if (r[i].set == set && r[i].stage == stage && r[i].stageNumber > high) high = r[i].stageNumber;

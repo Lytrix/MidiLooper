@@ -157,7 +157,7 @@ struct MidiPorts {
     hostSend(0xC0, program, 0, Surface::kProgramChannel + 1);
   }
   /// A motor-fader message (NOTE_EDIT and GROOVE feedback).
-  void sendMotor(const ContentEngine::NoteEditSurface<ContentEngine::EngineRoot>::MotorMsg& m) {
+  void sendMotor(const ContentEngine::ControlSurfaceNoteEdit<ContentEngine::EngineRoot>::MotorMsg& m) {
     sendDin(m.status, m.d1, m.d2);
     const uint8_t type = m.status & 0xF0, channel = static_cast<uint8_t>((m.status & 0x0F) + 1);
     usbMIDI.send(type, m.d1, m.d2, channel, 0);

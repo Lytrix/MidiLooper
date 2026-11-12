@@ -295,14 +295,14 @@ struct SerialCommands {
       const uint16_t index = at != nullptr ? static_cast<uint16_t>(std::atoi(at + 1)) : ProductionBrowser::kNone;
       const char* why = set == 0 ? "WHICH" : nullptr;
       if (why == nullptr && index != ProductionBrowser::kNone &&
-          (browser.hidden(index) || browser.record(index).set != set))
+          (browser.hidden(index) || browser.entry(index).set != set))
         why = "NO SUCH STAGE";
       if (why == nullptr) why = library.beginMark(library::kTrash, set, index, nowUs);
       if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
     } else if (std::strcmp(verb, "restore") == 0) {  // restore <index>: trash record `index` back out
       const uint16_t index = static_cast<uint16_t>(arg != nullptr ? std::atoi(arg) : ProductionBrowser::kNone);
       const char* why = arg == nullptr || !browser.inTrash(index) ? "NOT IN THE TRASH" : nullptr;
-      if (why == nullptr) why = library.beginMark(library::kRestore, browser.record(index).set, index, nowUs);
+      if (why == nullptr) why = library.beginMark(library::kRestore, browser.entry(index).set, index, nowUs);
       if (why != nullptr) Serial.printf("#ENGINE,mark,refused,why=%s\n", why);
     } else if (std::strcmp(verb, "empty-trash") == 0) {
       const char* why = library.beginMark(library::kEmptyTrash, 0, ProductionBrowser::kNone, nowUs);

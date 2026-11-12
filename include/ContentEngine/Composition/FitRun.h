@@ -24,8 +24,8 @@
 // loop end), NoteOns and controllers kept past a shorter end keep their ticks. Lossless: rotating by `loop − shift`
 // gives the rows back. Shares the lookups' scratch (one resize or rotation at a time). No allocation.
 // The window (DEC-283, loop start in the stored loop: the selected bars stay absolute): a state's content is its
-// stored loop rotated `start` ticks earlier, the stored loop `frame` ticks long; a fit run's last row says so
-// (`kFitWindowStatus`), written by `build` when the window is not the plain one (start 0, the frame the loop).
+// stored loop rotated `start` ticks earlier, the stored loop `storedTicks` long; a fit run's last row says so
+// (`kFitPlayWindowStatus`), written by `build` when the window is not the plain one (start 0, the stored loop the loop itself).
 
 #pragma once
 
@@ -41,9 +41,9 @@ namespace ContentEngine {
 enum class FitResult : uint8_t { Ok, None, DeniedRun, DeniedCapacity, TooLarge, TooManyOpen };
 
 /// A loop's play window in its stored notes: the content's tick 0 lies `start` ticks into the stored loop,
-/// which is `frame` ticks long (at least the loop).
-struct LoopWindow {
-  uint32_t start = 0, frame = 0;
+/// which is `storedTicks` long (at least the loop).
+struct PlayWindow {
+  uint32_t start = 0, storedTicks = 0;
   // The two last ranges of the step / bar buttons (DEC-284, HOME and variation) (A the older, B the newer), each a
   // start in the stored loop and a length; length 0: none.
   uint32_t aStart = 0, aLength = 0, bStart = 0, bLength = 0;
@@ -55,7 +55,7 @@ struct LoopWindow {
   uint32_t columnA = 0, columnB = 0;
   uint8_t heard = 0;
 };
-/// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the frame the
+/// The window of a state listing `runs[0..n)` at loop `loop`: its fit run's window row, else start 0 and the stored loop the
 /// loop.
 /// A groove file template stored in fit run `fit`: its table and label. False: none there.
 template <typename Runs, typename Pool>
@@ -91,18 +91,18 @@ bool readTemplate(Runs& runs, Pool& pool, RunId fit, uint32_t shape, groove::Tab
 }
 
 template <typename Runs, typename Pool>
-LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32_t loop) {
-  LoopWindow w{};
-  w.frame = loop;
+PlayWindow playWindowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32_t loop) {
+  PlayWindow w{};
+  w.storedTicks = loop;
   for (uint8_t i = 0; i < n; ++i) {
     const auto& d = runs.run(list[i]);
     if (d.kind != RunKind::kFit) continue;
     for (uint32_t r = d.rowCount; r > 0; --r) {  // the marker rows sort last; every one read (no fixed count)
       const PassEvent& e = runs.rowAt(list[i], r - 1, pool);
       if (e.tick != 0xFFFFFFFFu) break;
-      if (e.status == kFitWindowStatus) {
+      if (e.status == kFitPlayWindowStatus) {
         w.start = e.seq;
-        w.frame = e.noteId;
+        w.storedTicks = e.noteId;
       } else if (e.status == kFitRangeAStatus) {
         w.aStart = e.seq;
         w.aLength = e.noteId;
@@ -121,8 +121,8 @@ LoopWindow windowOf(Runs& runs, Pool& pool, const RunId* list, uint8_t n, uint32
       }
     }
   }
-  if (w.frame < loop) w.frame = loop;
-  if (w.frame != 0) w.start %= w.frame;
+  if (w.storedTicks < loop) w.storedTicks = loop;
+  if (w.storedTicks != 0) w.start %= w.storedTicks;
   return w;
 }
 
@@ -197,7 +197,7 @@ class FitBuilder {
   /// with the writer's reference, or kNoRun when the result is not Ok. `window`: the state's window, written
   /// as the last row unless it is the plain one.
   FitResult build(Pool& pool, Runs& runs, Res& res, uint8_t slot, const RunId* content, uint8_t n, uint32_t loop,
-                  RunId& fit, LoopWindow window = LoopWindow{}, const groove::Table* table = nullptr,
+                  RunId& fit, PlayWindow window = PlayWindow{}, const groove::Table* table = nullptr,
                   const char* label = nullptr) {
     fit = kNoRun;
     if (n > kMaxRuns) return FitResult::TooLarge;
@@ -209,7 +209,7 @@ class FitBuilder {
       const FitResult r = scan(pool, runs, content[i], i, loop);
       if (r != FitResult::Ok) return r;
     }
-    const bool windowed = window.start != 0 || (window.frame != 0 && window.frame != loop);
+    const bool windowed = window.start != 0 || (window.storedTicks != 0 && window.storedTicks != loop);
     const bool rangeA = window.aLength != 0;
     const bool rangeB = window.bLength != 0;
     const bool grooved = window.groove != 0;
@@ -244,7 +244,7 @@ class FitBuilder {
       e.status = status;
       res.writeOwed(run, e);
     };
-    if (windowed) mark(kFitWindowStatus, window.start, window.frame);  // sorted: window, range A, range B, groove
+    if (windowed) mark(kFitPlayWindowStatus, window.start, window.storedTicks);  // sorted: window, range A, range B, groove
     if (rangeA) mark(kFitRangeAStatus, window.aStart, window.aLength);
     if (rangeB) mark(kFitRangeBStatus, window.bStart, window.bLength);
     if (grooved) mark(kFitGrooveStatus, window.groove, window.grooveShape != 0 ? window.grooveShape : 1);

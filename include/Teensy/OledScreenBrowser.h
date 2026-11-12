@@ -12,7 +12,7 @@
 
 namespace Teensy {
 
-inline auto OledScreen::idText(const Record& r, char* out, size_t n) -> void {
+inline auto OledScreen::idText(const Entry& r, char* out, size_t n) -> void {
   snprintf(out, n, "%c%02u", ContentEngine::library::stageLetter(r.stage), r.stageNumber);
 }
 
@@ -67,14 +67,14 @@ inline auto OledScreen::drawTrashCorner(bool undo) -> void {
   hline(x, x + 2, static_cast<int16_t>(y + 4), v);
 }
 
-inline auto OledScreen::recordOf(const Row& r) -> uint16_t {
+inline auto OledScreen::entryOf(const Row& r) -> uint16_t {
   return r.kind == RowKind::Milestone || r.kind == RowKind::Set || r.kind == RowKind::Working ||
                  r.kind == RowKind::Item
-             ? r.record
+             ? r.entry
              : SetBrowser::kNone;
 }
 
-inline auto OledScreen::when(const Record& m) const -> ContentEngine::wallclock::Local {
+inline auto OledScreen::when(const Entry& m) const -> ContentEngine::wallclock::Local {
   return ContentEngine::wallclock::local(m.wallTime, browserInfo_.tz);
 }
 
@@ -143,12 +143,12 @@ inline auto OledScreen::drawConfirm(const SetBrowser& b) -> void {
     snprintf(q, sizeof q, "EMPTY THE TRASH?");
     snprintf(line, sizeof line, "%u ITEM%s, %u STAGE%s", b.itemCount(), b.itemCount() == 1 ? "" : "S", stages,
              stages == 1 ? "" : "S");
-  } else if (b.confirmRecord() != SetBrowser::kNone) {
-    rec = b.confirmRecord();
+  } else if (b.confirmEntry() != SetBrowser::kNone) {
+    rec = b.confirmEntry();
     char id[8];
-    idText(b.record(rec), id, sizeof id);
+    idText(b.entry(rec), id, sizeof id);
     snprintf(q, sizeof q, "MOVE SET %u %s TO TRASH?", b.confirmSet(), id);
-    snprintf(line, sizeof line, "%s", ContentEngine::library::stageName(b.record(rec).stage));
+    snprintf(line, sizeof line, "%s", ContentEngine::library::stageName(b.entry(rec).stage));
   } else {
     rec = b.latestOf(b.confirmSet());
     snprintf(q, sizeof q, "MOVE SET %u TO TRASH?", b.confirmSet());
@@ -159,8 +159,8 @@ inline auto OledScreen::drawConfirm(const SetBrowser& b) -> void {
   if (empty) {
     label("REMOVED FOR GOOD", static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
   } else if (rec != SetBrowser::kNone) {
-    ContentEngine::wallclock::formatStamp(b.record(rec).wallTime, browserInfo_.tz, stamp, sizeof stamp);
-    snprintf(line, sizeof line, b.confirmRecord() != SetBrowser::kNone ? "SAVED %s" : "LATEST %s", stamp);
+    ContentEngine::wallclock::formatStamp(b.entry(rec).wallTime, browserInfo_.tz, stamp, sizeof stamp);
+    snprintf(line, sizeof line, b.confirmEntry() != SetBrowser::kNone ? "SAVED %s" : "LATEST %s", stamp);
     label(line, static_cast<int16_t>(x0 + 6), static_cast<int16_t>(y0 + 30), 9);
   }
   drawButtons(b, x0, x1, kButtonY);
@@ -185,11 +185,11 @@ inline auto OledScreen::clabel(const char* s, int16_t xc, int16_t top, uint8_t v
 
 inline auto OledScreen::drawPicker(const SetBrowser& b, ContentEngine::EngineRoot& e) -> void {
   char title[32], a[32], c[24];
-  const uint16_t rec = b.pickRecord();
+  const uint16_t rec = b.pickEntry();
   if (rec != SetBrowser::kNone) {
     char id[8];
-    idText(b.record(rec), id, sizeof id);
-    snprintf(title, sizeof title, "LOOPS  SET %u  %s", b.record(rec).set, id);
+    idText(b.entry(rec), id, sizeof id);
+    snprintf(title, sizeof title, "LOOPS  SET %u  %s", b.entry(rec).set, id);
   } else {
     snprintf(title, sizeof title, "EMPTY LOOPS");
   }
@@ -341,12 +341,12 @@ inline auto OledScreen::drawSpine(const SetBrowser& b) -> void {
   ContentEngine::wallclock::Local prev{};
   bool havePrev = false;
   for (uint16_t i = b.first(); i < n && i < last; ++i) {
-    const uint16_t rec = recordOf(b.row(i));
+    const uint16_t rec = entryOf(b.row(i));
     const int16_t y = rowY(b, i);
-    if (rec == SetBrowser::kNone || !ContentEngine::wallclock::valid(b.record(rec).wallTime)) continue;
-    const auto l = when(b.record(rec));
+    if (rec == SetBrowser::kNone || !ContentEngine::wallclock::valid(b.entry(rec).wallTime)) continue;
+    const auto l = when(b.entry(rec));
     if (top < 0) {
-      top = i == b.first() && i > 0 && recordOf(b.row(static_cast<uint16_t>(i - 1))) != SetBrowser::kNone
+      top = i == b.first() && i > 0 && entryOf(b.row(static_cast<uint16_t>(i - 1))) != SetBrowser::kNone
                 ? static_cast<int16_t>(kWY0 + 10)
                 : static_cast<int16_t>(y + 2);
     } else if (havePrev && (l.month != prev.month || l.year != prev.year)) {  // a month ends: a gap
@@ -396,17 +396,17 @@ inline auto OledScreen::drawRow(const SetBrowser& b, uint16_t i) -> void {
     case RowKind::TrashSet: label("MOVE SET TO TRASH", kYearX, y, on ? 15 : 11); return;
     default: break;
   }
-  const uint16_t rec = recordOf(r);
-  const bool dated = rec != SetBrowser::kNone && ContentEngine::wallclock::valid(b.record(rec).wallTime);
+  const uint16_t rec = entryOf(r);
+  const bool dated = rec != SetBrowser::kNone && ContentEngine::wallclock::valid(b.entry(rec).wallTime);
   if (dated) {
-    const auto l = when(b.record(rec));
+    const auto l = when(b.entry(rec));
     // Year and month on the top row (sticky) and where a month starts; the day once per day.
     bool newMonth = true, newDay = true;
     for (uint16_t j = i; j > b.first();) {  // the nearest dated row above it on screen (one without a time is passed)
-      const uint16_t above = recordOf(b.row(--j));
+      const uint16_t above = entryOf(b.row(--j));
       if (above == SetBrowser::kNone) break;
-      if (!ContentEngine::wallclock::valid(b.record(above).wallTime)) continue;
-      const auto a = when(b.record(above));
+      if (!ContentEngine::wallclock::valid(b.entry(above).wallTime)) continue;
+      const auto a = when(b.entry(above));
       newMonth = a.month != l.month || a.year != l.year;
       newDay = newMonth || a.day != l.day;
       break;
@@ -440,24 +440,24 @@ inline auto OledScreen::drawRow(const SetBrowser& b, uint16_t i) -> void {
   }
   char text[16], note[12] = {};
   if (r.kind == RowKind::Milestone) {
-    idText(b.record(rec), text, sizeof text);
-  } else if (r.kind == RowKind::Item && b.record(rec).parent != 0) {  // a stage in the trash: its set and id
-    const uint16_t m = b.find(b.record(rec).parent);
+    idText(b.entry(rec), text, sizeof text);
+  } else if (r.kind == RowKind::Item && b.entry(rec).parent != 0) {  // a stage in the trash: its set and id
+    const uint16_t m = b.find(b.entry(rec).parent);
     char id[8] = "?";
-    if (m != SetBrowser::kNone) idText(b.record(m), id, sizeof id);
+    if (m != SetBrowser::kNone) idText(b.entry(m), id, sizeof id);
     snprintf(text, sizeof text, "SET %u %s", r.set, id);
   } else {
     snprintf(text, sizeof text, "SET %u", r.set);
   }
   if (rec != SetBrowser::kNone) {  // the time in one column for sets (their newest stage) and stages
-    ContentEngine::wallclock::formatClock(b.record(rec).wallTime, browserInfo_.tz, note, sizeof note);
+    ContentEngine::wallclock::formatClock(b.entry(rec).wallTime, browserInfo_.tz, note, sizeof note);
     if (strcmp(note, "--:--") == 0) note[0] = 0;
   }
   label(text, kIdX, y, v);
   if (note[0] != 0) rlabel(note, kNoteXR, y, on ? 15 : kDimText);
 }
 
-inline auto OledScreen::drawMilestone(const Record& m, const char* line2, const char* line3) -> void {
+inline auto OledScreen::drawMilestone(const Entry& m, const char* line2, const char* line3) -> void {
   char id[8];
   idText(m, id, sizeof id);
   label(id, kDetailX, kMosaicY, 15, 3);
@@ -481,7 +481,7 @@ inline auto OledScreen::drawDetail(const SetBrowser& b, const Row& r, char* h, s
       const uint16_t base = b.find(b.baseSequence());
       if (base != SetBrowser::kNone) {
         char id[8];
-        idText(b.record(base), id, sizeof id);
+        idText(b.entry(base), id, sizeof id);
         snprintf(c, sizeof c, "FROM %s", id);
       } else {
         snprintf(c, sizeof c, "NEW WORK");
@@ -548,21 +548,21 @@ inline auto OledScreen::drawDetail(const SetBrowser& b, const Row& r, char* h, s
       return;
     }
     case RowKind::Item: {  // the item's newest stage, its stage count (a set) or set (a stage), when it went to the trash
-      const auto& t = b.record(r.record);
-      const uint16_t newest = b.itemNewest(r.record);
+      const auto& t = b.entry(r.entry);
+      const uint16_t newest = b.itemNewest(r.entry);
       char at[8];
       ContentEngine::wallclock::formatClock(t.wallTime, browserInfo_.tz, at, sizeof at);
       // Beside the mosaic: 12 characters at most (kMosaicX − kDetailX); the set is in the row and the hint.
-      const uint16_t size = b.itemSize(r.record);
+      const uint16_t size = b.itemSize(r.entry);
       if (t.parent == 0) snprintf(a, sizeof a, "%u STAGE%s", size, size == 1 ? "" : "S");
       else snprintf(a, sizeof a, "SET %u", r.set);
       snprintf(c, sizeof c, "TRASHED %s", at);
-      if (newest != SetBrowser::kNone) drawMilestone(b.record(newest), a, c);
+      if (newest != SetBrowser::kNone) drawMilestone(b.entry(newest), a, c);
       if (t.parent == 0) {
         snprintf(h, n, "[TRK] RESTORE SET %u", r.set);
       } else {
         char id[8] = "";
-        if (newest != SetBrowser::kNone) idText(b.record(newest), id, sizeof id);
+        if (newest != SetBrowser::kNone) idText(b.entry(newest), id, sizeof id);
         snprintf(h, n, "[TRK] RESTORE STAGE %s", id);
       }
       return;
@@ -570,7 +570,7 @@ inline auto OledScreen::drawDetail(const SetBrowser& b, const Row& r, char* h, s
     case RowKind::Working:
     case RowKind::Set:
       snprintf(h, n, "[TRK] OPEN");
-      if (r.record == SetBrowser::kNone) {
+      if (r.entry == SetBrowser::kNone) {
         snprintf(h, n, "[TRK] OPEN");
         snprintf(a, sizeof a, "SET %u", r.set);
         label(a, kDetailX, kMosaicY, 15, 2);
@@ -579,14 +579,14 @@ inline auto OledScreen::drawDetail(const SetBrowser& b, const Row& r, char* h, s
         return;
       }
       snprintf(c, sizeof c, "%u STAGE%s", b.milestonesIn(r.set), b.milestonesIn(r.set) == 1 ? "" : "S");
-      drawMilestone(b.record(r.record), r.kind == RowKind::Working ? "LATEST  NOW" : "LATEST", c);
+      drawMilestone(b.entry(r.entry), r.kind == RowKind::Working ? "LATEST  NOW" : "LATEST", c);
       return;
     case RowKind::Milestone: {
-      const auto& m = b.record(r.record);
+      const auto& m = b.entry(r.entry);
       const uint16_t parent = m.parent != 0 ? b.find(m.parent) : SetBrowser::kNone;
       char id[8];
       if (parent != SetBrowser::kNone) {
-        idText(b.record(parent), id, sizeof id);
+        idText(b.entry(parent), id, sizeof id);
         snprintf(a, sizeof a, "FROM %s", id);
       }
       drawMilestone(m, parent != SetBrowser::kNone ? a : nullptr, nullptr);
@@ -597,7 +597,7 @@ inline auto OledScreen::drawDetail(const SetBrowser& b, const Row& r, char* h, s
   }
 }
 
-inline auto OledScreen::drawMosaic(const Record& m) -> void {
+inline auto OledScreen::drawMosaic(const Entry& m) -> void {
   uint8_t lv[64];
   for (uint8_t k = 0; k < 64; ++k) lv[k] = static_cast<uint8_t>((m.mosaic[k / 4] >> ((k % 4) * 2)) & 3);
   drawCells(lv);
@@ -655,7 +655,7 @@ inline auto OledScreen::drawSavePopup(const SetBrowser& b) -> void {
   for (uint16_t k = from; k < count && k < from + 4; ++k) {
     const int16_t y = static_cast<int16_t>(kHeadY + 8 + (k - from) * 7);
     const bool line = b.historyOnLine(k);
-    const auto& m = b.record(b.historyRecord(k));
+    const auto& m = b.entry(b.historyEntry(k));
     const int16_t x = line ? kMain : kSide;
     if (line) {
       if (lineTop < 0) lineTop = y;

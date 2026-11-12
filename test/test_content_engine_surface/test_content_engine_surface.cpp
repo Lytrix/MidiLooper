@@ -360,7 +360,7 @@ void test_bars_with_notes_outside_the_loop_light_dim() {
   gS.input(0x8F, 18, 0, gUs / 1000);
   ms(300);
   TEST_ASSERT_EQUAL_UINT32(2 * 768, X().loopLength(X().contentOf(0)));
-  TEST_ASSERT_EQUAL_UINT32(768, C().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(768, C().playWindow(0).start);
   run(gUs + kBarUs / 2);
   TEST_ASSERT_EQUAL_UINT8(32, gLed[40]);  // bar 1: notes, outside the loop
   TEST_ASSERT_EQUAL_UINT8(32, gLed[43]);  // bar 4
@@ -445,7 +445,7 @@ void test_buttons_are_absolute_in_performance() {
   until(2 * kBarUs, [] { return X().playing(0) && !C().switchQueued(0); });
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().rotate(0, 768, gLast, gUs, gClk.usPerTick()));
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, C().resize(0, 2 * 768, gLast, gUs, gClk.usPerTick()));
-  TEST_ASSERT_EQUAL_UINT32(768, C().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(768, C().playWindow(0).start);
   run(gUs + 2 * kBarUs);
   TEST_ASSERT_EQUAL_UINT8(0, gLed[40]);   // stored bar 1: outside the loop, no notes
   TEST_ASSERT_TRUE(gLed[41] >= 32);       // stored bars 2..3: the loop
@@ -945,7 +945,7 @@ static ProductionBrowser gBrowser;
 /// closes the popup, then the browser; nothing reaches the transport or the mute meanwhile.
 void test_the_browser_takes_record_track_and_edit_while_open() {
   gBrowser.clear();
-  library::Record r{};
+  library::Entry r{};
   r.sequence = 1;
   r.set = 1;
   gBrowser.add(r);
@@ -995,7 +995,7 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
   TEST_ASSERT_TRUE(gBrowser.takeRequest(q));
   TEST_ASSERT_EQUAL(ProductionBrowser::Action::Trash, q.action);
   TEST_ASSERT_EQUAL_UINT16(1, q.set);
-  TEST_ASSERT_EQUAL_UINT16(0, q.record);
+  TEST_ASSERT_EQUAL_UINT16(0, q.entry);
   gBrowser.failed("TRASH FAILED", "BUSY");
   tap(S::kTrackSwitchNote, 700);  // a failure: a long press closes
   ms(400);
@@ -1016,7 +1016,7 @@ void test_the_browser_takes_record_track_and_edit_while_open() {
 /// everywhere — LOAD LOOP is its hold.
 void test_copy_mode_track_switch_short_is_the_next_track() {
   gBrowser.clear();
-  library::Record r{};
+  library::Entry r{};
   r.sequence = 1;
   r.set = 1;
   gBrowser.add(r);
@@ -1044,7 +1044,7 @@ void test_copy_mode_track_switch_short_is_the_next_track() {
 /// hold only ends copy mode.
 void test_holding_the_copy_source_again_opens_the_picker() {
   gBrowser.clear();
-  library::Record r{};
+  library::Entry r{};
   r.sequence = 1;
   r.set = 1;
   gBrowser.add(r);
@@ -1070,7 +1070,7 @@ void test_holding_the_copy_source_again_opens_the_picker() {
 /// long press exits to playing.
 void test_a_slots_long_press_opens_the_picker_and_four_buttons_move_in_it() {
   gBrowser.clear();
-  library::Record r{};
+  library::Entry r{};
   r.sequence = 1;
   r.set = 1;
   gBrowser.add(r);

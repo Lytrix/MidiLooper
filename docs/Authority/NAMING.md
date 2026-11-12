@@ -476,7 +476,9 @@ Headers live in `include/`; implementations in `src/`. Filenames describe **resp
 ## Engine source layout and vocabulary (DEC-296)
 
 Since E9.8d (2026-11-11) the firmware is the fixed-memory engine only. Its code follows the PlatformIO layout —
-headers in `include/`, the one implementation file `src/main.cpp` — and groups the engine's headers by responsibility.
+headers in `include/`, the one implementation file `src/main.cpp` (DEC-299, header-only engine) — and groups the
+engine's headers by responsibility. A large class keeps its declarations and puts the bodies of one responsibility in
+`<Class><Part>.h` beside it (CODE_HYGIENE.md § 2).
 A folder names an **area**, not a runtime owner; the owner of everything is `EngineRoot`.
 
 | Folder | Owns |
@@ -485,20 +487,36 @@ A folder names an **area**, not a runtime owner; the owner of everything is `Eng
 | `Content/` | the rows and their storage in memory: `PassEvent`, `PagePool`, `RunTable`, `ManifestTable`, `RowReservations`, `SourceRun`, `ReclaimJob`, `MidiClass`, `CaptureWriter` (takes and overdubs) |
 | `Composition/` | turning a state's runs into playable windows: `SpanWindowComposer`, `SpanWindow`, `CheckpointTable`, `FitRun`, `EditIndexStore`, `Groove`, `GroovePass` |
 | `Playback/` | playing windows and switching states: `PlaybackTrack`, `PlaybackJobs`, `TerminalScheduler`, `SlotTransport`, `TrackControl`, `ClockOutput`, `MidiOutputHub` |
-| `Timing/` | `EngineClock`, `TempoMapping`, `WallClock` |
+| `Timing/` | `EngineClock`, `WallClock` |
 | `NoteEdit/` | `NoteEditSession`, `NoteEditWriter` |
 | `History/` | undo / redo per slot: `SlotUndoHistory`, `ColdTier` (steps on the card), `HistoryCost` |
 | `Storage/` | the card: `Persistence`, `RunStore`, `SlotFile`, `SetLibraryFormat`, `LibraryLoader`, `LibraryWriter`, `V1Import` |
-| `ControlSurface/` | the DROID and buttons: `ControlSurface`, `NoteEditSurface`, `SetBrowser`, `UsbHostTransmitAdmission` |
+| `ControlSurface/` | the DROID and buttons: `ControlSurface` (and its parts `ControlSurfaceGroove`, `ControlSurfaceLoopEdit`, `ControlSurfaceCopy`, `ControlSurfaceLeds`), `ControlSurfaceNoteEdit`, `PressDetector`, `SetBrowser`, `UsbHostTransmitAdmission` |
 | `Display/` | what the screen shows, platform-free: `DisplayTiles`, `PianoRollRender`, `StatusView` |
-| `include/Teensy/` | the Teensy-only adapters (Arduino libraries; not built natively): `OledScreen`, `SdCardIo` |
+| `include/Teensy/` | the Teensy-only adapters (Arduino libraries; not built natively): `OledScreen` (parts `OledScreenBrowser`, `OledScreenPerformance`), `SdCardIo` |
+| `src/` | the firmware: `main.cpp` (`setup`, `loop`), `Firmware.h`, and the modules in namespace `firmware` — `MidiInput`, `MidiPorts`, `GpioEncoder`, `DeviceSettings`, `SavedSelection`, `ScreenView`, `BootHealth`, `LibraryOperations`, `SerialCommands` |
 
 **Engine nouns** (adopted): **run** (one recorded or derived stream of rows, written once), **manifest** / **state** (a
-slot's list of runs at one revision: one undo step), **slot** (64: 8 tracks × 8), **window** (a composed span of a
-state, 1,536 ticks), **grain** (one bounded step of background work, ≤ g), **job** (work the scheduler runs in grains),
+slot's list of runs at one revision: one undo step), **slot** (64: 8 tracks × 8), **span window** (a composed
+span of a state, 1,536 ticks), **grain** (one bounded step of background work, ≤ g), **job** (work the scheduler runs in grains),
 **checkpoint** (composer state at a window boundary), **fit run** (a state's lookups and markers: window, ranges,
 groove, columns), **hot / cold step** (an undo step in PSRAM / only on the card). Tests stay flat:
 `test/test_content_engine_<area>/` (the runner reads one level).
+
+**Words with more than one sense** — always qualified, each sense kept to its own name (DEC-300, overloaded words):
+
+| Word | Sense | Name in code |
+|---|---|---|
+| surface | the control surface: the DROID and the code that handles it | `ControlSurface`, `ControlSurface*` parts, `fw.surface` |
+| | *not* the saved track / slot / mute selection | that is the **saved selection**: `setSelectionState`, `restoredSelection`, `SavedSelection`, `kSelectionBytes` |
+| window | a composed span of playback (1,536 ticks) | **span window**: `SpanWindow`, `kWindowTicks` |
+| | the loop's place in its stored notes (DEC-257) | **play window**: `PlayWindow`, `setPlayWindow`, `playWindowOf`, `kFitPlayWindowStatus` |
+| | a window on the screen (GROOVE, copy, browser, popup) | **window** (UI): `openGroove`, `OledScreen::window` |
+| frame | one picture on the screen (every 33 ms) | **frame**: `drawStage`, `frameMs_` |
+| | the stored loop a play window counts in | **stored loop**: `PlayWindow::storedTicks`, `storedTicks_`, `playStart_` |
+| record | the Record take (mode, gesture) | **Record**: `Mode::Recording`, `kRecord` |
+| | a milestone, trash, restore or empty-trash item in the library's index | **entry**: `library::Entry`, `entries_`, `entry(i)`, `kIndexEntries` |
+| | a run's, a slot's state or its cold states' block in the store (DEC-254) | **run record**, **state record**, **cold record** (Storage only) |
 
 Not renamed: `ContentEngine`, `EngineRoot`, `EngineCore`, `EngineConfig`, `EngineClock`, and the serial tokens
 `!ENGINE` / `#ENGINE` (frozen, as `#CAP`).

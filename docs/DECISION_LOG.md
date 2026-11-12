@@ -17122,3 +17122,31 @@ out-of-class definitions (CODE_HYGIENE.md § 2), not into `.cpp` files.
 
 **Tried and rejected:** none built. **Revisit if:** compile time becomes a bottleneck — the non-template Teensy
 adapters (`OledScreen`, `SdCardIo`) could become `.cpp` files, with their placement checked against the RAM1 gates.
+
+## DEC-300 — Overloaded words split: surface, window, frame, record
+
+**Date:** 2026-11-12. **Owner:** "can you explain what surface means in the codebase? the word seems overloaded"; then
+"look at similar overloaded words … 2-4 renames" and "yes rename these, also check the docs".
+
+**Decision:** each of four words keeps one sense in code; the others are renamed (NAMING.md § Engine source layout and
+vocabulary, "Words with more than one sense"):
+1. **surface** is the control surface only. The saved track / slot / mute selection is the **saved selection**
+   (`setSurfaceState` → `setSelectionState`, `restoredSurfaceState` → `restoredSelection`, `kSurfaceBytes` →
+   `kSelectionBytes`, the library header's `surface[]` → `selection[]`). `NoteEditSurface` → `ControlSurfaceNoteEdit`.
+2. **window**: the loop's place in its stored notes is the **play window** (`LoopWindow` → `PlayWindow`, `setWindow` →
+   `setPlayWindow`, `windowOf` → `playWindowOf`, `kFitWindowStatus` → `kFitPlayWindowStatus`); the composed span is the
+   **span window**; a bare "window" is a UI window.
+3. **frame** is a screen frame only; the stored loop a play window counts in is `storedTicks` (`PlayWindow::frame` →
+   `storedTicks`, `frame_` → `storedTicks_`, `frameStart_` → `playStart_`, `GrooveRequest::frame` → `storedTicks`).
+4. **record**: the library's index items are **entries** (`library::Record` → `library::Entry`, `records_` →
+   `entries_`, `readRecord` → `readEntry`, `kIndexRecords` → `kIndexEntries` and the like); Record is the take; the
+   store's run / state / cold records keep DEC-254's names.
+
+**Evidence:** names only — on-card formats, file names (`surface.mls`) and serial keys unchanged; RAM1 and RAM2 sizes
+identical to `59513e00…` (image `078f0918…` after the comment fixes rebuilt); native 544 passed.
+
+**Tried and rejected:**
+
+| Tried | Measured | Rejected because | Revisit if |
+|---|---|---|---|
+| Renaming the library's `record` by pattern across all files | the browser, writer and coordinator mix the library sense with Record takes (`recordsWithOthers`, `queuedRecordSlot`) | a pattern would rename take counters | — (renamed by exact name outside the five library files) |

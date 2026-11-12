@@ -377,11 +377,11 @@ class EngineRoot {
     if (card_ != nullptr) p_->persistence.startBootLoad();
   }
   const ProductionPersistence& persistence() const { return p_->persistence; }
-  /// The surface's state (selected track and slots, `ProductionPersistence::kStateBytes`): saved like a slot.
-  void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
-    if (card_ != nullptr) p_->persistence.setSurfaceState(s, nowUs);
+  /// The saved selection (selected track and slots, muted tracks, `ProductionPersistence::kStateBytes`): saved like a slot.
+  void setSelectionState(const uint8_t* s, uint32_t nowUs) {
+    if (card_ != nullptr) p_->persistence.setSelectionState(s, nowUs);
   }
-  /// The engine's settings saved with the surface state (the GROOVE cycle's bars).
+  /// The engine's settings saved with the saved selection (the GROOVE cycle's bars).
   void setEngineSettings(uint8_t cycleBars, uint32_t nowUs) { p_->persistence.setSettings(cycleBars, nowUs); }
 
 
@@ -498,7 +498,7 @@ class EngineRoot {
     return nullptr;
   }
   /// Loads milestone `index` (the caller checked `loadRefusal`): the working set becomes the checkpoint `c`, then is
-  /// replaced. The tempo and surface state are the caller's to apply from `setLoad().blob()` when it ends. `live` (the
+  /// replaced. The tempo and saved selection are the caller's to apply from `setLoad().blob()` when it ends. `live` (the
   /// clock runs): the set plays on until the switch point, where every playing track stops; the loaded set's
   /// tracks resume together at the first bar after the load (a short gap).
   /// A live load stages the playing tracks' destination slots first: those switch without a gap.
@@ -814,7 +814,7 @@ class EngineRoot {
     const bool replaced = st == ProductionSetLoad::Status::Done || st == ProductionSetLoad::Status::Restored;
     for (uint8_t t = 0; t < kTrackCount; ++t) {
       if (!(switched_ & (1u << t))) continue;
-      const uint8_t sel = p_->setLoad.blob().surface[1 + t];
+      const uint8_t sel = p_->setLoad.blob().selection[1 + t];
       const uint8_t slot = replaced ? (sel / 8 == t ? sel : ProductionTransport::kNoSlot) : switchedSlot_[t];
       if (slot != ProductionTransport::kNoSlot && r_->transport.contentOf(slot) != kNoManifest)
         r_->control.queueSwitch(t, slot, ProductionControl::Quantize::NextBar, clock, false);

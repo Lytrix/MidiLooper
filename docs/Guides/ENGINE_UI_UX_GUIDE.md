@@ -127,7 +127,7 @@ preset, `A A A B A B A C`):
   (tempo, note position).
 - Order the faders as the window's fields (F1, F2 the first column; F3, F4 the second).
 - When a bank opens the DROID **reports each fader's position**: the first CC of each fader after opening is not a
-  move (`faderSeen_`, DEC-295 am. 2). Motor writes need echo handling (NOTE_EDIT: `NoteEditSurface` motor settle).
+  move (`faderSeen_`, DEC-295 am. 2). Motor writes need echo handling (NOTE_EDIT: `ControlSurfaceNoteEdit` motor settle).
 - A window's faders **follow its values on opening** (the GROOVE window, E9.8b-3c): the value on the fader's CC, then
   its `clear` trigger note (GROOVE: channel 16 notes 102–105; LOOP_EDIT: 100–101 and channel 15 notes 1–2), queued
   in `ControlSurface::loopWrite`; the fader's messages are not moves for `kMotorSettleMs` (`landing`). The patch's

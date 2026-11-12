@@ -40,7 +40,7 @@ inline auto ControlSurface<Engine>::loopWrite(uint8_t fader, uint8_t status, uin
   loopMotor_[loopMotorCount_++] = LoopMotor{{status, d1, d2}, ms};
   loopMotor_[loopMotorCount_++] = LoopMotor{{static_cast<uint8_t>(0x90 | trigStatus), trigNote, 127}, ms};
   loopMotor_[loopMotorCount_++] =
-      LoopMotor{{static_cast<uint8_t>(0x80 | trigStatus), trigNote, 0}, ms + NoteEditSurface<Engine>::kMotorGateMs};
+      LoopMotor{{static_cast<uint8_t>(0x80 | trigStatus), trigNote, 0}, ms + ControlSurfaceNoteEdit<Engine>::kMotorGateMs};
   loopWrittenMs_[fader] = ms;
 }
 
@@ -49,18 +49,18 @@ inline auto ControlSurface<Engine>::parkLoopFaders(uint32_t ms) -> void {
   loopPark_ = false;
   loopMotorCount_ = 0;
   const ManifestId c = transport().contentOf(shownSlot(selected()));
-  {  // the start: its place in the stored loop, F1's travel over the frame's 16ths
+  {  // the start: its place in the stored loop, F1's travel over the stored loop's 16ths
     uint16_t wire = 0;
     if (c != kNoManifest) {
       beyondEnd(c);
-      const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth, k = frameStart_ / NoteEditSurface<Engine>::kSixteenth;
+      const uint32_t steps = storedTicks_ / ControlSurfaceNoteEdit<Engine>::kSixteenth, k = playStart_ / ControlSurfaceNoteEdit<Engine>::kSixteenth;
       if (steps > 1) wire = static_cast<uint16_t>((k * 16383u + (steps - 1) / 2) / (steps - 1));
       parkedStart_ = static_cast<int32_t>(k);
     }
     loopWrite(0, 0xE0 | kProgramChannel, static_cast<uint8_t>(wire & 0x7F), static_cast<uint8_t>(wire >> 7),
               kProgramChannel, kStartTrigger, ms);
   }
-  const uint32_t loop = c == kNoManifest ? NoteEditSurface<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
+  const uint32_t loop = c == kNoManifest ? ControlSurfaceNoteEdit<Engine>::kBar : e_->manifests().manifest(c).loopLengthTicks;
   parkedNotch_ = static_cast<int16_t>(positionOf(loop));
   loopWrite(1, 0xB0 | kProgramChannel, kLengthCc, ccOfNotch(positionOf(loop)), kProgramChannel, kLengthTrigger, ms);
   if (clock_->external()) return;
@@ -81,7 +81,7 @@ inline auto ControlSurface<Engine>::startFader(int16_t pb, uint32_t ms) -> void 
   const ManifestId c = transport().contentOf(shownSlot(selected()));
   if (c == kNoManifest) return;
   beyondEnd(c);
-  const uint32_t steps = frame_ / NoteEditSurface<Engine>::kSixteenth;
+  const uint32_t steps = storedTicks_ / ControlSurfaceNoteEdit<Engine>::kSixteenth;
   const uint32_t k =
       steps > 1 ? (static_cast<uint32_t>(static_cast<int32_t>(pb) + 8192) * (steps - 1) + 8191) / 16383 : 0;
   // The motor's echo of its parked place — within a
@@ -89,7 +89,7 @@ inline auto ControlSurface<Engine>::startFader(int16_t pb, uint32_t ms) -> void 
   if (parkedStart_ >= 0 && static_cast<int32_t>(k) - parkedStart_ <= 1 && parkedStart_ - static_cast<int32_t>(k) <= 1)
     return;
   parkedStart_ = -1;
-  pendingStart_ = k * NoteEditSurface<Engine>::kSixteenth;
+  pendingStart_ = k * ControlSurfaceNoteEdit<Engine>::kSixteenth;
   startPending_ = true;
   startMs_ = ms;
 }
@@ -102,7 +102,7 @@ inline auto ControlSurface<Engine>::settleStart(uint32_t ms) -> void {
   const uint8_t slot = shownSlot(selected());
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return;
-  setWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Keep);
+  setPlayWindow(slot, pendingStart_, e_->manifests().manifest(c).loopLengthTicks, Mark::Keep);
 }
 
 template <typename Engine>
@@ -114,7 +114,7 @@ template <typename Engine>
 inline auto ControlSurface<Engine>::loopAt(uint8_t i) -> uint32_t {
   static constexpr uint16_t kFraction[5] = {48, 96, 192, 384, 576};  // ticks: 1/16 … 3/4 bar
   static constexpr uint16_t kTail[4] = {32, 64, 96, 128};            // bars
-  const uint32_t bar = NoteEditSurface<Engine>::kBar;
+  const uint32_t bar = ControlSurfaceNoteEdit<Engine>::kBar;
   return i < 5 ? kFraction[i] : i < 21 ? (i - 4u) * bar : kTail[i < kLengthScaleCount ? i - 21 : 3] * bar;
 }
 
@@ -184,14 +184,14 @@ inline auto ControlSurface<Engine>::loopRange(bool bars, uint8_t a, uint8_t b) -
   if (c == kNoManifest) return;
   beyondEnd(c);
   const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-  constexpr uint32_t kBar = NoteEditSurface<Engine>::kBar, kStep = NoteEditSurface<Engine>::kSixteenth;
+  constexpr uint32_t kBar = ControlSurfaceNoteEdit<Engine>::kBar, kStep = ControlSurfaceNoteEdit<Engine>::kSixteenth;
   const uint32_t pos = x.playing(t) && x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
-  const uint32_t at = (frameStart_ + pos) % frame_;
+  const uint32_t at = (playStart_ + pos) % storedTicks_;
   const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;
   const uint8_t lo = a < b ? a : b, hi = a < b ? b : a;
   const uint32_t start = base + lo * unit, length = (hi - lo + 1u) * unit;
-  if (start >= frame_) return;
-  setWindow(slot, start, length, Mark::Range, true);  // buttons past the stored loop's end lengthen it
+  if (start >= storedTicks_) return;
+  setPlayWindow(slot, start, length, Mark::Range, true);  // buttons past the stored loop's end lengthen it
 }
 
 template <typename Engine>
@@ -199,18 +199,18 @@ inline auto ControlSurface<Engine>::resizeTo(uint8_t slot, uint32_t loop, Mark m
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return;
   beyondEnd(c);
-  setWindow(slot, frameStart_, loop, mark);
+  setPlayWindow(slot, playStart_, loop, mark);
 }
 
 template <typename Engine>
-inline auto ControlSurface<Engine>::setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow) -> bool {
+inline auto ControlSurface<Engine>::setPlayWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow) -> bool {
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest || length == 0) return false;
   beyondEnd(c);
-  uint32_t frame = frame_, at = frameStart_;
+  uint32_t storedTicks = storedTicks_, at = playStart_;
   const uint32_t loop = e_->manifests().manifest(c).loopLengthTicks;
-  if (start >= frame) return false;
-  LoopWindow marks = transport().window(slot);
+  if (start >= storedTicks) return false;
+  PlayWindow marks = transport().playWindow(slot);
   if (mark == Mark::Range) {  // B the new range; A the one playing (when it was A or B), else B before
     const bool wasA = marks.aLength != 0 && at == marks.aStart && loop == marks.aLength;
     const bool wasB = marks.bLength != 0 && at == marks.bStart && loop == marks.bLength;
@@ -227,16 +227,16 @@ inline auto ControlSurface<Engine>::setWindow(uint8_t slot, uint32_t start, uint
     visited(slot);
     return true;
   };
-  if (loop != frame && !ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
-  if (length > frame || (grow && start + length > frame)) {  // longer: back to its start, then the frame grows
-    if (at != 0 && !ok(control().rotate(slot, frame - at, tick_, us_, us(), visitState_, &marks))) return false;
+  if (loop != storedTicks && !ok(control().resize(slot, storedTicks, tick_, us_, us(), visitState_, &marks))) return false;
+  if (length > storedTicks || (grow && start + length > storedTicks)) {  // longer: back to its start, then the storedTicks grows
+    if (at != 0 && !ok(control().rotate(slot, storedTicks - at, tick_, us_, us(), visitState_, &marks))) return false;
     at = 0;
-    frame = start + length;
-    if (!ok(control().resize(slot, frame, tick_, us_, us(), visitState_, &marks))) return false;
+    storedTicks = start + length;
+    if (!ok(control().resize(slot, storedTicks, tick_, us_, us(), visitState_, &marks))) return false;
   }
-  const uint32_t shift = (start + frame - at) % frame;
+  const uint32_t shift = (start + storedTicks - at) % storedTicks;
   if (shift != 0 && !ok(control().rotate(slot, shift, tick_, us_, us(), visitState_, &marks))) return false;
-  if (length != frame && !ok(control().resize(slot, length, tick_, us_, us(), visitState_, &marks))) return false;
+  if (length != storedTicks && !ok(control().resize(slot, length, tick_, us_, us(), visitState_, &marks))) return false;
   loopPark_ = true;  // the faders to the new start and length
   return true;
 }
@@ -252,14 +252,14 @@ inline auto ControlSurface<Engine>::switchRange(uint8_t slot) -> void {
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return;
   beyondEnd(c);
-  const LoopWindow w = transport().window(slot);
+  const PlayWindow w = transport().playWindow(slot);
   const uint32_t loop = loopTicks(slot);
   const bool onB = w.bLength != 0 && w.start == w.bStart && loop == w.bLength;
   visitState_ = 0;  // its own step
   if ((onB || w.bLength == 0) && w.aLength != 0)
-    setWindow(slot, w.aStart, w.aLength, Mark::Keep);
+    setPlayWindow(slot, w.aStart, w.aLength, Mark::Keep);
   else if (w.bLength != 0)
-    setWindow(slot, w.bStart, w.bLength, Mark::Keep);
+    setPlayWindow(slot, w.bStart, w.bLength, Mark::Keep);
   pendingStart_ = 0;
   startPending_ = false;
 }
@@ -270,7 +270,7 @@ inline auto ControlSurface<Engine>::playFull(uint8_t slot) -> void {
   if (c == kNoManifest) return;
   beyondEnd(c);
   visitState_ = 0;
-  setWindow(slot, 0, frame_, Mark::Keep);
+  setPlayWindow(slot, 0, storedTicks_, Mark::Keep);
   pendingStart_ = 0;
   startPending_ = false;
 }
@@ -347,22 +347,22 @@ inline auto ControlSurface<Engine>::choiceOf(uint8_t slot) -> uint8_t {
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return kNoChoice;
   beyondEnd(c);
-  const LoopWindow w = transport().window(slot);
-  const uint32_t loop = loopTicks(slot), start = frameStart_;
-  if (start == 0 && loop == frame_) return kChoiceFull;
+  const PlayWindow w = transport().playWindow(slot);
+  const uint32_t loop = loopTicks(slot), start = playStart_;
+  if (start == 0 && loop == storedTicks_) return kChoiceFull;
   if (w.bLength != 0 && start == w.bStart && loop == w.bLength) return kChoiceB;
   if (w.aLength != 0 && start == w.aStart && loop == w.aLength) return kChoiceA;
   for (uint8_t i = 3; i < kChoiceCount; ++i)
-    if (start == 0 && loop == choiceBars(i) * NoteEditSurface<Engine>::kBar) return i;
+    if (start == 0 && loop == choiceBars(i) * ControlSurfaceNoteEdit<Engine>::kBar) return i;
   return kNoChoice;
 }
 
 template <typename Engine>
 inline auto ControlSurface<Engine>::nextChoice(uint8_t slot, bool back) -> uint8_t {
-  const LoopWindow w = transport().window(slot);
+  const PlayWindow w = transport().playWindow(slot);
   uint8_t i = popupChoice_;
   if (i == kNoChoice) {  // by length: the first numbered choice above it, or the last below it
-    const uint32_t loop = loopTicks(slot), bar = NoteEditSurface<Engine>::kBar;
+    const uint32_t loop = loopTicks(slot), bar = ControlSurfaceNoteEdit<Engine>::kBar;
     if (back) {
       for (uint8_t k = kChoiceCount; k-- > 3;)
         if (choiceBars(k) * bar < loop) return k;
@@ -383,15 +383,15 @@ inline auto ControlSurface<Engine>::applyChoice(uint8_t slot, uint8_t i) -> void
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return;
   beyondEnd(c);
-  const LoopWindow w = transport().window(slot);
+  const PlayWindow w = transport().playWindow(slot);
   if (i == kChoiceFull)
-    setWindow(slot, 0, frame_, Mark::Keep);
+    setPlayWindow(slot, 0, storedTicks_, Mark::Keep);
   else if (i == kChoiceA && w.aLength != 0)
-    setWindow(slot, w.aStart, w.aLength, Mark::Keep);
+    setPlayWindow(slot, w.aStart, w.aLength, Mark::Keep);
   else if (i == kChoiceB && w.bLength != 0)
-    setWindow(slot, w.bStart, w.bLength, Mark::Keep);
+    setPlayWindow(slot, w.bStart, w.bLength, Mark::Keep);
   else if (choiceBars(i) != 0)
-    setWindow(slot, 0, choiceBars(i) * NoteEditSurface<Engine>::kBar, Mark::Keep);
+    setPlayWindow(slot, 0, choiceBars(i) * ControlSurfaceNoteEdit<Engine>::kBar, Mark::Keep);
 }
 
 template <typename Engine>

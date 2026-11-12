@@ -159,10 +159,10 @@ static LibWriter::Milestone milestone(Stage stage, uint8_t number) {
   m.parent = 0;
   m.wallTime = 1794175000;
   m.tempoTenths = 1200;
-  m.surface[0] = 1;
+  m.selection[0] = 1;
   return m;
 }
-static std::vector<uint8_t> blobSlot(const Record& r, uint8_t slot) {
+static std::vector<uint8_t> blobSlot(const Entry& r, uint8_t slot) {
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;
@@ -202,7 +202,7 @@ static LibWriter::Checkpoint before() {
   c.wallTime = 1794175000;
   c.set = 2;
   c.tempoTenths = 1000;
-  c.surface[0] = 3;
+  c.selection[0] = 3;
   return c;
 }
 /// The set changed after the milestone: slot 0 one step back, slot 2 replaced, slot 3 recorded.
@@ -250,7 +250,7 @@ void test_a_load_brings_the_milestone_back_histories_included() {
   TEST_ASSERT_TRUE(setNow() == atMilestone);  // every slot's file as at the milestone: states, current, runs
   TEST_ASSERT_EQUAL_UINT8(2, gH.undoDepth(0));  // its undo history too (the overdub, the record)
   TEST_ASSERT_EQUAL_UINT16(1200, gL.blob().tempoTenths);
-  TEST_ASSERT_EQUAL_UINT8(1, gL.blob().surface[0]);
+  TEST_ASSERT_EQUAL_UINT8(1, gL.blob().selection[0]);
   TEST_ASSERT_TRUE(gRes.check());
   TEST_ASSERT_EQUAL_UINT16(0, gRuns.reclaimPendingRuns());  // the cleared set reclaimed before the read
 }
@@ -270,7 +270,7 @@ void test_the_checkpoint_holds_the_set_before_the_load_and_return_brings_it_back
   TEST_ASSERT_EQUAL(Loader::Status::Done, loadToEnd());
   TEST_ASSERT_TRUE(setNow() == beforeLoad);
   TEST_ASSERT_EQUAL_UINT16(1000, gL.blob().tempoTenths);  // the checkpoint's tempo and surface
-  TEST_ASSERT_EQUAL_UINT8(3, gL.blob().surface[0]);
+  TEST_ASSERT_EQUAL_UINT8(3, gL.blob().selection[0]);
   TEST_ASSERT_TRUE(gW.checkpoint(h));
   TEST_ASSERT_EQUAL_UINT32(1, h.sequence);  // return writes no checkpoint
   TEST_ASSERT_TRUE(gRes.check());
@@ -279,8 +279,8 @@ void test_the_checkpoint_holds_the_set_before_the_load_and_return_brings_it_back
 void test_a_load_that_fails_is_undone_from_the_checkpoint() {
   buildSet();
   saveMilestone();
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;
@@ -299,8 +299,8 @@ void test_a_load_that_fails_is_undone_from_the_checkpoint() {
 void test_a_slot_file_shorter_than_its_header_says_fails_the_load() {
   buildSet();
   saveMilestone();
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;
@@ -362,7 +362,7 @@ void test_a_live_load_waits_for_the_switch_point_before_it_clears() {
 void test_staging_loads_the_selected_slot_beside_the_set() {
   buildSet();
   LibWriter::Milestone m = milestone(Stage::Take, 1);
-  m.surface[1] = 2;  // track 0 selects slot 2
+  m.selection[1] = 2;  // track 0 selects slot 2
   TEST_ASSERT_EQUAL(LibWriter::Result::Ok, gW.beginMilestone(gPool, gRuns, gManifests, gH, gIds.peek(), m, gScratch));
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
   const auto atMilestone = setNow();
@@ -453,8 +453,8 @@ void test_a_get_that_finds_nothing_or_fails_changes_nothing() {
   TEST_ASSERT_EQUAL(Loader::Result::Ok, gL.beginGet(0, 1, 3));  // slot 1 was empty at the stage
   TEST_ASSERT_EQUAL(Loader::Status::Unchanged, loadToEnd());
   TEST_ASSERT_EQUAL(kNoManifest, gL.takeGot());
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;
@@ -511,8 +511,8 @@ void test_a_get_reads_only_the_current_states_runs() {
 /// The whole slot file is still checked: a damaged row of a run the current state does not list fails the get.
 void test_a_get_checks_the_whole_slot_file() {
   saveHistories();
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;

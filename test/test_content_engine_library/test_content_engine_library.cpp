@@ -73,7 +73,7 @@ void test_the_header_names_the_working_set_separately() {
 }
 
 void test_records_round_trip_and_reject_damage() {
-  Record r;
+  Entry r;
   r.sequence = 17;
   r.set = 2;
   r.stage = Stage::Take;
@@ -87,9 +87,9 @@ void test_records_round_trip_and_reject_damage() {
   r.logSector = 900;
   r.logSectors = 37;
   r.mosaic[3] = 0xE4;
-  uint8_t b[kRecordBytes];
+  uint8_t b[kEntryBytes];
   encode(r, b);
-  Record d;
+  Entry d;
   TEST_ASSERT_TRUE(decode(b, d));
   TEST_ASSERT_EQUAL_UINT32(17, d.sequence);
   TEST_ASSERT_EQUAL_UINT16(2, d.set);
@@ -105,9 +105,9 @@ void test_records_round_trip_and_reject_damage() {
   TEST_ASSERT_FALSE(decode(b, d));
   std::memset(b, 0, sizeof b);  // an unwritten record
   TEST_ASSERT_FALSE(decode(b, d));
-  TEST_ASSERT_EQUAL_UINT32(2, recordSector(0));
-  TEST_ASSERT_EQUAL_UINT32(3, recordSector(8));
-  TEST_ASSERT_EQUAL_UINT32(64, recordOffset(9));
+  TEST_ASSERT_EQUAL_UINT32(2, entrySector(0));
+  TEST_ASSERT_EQUAL_UINT32(3, entrySector(8));
+  TEST_ASSERT_EQUAL_UINT32(64, entryOffset(9));
 }
 
 void test_blob_and_checkpoint_headers() {
@@ -115,7 +115,7 @@ void test_blob_and_checkpoint_headers() {
   h.sequence = 17;
   h.noteIdHigh = 4000;
   h.tempoTenths = 1200;
-  h.surface[0] = 3;
+  h.selection[0] = 3;
   h.slotBytes[0] = 1000;
   h.slotBytes[9] = 512;
   h.slotBytes[63] = 1;
@@ -125,7 +125,7 @@ void test_blob_and_checkpoint_headers() {
   TEST_ASSERT_TRUE(decode(s, d));
   TEST_ASSERT_EQUAL_UINT32(1000, d.slotBytes[0]);
   TEST_ASSERT_EQUAL_UINT32(1, d.slotBytes[63]);
-  TEST_ASSERT_EQUAL_UINT8(3, d.surface[0]);
+  TEST_ASSERT_EQUAL_UINT8(3, d.selection[0]);
   TEST_ASSERT_EQUAL_UINT32(1 + 2 + 1 + 1, blobSectors(d.slotBytes));  // header, 1000 B → 2, 512 → 1, 1 → 1
   s[100] ^= 1;
   TEST_ASSERT_FALSE(decode(s, d));
@@ -158,12 +158,12 @@ void test_a_save_that_does_not_fit_is_refused_by_name() {
   TEST_ASSERT_EQUAL(Fit::LogFull, fits(h, 10));
   TEST_ASSERT_EQUAL(Fit::Ok, fits(h, 9));
   h.appendSector = 0;
-  h.count = kIndexRecords;
+  h.count = kIndexEntries;
   TEST_ASSERT_EQUAL(Fit::IndexFull, fits(h, 1));
 }
 
 void test_stage_numbers_count_per_stage_within_a_set() {
-  Record r[5];
+  Entry r[5];
   r[0].set = 2, r[0].stage = Stage::Take, r[0].stageNumber = 1;
   r[1].set = 2, r[1].stage = Stage::Building, r[1].stageNumber = 4;
   r[2].set = 2, r[2].stage = Stage::Take, r[2].stageNumber = 3;

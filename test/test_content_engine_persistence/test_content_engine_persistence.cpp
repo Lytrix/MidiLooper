@@ -652,12 +652,12 @@ void test_a_copy_loads_only_into_its_own_slot() {
 // Owner 2026-11-06: the selected track and slots survive a reboot. Saved like a slot (only after approval, once
 // settled) into the store's two state sectors in turn; a second engine restores the later one, the earlier one when
 // the later is damaged, nothing when both are.
-// E9.8b-3c: the GROOVE cycle's bars are saved with the surface state and come back at boot; a state written without
+// E9.8b-3c: the GROOVE cycle's bars are saved with the saved selection and come back at boot; a state written without
 // them reads as none.
 void test_the_cycle_length_is_saved_with_the_surface_state() {
   const uint8_t state[ProductionPersistence::kStateBytes] = {2, 0, 9, 18, 24, 32, 41, 50, 63, 0};
   gA.approveSaving();
-  gA.setSurfaceState(state, us(gClock));
+  gA.setSelectionState(state, us(gClock));
   run(gA, gClock + kSettleTicks + 20);
   bootB();
   TEST_ASSERT_EQUAL_UINT8(0, gB.persistence().restoredCycleBars());  // none set: none saved
@@ -668,19 +668,19 @@ void test_the_cycle_length_is_saved_with_the_surface_state() {
   bootB();
   TEST_ASSERT_EQUAL_UINT8(4, gB.persistence().restoredCycleBars());
   uint8_t back[ProductionPersistence::kStateBytes] = {};
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(state, back, ProductionPersistence::kStateBytes);  // the selection unchanged
 }
 
 void test_the_surface_state_is_saved_and_restored() {
   const uint8_t state[ProductionPersistence::kStateBytes] = {7, 0, 9, 18, 24, 32, 41, 50, 63};
-  gA.setSurfaceState(state, us(gClock));
+  gA.setSelectionState(state, us(gClock));
   run(gA, gClock + kSettleTicks + 20);
   TEST_ASSERT_EQUAL_UINT32(0, gCard.writes);  // not approved: nothing written
   gA.approveSaving();
   const uint32_t waiting = gCard.waitingWrites;  // the new store's headers cleared at the approval
   run(gA, gClock + kSettleTicks / 2);
-  gA.setSurfaceState(state, us(gClock));  // unchanged: no new settle time
+  gA.setSelectionState(state, us(gClock));  // unchanged: no new settle time
   run(gA, gClock + kSettleTicks);
   TEST_ASSERT_NOT_NULL(gCard.sector(0));
   const uint32_t writes = gCard.writes;
@@ -688,7 +688,7 @@ void test_the_surface_state_is_saved_and_restored() {
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);  // saved once
   // A new selection is saved only once it has settled (2 s), into the other sector.
   const uint8_t next[ProductionPersistence::kStateBytes] = {3, 1, 9, 18, 24, 32, 41, 50, 63, 0x05};  // tracks 1, 3 muted
-  gA.setSurfaceState(next, us(gClock));
+  gA.setSelectionState(next, us(gClock));
   run(gA, gClock + kSettleTicks / 2);
   TEST_ASSERT_EQUAL_UINT32(writes, gCard.writes);
   TEST_ASSERT_FALSE(gA.persistence().unsaved());  // the screen's dots ignore the selection (E9.8k): no dots
@@ -710,34 +710,34 @@ void test_the_surface_state_is_saved_and_restored() {
   TEST_ASSERT_TRUE(gCard.idle());                          // and left it idle
   bootB();
   uint8_t back[ProductionPersistence::kStateBytes] = {};
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(next, back, ProductionPersistence::kStateBytes);
   // The later one damaged: the earlier selection.
   gCard.sector(1)[9] ^= 0x01;  // a bit of the state word
   bootB();
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(state, back, ProductionPersistence::kStateBytes);
   // A third selection goes back to sector 0 and is the one restored (the later sequence, whichever sector).
   gCard.sector(1)[9] ^= 0x01;  // repaired
   const uint8_t third[ProductionPersistence::kStateBytes] = {5, 2, 9, 18, 24, 32, 41, 50, 63, 0x80};
-  gA.setSurfaceState(third, us(gClock));
+  gA.setSelectionState(third, us(gClock));
   run(gA, gClock + kSettleTicks + 20);
   bootB();
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(third, back, ProductionPersistence::kStateBytes);
   // DEC-293: a mute change alone is saved (settled), and a damaged mute word reads as none muted, the rest kept.
   uint8_t muted[ProductionPersistence::kStateBytes];
   for (uint8_t i = 0; i < ProductionPersistence::kStateBytes; ++i) muted[i] = third[i];
   muted[ProductionPersistence::kStateBytes - 1] = 0x81;
-  gA.setSurfaceState(muted, us(gClock));
+  gA.setSelectionState(muted, us(gClock));
   run(gA, gClock + kSettleTicks + 20);
   bootB();
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8_ARRAY(muted, back, ProductionPersistence::kStateBytes);
   const uint8_t latest = gCard.sector(0)[17] == 0x81 ? 0 : 1;  // the sector holding the mask
   gCard.sector(latest)[17] ^= 0x01;
   bootB();
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8(0, back[ProductionPersistence::kStateBytes - 1]);
   TEST_ASSERT_EQUAL_UINT8(5, back[0]);
   gCard.sector(latest)[17] ^= 0x01;
@@ -745,7 +745,7 @@ void test_the_surface_state_is_saved_and_restored() {
   gCard.sector(0)[9] ^= 0x01;
   gCard.sector(1)[9] ^= 0x01;
   bootB();
-  TEST_ASSERT_FALSE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_FALSE(gB.persistence().restoredSelection(back));
 }
 
 // The state file of before the store (`surface.mls`, "MLS1") is restored and written into the store.
@@ -758,12 +758,12 @@ void test_the_state_file_of_before_the_store_is_restored() {
   gCard.put("/MidiLooper/engine/surface.mls", b, sizeof b);
   bootB();
   uint8_t back[ProductionPersistence::kStateBytes] = {};
-  TEST_ASSERT_TRUE(gB.persistence().restoredSurfaceState(back));
+  TEST_ASSERT_TRUE(gB.persistence().restoredSelection(back));
   TEST_ASSERT_EQUAL_UINT8(3, back[0]);
   TEST_ASSERT_EQUAL_UINT8(1, back[1]);
   TEST_ASSERT_EQUAL_UINT8(10, back[2]);
   TEST_ASSERT_EQUAL_UINT8(0, back[ProductionPersistence::kStateBytes - 1]);  // no mutes before DEC-293
-  gB.setSurfaceState(back, us(gClock));
+  gB.setSelectionState(back, us(gClock));
   run(gB, gClock + kSettleTicks + 20);
   TEST_ASSERT_NOT_NULL(gCard.sector(0));  // in the store
 }
@@ -829,9 +829,9 @@ static void liveSet() {
   m.set = 1;
   m.stage = library::Stage::Sketch;
   m.stageNumber = 1;
-  m.surface[0] = 1;
-  for (uint8_t t = 0; t < 8; ++t) m.surface[1 + t] = static_cast<uint8_t>(t * 8);
-  m.surface[2] = 9;  // track 1 on slot 9
+  m.selection[0] = 1;
+  for (uint8_t t = 0; t < 8; ++t) m.selection[1 + t] = static_cast<uint8_t>(t * 8);
+  m.selection[2] = 9;  // track 1 on slot 9
   TEST_ASSERT_EQUAL(ProductionLibrary::Result::Ok, gA.saveMilestone(m));
   runLibrary(gA);
   gA.control().stopTrack(1, gClock, us(gClock), kUsPerTick);

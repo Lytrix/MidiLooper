@@ -74,7 +74,7 @@
 namespace ContentEngine {
 
 template <typename Engine>
-class NoteEditSurface {
+class ControlSurfaceNoteEdit {
  public:
   static constexpr uint32_t kSixteenth = 48, kBar = 768, kWindowBars = 16;
   static constexpr int32_t kPbMin = -8192, kPbMax = 8192;

@@ -6,7 +6,7 @@
 //
 // Input: the DROID control plane, MIDI channels 13–16 (`controlPlane`: never recorded, never thru). Buttons are notes
 // on channel 16 (`MidiConfig`): record 36, track switch 37, transport 39, play / stop 40, loop slots 50–57, tracks
-// 60–67; NOTE_EDIT (`NoteEditSurface`): edit mode 38 (short: the track buttons' select / mute mode; long: NOTE_EDIT on
+// 60–67; NOTE_EDIT (`ControlSurfaceNoteEdit`): edit mode 38 (short: the track buttons' select / mute mode; long: NOTE_EDIT on
 // the shown slot ↔ LOOP_EDIT, from performance LOOP_EDIT when the slot is empty; held 1.5 s: leave; LOOP_EDIT's F4 is
 // the coarse tempo, whole BPM, pitch bend on channel 15, and F3 the fine tempo, 0.1 BPM from its centre, CC 100 on
 // channel 16; F2 the loop length on a scale of 25 notches, 1/16 bar to 128 bars, CC 101 on channel 16 (or pitch bend on
@@ -54,7 +54,7 @@
 //     press, the selected track's playing slot restarts at that position at the next launch step
 //     (`TrackControl::queueSeek`; a queued switch replaced) — a 16th of the bar playing, a bar of the 8-bar page
 //     playing, modulo the loop. A stopped or taking track ignores them. In NOTE_EDIT the step buttons are the 16ths of
-//     the bracket's bar (`NoteEditSurface`): short = select / cycle (an empty step: a 16th C4), double = delete, held
+//     the bracket's bar (`ControlSurfaceNoteEdit`): short = select / cycle (an empty step: a 16th C4), double = delete, held
 //     `kLockMs` = the parameter lock until the release (no gesture then); their LEDs show that bar's notes and the
 //     bracket's step. In LOOP_EDIT a bar or a step held and another of its kind pressed, either way round, makes the
 //     range between them the loop (a double press: that bar or 16th alone): its left end the new start (a rotation),
@@ -71,7 +71,7 @@
 //   note; the step's release is then no press. The long push does nothing yet (a CC menu later).
 // * Copy mode: a slot held `kCopyHoldMs` — or in NOTE_EDIT a bar button, or a step whose lock changed nothing — starts
 //   it (the source's LED pulses, the screen shows the copy window); the source's release keeps it. A short press of
-//   another slot / bar / step pastes there (`TrackControl::copySlot`, `NoteEditSurface::copyBar` / `copyNote`; one undo
+//   another slot / bar / step pastes there (`TrackControl::copySlot`, `ControlSurfaceNoteEdit::copyBar` / `copyNote`; one undo
 //   step each; its LED flashes three times) and copy mode ends (the window closes after the copy; a refused paste keeps
 //   it). It also closes `kCopyIdleMs` after the source's release with nothing pasted (a countdown, restarted by a track
 //   switch). A double press of the source clears it — a slot, the bar's notes, or the 16th's notes (the source note's
@@ -167,7 +167,7 @@ class ControlSurface {
     for (uint8_t t = 0; t < kTracks; ++t) press_.configure(kTrack0 + t, T{300, 400, 600, 0, false});
     for (uint8_t k = 0; k < 16; ++k) press_.configure(kStep0 + k, T{300, 400, 600, 0, false});
     press_.configure(kEncoder, T{300, 400, 600, 0, false});
-    encoderOption_ = NoteEditSurface<Engine>::Nudge::Pitch;
+    encoderOption_ = ControlSurfaceNoteEdit<Engine>::Nudge::Pitch;
     encoderStep_ = 0xFF;
     encoderMs_ = 0;
     lockStep_ = 0xFF;
@@ -339,7 +339,7 @@ class ControlSurface {
       lockStep_ = k;
       edit_.lockBegin(k, ms);
     }
-    using N = typename NoteEditSurface<Engine>::Nudge;
+    using N = typename ControlSurfaceNoteEdit<Engine>::Nudge;
     int32_t accel = 1;
     if (encoderOption_ == N::Move) accel = interval < 25 ? 24 : interval < 50 ? 8 : interval < 100 ? 4 : 1;
     else if (encoderOption_ == N::Length) accel = interval < 25 ? 8 : interval < 50 ? 4 : interval < 100 ? 2 : 1;
@@ -387,7 +387,7 @@ class ControlSurface {
   /// move for `kMotorSettleMs` (`landing`).
   void parkGrooveFaders(uint32_t ms);
   // ---- Compare -----------------------------------------------------------------------------------
-  static constexpr uint32_t kBarTicks = NoteEditSurface<Engine>::kBar;
+  static constexpr uint32_t kBarTicks = ControlSurfaceNoteEdit<Engine>::kBar;
   /// The cycle's bars a turn: a global setting, no control yet.
   uint8_t cycleBars() const { return cycleBars_; }
   void setCycleBars(uint8_t b) { cycleBars_ = b == 0 ? 1 : b; }
@@ -422,7 +422,7 @@ class ControlSurface {
   uint8_t copySourceSlot() const { return copySlot_; }  // Slot: the engine slot
   uint8_t copySourceBar() const { return copyButton_; }  // Bar: 0–7 of its page
   int16_t copySourceNote() const { return copyNote_; }  // Note: its index in the session
-  /// The progress bar's frame (every note in the stored loop known; absolute): `scale` the stored loop's ticks
+  /// The progress bar's extent (every note in the stored loop known; absolute): `scale` the stored loop's ticks
   /// (`frameOf`), `start` the current loop's start in it, `known` how far its notes reach from its start in whole bars
   /// (the loop past it is drawn as past the known length). False: no content.
   /// Groove: starts the slot's groove build per `s` (amount 0: its removal) over its stored loop, scope A / B its
@@ -472,11 +472,11 @@ class ControlSurface {
   /// Diagnostics: full scans of a state's rows the LEDs made (one per new state; never per bar of playback).
   uint32_t rowScans() const { return rowScans_; }
   /// The encoder's option (pitch, move, length, velocity), for the screen.
-  typename NoteEditSurface<Engine>::Nudge encoderOption() const { return encoderOption_; }
+  typename ControlSurfaceNoteEdit<Engine>::Nudge encoderOption() const { return encoderOption_; }
 
   /// Once per main-loop pass: the gestures due, at the last played tick.
   void service(uint32_t ms, uint32_t lastTick, uint32_t nowUs);
-  const NoteEditSurface<Engine>& edit() const { return edit_; }
+  const ControlSurfaceNoteEdit<Engine>& edit() const { return edit_; }
   /// LOOP_EDIT is open (the edit button's cycle).
   bool loopEdit() const { return loopEdit_; }
   /// LOOP_EDIT's F2 moved, not yet applied: the length it will take, in ticks (0: none).
@@ -493,7 +493,7 @@ class ControlSurface {
   /// LOOP_EDIT's loop start in the stored loop (F1's pending one while it settles).
   uint32_t loopStart();
   /// The next motor message, sent like the LEDs: NOTE_EDIT's, else LOOP_EDIT's (`loopWrite`).
-  bool motor(uint32_t ms, typename NoteEditSurface<Engine>::MotorMsg& m);
+  bool motor(uint32_t ms, typename ControlSurfaceNoteEdit<Engine>::MotorMsg& m);
 
   /// The transport started with `firstTick` as its first tick: armed Records start there (not a bar later).
   void transportStarted(uint32_t firstTick);
@@ -721,7 +721,7 @@ class ControlSurface {
             return;
           }
           if (p == Press::Short || p == Press::Long)
-            control().createEmpty(shownSlot(t), kNewLoopBars * NoteEditSurface<Engine>::kBar);  // refused when filled
+            control().createEmpty(shownSlot(t), kNewLoopBars * ControlSurfaceNoteEdit<Engine>::kBar);  // refused when filled
           if (p == Press::Long) openPopup(shownSlot(t), kLength, nowMs_);
           return;
         }
@@ -754,7 +754,7 @@ class ControlSurface {
       } else if (k != 0xFF && p == Press::Double) {
         edit_.deleteSelected(nowMs_);
       } else if (k == 0xFF && p == Press::Short) {  // the next option: pitch, move, length, velocity
-        using N = typename NoteEditSurface<Engine>::Nudge;
+        using N = typename ControlSurfaceNoteEdit<Engine>::Nudge;
         encoderOption_ = static_cast<N>((static_cast<uint8_t>(encoderOption_) + 1) % 4);
       }
       return;  // long: a CC menu later
@@ -810,9 +810,9 @@ class ControlSurface {
   void loopWrite(uint8_t fader, uint8_t status, uint8_t d1, uint8_t d2, uint8_t trigStatus, uint8_t trigNote, uint32_t ms);
   void parkLoopFaders(uint32_t ms);
   void writeFine(uint8_t cc, uint32_t ms);
-  bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < NoteEditSurface<Engine>::kMotorSettleMs; }
+  bool landing(uint8_t fader, uint32_t ms) const { return ms - loopWrittenMs_[fader] < ControlSurfaceNoteEdit<Engine>::kMotorSettleMs; }
   /// LOOP_EDIT's F1 (pitch bend on channel 16): the loop start in the stored loop,
-  /// over its 16ths (absolute). Applied at rest (`setWindow`), one undo step a visit; not while its motor lands.
+  /// over its 16ths (absolute). Applied at rest (`setPlayWindow`), one undo step a visit; not while its motor lands.
   void startFader(int16_t pb, uint32_t ms);
   void settleStart(uint32_t ms);
   /// LOOP_EDIT's F2: the shown loop's length, 1–128 bars over the travel. Applied
@@ -847,12 +847,12 @@ class ControlSurface {
   /// The loop `loop` ticks long from its start (F2, the popup).
   void resizeTo(uint8_t slot, uint32_t loop, Mark mark);
   /// The shown loop becomes `length` ticks from `start` in the stored loop, in this visit's undo step: the content back
-  /// to the whole stored loop, rotated there to the start (lossless: rotated at the frame's length), then cut to the
+  /// to the whole stored loop, rotated there to the start (lossless: rotated at the stored loop's length), then cut to the
   /// length; a loop reaching past the stored loop's end wraps to its start. A loop longer than the stored loop — or,
   /// `grow`, one reaching past its end — makes it longer (rotated back to its start first, so the stored notes keep
   /// their places). `mark`: a range of the buttons (`Range`: the newest remembered range, the one playing before it the
   /// other) or not; the remembered ranges are kept with every state.
-  bool setWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false);
+  bool setPlayWindow(uint8_t slot, uint32_t start, uint32_t length, Mark mark, bool grow = false);
   // ---- The remembered ranges (two custom loop lengths to switch between; a double press plays the whole loop) ----------------------------------------
   uint32_t loopTicks(uint8_t slot);
   /// NOTELEN's single press, in performance and LOOP_EDIT: the other remembered range — from B to A, from A to B, from
@@ -958,10 +958,10 @@ class ControlSurface {
     // of its 8-bar page playing — taken into the loop; outside the loop nothing; past the stored loop's end modulo the
     // loop.
     beyondEnd(m);
-    const uint32_t at = (frameStart_ + pos) % frame_;
+    const uint32_t at = (playStart_ + pos) % storedTicks_;
     const uint32_t place = note < kBarStepBase ? at / kBar * kBar + note * kSixteenth
                                                : at / kPage * kPage + (note - kBarStepBase) * kBar;
-    const uint32_t target = place >= frame_ ? place % loop : (place + frame_ - frameStart_) % frame_;  // past it: modulo the loop
+    const uint32_t target = place >= storedTicks_ ? place % loop : (place + storedTicks_ - playStart_) % storedTicks_;  // past it: modulo the loop
     if (target >= loop) return;  // a stored place outside the loop: nothing
     control().queueSeek(t, target, tick_);
   }
@@ -1023,7 +1023,7 @@ class ControlSurface {
   Engine* e_ = nullptr;
   EngineClock* clock_ = nullptr;
   PressDetector<kButtons> press_;
-  NoteEditSurface<Engine> edit_;
+  ControlSurfaceNoteEdit<Engine> edit_;
   uint8_t slot_[kTracks] = {};
   uint8_t lockStep_ = 0xFF;  // NOTE_EDIT: the step held as a parameter lock (0xFF: none)
   uint8_t barsHeld_ = 0;                      // NOTE_EDIT: the bar buttons held (bit per bar)
@@ -1033,7 +1033,7 @@ class ControlSurface {
   uint64_t beyondBars_ = 0;                    // ... its bars with notes past the loop's end
   uint16_t beyondSteps_ = 0;                   // ... the 16ths of the bar holding its end
   uint32_t storedEnd_ = 0;                     // ... the end of its stored notes (ticks)
-  uint32_t frame_ = 0, frameStart_ = 0;        // ... the stored loop's length and the loop's start in it
+  uint32_t storedTicks_ = 0, playStart_ = 0;        // ... the stored loop's length and the loop's start in it
   uint32_t absEnd_ = 0;                        // ... how far its notes reach from the stored loop's start (whole bars)
   uint64_t absBars_ = 0;                       // ... the stored loop's bars holding a NoteOn
   uint32_t stepsIdentity_ = 0, stepsBar_ = 0;  // `absSteps`: the state and stored bar last scanned
@@ -1044,7 +1044,7 @@ class ControlSurface {
   // `beyondScan`'s state between passes: the state it scans, where it is, and the values it builds (published at its
   // end).
   struct Scan {
-    uint32_t identity = 0, loop = 0, run = 0, row = 0, storedEnd = 0, frame = 0, frameStart = 0, absEnd = 0;
+    uint32_t identity = 0, loop = 0, run = 0, row = 0, storedEnd = 0, storedTicks = 0, playStart = 0, absEnd = 0;
     uint64_t beyondBars = 0, absBars = 0;
     uint16_t beyondSteps = 0;
     uint16_t barSteps[64] = {};
@@ -1084,7 +1084,7 @@ class ControlSurface {
   uint32_t sourceTapMs_ = 0;
   uint8_t flashLed_ = 0xFF, flashTrack_ = 0;  // a paste's LED (channel 15 note) flashing three times, on that track
   uint32_t flashMs_ = 0;
-  typename NoteEditSurface<Engine>::Nudge encoderOption_ = NoteEditSurface<Engine>::Nudge::Pitch;
+  typename ControlSurfaceNoteEdit<Engine>::Nudge encoderOption_ = ControlSurfaceNoteEdit<Engine>::Nudge::Pitch;
   uint8_t encoderStep_ = 0xFF;  // the step held when the encoder was pushed (0xFF: none)
   uint32_t encoderMs_ = 0;      // the last turn (the acceleration's interval)
   /// Starts copy mode from a held source, ends it on a long press of any other button, a source lock that changed its
@@ -1127,7 +1127,7 @@ class ControlSurface {
   // Stored notes outside the loop at the level an empty bar had (the lowest the DROID shows: 8 and 20 are not
   // visible), the loop's bars above it.
   static constexpr uint8_t kBeyondLed = 32, kLoopEmptyLed = 48, kLoopNotesLed = 96;
-  /// The stored loop of state `m`: its notes past the loop's end, its frame and the bars and 16ths
+  /// The stored loop of state `m`: its notes past the loop's end, its stored loop and the bars and 16ths
   /// holding notes — scanned to the end now (gestures need the exact values).
   void beyondEnd(ManifestId m) { beyondScan(m, 0xFFFFFFFFu); }
   /// The same in steps of at most `budget` rows: a large state scanned in one main-loop pass puts the LED stage over
@@ -1150,7 +1150,7 @@ class ControlSurface {
   bool loopEdit_ = false;    // LOOP_EDIT: the edit button's other mode
   ProductionBrowser* browser_ = nullptr;  // the sets browser
   struct LoopMotor {
-    typename NoteEditSurface<Engine>::MotorMsg m;
+    typename ControlSurfaceNoteEdit<Engine>::MotorMsg m;
     uint32_t at;  // due
   };
   static constexpr uint8_t kLoopMotorQueue = 12;  // four faders, three messages each

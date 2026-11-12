@@ -48,7 +48,7 @@ static EngineClock gClk;
 static S gS;
 static uint32_t gUs = 0, gLast = 0;
 static constexpr uint32_t kTick = 2604, kBarUs = 768 * kTick;
-static constexpr uint32_t kSettle = 520;  // ms: past NoteEditSurface's kMotorSettleMs (500)
+static constexpr uint32_t kSettle = 520;  // ms: past ControlSurfaceNoteEdit's kMotorSettleMs (500)
 
 // Live notes played into a take: positions in µs.
 struct Live {
@@ -166,7 +166,7 @@ static void enterEdit() {
 }
 /// Past the motor faders' echo window after a write (NOTE_EDIT feedback): a value equal to a just-written one is the
 /// fader's echo, not a move.
-static void settle() { ms(NoteEditSurface<EngineRoot>::kMotorSettleMs + 10); }
+static void settle() { ms(ControlSurfaceNoteEdit<EngineRoot>::kMotorSettleMs + 10); }
 static EditNote sel() {
   EditNote n{};
   TEST_ASSERT_TRUE(gS.edit().selected(n));
@@ -352,7 +352,7 @@ void test_the_droid_fader_bank_follows_note_edit() {
 // Motor feedback (owner 2026-11-06): the DROID's motor faders follow the selection — a value, then its trigger note,
 // released after the gate; F1 / F2 / F3 / F4 = pitch bend 16, pitch bend 14, CC 2 / CC 3 on 15; trigger notes 0 on 16 /
 // 14, 1 / 2 on 15. A fader's echo of a written value changes nothing.
-using Motor = NoteEditSurface<EngineRoot>::MotorMsg;
+using Motor = ControlSurfaceNoteEdit<EngineRoot>::MotorMsg;
 struct Sent {
   uint32_t ms;
   Motor m;
@@ -421,7 +421,7 @@ void test_motor_faders_follow_the_selection_and_their_echo_changes_nothing() {
   TEST_ASSERT_NOT_NULL(on);
   TEST_ASSERT_NOT_NULL(off);
   TEST_ASSERT_TRUE(fine->ms <= on->ms);
-  TEST_ASSERT_TRUE(off->ms - on->ms >= NoteEditSurface<EngineRoot>::kMotorGateMs);
+  TEST_ASSERT_TRUE(off->ms - on->ms >= ControlSurfaceNoteEdit<EngineRoot>::kMotorGateMs);
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9F, 0));  // F1's trigger (channel 16 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9D, 0));  // F2's (channel 14 note 0)
   TEST_ASSERT_NOT_NULL(findMsg(v, 0x9E, 2));  // F4's (channel 15 note 2)
@@ -1060,7 +1060,7 @@ static void turn(int32_t d, uint32_t gapMs = 200) {
   ms(1);
 }
 void test_the_encoder_cycles_its_options_and_nudges_the_note() {
-  using N = NoteEditSurface<EngineRoot>::Nudge;
+  using N = ControlSurfaceNoteEdit<EngineRoot>::Nudge;
   recordBar({{96, 64}, {384, 67}});
   enterEdit();
   settle();
@@ -1142,7 +1142,7 @@ void test_the_encoder_with_a_step_held() {
   ms(450);
   TEST_ASSERT_FALSE(gS.edit().locked());
   TEST_ASSERT_EQUAL_UINT8(67, sel().pitch);  // the previous selection, no press of the step
-  TEST_ASSERT_EQUAL(NoteEditSurface<EngineRoot>::Nudge::Pitch, gS.encoderOption());  // the pushes did not cycle
+  TEST_ASSERT_EQUAL(ControlSurfaceNoteEdit<EngineRoot>::Nudge::Pitch, gS.encoderOption());  // the pushes did not cycle
 }
 
 // A NOTELEN long press released without F4 moved by hand creates a note at the bracket (owner 2026-11-08); F4's motor
@@ -2167,14 +2167,14 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   };
   range(2, 9);  // steps 3..10: from 96, 384 long
   TEST_ASSERT_EQUAL_UINT32(384, loopOf(0));
-  TEST_ASSERT_EQUAL_UINT32(96, gE.control().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(96, gE.control().playWindow(0).start);
   uint32_t scale = 0, from = 0, known = 0;
   TEST_ASSERT_TRUE(gS.loopFrame(0, scale, from, known));
   TEST_ASSERT_EQUAL_UINT32(768, scale);
   TEST_ASSERT_EQUAL_UINT32(96, from);
   range(0, 2);  // steps 1..3 of the stored loop — not of the current one: from 0, 144 long
   TEST_ASSERT_EQUAL_UINT32(144, loopOf(0));
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).start);
   // DEC-284 amendment 2 (owner 2026-11-10: a range "sets it as BASE"): the motors' echo of their parked places — F1 a
   // reading short of its 16th, F2 the notch below a length off its scale (1/8 for 144 ticks) — moves nothing.
   drainMotors(600);  // the motors park on the new start and length
@@ -2182,11 +2182,11 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   gS.input(0xBF, 101, (1 * 127 + 12) / 24, gUs / 1000);  // F2 at notch 1 (1/8 bar)
   ms(400);
   TEST_ASSERT_EQUAL_UINT32(144, loopOf(0));
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
-  TEST_ASSERT_EQUAL_UINT32(96, gE.control().window(0).aStart);  // the remembered ranges untouched (amendment 3)
-  TEST_ASSERT_EQUAL_UINT32(384, gE.control().window(0).aLength);
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).bStart);
-  TEST_ASSERT_EQUAL_UINT32(144, gE.control().window(0).bLength);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).start);
+  TEST_ASSERT_EQUAL_UINT32(96, gE.control().playWindow(0).aStart);  // the remembered ranges untouched (amendment 3)
+  TEST_ASSERT_EQUAL_UINT32(384, gE.control().playWindow(0).aLength);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).bStart);
+  TEST_ASSERT_EQUAL_UINT32(144, gE.control().playWindow(0).bLength);
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 144), 96);  // the note at 96 where it was recorded
   range(4, 15);  // steps 5..16: from 192, to the stored loop's end
@@ -2200,7 +2200,7 @@ void test_loop_edit_ranges_are_absolute_in_the_stored_loop() {
   TEST_ASSERT_EQUAL_UINT32(192, gS.loopStart());
   range(17, 18);  // bars 1..2: past the stored loop's end, which grows to 2 bars; the notes where they were
   TEST_ASSERT_EQUAL_UINT32(2 * 768, loopOf(0));
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).start);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).start);
   run(gUs + 3 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 2 * 768), 96);
   EXPECT_ALL(positions(true, 62, 2 * 768), 600);
@@ -2252,7 +2252,7 @@ void test_loop_edit_notelen_double_restores_the_previous_loop() {
   };
   const auto at = [](uint32_t start, uint32_t loop) {
     TEST_ASSERT_EQUAL_UINT32(loop, loopOf(0));
-    TEST_ASSERT_EQUAL_UINT32(start, gE.control().window(0).start);
+    TEST_ASSERT_EQUAL_UINT32(start, gE.control().playWindow(0).start);
   };
   // The double: the whole stored loop — the edited note at 96 again, 70 now.
   enterLoopEditOnContent();
@@ -2360,7 +2360,7 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
   }
   TEST_ASSERT_EQUAL_UINT8(1, grooves);
   TEST_ASSERT_TRUE(takes >= 1);  // the take kept
-  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().window(0).groove);
+  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().playWindow(0).groove);
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), 144);  // on the 16th grid, and heard once (not also at 130)
   EXPECT_ALL(positions(true, 62, 768), 240);
@@ -2371,7 +2371,7 @@ void test_a_groove_moves_the_notes_and_keeps_the_original() {
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
   run(gUs + 4 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), 130);
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).groove);
   // Undo: the grooved state again, then the original.
   gE.control().undo(0, gLast, gUs, gClk.usPerTick());
   run(gUs + 2 * 768 * kTick);
@@ -2451,7 +2451,7 @@ void test_a_stale_groove_build_is_dropped() {
   run(gUs + 6 * 768 * kTick);
   TEST_ASSERT_EQUAL(ProductionGroove::State::Idle, gE.grooveState());
   TEST_ASSERT_EQUAL_UINT32(resized, gE.manifests().manifest(gE.transport().contentOf(0)).identity);
-  TEST_ASSERT_EQUAL_UINT32(0, gE.control().window(0).groove);
+  TEST_ASSERT_EQUAL_UINT32(0, gE.control().playWindow(0).groove);
 }
 
 // DEC-289 (owner 2026-11-10: "long press on play/stop"): the GROOVE window — opened on the shown slot with the slot's
@@ -2582,11 +2582,11 @@ void test_the_groove_window_sets_a_groove() {
   ms(50);
   TEST_ASSERT_FALSE(gS.grooveOpen());
   run(gUs + 4 * 768 * kTick);
-  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).amount);
+  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).groove).amount);
   // … but stored with the slot (owner 2026-11-11): A 30 %, B 100 %, B heard.
-  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnA).amount);
-  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnB).amount);
-  TEST_ASSERT_EQUAL_UINT8(3, gE.control().window(0).heard);
+  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).columnA).amount);
+  TEST_ASSERT_EQUAL_UINT8(100, ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).columnB).amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gE.control().playWindow(0).heard);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));  // two visits, two steps
   tap(S::kTransportNote, 700);  // opened again: A 30 %, B 100 % heard
   ms(50);
@@ -2598,8 +2598,8 @@ void test_the_groove_window_sets_a_groove() {
   TEST_ASSERT_EQUAL_UINT8(undo0 + 2, gE.history().undoDepth(0));
   // A rebuilt fit run (a loop length change) carries the columns.
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().resize(0, 2 * 768, gLast, gUs, gClk.usPerTick()));
-  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().window(0).columnA).amount);
-  TEST_ASSERT_EQUAL_UINT8(3, gE.control().window(0).heard);
+  TEST_ASSERT_EQUAL_UINT8(30, ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).columnA).amount);
+  TEST_ASSERT_EQUAL_UINT8(3, gE.control().playWindow(0).heard);
 }
 
 // DEC-289 amendment 2: the DROID sends PLAY/STOP as a short-press trigger (nothing while held), so the window has its
@@ -2644,7 +2644,7 @@ void test_auto_grooves_an_overdub() {
   run(gUs + 6 * 768 * kTick);  // AUTO: grooved again, the overdub in it
   EXPECT_ALL(positions(true, 62, 768), 240);
   EXPECT_ALL(positions(true, 60, 768), 144);
-  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
+  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).groove).autoGroove);
 }
 
 // DEC-294 / DEC-295 (owner: "audition no groove, previous groove, new groove"): A (the groove when the window opened)
@@ -2747,7 +2747,7 @@ void test_the_groove_window_compares_a_b_and_off() {
   TEST_ASSERT_FALSE(gS.grooveOpen());
   run(gUs + 2 * 768 * kTick);
   EXPECT_ALL(positions(true, 60, 768), kept == S::Heard::A ? 137u : 144u);
-  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().window(0).groove).autoGroove);
+  TEST_ASSERT_TRUE(ContentEngine::groove::Settings::unpack(gE.control().playWindow(0).groove).autoGroove);
   TEST_ASSERT_EQUAL_UINT8(undo0 + 1, gE.history().undoDepth(0));
 }
 
@@ -2765,20 +2765,20 @@ void test_a_groove_keeps_the_window_and_a_resize_keeps_the_groove() {
   ms(200);
   tap(S::kEditModeNote, 1600);
   ms(100);
-  const auto before = gE.control().window(0);
+  const auto before = gE.control().playWindow(0);
   TEST_ASSERT_EQUAL_UINT32(96, before.start);
   ContentEngine::groove::Settings s;
   s.tmpl = ContentEngine::groove::kMpc16_58;
   s.amount = 50;
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gS.applyGroove(0, s));
   run(gUs + 4 * 768 * kTick);
-  const auto after = gE.control().window(0);
+  const auto after = gE.control().playWindow(0);
   TEST_ASSERT_EQUAL_UINT32(before.start, after.start);
-  TEST_ASSERT_EQUAL_UINT32(before.frame, after.frame);
+  TEST_ASSERT_EQUAL_UINT32(before.storedTicks, after.storedTicks);
   TEST_ASSERT_EQUAL_UINT32(before.bLength, after.bLength);
   TEST_ASSERT_EQUAL_UINT32(s.pack(), after.groove);
   TEST_ASSERT_EQUAL(ProductionTransport::Result::Ok, gE.control().resize(0, 768, gLast, gUs, gClk.usPerTick()));
-  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().window(0).groove);  // carried through the rebuilt fit run
+  TEST_ASSERT_EQUAL_UINT32(s.pack(), gE.control().playWindow(0).groove);  // carried through the rebuilt fit run
 }
 
 int main(int, char**) {

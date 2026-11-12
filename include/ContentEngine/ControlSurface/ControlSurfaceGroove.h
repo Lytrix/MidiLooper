@@ -48,7 +48,7 @@ inline auto ControlSurface<Engine>::openGroove(uint8_t slot) -> void {
   groove_ = true;
   grooveWin_ = slot;
   grooveField_ = kFieldGrooveA;
-  const uint32_t packed = transport().window(slot).groove;
+  const uint32_t packed = transport().playWindow(slot).groove;
   if (packed != 0) {  // A the slot's groove, B a copy to change
     grooveA_ = groove::Settings::unpack(packed);
   } else {  // 1/16 by default, 50 %
@@ -59,7 +59,7 @@ inline auto ControlSurface<Engine>::openGroove(uint8_t slot) -> void {
   grooveAuto_ = grooveA_.autoGroove;
   grooveALabel_[0] = 0;
   if (grooveA_.tmpl == groove::kFileTemplate) {
-    const LoopWindow sw = transport().window(slot);
+    const PlayWindow sw = transport().playWindow(slot);
     if (!readTemplate(e_->runs(), e_->pool(), sw.tableRun, sw.grooveShape, grooveATable_, grooveALabel_))
       grooveA_.tmpl = groove::kStraight;
   }
@@ -79,7 +79,7 @@ inline auto ControlSurface<Engine>::openGroove(uint8_t slot) -> void {
 
 template <typename Engine>
 inline auto ControlSurface<Engine>::restoreColumns(uint8_t slot, uint32_t packed) -> void {
-  const LoopWindow w = transport().window(slot);
+  const PlayWindow w = transport().playWindow(slot);
   if (w.heard == 0) return;
   groove::Settings a = groove::Settings::unpack(w.columnA), b = groove::Settings::unpack(w.columnB);
   const auto fileless = [&](groove::Settings& g) {
@@ -146,7 +146,7 @@ inline auto ControlSurface<Engine>::isFull(uint8_t slot) -> bool {
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return true;
   beyondEnd(c);
-  return frameStart_ == 0 && loopTicks(slot) == frame_;
+  return playStart_ == 0 && loopTicks(slot) == storedTicks_;
 }
 
 template <typename Engine>
@@ -155,8 +155,8 @@ inline auto ControlSurface<Engine>::loopFrame(uint8_t slot, uint32_t& scale, uin
   const ManifestId c = transport().contentOf(slot);
   if (c == kNoManifest) return false;
   beyondScan(c, kScanRows / 2);  // the screen: in steps (the last state scanned until this one is done)
-  scale = frame_;
-  start = frameStart_;
+  scale = storedTicks_;
+  start = playStart_;
   known = absEnd_;
   return true;
 }
@@ -211,7 +211,7 @@ inline auto ControlSurface<Engine>::service(uint32_t ms, uint32_t lastTick, uint
 template <typename Engine>
 inline auto ControlSurface<Engine>::popupRanges() -> uint8_t {
   if (transport().contentOf(popupSlot_) == kNoManifest) return 0;
-  const LoopWindow w = transport().window(popupSlot_);
+  const PlayWindow w = transport().playWindow(popupSlot_);
   return static_cast<uint8_t>((w.aLength != 0 ? 1 : 0) | (w.bLength != 0 ? 2 : 0));
 }
 
@@ -224,11 +224,11 @@ inline auto ControlSurface<Engine>::popupLoop() const -> uint32_t {
 
 template <typename Engine>
 inline auto ControlSurface<Engine>::loopStart() -> uint32_t {
-  return startPending_ ? pendingStart_ : e_->transport().window(shownSlot(selected())).start;
+  return startPending_ ? pendingStart_ : e_->transport().playWindow(shownSlot(selected())).start;
 }
 
 template <typename Engine>
-inline auto ControlSurface<Engine>::motor(uint32_t ms, typename NoteEditSurface<Engine>::MotorMsg& m) -> bool {
+inline auto ControlSurface<Engine>::motor(uint32_t ms, typename ControlSurfaceNoteEdit<Engine>::MotorMsg& m) -> bool {
   if (edit_.motor(ms, m)) return true;
   if (loopPark_) parkLoopFaders(ms);
   for (uint8_t i = 0; i < loopMotorCount_; ++i) {  // the first one due, in queue order
@@ -468,7 +468,7 @@ inline auto ControlSurface<Engine>::serviceGroove(uint32_t ms) -> void {
     return;
   const auto& d = e_->manifests().manifest(c);
   if (d.identity == autoTried_) return;
-  const groove::Settings g = groove::Settings::unpack(transport().window(slot).groove);
+  const groove::Settings g = groove::Settings::unpack(transport().playWindow(slot).groove);
   if (g.amount == 0 || !g.autoGroove) return;
   bool afterGroove = false, overdub = false;
   for (uint8_t i = 0; i < d.runCount; ++i) {

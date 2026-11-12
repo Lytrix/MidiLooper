@@ -10,9 +10,9 @@
 // * `LibraryWriter` — one job at a time, in grains of at most one sector write, each only once the card is ready for
 //   it. A milestone: the size is checked first (`library::fits`: refused before anything is written), then the blob
 //   (header, each slot's set file from the snapshot, sector-aligned) at the log's append point, programmed; then its
-//   index record, programmed; then the index header into the sector that is not current, programmed — only then is the
+//   index entry, programmed; then the index header into the sector that is not current, programmed — only then is the
 //   milestone published. A checkpoint: the blob into the region that is not current, programmed, then its header,
-//   programmed. A trash, restore or empty-trash record (DEC-268, trash): the record, programmed, then the index header
+//   programmed. A trash, restore or empty-trash entry (DEC-268, trash): the entry, programmed, then the index header
 //   — no blob, nothing older rewritten. A working-set change (DEC-269, named working set): the index header alone. Any
 //   failed write ends the job unpublished: the current header / checkpoint stay, the space is reused.
 // No allocation.
@@ -138,7 +138,7 @@ class LibraryWriter {
     uint32_t parent = 0;
     uint32_t wallTime = 0;
     uint16_t tempoTenths = 0;
-    uint8_t surface[library::kSurfaceBytes] = {};
+    uint8_t selection[library::kSelectionBytes] = {};
   };
   struct Checkpoint {
     uint32_t wallTime = 0;
@@ -146,7 +146,7 @@ class LibraryWriter {
     uint16_t set = 0;
     uint32_t loaded = 0;
     uint16_t tempoTenths = 0;
-    uint8_t surface[library::kSurfaceBytes] = {};
+    uint8_t selection[library::kSelectionBytes] = {};
   };
 
   /// Reads the index header and both checkpoint headers (the card has the library open). False: a read failed.
@@ -168,10 +168,10 @@ class LibraryWriter {
     if (haveCheckpoint_) out = checkpoint_;
     return haveCheckpoint_;
   }
-  bool readRecord(uint16_t i, library::Record& r) {
+  bool readEntry(uint16_t i, library::Entry& r) {
     uint8_t s[library::kSector];
-    return mounted_ && i < header_.count && card_->readLibrarySector(library::recordSector(i), s) &&
-           library::decode(s + library::recordOffset(i), r);
+    return mounted_ && i < header_.count && card_->readLibrarySector(library::entrySector(i), s) &&
+           library::decode(s + library::entryOffset(i), r);
   }
   /// The region (0 / 1) holding the current checkpoint.
   uint8_t checkpointRegion() const { return region_; }
@@ -179,8 +179,8 @@ class LibraryWriter {
   Status status() const { return status_; }
   /// The last job published the working set alone (`beginWorking`).
   bool workingJob() const { return headerOnly_; }
-  /// The record of the milestone the last job published.
-  const library::Record& published() const { return record_; }
+  /// The entry of the milestone the last job published.
+  const library::Entry& published() const { return entry_; }
 
   /// Captures the set and starts writing it as a milestone; refused by name before anything is written.
   Result beginMilestone(Pool& pool, Runs& runs, Manifests& manifests, const HistoryT& history, uint32_t noteIdHigh,
@@ -198,52 +198,52 @@ class LibraryWriter {
     }
     checkpointJob_ = false;
     headerOnly_ = false;
-    record_ = library::Record{};
-    record_.sequence = header_.nextSequence;
-    record_.set = m.set;
-    record_.stage = m.stage;
-    record_.stageNumber = m.stageNumber;
-    record_.parent = m.parent;
-    record_.wallTime = m.wallTime;
-    record_.tempoTenths = m.tempoTenths;
-    record_.loops = snap_.loops();
-    record_.shortestLoop = snap_.shortest();
-    record_.longestLoop = snap_.longest();
-    record_.logSector = header_.appendSector;
-    record_.logSectors = sectors;
-    for (int i = 0; i < 16; ++i) record_.mosaic[i] = snap_.mosaic()[i];
-    start(library::kLogBase + header_.appendSector, record_.sequence, m.tempoTenths, m.surface);
+    entry_ = library::Entry{};
+    entry_.sequence = header_.nextSequence;
+    entry_.set = m.set;
+    entry_.stage = m.stage;
+    entry_.stageNumber = m.stageNumber;
+    entry_.parent = m.parent;
+    entry_.wallTime = m.wallTime;
+    entry_.tempoTenths = m.tempoTenths;
+    entry_.loops = snap_.loops();
+    entry_.shortestLoop = snap_.shortest();
+    entry_.longestLoop = snap_.longest();
+    entry_.logSector = header_.appendSector;
+    entry_.logSectors = sectors;
+    for (int i = 0; i < 16; ++i) entry_.mosaic[i] = snap_.mosaic()[i];
+    start(library::kLogBase + header_.appendSector, entry_.sequence, m.tempoTenths, m.selection);
     return Result::Ok;
   }
-  /// Starts publishing a trash-side record: `kind` library::kTrash (`target` a milestone's sequence, or 0 for
-  /// `set`'s shown milestones so far), kRestore (`target` the trash record's sequence) or kEmptyTrash. Only the record
+  /// Starts publishing a trash-side entry: `kind` library::kTrash (`target` a milestone's sequence, or 0 for
+  /// `set`'s shown milestones so far), kRestore (`target` the trash entry's sequence) or kEmptyTrash. Only the entry
   /// and the header are written; refused by name when the index is full.
   Result beginMark(uint8_t kind, uint16_t set, uint32_t target, uint32_t wallTime) {
     if (!mounted_) return Result::NotMounted;
     if (busy()) return Result::Busy;
-    if (header_.count >= library::kIndexRecords) return Result::IndexFull;
+    if (header_.count >= library::kIndexEntries) return Result::IndexFull;
     checkpointJob_ = false;
     headerOnly_ = false;
-    record_ = library::Record{};
-    record_.sequence = header_.nextSequence;
-    record_.set = set;
-    record_.kind = kind;
-    record_.parent = target;
-    record_.wallTime = wallTime;
-    phase_ = Phase::Record;
+    entry_ = library::Entry{};
+    entry_.sequence = header_.nextSequence;
+    entry_.set = set;
+    entry_.kind = kind;
+    entry_.parent = target;
+    entry_.wallTime = wallTime;
+    phase_ = Phase::Entry;
     status_ = Status::Running;
     return Result::Ok;
   }
   /// Starts publishing `set` (base milestone `base`, 0 none) as the working set: the index header alone, so it
-  /// needs no index record; a failed write leaves the previous header — and working set — current.
+  /// needs no index entry; a failed write leaves the previous header — and working set — current.
   Result beginWorking(uint16_t set, uint32_t base) {
     if (!mounted_) return Result::NotMounted;
     if (busy()) return Result::Busy;
     checkpointJob_ = false;
     headerOnly_ = true;
-    record_ = library::Record{};  // no record written: it only carries the working set to the header
-    record_.set = set;
-    record_.parent = base;
+    entry_ = library::Entry{};  // no entry written: it only carries the working set to the header
+    entry_.set = set;
+    entry_.parent = base;
     phase_ = Phase::Header;
     status_ = Status::Running;
     return Result::Ok;
@@ -267,7 +267,7 @@ class LibraryWriter {
     pending_.set = c.set;
     pending_.loaded = c.loaded;
     pending_.sectors = sectors;
-    start(library::checkpointBase(target_) + 1, pending_.sequence, c.tempoTenths, c.surface);
+    start(library::checkpointBase(target_) + 1, pending_.sequence, c.tempoTenths, c.selection);
     return Result::Ok;
   }
 
@@ -318,23 +318,23 @@ class LibraryWriter {
         return status_;
       case Phase::WaitBlob:
         if (!card_->libraryReady(Card::kIdle)) return status_;
-        phase_ = checkpointJob_ ? Phase::CheckpointHeader : Phase::Record;
+        phase_ = checkpointJob_ ? Phase::CheckpointHeader : Phase::Entry;
         return status_;
-      case Phase::Record: {
+      case Phase::Entry: {
         const uint16_t i = header_.count;
-        if (!card_->libraryReady(library::recordSector(i))) return status_;
+        if (!card_->libraryReady(library::entrySector(i))) return status_;
         uint8_t sector[library::kSector];
-        if (i % library::kRecordsPerSector == 0) {
+        if (i % library::kEntriesPerSector == 0) {
           for (auto& x : sector) x = 0;  // a fresh sector: whatever the card held there is not read
-        } else if (!card_->readLibrarySector(library::recordSector(i), sector)) {
+        } else if (!card_->readLibrarySector(library::entrySector(i), sector)) {
           return fail();
         }
-        library::encode(record_, sector + library::recordOffset(i));
-        if (!card_->writeLibrarySector(library::recordSector(i), sector)) return fail();
-        phase_ = Phase::WaitRecord;
+        library::encode(entry_, sector + library::entryOffset(i));
+        if (!card_->writeLibrarySector(library::entrySector(i), sector)) return fail();
+        phase_ = Phase::WaitEntry;
         return status_;
       }
-      case Phase::WaitRecord:
+      case Phase::WaitEntry:
         if (!card_->libraryReady(Card::kIdle)) return status_;
         phase_ = Phase::Header;
         return status_;
@@ -345,16 +345,16 @@ class LibraryWriter {
         next_.sequence = header_.sequence + 1;
         if (headerOnly_) {
           next_.hasWorking = true;
-          next_.workingSet = record_.set;
-          next_.workingBase = record_.parent;
+          next_.workingSet = entry_.set;
+          next_.workingBase = entry_.parent;
         } else {
           next_.count = static_cast<uint16_t>(header_.count + 1);
-          next_.appendSector = header_.appendSector + record_.logSectors;
+          next_.appendSector = header_.appendSector + entry_.logSectors;
           next_.nextSequence = header_.nextSequence + 1;
-          if (record_.kind == library::kMilestone) {  // a save: its set is the working one, descending from it
+          if (entry_.kind == library::kMilestone) {  // a save: its set is the working one, descending from it
             next_.hasWorking = true;
-            next_.workingSet = record_.set;
-            next_.workingBase = record_.sequence;
+            next_.workingSet = entry_.set;
+            next_.workingBase = entry_.sequence;
           }
         }
         uint8_t sector[library::kSector];
@@ -410,7 +410,7 @@ class LibraryWriter {
   };
   using Save = SaveJob<Pool, Runs, Manifests, HistoryT, Sink, library::kSector>;
   enum class Phase : uint8_t {
-    BlobHeader, NextSlot, Body, Pad, WaitBlob, Record, WaitRecord, Header, WaitHeader, CheckpointHeader, WaitCheckpoint
+    BlobHeader, NextSlot, Body, Pad, WaitBlob, Entry, WaitEntry, Header, WaitHeader, CheckpointHeader, WaitCheckpoint
   };
 
   void bind(Pool& pool, Runs& runs, Manifests& manifests, uint8_t* scratch) {
@@ -425,13 +425,13 @@ class LibraryWriter {
     for (uint8_t s = 0; s < Slots && s < library::kSlots; ++s) bytes[s] = snap_.bytes(s);
     return library::blobSectors(bytes);
   }
-  void start(uint32_t base, uint32_t sequence, uint16_t tempoTenths, const uint8_t* surface) {
+  void start(uint32_t base, uint32_t sequence, uint16_t tempoTenths, const uint8_t* selection) {
     base_ = base;
     blob_ = library::BlobHeader{};
     blob_.sequence = sequence;
     blob_.noteIdHigh = snap_.noteIdHigh();
     blob_.tempoTenths = tempoTenths;
-    for (uint8_t i = 0; i < library::kSurfaceBytes; ++i) blob_.surface[i] = surface[i];
+    for (uint8_t i = 0; i < library::kSelectionBytes; ++i) blob_.selection[i] = selection[i];
     for (uint8_t s = 0; s < Slots && s < library::kSlots; ++s) blob_.slotBytes[s] = snap_.bytes(s);
     sink_.fill = 0;
     phase_ = Phase::BlobHeader;
@@ -441,7 +441,7 @@ class LibraryWriter {
     snap_.release(*manifests_, *runs_);
     return r;
   }
-  void releaseSnapshot() {  // a trash-side record captured nothing
+  void releaseSnapshot() {  // a trash-side entry captured nothing
     if (snap_.held()) snap_.release(*manifests_, *runs_);
   }
   Status fail() {
@@ -468,7 +468,7 @@ class LibraryWriter {
   bool haveCheckpoint_ = false;
   uint8_t region_ = 1, target_ = 0;
   bool mounted_ = false, checkpointJob_ = false, headerOnly_ = false;
-  library::Record record_;
+  library::Entry entry_;
   library::BlobHeader blob_;
   uint32_t base_ = 0;
   uint8_t slot_ = 0;

@@ -26,12 +26,12 @@ inline auto ControlSurface<Engine>::beyondScan(ManifestId m, uint32_t budget) ->
   const uint32_t endBar = w.loop / kBar;
   while (w.phase != 0) {
     if (w.run >= d.runCount) {
-      if (w.phase == 1) {  // the stored loop — the window's frame, at least the stored notes' reach in whole bars
-        const LoopWindow lw = windowOf(e_->runs(), e_->pool(), d.runs, d.runCount, w.loop);
+      if (w.phase == 1) {  // the stored loop — the play window's, at least the stored notes' reach in whole bars
+        const PlayWindow lw = playWindowOf(e_->runs(), e_->pool(), d.runs, d.runCount, w.loop);
         const uint32_t stored = (w.storedEnd + kBar - 1) / kBar * kBar;
-        w.frame = lw.frame > stored ? lw.frame : stored;
-        if (w.frame == 0) w.frame = kBar;
-        w.frameStart = lw.start % w.frame;
+        w.storedTicks = lw.storedTicks > stored ? lw.storedTicks : stored;
+        if (w.storedTicks == 0) w.storedTicks = kBar;
+        w.playStart = lw.start % w.storedTicks;
         w.phase = 2;
         w.run = 0;
         w.row = 0;
@@ -41,10 +41,10 @@ inline auto ControlSurface<Engine>::beyondScan(ManifestId m, uint32_t budget) ->
       beyondBars_ = w.beyondBars;
       beyondSteps_ = w.beyondSteps;
       storedEnd_ = w.storedEnd;
-      frame_ = w.frame;
-      frameStart_ = w.frameStart;
+      storedTicks_ = w.storedTicks;
+      playStart_ = w.playStart;
       absBars_ = w.absBars;
-      absEnd_ = w.absEnd > w.frame ? w.frame : w.absEnd;
+      absEnd_ = w.absEnd > w.storedTicks ? w.storedTicks : w.absEnd;
       for (uint8_t k = 0; k < 64; ++k) barSteps_[k] = w.barSteps[k];
       ++rowScans_;
       w.phase = 0;
@@ -68,7 +68,7 @@ inline auto ControlSurface<Engine>::beyondScan(ManifestId m, uint32_t budget) ->
         if (bb < 64) w.beyondBars |= 1ull << bb;
         if (bb == endBar) w.beyondSteps = static_cast<uint16_t>(w.beyondSteps | (1u << ((e.tick % kBar) / kSixteenth)));
       } else {
-        const uint32_t at = (e.tick + w.frameStart) % w.frame, bar = at / kBar;
+        const uint32_t at = (e.tick + w.playStart) % w.storedTicks, bar = at / kBar;
         if (bar < 64) {
           w.absBars |= 1ull << bar;
           w.barSteps[bar] = static_cast<uint16_t>(w.barSteps[bar] | (1u << ((at % kBar) / kSixteenth)));
@@ -107,7 +107,7 @@ inline auto ControlSurface<Engine>::absSteps(ManifestId m, uint32_t bar) -> uint
     for (uint32_t r = 0; r < run.rowCount; ++r) {
       const PassEvent& e = e_->runs().rowAt(d.runs[i], r, e_->pool());
       if ((e.status & 0xF0) != 0x90 || e.data2 == 0) continue;
-      const uint32_t a = (e.tick + frameStart_) % frame_;
+      const uint32_t a = (e.tick + playStart_) % storedTicks_;
       if (a / kBar == bar) steps_ = static_cast<uint16_t>(steps_ | (1u << ((a % kBar) / kSixteenth)));
     }
   }
@@ -117,24 +117,24 @@ inline auto ControlSurface<Engine>::absSteps(ManifestId m, uint32_t bar) -> uint
 template <typename Engine>
 inline auto ControlSurface<Engine>::loopEditLeds(ManifestId m, uint32_t loop, uint32_t pos, bool moving, uint8_t* want) -> void {
   beyondScan(m, kScanRows);  // the LEDs: in steps
-  const uint32_t frame = frame_, start = frameStart_;
-  const uint32_t at = (start + (moving ? pos % loop : 0)) % frame;
-  const auto in = [&](uint32_t a) { return (a + frame - start) % frame < loop; };
+  const uint32_t storedTicks = storedTicks_, start = playStart_;
+  const uint32_t at = (start + (moving ? pos % loop : 0)) % storedTicks;
+  const auto in = [&](uint32_t a) { return (a + storedTicks - start) % storedTicks < loop; };
   const uint32_t page = at / (8 * kBar) * 8, bar = at / kBar;
   for (uint8_t i = 0; i < 8; ++i) {
     const uint32_t b = page + i, a = b * kBar;
-    if (a >= frame) {
+    if (a >= storedTicks) {
       want[40 + i] = 0;
       continue;
     }
     const bool notes = b < 64 && ((absBars_ >> b) & 1u);
-    const bool inside = in(a) || in(a + kBar - 1 < frame ? a + kBar - 1 : frame - 1);
+    const bool inside = in(a) || in(a + kBar - 1 < storedTicks ? a + kBar - 1 : storedTicks - 1);
     want[40 + i] = moving && b == bar ? 127 : inside ? (notes ? kLoopNotesLed : kLoopEmptyLed) : notes ? kBeyondLed : 0;
   }
   const uint16_t steps = absSteps(m, bar);
   for (uint8_t k = 0; k < 16; ++k) {
     const uint32_t a = bar * kBar + k * kSixteenth;
-    want[k] = a >= frame || !((steps >> k) & 1u) ? 0 : in(a) ? 64 : kBeyondLed;
+    want[k] = a >= storedTicks || !((steps >> k) & 1u) ? 0 : in(a) ? 64 : kBeyondLed;
     want[16 + k] = 0;
   }
   if (moving) want[16 + (at % kBar) / kSixteenth] = 127;

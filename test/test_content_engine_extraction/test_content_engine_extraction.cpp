@@ -170,7 +170,7 @@ void test_a_too_big_groove_build_releases_everything() {
   GrooveRequest q;
   q.settings.tmpl = groove::kStraight;
   q.settings.amount = 100;
-  q.frame = kLoop;
+  q.storedTicks = kLoop;
   using B = decltype(gBuilder);
   TEST_ASSERT_TRUE(gBuilder.start(0, 5, &r, 1, nullptr, 0, q) == B::State::Waiting);
   B::State st = B::State::Waiting;

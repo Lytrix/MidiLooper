@@ -5,7 +5,7 @@
 // do; the owner of the library and the set carries out what it asks (`takeRequest`) and answers `succeeded` or
 // `failed`.
 //
-// * The index, in memory: every published milestone's record, in publication order (`add`), and per set its newest
+// * The index, in memory: every published milestone's entry, in publication order (`add`), and per set its newest
 //   milestone. Sets are listed newest first, a set's milestones newest first.
 // * Views (saving and loading split, no return row; the dividers name the intent). Top: `< CLOSE`, `SAVE SET`, a `LOAD
 //   SET` divider (not selectable), then the working set and the other sets, newest first, and `TRASH` last (the second
@@ -19,10 +19,10 @@
 //   asks to move it to the trash (`YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it closes the
 //   save popup and a failure, changing nothing. In the trash TRACK restores an item; `EMPTY TRASH` asks again before
 //   removing everything in it for good. Opening selects `SAVE SET`.
-// * The trash: trash, restore and empty-trash records are `add`ed like milestones, in card order. A trash record is an
+// * The trash: trash, restore and empty-trash entries are `add`ed like milestones, in card order. A trash entry is an
 //   item: the milestone it names, or every shown milestone of its set before it (its stages and history together).
-//   Restoring an item shows its milestones again (and so their set); emptying removes every item for good. Records keep
-//   their place (a row's record is its card index) and every milestone counts for numbering, so no id or set number is
+//   Restoring an item shows its milestones again (and so their set); emptying removes every item for good. Entries keep
+//   their place (a row's entry is its card index) and every milestone counts for numbering, so no id or set number is
 //   used twice.
 // * The suggestion (proposal §3): one stage by one rule. No base milestone: Sketch. A new set from a base: the base's
 //   stage. Otherwise the base's stage, unless everything since it is of one kind (`Activity`): content changed only →
@@ -42,7 +42,7 @@
 //   it; on a preset to USE an empty loop — over a filled destination after a confirmation. A move ends an audition;
 //   HOLD TRACK leaves it (back to the stages). The preview the panel shows is the owner's: it reads the loop under the
 //   cursor (`previewWanted`, a generation per cursor position) and answers with its generation.
-// No allocation; the record array is the caller's memory (PSRAM on the device).
+// No allocation; the entry array is the caller's memory (PSRAM on the device).
 
 #pragma once
 
@@ -53,7 +53,7 @@
 
 namespace ContentEngine {
 
-template <uint16_t MaxRecords = library::kIndexRecords>
+template <uint16_t MaxEntries = library::kIndexEntries>
 class SetBrowser {
  public:
   enum class View : uint8_t { Closed, Top, Set, Bin, Popup, Confirm, Failed, Stages, Picker };
@@ -61,9 +61,9 @@ class SetBrowser {
   struct Row {
     RowKind kind;
     uint16_t set;     // Working, Set, Item: the set
-    uint16_t record;  // Set: its newest milestone; Milestone: the milestone (kNone: none); Item: the trash record
+    uint16_t entry;  // Set: its newest milestone; Milestone: the milestone (kNone: none); Item: the trash entry
   };
-  /// The get-a-loop picker: Audition (record, from, into), Use (the same: placed as one undo step), UseEmpty (bars,
+  /// The get-a-loop picker: Audition (entry, from, into), Use (the same: placed as one undo step), UseEmpty (bars,
   /// into), CancelAudition, LeavePicker (any audition ended, the preview dropped).
   enum class Action : uint8_t {
     None, Save, Load, Trash, Restore, Empty, Audition, Use, UseEmpty, CancelAudition, LeavePicker
@@ -73,7 +73,7 @@ class SetBrowser {
   enum class Confirm : uint8_t { ToTrash, Empty, EmptyLoop };
   struct Request {
     Action action = Action::None;
-    uint16_t record = 0;  // Load; Trash: the stage (kNone: the whole set); Restore: the trash record
+    uint16_t entry = 0;  // Load; Trash: the stage (kNone: the whole set); Restore: the trash entry
     uint16_t set = 0;     // Save: the set it goes into; Trash, Restore: the set
     library::Stage stage = library::Stage::Sketch;
     uint8_t stageNumber = 0;
@@ -94,12 +94,12 @@ class SetBrowser {
     lastTrash_ = kNone;
     view_ = View::Closed;
   }
-  /// A published record, in publication order: a milestone, or a trash / restore / empty-trash record.
+  /// A published entry, in publication order: a milestone, or a trash / restore / empty-trash entry.
   /// False: the cache is full.
-  bool add(const library::Record& r) {
-    if (count_ >= MaxRecords) return false;
+  bool add(const library::Entry& r) {
+    if (count_ >= MaxEntries) return false;
     const uint16_t at = count_++;
-    records_[at] = r;
+    entries_[at] = r;
     trashedBy_[at] = kNone;
     gone_[at] = false;
     switch (r.kind) {
@@ -109,8 +109,8 @@ class SetBrowser {
       case library::kTrash: {  // the milestone named, or the set's shown ones before it; an item that took none is spent
         bool took = false;
         for (uint16_t i = 0; i < at; ++i)
-          if (shown(i) && records_[i].set == r.set &&
-              (r.parent == 0 ? records_[i].sequence < r.sequence : records_[i].sequence == r.parent)) {
+          if (shown(i) && entries_[i].set == r.set &&
+              (r.parent == 0 ? entries_[i].sequence < r.sequence : entries_[i].sequence == r.parent)) {
             trashedBy_[i] = at;
             took = true;
           }
@@ -119,7 +119,7 @@ class SetBrowser {
       }
       case library::kRestore:
         for (uint16_t j = 0; j < at; ++j)
-          if (inTrash(j) && records_[j].sequence == r.parent) {
+          if (inTrash(j) && entries_[j].sequence == r.parent) {
             gone_[j] = true;
             for (uint16_t i = 0; i < at; ++i)
               if (trashedBy_[i] == j) trashedBy_[i] = kNone;
@@ -135,13 +135,13 @@ class SetBrowser {
     indexSets();
     return true;
   }
-  /// Whether record `i` is not a shown milestone (trash-side, in the trash or removed: not loadable from the browser).
+  /// Whether entry `i` is not a shown milestone (trash-side, in the trash or removed: not loadable from the browser).
   bool hidden(uint16_t i) const { return i >= count_ || !shown(i); }
-  /// Whether trash record `i` is an item still in the trash.
+  /// Whether trash entry `i` is an item still in the trash.
   bool inTrash(uint16_t i) const {
-    return i < count_ && records_[i].kind == library::kTrash && !gone_[i];
+    return i < count_ && entries_[i].kind == library::kTrash && !gone_[i];
   }
-  /// The trash: its items newest first (trash records), and an item's milestones — how many, the newest.
+  /// The trash: its items newest first (trash entries), and an item's milestones — how many, the newest.
   uint16_t itemCount() const { return items_; }
   uint16_t item(uint16_t k) const { return item_[k]; }
   uint16_t itemSize(uint16_t trash) const {
@@ -155,14 +155,14 @@ class SetBrowser {
     return kNone;
   }
   uint16_t count() const { return count_; }
-  const library::Record& record(uint16_t i) const { return records_[i]; }
+  const library::Entry& entry(uint16_t i) const { return entries_[i]; }
   uint16_t setCount() const { return sets_; }
   /// The next stage number of `stage` in `set`.
   uint8_t nextNumber(uint16_t set, library::Stage stage) const {
     uint8_t high = 0;
     for (uint16_t i = 0; i < count_; ++i)
-      if (records_[i].set == set && records_[i].stage == stage && records_[i].stageNumber > high)
-        high = records_[i].stageNumber;
+      if (entries_[i].set == set && entries_[i].stage == stage && entries_[i].stageNumber > high)
+        high = entries_[i].stageNumber;
     return static_cast<uint8_t>(high + 1);
   }
   /// A set number no milestone uses, a deleted one included, nor the working set: one past the highest (numbers are
@@ -170,10 +170,10 @@ class SetBrowser {
   uint16_t newSetNumber() const {
     uint16_t high = workingSet_;
     for (uint16_t i = 0; i < count_; ++i)
-      if (records_[i].set > high) high = records_[i].set;
+      if (entries_[i].set > high) high = entries_[i].set;
     return static_cast<uint16_t>(high + 1);
   }
-  /// The working set a boot starts in, once the records are added: the one the card's header names — kept
+  /// The working set a boot starts in, once the entries are added: the one the card's header names — kept
   /// with no shown milestone, its base only while that is shown in it — else the newest shown milestone's set, no base.
   struct Working {
     uint16_t set = 1;
@@ -184,12 +184,12 @@ class SetBrowser {
     if (h.hasWorking) {
       w.set = h.workingSet;
       const uint16_t b = h.workingBase != 0 ? find(h.workingBase) : kNone;
-      if (b != kNone && shown(b) && records_[b].set == w.set) w.base = h.workingBase;
+      if (b != kNone && shown(b) && entries_[b].set == w.set) w.base = h.workingBase;
       return w;
     }
     for (uint16_t i = count_; i-- > 0;)
       if (shown(i)) {
-        w.set = records_[i].set;
+        w.set = entries_[i].set;
         break;
       }
     return w;
@@ -197,7 +197,7 @@ class SetBrowser {
   /// The cache index of the milestone published as `sequence` (kNone: none).
   uint16_t find(uint32_t sequence) const {
     for (uint16_t i = 0; i < count_; ++i)
-      if (records_[i].sequence == sequence) return i;
+      if (entries_[i].sequence == sequence) return i;
     return kNone;
   }
 
@@ -221,7 +221,7 @@ class SetBrowser {
     provisional = false;
     const uint16_t b = find(base_);
     if (base_ == 0 || b == kNone) return library::Stage::Sketch;  // new work with no saved origin
-    const library::Stage base = records_[b].stage;
+    const library::Stage base = entries_[b].stage;
     if (newSet || base == library::Stage::Arrangement || base == library::Stage::Final) return base;
     const Activity& a = activity_;
     if (a.build && a.explore) return base;  // mixed: the base's stage
@@ -305,7 +305,7 @@ class SetBrowser {
         request_ = Request{};
         request_.action = confirm_ == Confirm::Empty ? Action::Empty : Action::Trash;
         request_.set = confirmSet_;
-        request_.record = confirmRecord_;
+        request_.entry = confirmEntry_;
         pending_ = request_;
         return;
       case View::Failed:  // try again
@@ -368,17 +368,17 @@ class SetBrowser {
         request_ = Request{};
         request_.action = Action::Restore;
         request_.set = r.set;
-        request_.record = r.record;
+        request_.entry = r.entry;
         pending_ = request_;
         return;
       case RowKind::Milestone:
         if (view_ == View::Stages) {  // SELECT STAGE: its loops
-          openPicker(r.record, false);
+          openPicker(r.entry, false);
           return;
         }
         request_ = Request{};
         request_.action = Action::Load;
-        request_.record = r.record;
+        request_.entry = r.entry;
         pending_ = request_;
         return;
     }
@@ -397,7 +397,7 @@ class SetBrowser {
         request_.action = Action::LeavePicker;
         audition_ = Audition::None;
         preview_ = Preview::None;
-        openStages(pickRecord_);
+        openStages(pickEntry_);
         return;
       case View::Stages:
         view_ = View::Set;
@@ -415,7 +415,7 @@ class SetBrowser {
         return;
     }
     const Row r = row(selected_);
-    if (r.kind == RowKind::Milestone) openConfirm(Confirm::ToTrash, r.set, r.record);
+    if (r.kind == RowKind::Milestone) openConfirm(Confirm::ToTrash, r.set, r.entry);
     else if ((r.kind == RowKind::Working || r.kind == RowKind::Set) && latestOf(r.set) != kNone)
       openConfirm(Confirm::ToTrash, r.set, kNone);
   }
@@ -430,7 +430,7 @@ class SetBrowser {
     request_ = Request{};
     request_.action = Action::Trash;
     request_.set = r.set;
-    request_.record = r.kind == RowKind::Milestone ? r.record : kNone;
+    request_.entry = r.kind == RowKind::Milestone ? r.entry : kNone;
     pending_ = request_;
   }
   /// A triple TRACK: what the last trash moved comes back (while it is still in the trash).
@@ -440,12 +440,12 @@ class SetBrowser {
     list_ = view_;
     request_ = Request{};
     request_.action = Action::Restore;
-    request_.set = records_[lastTrash_].set;
-    request_.record = lastTrash_;
+    request_.set = entries_[lastTrash_].set;
+    request_.entry = lastTrash_;
     pending_ = request_;
     lastTrash_ = kNone;
   }
-  /// The trash record a triple TRACK would restore (kNone: none).
+  /// The trash entry a triple TRACK would restore (kNone: none).
   uint16_t lastTrash() const { return lastTrash_ != kNone && inTrash(lastTrash_) ? lastTrash_ : kNone; }
   /// A double TRACK: the trash from the sets or a set (its newest item selected), the sets from the trash.
   void openTrash() {
@@ -464,12 +464,12 @@ class SetBrowser {
   /// The confirmation: what it asks, its set and stage (kNone: the whole set); 0 YES, 1 CANCEL.
   Confirm confirmKind() const { return confirm_; }
   uint16_t confirmSet() const { return confirmSet_; }
-  uint16_t confirmRecord() const { return confirmRecord_; }
+  uint16_t confirmEntry() const { return confirmEntry_; }
   uint8_t confirmSelected() const { return confirmSel_; }
-  /// A trash, restore or empty-trash asked for was published (its record `add`ed): back to the list, the nearest row
+  /// A trash, restore or empty-trash asked for was published (its entry `add`ed): back to the list, the nearest row
   /// still there selected; a set left without stages leaves its view for the sets.
   void marked() {
-    if (pending_.action == Action::Trash && count_ != 0 && records_[count_ - 1].kind == library::kTrash)
+    if (pending_.action == Action::Trash && count_ != 0 && entries_[count_ - 1].kind == library::kTrash)
       lastTrash_ = static_cast<uint16_t>(count_ - 1);  // a triple TRACK brings it back
     view_ = list_;
     if (view_ == View::Set) {
@@ -525,7 +525,7 @@ class SetBrowser {
       if (i == 1) return Row{RowKind::Empty, 0, kNone};
       if (i == 2) return Row{RowKind::Divider, 0, kNone};
       const uint16_t t = item_[i - kBinHead];
-      return Row{RowKind::Item, records_[t].set, t};
+      return Row{RowKind::Item, entries_[t].set, t};
     }
     if (shownList() == View::Set) {
       if (i == 0) return Row{RowKind::Back, openSet_, kNone};
@@ -571,7 +571,7 @@ class SetBrowser {
   /// How many milestones `set` has.
   uint16_t milestonesIn(uint16_t set) const {
     uint16_t n = 0;
-    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (records_[i].set == set && shown(i) ? 1 : 0));
+    for (uint16_t i = 0; i < count_; ++i) n = static_cast<uint16_t>(n + (entries_[i].set == set && shown(i) ? 1 : 0));
     return n;
   }
 
@@ -616,7 +616,7 @@ class SetBrowser {
     request_ = Request{};
     openSet_ = workingSet_;
     uint16_t src = find(base_);
-    if (src == kNone || !shown(src) || records_[src].set != workingSet_) src = latestOf(workingSet_);
+    if (src == kNone || !shown(src) || entries_[src].set != workingSet_) src = latestOf(workingSet_);
     openPicker(src, true);
   }
   /// The cursor's moves: NOTELEN up, PLAY/STOP down, REC left, EDIT right. Each ends an audition and starts a preview
@@ -626,7 +626,7 @@ class SetBrowser {
   void pickLeft() { pickMove(-1, 0); }
   void pickRight() { pickMove(1, 0); }
   bool picking() const { return view_ == View::Picker || (view_ == View::Confirm && list_ == View::Picker); }
-  uint16_t pickRecord() const { return pickRecord_; }
+  uint16_t pickEntry() const { return pickEntry_; }
   uint8_t pickDestination() const { return pickDest_; }
   bool pickDestinationFilled() const { return pickDestFilled_; }
   /// The cursor: a preset (`pickPreset` 0..4, else kNoPreset) or the grid's track and slot.
@@ -638,15 +638,15 @@ class SetBrowser {
   uint8_t pickSource() const { return static_cast<uint8_t>(pickTrack_ * 8 + pickSlot_); }
   /// The stage's slot `slot` has a loop (its mosaic level, 0: empty).
   uint8_t pickLevel(uint8_t slot) const {
-    if (pickRecord_ == kNone || slot >= 64) return 0;
-    return static_cast<uint8_t>((records_[pickRecord_].mosaic[slot / 4] >> (2 * (slot % 4))) & 3u);
+    if (pickEntry_ == kNone || slot >= 64) return 0;
+    return static_cast<uint8_t>((entries_[pickEntry_].mosaic[slot / 4] >> (2 * (slot % 4))) & 3u);
   }
   /// The loop the owner should preview: the stage and slot under the cursor and its generation; false on a preset, an
   /// empty slot, or no picker.
-  bool previewWanted(uint32_t& generation, uint16_t& record, uint8_t& slot) const {
+  bool previewWanted(uint32_t& generation, uint16_t& entry, uint8_t& slot) const {
     if (!picking() || pickPreset_ != kNoPreset || pickLevel(pickSource()) == 0) return false;
     generation = generation_;
-    record = pickRecord_;
+    entry = pickEntry_;
     slot = pickSource();
     return true;
   }
@@ -677,7 +677,7 @@ class SetBrowser {
   /// The working set's milestones newest first (the popup's history): how many, which, and whether one lies on the
   /// base's line (the base and its parents; others branched off); the base's row (kNone: none).
   uint16_t historyCount() const { return members_; }
-  uint16_t historyRecord(uint16_t k) const { return member_[k]; }
+  uint16_t historyEntry(uint16_t k) const { return member_[k]; }
   bool historyOnLine(uint16_t k) const { return k < members_ && line_[k]; }
   uint16_t historyBase() const { return baseRow_; }
   library::Stage suggested() const { return suggested_; }
@@ -698,9 +698,9 @@ class SetBrowser {
   }
   /// A milestone neither in the trash nor removed.
   bool shown(uint16_t i) const {
-    return records_[i].kind == library::kMilestone && trashedBy_[i] == kNone;
+    return entries_[i].kind == library::kMilestone && trashedBy_[i] == kNone;
   }
-  /// The sets with a shown milestone and each one's newest, and the trash's items newest first, from the records.
+  /// The sets with a shown milestone and each one's newest, and the trash's items newest first, from the entries.
   void indexSets() {
     sets_ = 0;
     items_ = 0;
@@ -711,18 +711,18 @@ class SetBrowser {
   }
   void addToSets(uint16_t r) {
     uint16_t i = 0;
-    while (i < sets_ && setNumber_[i] != records_[r].set) ++i;
+    while (i < sets_ && setNumber_[i] != entries_[r].set) ++i;
     if (i == sets_) {
-      setNumber_[sets_] = records_[r].set;
+      setNumber_[sets_] = entries_[r].set;
       ++sets_;
     }
     setLatest_[i] = r;  // publication order: the newest
   }
-  void openConfirm(Confirm what, uint16_t set, uint16_t record) {
+  void openConfirm(Confirm what, uint16_t set, uint16_t entry) {
     list_ = view_;
     confirm_ = what;
     confirmSet_ = set;
-    confirmRecord_ = record;
+    confirmEntry_ = entry;
     confirmSel_ = 1;  // CANCEL
     view_ = View::Confirm;
   }
@@ -771,10 +771,10 @@ class SetBrowser {
     if (members_ == 0 || from >= members_) return;
     for (uint16_t k = from;;) {  // `from` (the newest, or the base), then each parent in the set
       line_[k] = true;
-      const uint32_t parent = records_[member_[k]].parent;
+      const uint32_t parent = entries_[member_[k]].parent;
       uint16_t next = kNone;
       for (uint16_t j = static_cast<uint16_t>(k + 1); parent != 0 && j < members_; ++j)
-        if (records_[member_[j]].sequence == parent) next = j;
+        if (entries_[member_[j]].sequence == parent) next = j;
       if (next == kNone) break;
       k = next;
     }
@@ -783,12 +783,12 @@ class SetBrowser {
       if (!line_[k]) oldestSide = k;
     if (oldestSide == kNone) return;
     for (uint16_t k = 0; k < members_; ++k)  // the side's root: where it grew from, on the line
-      if (line_[k] && records_[member_[k]].sequence == records_[member_[oldestSide]].parent) join_ = k;
+      if (line_[k] && entries_[member_[k]].sequence == entries_[member_[oldestSide]].parent) join_ = k;
   }
   void fillMembers(uint16_t set) {
     members_ = 0;
     for (uint16_t i = count_; i-- > 0;)  // newest first
-      if (records_[i].set == set && shown(i)) member_[members_++] = i;
+      if (entries_[i].set == set && shown(i)) member_[members_++] = i;
   }
   /// The save popup over the top level: the working set's history with the base's line marked, the suggestion
   /// selected.
@@ -797,7 +797,7 @@ class SetBrowser {
     fillMembers(workingSet_);
     baseRow_ = kNone;
     for (uint16_t k = 0; k < members_; ++k)
-      if (records_[member_[k]].sequence == base_) baseRow_ = k;
+      if (entries_[member_[k]].sequence == base_) baseRow_ = k;
     markLine(baseRow_ == kNone ? 0 : baseRow_);
     suggested_ = suggest(false, provisional_);
     stageSel_ = static_cast<uint8_t>(static_cast<uint8_t>(suggested_) + 1);
@@ -814,10 +814,10 @@ class SetBrowser {
     first_ = 0;
     scroll();
   }
-  /// The picker over milestone `record` (kNone: presets only) for the destination; the cursor on the 4-bar
+  /// The picker over milestone `entry` (kNone: presets only) for the destination; the cursor on the 4-bar
   /// preset for an empty destination, else on the destination's own position.
-  void openPicker(uint16_t record, bool fromSlot) {
-    pickRecord_ = record;
+  void openPicker(uint16_t entry, bool fromSlot) {
+    pickEntry_ = entry;
     pickFromSlot_ = fromSlot;
     if (pickDestFilled_) {
       pickPreset_ = kNoPreset;
@@ -883,7 +883,7 @@ class SetBrowser {
     if (audition_ == Audition::Pending) return;  // not heard yet
     request_ = Request{};
     request_.action = audition_ == Audition::None ? Action::Audition : Action::Use;
-    request_.record = pickRecord_;
+    request_.entry = pickEntry_;
     request_.from = pickSource();
     request_.into = pickDest_;
     pending_ = request_;
@@ -902,18 +902,18 @@ class SetBrowser {
   }
 
   static constexpr uint8_t kText = 24;
-  library::Record records_[MaxRecords];
-  uint16_t setNumber_[MaxRecords], setLatest_[MaxRecords], member_[MaxRecords];
-  bool line_[MaxRecords] = {};
-  // A milestone's trash record (kNone: none); a trash record spent (its item restored, emptied, or empty).
-  uint16_t trashedBy_[MaxRecords], item_[MaxRecords];
-  bool gone_[MaxRecords] = {};
+  library::Entry entries_[MaxEntries];
+  uint16_t setNumber_[MaxEntries], setLatest_[MaxEntries], member_[MaxEntries];
+  bool line_[MaxEntries] = {};
+  // A milestone's trash entry (kNone: none); a trash entry spent (its item restored, emptied, or empty).
+  uint16_t trashedBy_[MaxEntries], item_[MaxEntries];
+  bool gone_[MaxEntries] = {};
   uint16_t items_ = 0;
   uint16_t join_ = kNone, baseRow_ = kNone;
   uint16_t count_ = 0, sets_ = 0, members_ = 0;
   uint16_t workingSet_ = 1, openSet_ = 0, openSetRow_ = kTopHead;
   Confirm confirm_ = Confirm::ToTrash;
-  uint16_t confirmSet_ = 0, confirmRecord_ = kNone;
+  uint16_t confirmSet_ = 0, confirmEntry_ = kNone;
   uint8_t confirmSel_ = 1;
   uint32_t base_ = 0;
   bool changed_ = false, provisional_ = false;
@@ -923,10 +923,10 @@ class SetBrowser {
   uint8_t stageSel_ = 0;
   library::Stage suggested_ = library::Stage::Sketch;
   Request request_{}, pending_{};
-  uint16_t lastTrash_ = kNone;  // the trash record a triple TRACK restores
+  uint16_t lastTrash_ = kNone;  // the trash entry a triple TRACK restores
   // The picker — its stage (a milestone), destination, cursor (a preset, or a track and slot), the preview
   // generation and state, the audition.
-  uint16_t pickRecord_ = kNone;
+  uint16_t pickEntry_ = kNone;
   uint8_t pickDest_ = 0, pickPreset_ = kNoPreset, pickTrack_ = 0, pickSlot_ = 0, confirmBars_ = 0, silentWhy_ = 0;
   bool pickDestFilled_ = false, pickFromSlot_ = false;
   uint32_t generation_ = 0;

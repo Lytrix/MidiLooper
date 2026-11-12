@@ -2,7 +2,7 @@
 //  Licensed under the PolyForm Noncommercial 1.0.0
 //
 // Groove timing (DEC-287, the groove pass): built-in templates and where a note moves. Pure functions over ticks of the
-// stored loop (its frame); 768 ticks a bar, 48 a 16th.
+// stored loop (its storedTicks); 768 ticks a bar, 48 a 16th.
 //
 // A template is a grid `g` and an offset per grid line (its swung place). A note at `t` goes toward the nearest
 // *swung* target among the neighbouring grid lines — not the nearest straight line first (grid 48, 75 % swing: a note
@@ -111,22 +111,22 @@ inline Table builtin(uint8_t t) {
   return x;
 }
 
-/// `x` modulo `frame` for a signed `x`.
-inline uint32_t wrap(int64_t x, uint32_t frame) {
-  const int64_t m = x % static_cast<int64_t>(frame);
-  return static_cast<uint32_t>(m < 0 ? m + frame : m);
+/// `x` modulo `storedTicks` for a signed `x`.
+inline uint32_t wrap(int64_t x, uint32_t storedTicks) {
+  const int64_t m = x % static_cast<int64_t>(storedTicks);
+  return static_cast<uint32_t>(m < 0 ? m + storedTicks : m);
 }
-/// The signed shortest way from `a` to `b` around a loop of `frame` ticks (a tie: forward).
-inline int32_t towards(uint32_t a, uint32_t b, uint32_t frame) {
+/// The signed shortest way from `a` to `b` around a loop of `storedTicks` ticks (a tie: forward).
+inline int32_t towards(uint32_t a, uint32_t b, uint32_t storedTicks) {
   int64_t d = static_cast<int64_t>(b) - static_cast<int64_t>(a);
-  const int64_t half = frame / 2;
-  if (d > half) d -= frame;
-  if (d < -half) d += frame;
+  const int64_t half = storedTicks / 2;
+  if (d > half) d -= storedTicks;
+  if (d < -half) d += storedTicks;
   return static_cast<int32_t>(d);
 }
 
-/// The swung target nearest to `at` (a tie: the earlier), in the stored loop of `frame` ticks, under table `x`.
-inline uint32_t target(const Table& x, uint32_t at, uint32_t frame) {
+/// The swung target nearest to `at` (a tie: the earlier), in the stored loop of `storedTicks` ticks, under table `x`.
+inline uint32_t target(const Table& x, uint32_t at, uint32_t storedTicks) {
   const uint32_t g = x.step == 0 ? kSixteenth : x.step;
   const int64_t base = at / g;
   uint32_t best = at;
@@ -135,8 +135,8 @@ inline uint32_t target(const Table& x, uint32_t at, uint32_t frame) {
   for (int64_t line = base - 1; line <= base + 2; ++line) {
     const int64_t straight = line * static_cast<int64_t>(g);
     const uint32_t lineIndex = wrap(line, x.steps == 0 ? 1 : x.steps);
-    const uint32_t cand = wrap(straight + x.off[lineIndex], frame);
-    const int32_t d = towards(at, cand, frame);
+    const uint32_t cand = wrap(straight + x.off[lineIndex], storedTicks);
+    const int32_t d = towards(at, cand, storedTicks);
     const int32_t ad = d < 0 ? -d : d, ab = bestD < 0 ? -bestD : bestD;
     if (!found || ad < ab || (ad == ab && d < bestD)) {
       best = cand;
@@ -147,17 +147,17 @@ inline uint32_t target(const Table& x, uint32_t at, uint32_t frame) {
   return best;
 }
 
-inline uint32_t target(uint8_t t, uint32_t at, uint32_t frame) { return target(builtin(t), at, frame); }
+inline uint32_t target(uint8_t t, uint32_t at, uint32_t storedTicks) { return target(builtin(t), at, storedTicks); }
 
 /// Where a note at stored position `at` plays under `s` and table `x` (amount % of the way to its target).
-inline uint32_t place(const Settings& s, const Table& x, uint32_t at, uint32_t frame) {
-  if (s.amount == 0 || frame == 0) return at;
-  const int32_t d = towards(at, target(x, at, frame), frame);
+inline uint32_t place(const Settings& s, const Table& x, uint32_t at, uint32_t storedTicks) {
+  if (s.amount == 0 || storedTicks == 0) return at;
+  const int32_t d = towards(at, target(x, at, storedTicks), storedTicks);
   const int64_t moved = d >= 0 ? (static_cast<int64_t>(d) * s.amount + 50) / 100
                                : -((static_cast<int64_t>(-d) * s.amount + 50) / 100);
-  return wrap(static_cast<int64_t>(at) + moved, frame);
+  return wrap(static_cast<int64_t>(at) + moved, storedTicks);
 }
-inline uint32_t place(const Settings& s, uint32_t at, uint32_t frame) { return place(s, builtin(s.tmpl), at, frame); }
+inline uint32_t place(const Settings& s, uint32_t at, uint32_t storedTicks) { return place(s, builtin(s.tmpl), at, storedTicks); }
 
 }  // namespace groove
 }  // namespace ContentEngine

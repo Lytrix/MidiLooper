@@ -6,6 +6,10 @@ file per slot or per milestone. Authority: **DEC-254 — the run-once store and 
 runtime's storage see [`RUNTIME_STORAGE_AND_PERSISTENCE.md`](RUNTIME_STORAGE_AND_PERSISTENCE.md); for the engine as a
 whole, [`FIXED_MEMORY_ENGINE.md`](FIXED_MEMORY_ENGINE.md).
 
+Vocabulary: the store keeps **records** (each run's record, each slot's state record and cold record); the library
+keeps **entries** (an index entry per milestone, trash, restore or empty-trash); the **saved selection** is the
+selected track, each track's selected slot and the muted tracks.
+
 ## The files, all fixed blocks
 
 | File | Size | Holds | Source |
@@ -53,12 +57,12 @@ boot the newer valid copy wins. So a write cut off at any point leaves the previ
 
 - **Slot store:** a save writes the slot's new runs (each its own record, header last), then the slot's state record
   into its inactive copy, header last (DEC-254). Runs already on the card are not written again.
-- **Milestone:** the set's data (the blob) is appended to the log, then its 64 B index record, then the index header
+- **Milestone:** the set's data (the blob) is appended to the log, then its 64 B index entry, then the index header
   (A / B) that counts it. Until the header is programmed the milestone does not exist; a failed write's space is
   simply reused by the next one (DEC-258).
 - **Checkpoint:** written into the checkpoint region that is not current, its header last (DEC-258).
 - **Working set:** named in the index header (DEC-269). A save names its set and the new milestone; a load or return
-  writes only a new index header (A / B, no record). A cut-off write leaves the previous header, and the working set it
+  writes only a new index header (A / B, no entry). A cut-off write leaves the previous header, and the working set it
   names, current. The name travels with the card.
 
 ## The store file inside (DEC-254)
@@ -119,15 +123,15 @@ pressure; `#ENGINE,fetch`; `#ENGINE,runstore`; `#ENGINE,grain_worst` per job cla
 | Area | Sectors | What it holds |
 |---|---|---|
 | Index header A / B | 0–1 | count, where the next milestone goes, the next sequence number |
-| Index records | 2–513 | 4,096 records of 64 B: sequence, set, stage and stage number (`SET 2 T01` on screen), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |
+| Index entries | 2–513 | 4,096 entries of 64 B: sequence, set, stage and stage number (`SET 2 T01` on screen), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |
 | Checkpoint regions A / B | 2 × 4,301 | the recovery checkpoint, each region room for the largest set |
 | Milestone log | 2,088,036 | the milestones, appended |
 
 A milestone is the whole set at the instant it was asked for (every slot's history pinned until the write ends; later
-changes are not in it): a header sector (tempo, surface state, note-id high-water mark, each slot's byte size), then
+changes are not in it): a header sector (tempo, the saved selection, note-id high-water mark, each slot's byte size), then
 each slot's file in the store's format — its full undo history and each run's rows once — each starting on a new
 sector. The largest set is 4,300 sectors (a compile-time check); the log holds at least 485 of those, and about 4,100
-of a typical 509-sector set, so the 4,096-record index is usually the limit reached first.
+of a typical 509-sector set, so the 4,096-entry index is usually the limit reached first.
 
 ## One card stream
 
@@ -152,14 +156,14 @@ the gap. `!ENGINE switch-stage 0|1` turns staging off and on.
 
 ## The trash (DEC-268)
 
-Trashing, restoring and emptying rewrite nothing. Each is one more index record without a blob: a *trash* record
+Trashing, restoring and emptying rewrite nothing. Each is one more index entry without a blob: a *trash* entry
 names the milestone it moves to the trash, or, with no target, every shown milestone of its set published before it
-(one item); a *restore* record takes a trash record's item back out; an *empty-trash* record removes everything in the
-trash for good. They are published as a milestone's record is (the record, then the index header, each programmed
-first), so a cut-off one simply did not happen. At boot the records are replayed in order. A trashed milestone is still
+(one item); a *restore* entry takes a trash entry's item back out; an *empty-trash* entry removes everything in the
+trash for good. They are published as a milestone's entry is (the entry, then the index header, each programmed
+first), so a cut-off one simply did not happen. At boot the entries are replayed in order. A trashed milestone is still
 on the card and loads again once restored. An emptied one's blob stays in the log and its space is not reused (that
 would need compaction); its stage and set numbers are not reused either. Each of these uses one of the 4,096 index
-records.
+entries.
 
 ## The working set across a reboot (DEC-269)
 

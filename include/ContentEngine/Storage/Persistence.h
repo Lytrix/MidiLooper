@@ -16,7 +16,7 @@
 //   slot has two copies (A / B, `kCopySectors` each: a slot may hold the whole content pool); a save writes the copy
 //   that is not current, one sector write a grain — the body (`SaveJob`), its last partial sector, then the header with
 //   the next sequence (one counter past every copy the boot found, so a save reads nothing) — so an interrupted save
-//   leaves the current copy whole. The surface state alternates between two sectors. No write waits for the card
+//   leaves the current copy whole. The saved selection alternates between two sectors. No write waits for the card
 //   (a stop that waited for the card to program took up to 8 ms): a grain writes only when the card says it is
 //   `ready` for that sector, and a save or state write is complete only once the card is idle again (`closing_`: what
 //   it holds programmed).
@@ -30,10 +30,10 @@
 //   note edits discarded and named: `v1EditedMask`); a loop-start-shifted or empty V1 slot is skipped and named
 //   (`v1SkippedMask`), a failed one named too (`v1FailedMask`). Imported slots are saved once approved; V1 files are
 //   never written.
-// * ControlSurface state: the selected track and each track's selected slot, as `kStateBytes` bytes
-//   from the surface (`setSurfaceState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
+// * The saved selection: the selected track and each track's selected slot, as `kStateBytes` bytes
+//   from the surface (`setSelectionState`), saved like a slot — after approval, `kSettleUs` after its last change, as a
 //   persistence grain — into the store's state sectors ("MLS2", sequence, the state packed in 27 bits, a check word;
-//   before the store: `surface.mls`, read once); read at boot (`restoredSurfaceState`), none valid meaning none.
+//   before the store: `surface.mls`, read once); read at boot (`restoredSelection`), none valid meaning none.
 //   The muted tracks too (DEC-293), a fifth word in the sector with its own check.
 // `Card`: the files read only (exists, makeDir, openRead, read, closeRead) and the store (openStore, readSector,
 // writeSector) — see `CardIo`.
@@ -116,7 +116,7 @@ class Persistence : public ColdSink {
   // A save grain produces at most one sector (the CRC runs across chunks, so the file is the same whatever the chunk).
   static constexpr uint32_t kSaveChunk = 512;
   static constexpr uint32_t kSector = 512;
-  // The run-once store (DEC-254). Sectors 0–1 the surface state; per slot two state-record copies of
+  // The run-once store (DEC-254). Sectors 0–1 the saved selection; per slot two state-record copies of
   // `kCopySectors` (a header sector, then the slot stream without its rows: header, directory with each run's record
   // sector, states, CRC); then the run area (`RunStore.h`): each run once, as its own record.
   static constexpr const char* kStoreFile = "/MidiLooper/engine/store.bin";
@@ -344,7 +344,7 @@ class Persistence : public ColdSink {
   }
   /// A save or state write is on the card and not yet programmed (the milestone library waits for it, DEC-258).
   bool onCard() const { return saving_ != kNone || closing_; }
-  /// For the display's save dots: a slot is being written. The surface state (the selection) is saved
+  /// For the display's save dots: a slot is being written. The saved selection (the selection) is saved
   /// silently: a track switch must not hide the screen's progress line behind the dots.
   bool writing() const { return saving_ != kNone || closingSave_; }
   /// A slot changed since its last save (it is saved once settled).
@@ -355,8 +355,8 @@ class Persistence : public ColdSink {
   }
 
   // ---- ControlSurface state ----------------------------------------------------------------------------------------------------
-  /// The surface's state now (`kStateBytes`); saved once settled and approved.
-  void setSurfaceState(const uint8_t* s, uint32_t nowUs) {
+  /// The saved selection now (`kStateBytes`): selected track, each track's slot, muted tracks; saved once settled and approved.
+  void setSelectionState(const uint8_t* s, uint32_t nowUs) {
     const uint32_t packed = pack(s);
     if (stateKnown_ && packed == state_ && s[kStateBytes - 1] == mutes_) return;
     state_ = packed;
@@ -364,7 +364,7 @@ class Persistence : public ColdSink {
     stateKnown_ = true;
     stateChangedUs_ = nowUs;
   }
-  /// The engine's settings saved with the surface state — the GROOVE cycle's bars (1–255; 0: not saved).
+  /// The engine's settings saved with the saved selection — the GROOVE cycle's bars (1–255; 0: not saved).
   void setSettings(uint8_t cycleBars, uint32_t nowUs) {
     if (cycleBars == settings_) return;
     settings_ = cycleBars;
@@ -373,7 +373,7 @@ class Persistence : public ColdSink {
   /// The settings read at boot (0: none — a state sector without a settings word).
   uint8_t restoredCycleBars() const { return settingsRead_; }
   /// The state read at boot. False: none (no file, or a bad one).
-  bool restoredSurfaceState(uint8_t* out) const {
+  bool restoredSelection(uint8_t* out) const {
     if (stateRead_ == kNoState) return false;
     out[0] = stateRead_ & 7;  // the selected track; then track t's slot, t x 8 + its index
     for (uint8_t t = 0; t < kTracks; ++t) out[1 + t] = static_cast<uint8_t>(t * 8 + ((stateRead_ >> (3 + 3 * t)) & 7));
@@ -560,7 +560,7 @@ class Persistence : public ColdSink {
   }
 
   // ---- The store -------------------------------------------------------------------------------------------------------
-  // Sectors 0–1: the surface state. Slot s, copy c (A = 0, B = 1): `kCopySectors` from `copyBase(s, c)` — a header
+  // Sectors 0–1: the saved selection. Slot s, copy c (A = 0, B = 1): `kCopySectors` from `copyBase(s, c)` — a header
   // sector (magic "MLC1", slot, sequence, body bytes, check word), then the body (the slot file, `SlotFile.h`). A save writes
   // the copy that is not current: the body, then the header with the next sequence — an interrupted save leaves the
   // current copy whole. Boot loads the valid copy with the later sequence (the other
@@ -634,7 +634,7 @@ class Persistence : public ColdSink {
         saved_[s] = Fingerprint{};
         ++stats_.migratedSlots;
       }
-    if (stateRead_ != kNoState) stateSaved_ = kNoState;  // the surface state too
+    if (stateRead_ != kNoState) stateSaved_ = kNoState;  // the saved selection too
   }
   /// The run-area extents slot `s`'s copy `c` lists, held (the boot's cluster map, reclaimed at boot).
   void markCopy(uint8_t s, uint8_t c, uint32_t bytes) {

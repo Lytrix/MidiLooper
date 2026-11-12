@@ -410,7 +410,7 @@ class SlotTransport {
   /// new state replaces it in place instead of adding a step (0: always a step).
   /// `marks`: the remembered ranges to keep with the new state (nullptr: the base's).
   Result resize(uint8_t slot, uint32_t loop, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
-                uint32_t replace = 0, const LoopWindow* marks = nullptr) {
+                uint32_t replace = 0, const PlayWindow* marks = nullptr) {
     emitted = 0;
     if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -419,9 +419,9 @@ class SlotTransport {
     if (loop == 0 || loop == b.loopLengthTicks) return Result::NoChange;
     RunId list[Manifests::kMaxRuns];
     uint8_t n = contentRuns(b, list);
-    // The start kept, the frame at least the new loop.
-    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
-    if (w.frame < loop) w.frame = loop;
+    // The start kept, the stored loop at least the new loop.
+    PlayWindow w = playWindowOf(*runs_, *pool_, b.runs, b.runCount, b.loopLengthTicks);
+    if (w.storedTicks < loop) w.storedTicks = loop;
     mark(w, marks);
     ManifestId m;
     const Result r = fittedState(slot, list, n, loop, w, m);
@@ -440,7 +440,7 @@ class SlotTransport {
     if (base == kNoManifest) return Result::Empty;
     const auto& b = manifests_->manifest(base);
     const uint32_t loop = b.loopLengthTicks;
-    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
+    PlayWindow w = playWindowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     if (w.columnA == columnA && w.columnB == columnB && w.heard == heard) return Result::NoChange;
     w.columnA = columnA;
     w.columnB = columnB;
@@ -453,7 +453,7 @@ class SlotTransport {
     return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
 
-  static void mark(LoopWindow& w, const LoopWindow* marks) {
+  static void mark(PlayWindow& w, const PlayWindow* marks) {
     if (marks == nullptr) return;
     w.aStart = marks->aStart;
     w.aLength = marks->aLength;
@@ -508,7 +508,7 @@ class SlotTransport {
     }
     const auto& b = manifests_->manifest(base);
     const uint32_t loop = b.loopLengthTicks;
-    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
+    PlayWindow w = playWindowOf(*runs_, *pool_, b.runs, b.runCount, loop);
     const auto& rq = gb.request();
     w.groove = rq.settings.pack();
     const bool file = rq.settings.tmpl == groove::kFileTemplate && rq.settings.amount != 0;  // a groove file's template
@@ -534,12 +534,12 @@ class SlotTransport {
     return commitState(slot, base, m, replace, clock, out, max, emitted);
   }
 
-  /// The slot's play window in its stored notes (start 0 and the frame 0 without content).
-  LoopWindow window(uint8_t slot) const {
+  /// The slot's play window in its stored notes (start 0 and the stored loop 0 without content).
+  PlayWindow playWindow(uint8_t slot) const {
     const ManifestId c = contentOf(slot);
-    if (c == kNoManifest) return LoopWindow{};
+    if (c == kNoManifest) return PlayWindow{};
     const auto& m = manifests_->manifest(c);
-    return windowOf(*runs_, *pool_, m.runs, m.runCount, m.loopLengthTicks);
+    return playWindowOf(*runs_, *pool_, m.runs, m.runCount, m.loopLengthTicks);
   }
 
   /// Loop start (rotate): a state whose content runs are the slot's rotated `shift` ticks earlier
@@ -547,7 +547,7 @@ class SlotTransport {
   /// for them. Lossless — rotating by `loop − shift` gives the content back. One undo step; tracks playing the slot
   /// follow from the next boundary.
   Result rotate(uint8_t slot, uint32_t shift, uint32_t clock, Emit* out, uint8_t max, uint8_t& emitted,
-                uint32_t replace = 0, const LoopWindow* marks = nullptr) {
+                uint32_t replace = 0, const PlayWindow* marks = nullptr) {
     emitted = 0;
     if (slotBusy(slot)) return Result::Busy;
     const ManifestId base = contentOf(slot);
@@ -568,9 +568,9 @@ class SlotTransport {
       else
         result = f == FitResult::DeniedRun ? Result::DeniedRun : Result::Refused;
     }
-    // The start moves `shift` on in the frame (exact when the loop is the frame, as LOOP_EDIT rotates).
-    LoopWindow w = windowOf(*runs_, *pool_, b.runs, b.runCount, loop);
-    w.start = (w.start + shift) % w.frame;
+    // The start moves `shift` on in the stored loop (exact when the loop is the stored loop, as LOOP_EDIT rotates).
+    PlayWindow w = playWindowOf(*runs_, *pool_, b.runs, b.runCount, loop);
+    w.start = (w.start + shift) % w.storedTicks;
     mark(w, marks);
     const uint8_t rotated = n;
     ManifestId m = kNoManifest;
@@ -703,7 +703,7 @@ class SlotTransport {
   }
   /// A new state for `slot` listing `list[0..n)` and, when the loop needs one, a fit run built for window `w` (appended
   /// to `list`, `n` counting it). Ok: `m` holds the runs; otherwise nothing is created and the fit run is released.
-  Result fittedState(uint8_t slot, RunId* list, uint8_t& n, uint32_t loop, const LoopWindow& w, ManifestId& m,
+  Result fittedState(uint8_t slot, RunId* list, uint8_t& n, uint32_t loop, const PlayWindow& w, ManifestId& m,
                      const groove::Table* table = nullptr, const char* label = nullptr) {
     m = kNoManifest;
     RunId fit = kNoRun;

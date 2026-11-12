@@ -13,7 +13,7 @@
 //   caller's to place (`takeGot`); no checkpoint, no clear, no history touched; a failed read or an empty source slot
 //   changes nothing (`Unchanged`).
 // * The caller loads only with the transport stopped, no take and no NOTE_EDIT session open, and resets the tracks in
-//   `clear` (pending launches dropped) before any history is touched; the surface state and tempo the blob carried are
+//   `clear` (pending launches dropped) before any history is touched; the saved selection and tempo the blob carried are
 //   the caller's to apply (`blob()`). No heap.
 
 #pragma once
@@ -130,7 +130,7 @@ class BlobReader {
   /// The slot that failed (`Why::Slot`), and how many slots loaded.
   uint8_t slot() const { return slot_; }
   uint8_t loaded() const { return loaded_; }
-  /// The blob's header: tempo, surface state, note-id high-water mark.
+  /// The blob's header: tempo, saved selection, note-id high-water mark.
   const library::BlobHeader& blob() const { return blob_; }
   /// A detached load's state for `slot` (one reference, the caller's; kNoManifest: none).
   ManifestId detachedState(uint8_t slot) const { return slot < Slots ? detachedState_[slot] : kNoManifest; }
@@ -456,7 +456,7 @@ class SetLoad {
   }
 
   /// Starts loading milestone `index`. `c` describes the checkpoint written first (the working set's base, its set, the
-  /// time, tempo and surface state); its `loaded` is set to the milestone's sequence here.
+  /// time, tempo and saved selection); its `loaded` is set to the milestone's sequence here.
   /// `atSwitch` (a live load, DEC-260): after the checkpoint the load waits for `release` — the switch point — before
   /// anything is cleared. `stageTracks` (bit t, DEC-261, gapless live switch): for each, the milestone's selected slot
   /// of that track is staged first — its current state loaded beside the playing set (`staged`), for a switch without a
@@ -464,8 +464,8 @@ class SetLoad {
   Result beginLoad(uint16_t index, typename CaptureWriter::Checkpoint c, bool atSwitch = false, uint8_t stageTracks = 0) {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
-    if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
-    c.loaded = record_.sequence;
+    if (!writer_->readEntry(index, entry_) || entry_.kind != library::kMilestone) return Result::NoMilestone;
+    c.loaded = entry_.sequence;
     const typename CaptureWriter::Result r =
         writer_->beginCheckpoint(*pool_, *runs_, *manifests_, *history_, ids_->peek(), c, scratch_);
     if (r == CaptureWriter::Result::TooLarge) return Result::TooLarge;
@@ -483,7 +483,7 @@ class SetLoad {
     if (!writer_->mounted()) return Result::NotMounted;
     if (busy() || writer_->busy()) return Result::Busy;
     if (from >= Slots || into >= Slots || from >= library::kSlots) return Result::NoSlot;
-    if (!writer_->readRecord(index, record_) || record_.kind != library::kMilestone) return Result::NoMilestone;
+    if (!writer_->readEntry(index, entry_) || entry_.kind != library::kMilestone) return Result::NoMilestone;
     kind_ = Kind::Get;
     getFrom_ = from;
     hold_ = false;
@@ -582,9 +582,9 @@ class SetLoad {
   Status status() const { return status_; }
   Kind kind() const { return kind_; }
   /// The milestone being loaded (or got from), and the checkpoint written before it (or returned to).
-  const library::Record& record() const { return record_; }
+  const library::Entry& entry() const { return entry_; }
   const library::CheckpointHeader& checkpoint() const { return checkpoint_; }
-  /// The set that was read last: its tempo and surface state (the milestone's, or the checkpoint's after a restore).
+  /// The set that was read last: its tempo and saved selection (the milestone's, or the checkpoint's after a restore).
   const library::BlobHeader& blob() const { return reader_.blob(); }
   /// Why a load was restored: the reader's reason and slot.
   typename Reader::Why failedWhy() const { return failedWhy_; }
@@ -597,11 +597,11 @@ class SetLoad {
 
   /// The set this operation reads: the milestone's blob (a load or a get), or the checkpoint's (a return, a restore).
   uint32_t setAt() const {
-    return kind_ != Kind::Return && !restoring_ ? library::kLogBase + record_.logSector
+    return kind_ != Kind::Return && !restoring_ ? library::kLogBase + entry_.logSector
                                                 : library::checkpointBase(region()) + 1;
   }
   uint32_t setSequence() const {
-    return kind_ != Kind::Return && !restoring_ ? record_.sequence : checkpoint_.sequence;
+    return kind_ != Kind::Return && !restoring_ ? entry_.sequence : checkpoint_.sequence;
   }
   /// One staging grain: the set's header (which slot each staged track selects), then those slots' current
   /// states, detached. Staging that fails leaves nothing staged: those tracks take the gap.
@@ -616,7 +616,7 @@ class SetLoad {
       }
       uint64_t mask = 0;
       for (uint8_t t = 0; t < kTracks; ++t) {
-        const uint8_t sel = b.surface[1 + t];
+        const uint8_t sel = b.selection[1 + t];
         if (!((stageTracks_ >> t) & 1) || sel / 8 != t || sel >= Slots || b.slotBytes[sel] == 0) continue;
         stageSlot_[t] = sel;
         mask |= 1ull << sel;
@@ -678,7 +678,7 @@ class SetLoad {
   ClearFn clear_ = nullptr;
   void* ctx_ = nullptr;
   Reader reader_;
-  library::Record record_{};
+  library::Entry entry_{};
   library::CheckpointHeader checkpoint_{};
   Phase phase_ = Phase::Checkpoint;
   Kind kind_ = Kind::Load;

@@ -59,10 +59,10 @@ constexpr uint8_t kGroove = 5;  // the groove pass: the effective content of the
 constexpr uint8_t kFitFilterStatus = 0xF5u;
 constexpr uint8_t kFitCrossStatus = 0xF6u;
 constexpr uint8_t kFitHeldStatus = 0xF7u;
-/// The loop's play window in its stored notes, the fit run's last row: `seq` the loop's start, `noteId` the frame's
+/// The loop's play window in its stored notes, the fit run's last row: `seq` the loop's start, `noteId` the stored loop's
 /// length (ticks) — the stored loop the start counts in; `tick` 0xFFFFFFFF so it sorts after every lookup. Absent:
-/// start 0, the frame the loop.
-constexpr uint8_t kFitWindowStatus = 0xF8u;
+/// start 0, the stored loop the loop itself.
+constexpr uint8_t kFitPlayWindowStatus = 0xF8u;
 /// The loop's two remembered ranges (A the older, B the newer range set with the step / bar
 /// buttons), after the window row, same layout (`seq` the start, `noteId` the length). Absent: no such range.
 constexpr uint8_t kFitRangeAStatus = 0xF9u;

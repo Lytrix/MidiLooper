@@ -15,7 +15,7 @@ static B gB;
 static uint32_t gSeq = 0;
 
 static void publish(uint16_t set, Stage stage) {
-  Record r{};
+  Entry r{};
   r.sequence = ++gSeq;
   r.set = set;
   r.stage = stage;
@@ -49,10 +49,10 @@ void test_opening_selects_save_over_a_load_section_of_sets_newest_first() {
   TEST_ASSERT_EQUAL(B::RowKind::Divider, kind(2));
   TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
   TEST_ASSERT_EQUAL_UINT16(2, gB.row(3).set);
-  TEST_ASSERT_EQUAL_UINT16(4, gB.row(3).record);  // T01, its newest
+  TEST_ASSERT_EQUAL_UINT16(4, gB.row(3).entry);  // T01, its newest
   TEST_ASSERT_EQUAL_UINT16(3, gB.row(4).set);     // the newest other set first
   TEST_ASSERT_EQUAL_UINT16(7, gB.row(5).set);
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(5).record);  // SET 07's newest: T02
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(5).entry);  // SET 07's newest: T02
   TEST_ASSERT_EQUAL_UINT16(1, gB.selected());
 }
 
@@ -95,14 +95,14 @@ void test_a_set_opens_on_its_newest_milestone_and_loads_it() {
   TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
   TEST_ASSERT_EQUAL(B::RowKind::TrashSet, kind(5));  // MOVE SET TO TRASH, last (DEC-279 amendment 2)
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).record);  // T02 first
-  TEST_ASSERT_EQUAL_UINT16(1, gB.row(4).record);
+  TEST_ASSERT_EQUAL_UINT16(3, gB.row(3).entry);  // T02 first
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(4).entry);
   gB.down();
   gB.press();
   B::Request r;
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Load, r.action);
-  TEST_ASSERT_EQUAL_UINT16(1, r.record);  // T01 of SET 07
+  TEST_ASSERT_EQUAL_UINT16(1, r.entry);  // T01 of SET 07
   TEST_ASSERT_FALSE(gB.takeRequest(r));   // once
   gB.succeeded();
   TEST_ASSERT_FALSE(gB.isOpen());
@@ -227,7 +227,7 @@ void test_hold_closes_the_save_popup_and_asks_nothing() {
 // ---- The trash (DEC-268) --------------------------------------------------------------------------------------------
 /// A trash-side record as the library publishes it: its own sequence, the set, the target.
 static uint32_t mark(uint8_t kind, uint16_t set, uint32_t target) {
-  Record r{};
+  Entry r{};
   r.sequence = ++gSeq;
   r.set = set;
   r.kind = kind;
@@ -252,7 +252,7 @@ void test_hold_on_a_set_asks_to_trash_it_and_cancel_changes_nothing() {
   TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());
   TEST_ASSERT_EQUAL(B::Confirm::ToTrash, gB.confirmKind());
   TEST_ASSERT_EQUAL_UINT16(7, gB.confirmSet());
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.confirmRecord());
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.confirmEntry());
   TEST_ASSERT_EQUAL_UINT8(1, gB.confirmSelected());  // CANCEL
   TEST_ASSERT_EQUAL(B::RowKind::Set, kind(gB.selected()));  // the list under it
   gB.press();
@@ -275,7 +275,7 @@ void test_a_trashed_set_leaves_the_sets_for_the_trash() {
   const B::Request r = confirmYes();
   TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
   TEST_ASSERT_EQUAL_UINT16(3, r.set);
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.record);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.entry);
   TEST_ASSERT_EQUAL(B::View::Confirm, gB.view());  // until it is published
   mark(kTrash, 3, 0);
   gB.marked();
@@ -293,7 +293,7 @@ void test_a_trashed_set_leaves_the_sets_for_the_trash() {
 
 /// A double TRACK opens the trash (`< SETS`, EMPTY TRASH, the RESTORE divider, the items newest first) and closes it.
 void test_the_trash_lists_its_items_newest_first() {
-  mark(kTrash, 7, gB.record(3).sequence);  // SET 07 T02
+  mark(kTrash, 7, gB.entry(3).sequence);  // SET 07 T02
   mark(kTrash, 3, 0);                      // SET 03
   gB.open();
   gB.openTrash();
@@ -344,7 +344,7 @@ void test_the_trash_row_opens_the_trash_and_is_not_the_nearest_set() {
 
 /// TRACK on an item restores it at once; a stage restored brings its set back; the trash stays, the next item selected.
 void test_restoring_a_stage_brings_its_set_back() {
-  const uint32_t t = mark(kTrash, 3, gB.record(5).sequence);  // SET 03 F01, its only stage: the set is gone
+  const uint32_t t = mark(kTrash, 3, gB.entry(5).sequence);  // SET 03 F01, its only stage: the set is gone
   gB.open();
   TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
   gB.openTrash();
@@ -352,7 +352,7 @@ void test_restoring_a_stage_brings_its_set_back() {
   B::Request r;
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Restore, r.action);
-  TEST_ASSERT_EQUAL_UINT16(6, r.record);
+  TEST_ASSERT_EQUAL_UINT16(6, r.entry);
   mark(kRestore, 3, t);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Bin, gB.view());
@@ -366,7 +366,7 @@ void test_restoring_a_stage_brings_its_set_back() {
 
 /// A stage trashed on its own, then its set: two items; restoring the set leaves the stage in the trash.
 void test_a_set_item_takes_only_the_stages_still_shown() {
-  const uint32_t stage = mark(kTrash, 7, gB.record(3).sequence);  // T02
+  const uint32_t stage = mark(kTrash, 7, gB.entry(3).sequence);  // T02
   const uint32_t set = mark(kTrash, 7, 0);                         // T01, the rest
   TEST_ASSERT_EQUAL_UINT16(2, gB.itemCount());
   TEST_ASSERT_EQUAL_UINT16(1, gB.itemSize(7));
@@ -412,15 +412,15 @@ void test_trashing_a_stage_keeps_the_set_and_selects_the_next_stage() {
   for (int i = 0; i < 3; ++i) gB.down();
   gB.press();  // SET 07: T02, T01
   gB.hold();
-  TEST_ASSERT_EQUAL_UINT16(3, gB.confirmRecord());  // T02
+  TEST_ASSERT_EQUAL_UINT16(3, gB.confirmEntry());  // T02
   const B::Request r = confirmYes();
-  TEST_ASSERT_EQUAL_UINT16(3, r.record);
-  mark(kTrash, 7, gB.record(3).sequence);
+  TEST_ASSERT_EQUAL_UINT16(3, r.entry);
+  mark(kTrash, 7, gB.entry(3).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   TEST_ASSERT_EQUAL_UINT16(5, gB.rowCount());
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
-  TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).record);  // T01
+  TEST_ASSERT_EQUAL_UINT16(1, gB.row(3).entry);  // T01
   TEST_ASSERT_EQUAL_UINT8(3, gB.nextNumber(7, Stage::Take));
 }
 
@@ -437,8 +437,8 @@ void test_a_double_track_trashes_and_a_triple_brings_it_back() {
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
   TEST_ASSERT_EQUAL_UINT16(7, r.set);
-  TEST_ASSERT_EQUAL_UINT16(3, r.record);  // T02, no confirmation
-  const uint32_t t = mark(kTrash, 7, gB.record(3).sequence);
+  TEST_ASSERT_EQUAL_UINT16(3, r.entry);  // T02, no confirmation
+  const uint32_t t = mark(kTrash, 7, gB.entry(3).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   const uint16_t trashRecord = gB.lastTrash();
@@ -447,7 +447,7 @@ void test_a_double_track_trashes_and_a_triple_brings_it_back() {
   gB.undoTrash();
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Restore, r.action);
-  TEST_ASSERT_EQUAL_UINT16(trashRecord, r.record);
+  TEST_ASSERT_EQUAL_UINT16(trashRecord, r.entry);
   TEST_ASSERT_EQUAL_UINT16(7, r.set);
   mark(kRestore, 7, t);
   gB.marked();
@@ -463,7 +463,7 @@ void test_a_double_track_trashes_and_a_triple_brings_it_back() {
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Trash, r.action);
   TEST_ASSERT_EQUAL_UINT16(7, r.set);
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.record);  // the whole set
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, r.entry);  // the whole set
   // Outside a set's stages a double TRACK does nothing.
   gB.open();
   gB.trashSelected();
@@ -477,7 +477,7 @@ void test_trashing_the_last_stage_leaves_the_set_view() {
   gB.press();  // SET 03: F01
   gB.hold();
   const B::Request r = confirmYes();
-  mark(kTrash, 3, gB.record(r.record).sequence);
+  mark(kTrash, 3, gB.entry(r.entry).sequence);
   gB.marked();
   TEST_ASSERT_EQUAL(B::View::Top, gB.view());
   TEST_ASSERT_EQUAL_UINT16(6, gB.rowCount());
@@ -495,7 +495,7 @@ void test_trashing_the_working_set_keeps_its_row_and_base() {
   mark(kTrash, 2, 0);
   gB.marked();
   TEST_ASSERT_EQUAL(B::RowKind::Working, kind(3));
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.row(3).record);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.row(3).entry);
   TEST_ASSERT_EQUAL_UINT16(3, gB.selected());
   TEST_ASSERT_EQUAL_UINT16(4, gB.find(gB.baseSequence()));  // T01, in the trash but known
   bool provisional = false;
@@ -521,7 +521,7 @@ void test_a_failed_trash_keeps_the_set_and_retries() {
   TEST_ASSERT_TRUE(gB.takeRequest(again));
   TEST_ASSERT_EQUAL(B::Action::Trash, again.action);
   TEST_ASSERT_EQUAL_UINT16(7, again.set);
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, again.record);
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, again.entry);
 }
 
 /// At boot the index is replayed in card order: a set's trash record takes only what was published before it.
@@ -551,7 +551,7 @@ void test_a_failure_keeps_the_screen_and_selection_and_track_tries_again() {
   B::Request again;
   TEST_ASSERT_TRUE(gB.takeRequest(again));
   TEST_ASSERT_EQUAL(B::Action::Load, again.action);
-  TEST_ASSERT_EQUAL_UINT16(r.record, again.record);
+  TEST_ASSERT_EQUAL_UINT16(r.entry, again.entry);
   gB.failed("LOAD FAILED", "CARD READ ERROR");
   gB.hold();
   TEST_ASSERT_FALSE(gB.isOpen());
@@ -588,7 +588,7 @@ void test_the_line_and_its_side_branch() {
   gB.clear();
   gSeq = 0;
   auto add = [](Stage st, uint8_t n, uint32_t parent) {
-    Record r{};
+    Entry r{};
     r.sequence = ++gSeq;
     r.set = 4;
     r.stage = st;
@@ -621,7 +621,7 @@ void test_a_straight_history_has_one_lane() {
   gB.hold();
   gB.clear();
   gSeq = 0;
-  Record r{};
+  Entry r{};
   for (uint8_t k = 0; k < 3; ++k) {
     r.sequence = ++gSeq;
     r.set = 2;
@@ -642,7 +642,7 @@ void test_the_popup_history_follows_the_base_line() {
   gB.clear();
   gSeq = 0;
   auto add = [](Stage st, uint8_t n, uint32_t parent) {
-    Record r{};
+    Entry r{};
     r.sequence = ++gSeq;
     r.set = 4;
     r.stage = st;
@@ -659,7 +659,7 @@ void test_the_popup_history_follows_the_base_line() {
   gB.press();
   TEST_ASSERT_EQUAL(B::View::Popup, gB.view());
   TEST_ASSERT_EQUAL_UINT16(4, gB.historyCount());
-  TEST_ASSERT_EQUAL_UINT16(3, gB.historyRecord(0));  // A01 newest
+  TEST_ASSERT_EQUAL_UINT16(3, gB.historyEntry(0));  // A01 newest
   TEST_ASSERT_EQUAL_UINT16(2, gB.historyBase());     // B04's row
   TEST_ASSERT_FALSE(gB.historyOnLine(0));            // A01
   TEST_ASSERT_FALSE(gB.historyOnLine(1));            // T03
@@ -709,7 +709,7 @@ void test_a_card_naming_no_working_set_falls_back_to_the_newest() {
 // ---- Get a loop's picker (DEC-272) ----------------------------------------------------------------------------------
 /// A milestone of SET 05 whose mosaic has loops in slots 2 (track 1 slot 3, level 3) and 9 (track 2 slot 2, level 2).
 static uint16_t stageWithLoops() {
-  Record r{};
+  Entry r{};
   r.sequence = ++gSeq;
   r.set = 5;
   r.stage = Stage::Take;
@@ -743,7 +743,7 @@ static void openPickerOn(uint8_t dest, bool filled) {
 void test_the_picker_opens_from_a_sets_get_a_loop() {
   const uint16_t stage = stageWithLoops();
   openPickerOn(17, false);
-  TEST_ASSERT_EQUAL_UINT16(stage, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT16(stage, gB.pickEntry());
   TEST_ASSERT_EQUAL_UINT8(17, gB.pickDestination());
   TEST_ASSERT_EQUAL_UINT8(gB.startPreset(), gB.pickPreset());
   TEST_ASSERT_EQUAL_UINT8(4, B::kPresetBars[gB.pickPreset()]);
@@ -755,7 +755,7 @@ void test_the_picker_opens_from_a_sets_get_a_loop() {
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::LeavePicker, r.action);
   TEST_ASSERT_EQUAL(B::View::Stages, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(stage, gB.row(gB.selected()).record);  // the stage it came from
+  TEST_ASSERT_EQUAL_UINT16(stage, gB.row(gB.selected()).entry);  // the stage it came from
   gB.hold();
   TEST_ASSERT_EQUAL(B::View::Set, gB.view());
   gB.close();
@@ -824,7 +824,7 @@ void test_the_picker_auditions_then_uses_a_loop() {
   gB.press();
   TEST_ASSERT_TRUE(gB.takeRequest(r));
   TEST_ASSERT_EQUAL(B::Action::Audition, r.action);
-  TEST_ASSERT_EQUAL_UINT16(stage, r.record);
+  TEST_ASSERT_EQUAL_UINT16(stage, r.entry);
   TEST_ASSERT_EQUAL_UINT8(9, r.from);
   TEST_ASSERT_EQUAL_UINT8(20, r.into);
   TEST_ASSERT_EQUAL(B::Audition::Pending, gB.audition());
@@ -895,18 +895,18 @@ void test_a_preset_uses_an_empty_loop_asking_over_a_filled_slot() {
 void test_a_slots_long_press_opens_the_picker_on_the_base_stage() {
   gB.openPickerFromSlot(9, true);  // setUp: the working set SET 02, base sequence 5 (its T01, record 4)
   TEST_ASSERT_EQUAL(B::View::Picker, gB.view());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT16(4, gB.pickEntry());
   TEST_ASSERT_EQUAL_UINT8(9, gB.pickDestination());
   TEST_ASSERT_EQUAL_UINT8(1, gB.pickTrack());
   TEST_ASSERT_EQUAL_UINT8(1, gB.pickSlotIndex());
   gB.hold();
   TEST_ASSERT_EQUAL(B::View::Stages, gB.view());
   TEST_ASSERT_EQUAL_UINT16(2, gB.openSetNumber());
-  TEST_ASSERT_EQUAL_UINT16(4, gB.row(gB.selected()).record);
+  TEST_ASSERT_EQUAL_UINT16(4, gB.row(gB.selected()).entry);
   gB.close();
   gB.setWorking(9, 0);  // a working set without stages: the presets only
   gB.openPickerFromSlot(3, false);
-  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.pickRecord());
+  TEST_ASSERT_EQUAL_UINT16(B::kNone, gB.pickEntry());
   TEST_ASSERT_EQUAL_UINT8(gB.startPreset(), gB.pickPreset());
 }
 

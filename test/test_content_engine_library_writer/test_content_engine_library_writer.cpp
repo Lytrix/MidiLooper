@@ -152,10 +152,10 @@ static LibWriter::Milestone milestone(Stage stage, uint8_t number) {
   m.parent = 0;
   m.wallTime = 1794175000;
   m.tempoTenths = 1200;
-  m.surface[0] = 1;
+  m.selection[0] = 1;
   return m;
 }
-static std::vector<uint8_t> blobSlot(const Record& r, uint8_t slot) {
+static std::vector<uint8_t> blobSlot(const Entry& r, uint8_t slot) {
   uint8_t h[kSector];
   gCard.readLibrarySector(kLogBase + r.logSector, h);
   BlobHeader bh;
@@ -193,8 +193,8 @@ void test_a_milestone_is_published_and_reads_back() {
   LibWriter fresh;  // as at the next boot
   TEST_ASSERT_TRUE(fresh.mount(gCard));
   TEST_ASSERT_EQUAL_UINT16(1, fresh.header().count);
-  Record r;
-  TEST_ASSERT_TRUE(fresh.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(fresh.readEntry(0, r));
   TEST_ASSERT_EQUAL(Stage::Take, r.stage);
   TEST_ASSERT_EQUAL_UINT8(4, r.stageNumber);
   TEST_ASSERT_EQUAL_UINT16(2, r.set);
@@ -224,8 +224,8 @@ void test_a_change_while_it_writes_is_not_in_it() {
   commit(2, {d}, 4);
   gRuns.release(d);
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   TEST_ASSERT_TRUE(blobSlot(r, 0) == t0slot0);
   TEST_ASSERT_TRUE(blobSlot(r, 2) == t0slot2);
   TEST_ASSERT_FALSE(saveNow(2) == t0slot2);  // the live set did change
@@ -247,8 +247,8 @@ void test_an_interrupted_write_publishes_nothing_and_its_space_is_reused() {
   TEST_ASSERT_EQUAL(LibWriter::Result::Ok,
                     gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
-  Record r;
-  TEST_ASSERT_TRUE(gW.readRecord(0, r));
+  Entry r;
+  TEST_ASSERT_TRUE(gW.readEntry(0, r));
   TEST_ASSERT_EQUAL_UINT32(0, r.logSector);  // the failed write's space, reused
 }
 
@@ -258,8 +258,8 @@ void test_a_record_written_before_its_header_is_not_published() {
                     gW.beginMilestone(gPool, gRuns, gManifests, gH, 100, milestone(Stage::Sketch, 1), gScratch));
   TEST_ASSERT_EQUAL(LibWriter::Status::Done, runToEnd());
   const uint32_t before = gCard.writes;
-  Record first;
-  TEST_ASSERT_TRUE(gW.readRecord(0, first));
+  Entry first;
+  TEST_ASSERT_TRUE(gW.readEntry(0, first));
   uint32_t blobWrites = 1;  // header + slots
   {
     uint8_t h[kSector];
@@ -280,8 +280,8 @@ void test_a_record_written_before_its_header_is_not_published() {
   LibWriter fresh;
   TEST_ASSERT_TRUE(fresh.mount(gCard));
   TEST_ASSERT_EQUAL_UINT16(1, fresh.header().count);  // the second record exists on the card but is not published
-  Record r;
-  TEST_ASSERT_FALSE(fresh.readRecord(1, r));
+  Entry r;
+  TEST_ASSERT_FALSE(fresh.readEntry(1, r));
 }
 
 /// DEC-268: a deletion is a tombstone record and a header — no blob, the log not advanced, nothing older rewritten; a
@@ -309,11 +309,11 @@ void test_a_deletion_publishes_a_tombstone_and_rewrites_nothing() {
   TEST_ASSERT_TRUE(fresh.mount(gCard));
   TEST_ASSERT_EQUAL_UINT16(2, fresh.header().count);
   TEST_ASSERT_EQUAL_UINT32(append, fresh.header().appendSector);
-  Record m, t;
-  TEST_ASSERT_TRUE(fresh.readRecord(0, m));  // the milestone as it was
+  Entry m, t;
+  TEST_ASSERT_TRUE(fresh.readEntry(0, m));  // the milestone as it was
   TEST_ASSERT_EQUAL(kMilestone, m.kind);
   TEST_ASSERT_EQUAL_UINT32(1, m.sequence);
-  TEST_ASSERT_TRUE(fresh.readRecord(1, t));
+  TEST_ASSERT_TRUE(fresh.readEntry(1, t));
   TEST_ASSERT_EQUAL(kTrash, t.kind);
   TEST_ASSERT_EQUAL_UINT16(2, t.set);
   TEST_ASSERT_EQUAL_UINT32(1, t.parent);
@@ -336,12 +336,12 @@ void test_a_failed_deletion_publishes_nothing() {
   LibWriter fresh;
   TEST_ASSERT_TRUE(fresh.mount(gCard));
   TEST_ASSERT_EQUAL_UINT16(1, fresh.header().count);
-  Record r;
-  TEST_ASSERT_FALSE(fresh.readRecord(1, r));
+  Entry r;
+  TEST_ASSERT_FALSE(fresh.readEntry(1, r));
   gCard.failAfter = 0xFFFFFFFFu;
   IndexHeader full;
   full.sequence = 9;
-  full.count = static_cast<uint16_t>(kIndexRecords);
+  full.count = static_cast<uint16_t>(kIndexEntries);
   uint8_t sector[kSector];
   encode(full, sector);
   gCard.writeLibrarySector(0, sector);
@@ -400,7 +400,7 @@ void test_a_working_change_publishes_only_the_header() {
   TEST_ASSERT_EQUAL_UINT32(0, fresh.header().workingBase);
   IndexHeader full = fresh.header();  // no record needed: a full index still takes it
   full.sequence += 1;
-  full.count = static_cast<uint16_t>(kIndexRecords);
+  full.count = static_cast<uint16_t>(kIndexEntries);
   uint8_t sector[kSector];
   encode(full, sector);
   gCard.writeLibrarySector(0, sector);
@@ -453,7 +453,7 @@ void test_a_save_that_does_not_fit_writes_nothing() {
   TEST_ASSERT_EQUAL_UINT32(0, gCard.writes);
   TEST_ASSERT_EQUAL_UINT16(0, gManifests.manifest(gH.current(0)).readerPins);
   full.appendSector = 0;
-  full.count = kIndexRecords;
+  full.count = kIndexEntries;
   encode(full, s);
   gCard.writeLibrarySector(0, s);
   gCard.writes = 0;

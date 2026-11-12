@@ -279,7 +279,7 @@ void loop() {
   health.crumb(kLeds);  // 7. Feedback to the DROID
   uint8_t bank;
   if (fw.surface.bank(bank)) ports.sendBank(bank);  // the DROID's fader bank follows NOTE_EDIT
-  NoteEditSurface<EngineRoot>::MotorMsg motor;
+  ControlSurfaceNoteEdit<EngineRoot>::MotorMsg motor;
   if (fw.surface.motor(millis(), motor)) ports.sendMotor(motor);  // the DROID's motor faders follow the selection
   if (micros() - ports.lastLedUs >= MidiPorts::kLedGapUs) {
     if (!ports.hostTxRoom())

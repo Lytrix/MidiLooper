@@ -70,8 +70,8 @@ struct LibraryOperations {
     const uint64_t d = static_cast<uint64_t>(fw.clock.usPerTick()) * EngineClock::kTicksPerQuarter;
     return static_cast<uint16_t>((600000000ull + d / 2) / d);
   }
-  /// The surface state as it is saved (`saveSelection`).
-  void surfaceNow(uint8_t* state) {
+  /// The saved selection as it is saved (`saveSelection`).
+  void selectionNow(uint8_t* state) {
     state[0] = fw.engine.control().selectedTrack();
     for (uint8_t t = 0; t < kTrackCount; ++t) state[1 + t] = fw.surface.selectedSlot(t);
   }
@@ -109,8 +109,8 @@ struct LibraryOperations {
     const uint32_t t = micros();
     browser.clear();
     for (uint16_t i = 0; i < l.header().count; ++i) {
-      library::Record r{};
-      if (!l.readRecord(i, r)) r = library::Record{};
+      library::Entry r{};
+      if (!l.readEntry(i, r)) r = library::Entry{};
       browser.add(r);
     }
     // The working set the card's header names, else the newest shown milestone's set.
@@ -138,8 +138,8 @@ struct LibraryOperations {
   FIRMWARE_COLD void listMilestones() {
     auto& l = fw.engine.library();
     for (uint16_t i = 0; i < l.header().count; ++i) {
-      library::Record r;
-      if (!l.readRecord(i, r)) {
+      library::Entry r;
+      if (!l.readEntry(i, r)) {
         Serial.printf("#ENGINE,ms,i=%u,bad=1\n", i);
         continue;
       }
@@ -174,7 +174,7 @@ struct LibraryOperations {
     m.parent = base;
     m.wallTime = settings.wallTime();
     m.tempoTenths = tempoTenthsNow();
-    surfaceNow(m.surface);
+    selectionNow(m.selection);
     const ProductionLibrary::Result r = fw.engine.saveMilestone(m);
     if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
     libraryCheckpoint = false;
@@ -190,7 +190,7 @@ struct LibraryOperations {
     if (!fw.engine.library().mounted()) return "LIBRARY NOT READY";
     if (fw.engine.libraryBusy()) return "BUSY";
     if (fw.engine.auditioning()) return "AUDITION OPEN";  // its source stays as it is
-    const uint32_t target = index == ProductionBrowser::kNone ? 0 : browser.record(index).sequence;
+    const uint32_t target = index == ProductionBrowser::kNone ? 0 : browser.entry(index).sequence;
     const ProductionLibrary::Result r = fw.engine.markLibrary(kind, set, target, settings.wallTime());
     if (r != ProductionLibrary::Result::Ok) return libraryRefusal(r);
     libraryCheckpoint = false;
@@ -219,7 +219,7 @@ struct LibraryOperations {
     c.base = base;
     c.set = set;
     c.tempoTenths = tempoTenthsNow();
-    surfaceNow(c.surface);
+    selectionNow(c.selection);
     return c;
   }
   /// checkpoint: replaces the recovery checkpoint with the whole set as it is now (diagnostics until loading).
@@ -426,7 +426,7 @@ struct LibraryOperations {
       case ProductionBrowser::Action::Use: {
         const char* why = fw.engine.loadRefusal(true);
         if (why == nullptr && !fw.engine.auditioning()) why = "NO AUDITION";
-        if (why == nullptr && fw.engine.getLoop(q.record, q.from, q.into, false) != ProductionSetLoad::Result::Ok) why = "BUSY";
+        if (why == nullptr && fw.engine.getLoop(q.entry, q.from, q.into, false) != ProductionSetLoad::Result::Ok) why = "BUSY";
         if (why != nullptr) {
           browser.failed("USE FAILED", why);
           return;
@@ -465,7 +465,7 @@ struct LibraryOperations {
   }
   /// A get's end: placed on its slot, or nothing changed.
   FIRMWARE_COLD void endGet(ProductionSetLoad::Status st, unsigned long ms) {
-    const library::Record& r = fw.engine.setLoad().record();
+    const library::Entry& r = fw.engine.setLoad().entry();
     char from[6], into[6], line[48];
     slotName(getFrom, from, sizeof from);
     slotName(getInto, into, sizeof into);
@@ -562,9 +562,9 @@ struct LibraryOperations {
   /// The loaded set's tempo and selection (as the boot restores the saved selection).
   FIRMWARE_COLD void applyLoaded(const library::BlobHeader& b) {
     if (b.tempoTenths != 0 && !fw.clock.external()) fw.clock.setTempo(static_cast<uint32_t>(b.tempoTenths) * 10u);
-    if (b.surface[0] < kTrackCount) fw.engine.control().selectTrack(b.surface[0]);
+    if (b.selection[0] < kTrackCount) fw.engine.control().selectTrack(b.selection[0]);
     for (uint8_t t = 0; t < kTrackCount; ++t)
-      if (b.surface[1 + t] / 8 == t) fw.surface.selectSlot(t, static_cast<uint8_t>(b.surface[1 + t] % 8));
+      if (b.selection[1 + t] / 8 == t) fw.surface.selectSlot(t, static_cast<uint8_t>(b.selection[1 + t] % 8));
   }
   /// A load's or return's end, reported once.
   FIRMWARE_COLD __attribute__((noinline)) void serviceLoad() {  // from flash (RAM1 room)
@@ -601,12 +601,12 @@ struct LibraryOperations {
         applyLoaded(l.blob());
         resetEvidence();
         if (load) {
-          base = l.record().sequence;
-          set = l.record().set;
+          base = l.entry().sequence;
+          set = l.entry().set;
           workingOwed = true;
-          Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu,worst_grain_us=%lu\n", l.record().set,
-                        library::stageLetter(l.record().stage), l.record().stageNumber,
-                        static_cast<unsigned long>(l.record().sequence), ms, static_cast<unsigned long>(loadGrainMaxUs));
+          Serial.printf("#ENGINE,load,done,id=SET %02u %c%02u,seq=%lu,ms=%lu,worst_grain_us=%lu\n", l.entry().set,
+                        library::stageLetter(l.entry().stage), l.entry().stageNumber,
+                        static_cast<unsigned long>(l.entry().sequence), ms, static_cast<unsigned long>(loadGrainMaxUs));
         } else {
           base = l.checkpoint().base;
           set = l.checkpoint().set;
@@ -633,8 +633,8 @@ struct LibraryOperations {
       char line[40];
       if (st == ProductionSetLoad::Status::Done) {
         if (load) {
-          snprintf(line, sizeof line, "LOADED  SET %u  %c%02u", l.record().set, library::stageLetter(l.record().stage),
-                   l.record().stageNumber);
+          snprintf(line, sizeof line, "LOADED  SET %u  %c%02u", l.entry().set, library::stageLetter(l.entry().stage),
+                   l.entry().stageNumber);
         } else {
           char at[8];
           wallclock::formatClock(l.checkpoint().wallTime, settings.tzOffset, at, sizeof at);
@@ -697,15 +697,15 @@ struct LibraryOperations {
         break;
       case ProductionBrowser::Action::Load:
         browserOp = BrowserOp::Load;
-        if ((why = beginLoad(true, q.record, nowUs)) != nullptr) browser.failed("LOAD FAILED", why);
+        if ((why = beginLoad(true, q.entry, nowUs)) != nullptr) browser.failed("LOAD FAILED", why);
         break;
       case ProductionBrowser::Action::Trash:
         browserOp = BrowserOp::Mark;
-        if ((why = beginMark(library::kTrash, q.set, q.record, nowUs)) != nullptr) browser.failed("TRASH FAILED", why);
+        if ((why = beginMark(library::kTrash, q.set, q.entry, nowUs)) != nullptr) browser.failed("TRASH FAILED", why);
         break;
       case ProductionBrowser::Action::Restore:
         browserOp = BrowserOp::Mark;
-        if ((why = beginMark(library::kRestore, q.set, q.record, nowUs)) != nullptr)
+        if ((why = beginMark(library::kRestore, q.set, q.entry, nowUs)) != nullptr)
           browser.failed("RESTORE FAILED", why);
         break;
       case ProductionBrowser::Action::Empty:
@@ -762,7 +762,7 @@ struct LibraryOperations {
     if (libraryCheckpoint) {
       Serial.printf("#ENGINE,checkpoint,%s,ms=%lu\n", ok ? "done" : "failed", ms);
     } else if (fw.engine.library().published().kind != library::kMilestone) {  // the working set untouched
-      const library::Record& r = fw.engine.library().published();
+      const library::Entry& r = fw.engine.library().published();
       Serial.printf("#ENGINE,mark,%s,kind=%u,set=%u,target=%lu,seq=%lu,ms=%lu\n", ok ? "done" : "failed", r.kind, r.set,
                     static_cast<unsigned long>(r.parent), static_cast<unsigned long>(r.sequence), ms);
       char line[40];
@@ -773,12 +773,12 @@ struct LibraryOperations {
         uint32_t stage = r.parent;
         if (r.kind == library::kRestore) {
           const uint16_t t = browser.find(r.parent);
-          stage = t != ProductionBrowser::kNone ? browser.record(t).parent : 0;
+          stage = t != ProductionBrowser::kNone ? browser.entry(t).parent : 0;
         }
         const uint16_t m = stage != 0 ? browser.find(stage) : ProductionBrowser::kNone;
         char id[8] = "";
         if (m != ProductionBrowser::kNone)
-          snprintf(id, sizeof id, "  %c%02u", library::stageLetter(browser.record(m).stage), browser.record(m).stageNumber);
+          snprintf(id, sizeof id, "  %c%02u", library::stageLetter(browser.entry(m).stage), browser.entry(m).stageNumber);
         snprintf(line, sizeof line, "%s  SET %u%s", r.kind == library::kTrash ? "IN TRASH" : "RESTORED", r.set, id);
       }
       if (ok) browser.add(r);
@@ -795,7 +795,7 @@ struct LibraryOperations {
         browserOp = BrowserOp::None;
       }
     } else {
-      const library::Record& r = fw.engine.library().published();
+      const library::Entry& r = fw.engine.library().published();
       Serial.printf("#ENGINE,milestone,%s,id=SET %02u %c%02u,seq=%lu,sectors=%lu,ms=%lu\n", ok ? "done" : "failed",
                     r.set, library::stageLetter(r.stage), r.stageNumber, static_cast<unsigned long>(r.sequence),
                     static_cast<unsigned long>(r.logSectors), ms);

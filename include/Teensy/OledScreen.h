@@ -63,7 +63,7 @@
 
 namespace Teensy {
 
-/// What NOTE_EDIT shows (from the surface's `NoteEditSurface`).
+/// What NOTE_EDIT shows (from the surface's `ControlSurfaceNoteEdit`).
 struct EditView {
   bool active = false, ready = false;  // a session gathering / open
   uint8_t slot = 0xFF;
@@ -486,14 +486,14 @@ class OledScreen {
   using SetBrowser = ContentEngine::ProductionBrowser;
   using Row = SetBrowser::Row;
   using RowKind = SetBrowser::RowKind;
-  using Record = ContentEngine::library::Record;
+  using Entry = ContentEngine::library::Entry;
   // The window, the list's columns (year, month, day, the spine, id / name, time / right note) and the detail. The
   // day reads with the month (`NOV 9`, the gap of `2026 NOV`), the window narrower and centred.
   static constexpr int16_t kWX0 = 27, kWY0 = 1, kWX1 = 228, kWY1 = 56, kDiv = 137;
   static constexpr int16_t kYearX = 31, kMonX = 49, kDayXR = 71, kSpineX = 77, kIdX = 83, kNoteXR = 133;
   static constexpr int16_t kDetailX = 142, kMosaicX = 192, kMosaicY = 14, kRow0 = 13, kPitch = 9, kHintY = 59;
   static constexpr uint8_t kRuleLevel = 4, kDimText = 7;
-  static void idText(const Record& r, char* out, size_t n);
+  static void idText(const Entry& r, char* out, size_t n);
   static int16_t rowY(const SetBrowser& b, uint16_t i) { return static_cast<int16_t>(kRow0 + (i - b.first()) * kPitch); }
   /// A GEM window: a dim drop shadow, black, a frame, a hatched title bar with the title in its own black box.
   void window(int16_t x0, int16_t y0, int16_t x1, int16_t y1, const char* title);
@@ -506,9 +506,9 @@ class OledScreen {
   /// The bottom right (a long press exits every window): `HOLD EXIT`, or right after a move to the
   /// trash `3× [TRK] UNDO` beside a can, the can as bright as the words.
   void drawTrashCorner(bool undo);
-  /// The record a row stands for (its date on the spine), or kNone.
-  static uint16_t recordOf(const Row& r);
-  ContentEngine::wallclock::Local when(const Record& m) const;
+  /// The entry a row stands for (its date on the spine), or kNone.
+  static uint16_t entryOf(const Row& r);
+  ContentEngine::wallclock::Local when(const Entry& m) const;
   DISPLAY_COLD void drawBrowser(const SetBrowser& b, ContentEngine::EngineRoot& e);
   /// The target exactly (`MOVE SET 01 TO TRASH?` with ALL SAVED STAGES, or `MOVE SET 01 S01 TO TRASH?` with
   /// its stage) and when it was saved — or `EMPTY THE TRASH?`, for good — over the list; YES and CANCEL, the selected
@@ -535,10 +535,10 @@ class OledScreen {
   DISPLAY_COLD void drawSpine(const SetBrowser& b);
   DISPLAY_COLD void drawRow(const SetBrowser& b, uint16_t i);
   /// A milestone: its id three times the size, the stage and a second line under it; the mosaic beside.
-  DISPLAY_COLD void drawMilestone(const Record& m, const char* line2, const char* line3);
+  DISPLAY_COLD void drawMilestone(const Entry& m, const char* line2, const char* line3);
   DISPLAY_COLD void drawDetail(const SetBrowser& b, const Row& r, char* h, size_t n);
-  /// The 8 × 8 slots (rows tracks, columns slots), brighter for more content: a milestone's, from its record.
-  void drawMosaic(const Record& m);
+  /// The 8 × 8 slots (rows tracks, columns slots), brighter for more content: a milestone's, from its entry.
+  void drawMosaic(const Entry& m);
   /// The working set's, live: each slot's rows against the fullest slot's, as a milestone's are stored.
   void drawLiveMosaic();
   void drawCells(const uint8_t* lv);
