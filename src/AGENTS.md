@@ -4,10 +4,13 @@ Read before editing `main.cpp`. Rules: [CODE_HYGIENE.md § 4–5](../docs/Author
 these lines: DEC-298 (comment history, moved) § Teensy and main in the decision log.
 
 ## Owns
-- `main.cpp`: the engine firmware's one implementation file — the main loop (input, due ticks, jobs and grains, port
-  output, the control surface, the screen), the serial commands (`!ENGINE …`, `!STOP_STATUS`, `!REBOOT`), boot,
-  breadcrumbs, the watchdog and the USB health check, wall-clock time. Two sections live in parts included in place:
-  `LibraryOperations.h` (milestones, loads, get a loop, the picker, the working set) and `SerialCommands.h`.
+- `main.cpp`: how the firmware starts (`setup`) and runs (`loop`, nine named stages), the memory regions placed by
+  attribute, the module instances, the interrupts and the core's startup hooks. Nothing else.
+- `Firmware.h`: the shared parts (`Firmware`: engine, clock, card, screen, surface, the last tick) and `Diagnostics`.
+- Modules, each owning its state and taking only what it uses: `MidiInput`, `MidiPorts` (output and DROID feedback),
+  `GpioEncoder`, `DeviceSettings` (EEPROM, wall clock), `SavedSelection`, `ScreenView`, `BootHealth` (breadcrumbs,
+  watchdog, USB health). Coordinators that drive several parts: `LibraryOperations`, `SerialCommands` (the console).
+- All live in `namespace firmware` (which imports `ContentEngine` for itself only).
 
 ## Invariants
 - One main loop, no interrupts of its own. A tick waits at most one grain plus the non-engine stretch (B_max).
@@ -20,6 +23,10 @@ these lines: DEC-298 (comment history, moved) § Teensy and main in the decision
 - Diagnostics stay off the tick path and behind a command or the session-capture gate.
 
 ## Traps
+- Off-hot-path member functions are `FIRMWARE_COLD` (flash, `.flashmem.firmware`, `noclone`), never `FLASHMEM`: an
+  inline member cannot share `FLASHMEM`'s section with the core's non-inline functions (a section type conflict).
+- No `DMAMEM` / `EXTMEM` static inside a member function: place the buffer in `main.cpp` and pass it.
+- `Firmware.h` includes `EngineRoot.h` before `ControlSurface.h`: the surface's headers rely on its includes.
 - `!ENGINE end` ends an overdub at once and a Record take at the bar; a bar-quantised overdub end makes the next
   overdub `Busy`. DEC-297 (deep-overdub timing).
 - `!ENGINE undo` takes a slot, not a track.
