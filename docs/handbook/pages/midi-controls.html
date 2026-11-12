@@ -50,7 +50,7 @@
 
 <h2 id="feedback">MIDI feedback for LEDs and motorized faders</h2>
 <p>Route MIDI from the looper back to the controller. Set its LEDs to respond to note messages on <strong>channel 15</strong>. Note On velocity sets the brightness and Note Off turns the LED off. Assign notes 0–15 to step content, 16–31 to playback position, 39 to transport, 40–47 to bars, 50–57 to slots and 60–67 to tracks. For the bar 1 pad, transmit note 17 on channel 16 when pressed and configure its LED to respond to note 40 on channel 15.</p>
-<p>For its motorized faders, DROID receives Pitch Bend or CC for position, plus separate note messages to trigger motor movement. A pad controller can use the LED assignments independently. In NOTE_EDIT, DROID uses notes 1 and 2 on channel 15 for both motor triggers and step LEDs. If you build a custom preset, check which controls will respond to these messages. <a href="REPO/include/ContentEngine/EditSurface.h#L58">Note-edit motor feedback</a>.</p>
+<p>For its motorized faders, DROID receives Pitch Bend or CC for position, plus separate note messages to trigger motor movement. A pad controller can use the LED assignments independently. In NOTE_EDIT, DROID uses notes 1 and 2 on channel 15 for both motor triggers and step LEDs. If you build a custom preset, check which controls will respond to these messages. <a href="REPO/include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h#L54">Note-edit motor feedback</a>.</p>
 
 <h2 id="troubleshoot">When a control does something unexpected</h2>
 <ul>
@@ -60,4 +60,4 @@
   <li><strong>The OLED responds, but there is no sound.</strong> Match the synth’s MIDI receive channel to the selected track. Verify that Note On messages arrive at the synth’s MIDI IN or at your DAW’s instrument track. Then check that the instrument’s audio output reaches your headphones or monitors.</li>
   <li><strong>A DROID LED stays dark or the wrong pad lights.</strong> Adjust the LED assignment in <a href="assets/midilooper_v1.ini" download>midilooper_v1.ini</a>, then reload the patch on DROID. For bar LEDs, check the note numbers under <code>[midiin]</code> and the physical LED outputs under <code>[copy]</code>.</li>
 </ul>
-<p><a href="REPO/include/ContentEngine/Surface.h#L240">Engine button and fader definitions</a> · <a href="REPO/include/ContentEngine/Surface.h#L1800">LED assignments</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L233">Input routing</a> · <a href="REPO/src/EngineFirmware/EngineMain.cpp#L177">Playback outputs</a>.</p>
+<p><a href="REPO/include/ContentEngine/ControlSurface/ControlSurface.h#L115">Engine button and fader definitions</a> · <a href="REPO/include/ContentEngine/ControlSurface/ControlSurfaceLeds.h#L150">LED assignments</a> · <a href="REPO/src/MidiInput.h#L96">Input routing</a> · <a href="REPO/src/MidiPorts.h#L123">Playback outputs</a>.</p>

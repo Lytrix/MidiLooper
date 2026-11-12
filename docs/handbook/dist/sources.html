@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="theme-color" content="#f9f8f4"><title>Source excerpts · MidiLooper Manual</title><meta name="description" content="Selected passages from the reviewed engine checkout (d61d8d62, 11 November 2026). Paths and line numbers locate the implementation in the repository.">
+<meta name="theme-color" content="#f9f8f4"><title>Source excerpts · MidiLooper Manual</title><meta name="description" content="Selected passages from the reviewed engine checkout (c8851d2a, 12 November 2026). Paths and line numbers locate the implementation in the repository.">
 <link rel="icon" href="assets/mark.svg" type="image/svg+xml">
 <link rel="stylesheet" href="assets/manual.css"><script src="assets/search-index.js" defer></script><script src="assets/manual.js" defer></script>
 </head>
@@ -14,8 +14,7 @@
 <a class="repo-link" href="https://github.com/Lytrix/MidiLooper" aria-label="MidiLooper on GitHub"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path fill="currentColor" stroke="none" d="M12 .9A11.1 11.1 0 008.5 22.5c.55.1.76-.24.76-.54v-2.1c-3.1.67-3.76-1.32-3.76-1.32-.51-1.28-1.24-1.62-1.24-1.62-1.01-.69.08-.68.08-.68 1.12.08 1.7 1.15 1.7 1.15.99 1.7 2.6 1.21 3.24.93.1-.72.4-1.2.71-1.48-2.47-.28-5.07-1.24-5.07-5.5 0-1.21.43-2.2 1.14-2.97-.12-.28-.5-1.4.11-2.93 0 0 .93-.3 3.05 1.13a10.6 10.6 0 015.55 0c2.12-1.43 3.04-1.13 3.04-1.13.62 1.53.24 2.65.12 2.93.72.77 1.14 1.76 1.14 2.97 0 4.27-2.6 5.22-5.08 5.5.4.35.76 1.02.76 2.06v3.06c0 .3.2.65.76.54A11.1 11.1 0 0012 .9z"/></svg><span>GitHub</span><svg class="ico mini" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M6 17 18 5M7 5h11v11"/></svg></a></div></header>
 <div class="shell"><aside id="side-nav" class="sidebar"><nav aria-label="Manual chapters"><div class="nav-group"><h2>Getting started</h2><a class="nav-item" href="index.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 4h6a4 4 0 013 2 4 4 0 013-2h6v14h-6a4 4 0 00-3 2 4 4 0 00-3-2H3zM12 6v14"/></svg><span>Overview</span></a><a class="nav-item" href="setup.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m7 14 5-5 4 4-5 5H7zM13 8l3-3m1 7 3-3M7 18l-3 3"/></svg><span>Hardware &amp; setup</span></a><a class="nav-item" href="first-recording.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><circle cx="12" cy="12" r="3" fill="currentColor"/></svg><span>Your first loop</span></a></div><div class="nav-group"><h2>Playing & editing</h2><a class="nav-item" href="overdub-undo.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 8 9-5 9 5-9 5zM3 12l9 5 9-5M3 16l9 5 9-5"/></svg><span>Overdub &amp; undo</span></a><a class="nav-item" href="switching.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h16m-4-4 4 4-4 4M21 17H5m4-4-4 4 4 4"/></svg><span>Switching loops</span></a><a class="nav-item" href="editing.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7h6m5 0h7M3 17h11m5 0h2"/><circle cx="11.5" cy="7" r="2.5"/><circle cx="16.5" cy="17" r="2.5"/></svg><span>Notes &amp; loop ranges</span></a><a class="nav-item" href="groove.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h3l3-7 4 14 4-14 3 7h3"/></svg><span>Groove &amp; quantize</span></a></div><div class="nav-group"><h2>Library & controls</h2><a class="nav-item" href="library.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h6l3 3h9v10H3z"/></svg><span>Save &amp; load sets</span></a><a class="nav-item" href="midi-controls.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 3v5m0 4v9m7-18v11m0 4v3m7-18v3m0 4v11M3 9h4m3 6h4m3-8h4"/></svg><span>MIDI control map</span></a><a class="nav-item" href="screens.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2.5" y="4" width="19" height="14" rx="2"/><path d="M8 21h8M7 12h3l2-3 3 5 2-2"/></svg><span>Screen guide</span></a></div><div class="nav-group"><h2>Reference</h2><a class="nav-item" href="architecture.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3m6-3v3m-6 14v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/><rect x="9" y="9" width="6" height="6"/></svg><span>How it fits together</span></a><a class="nav-item" href="troubleshooting.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 3a5 5 0 00-6 6l-6 6a3 3 0 004 4l6-6a5 5 0 006-6l-3 3-3-3z"/></svg><span>Troubleshooting</span></a><a class="nav-item" href="implementation-notes.html"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m8 6-6 6 6 6m8-12 6 6-6 6M14 4l-4 16"/></svg><span>Implementation notes</span></a></div></nav><div class="engine-label"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 2v3m6-3v3m-6 14v3m6-3v3M2 9h3m-3 6h3m14-6h3m-3 6h3"/><rect x="9" y="9" width="6" height="6"/></svg><div><strong>Fixed-memory engine</strong><small>Teensy 4.1 · v0.7</small></div></div></aside>
 <main id="content" tabindex="-1" class="chapter"><div class="crumb"><a href="index.html">Manual</a><span aria-hidden="true">/</span>Source excerpts</div>
-<article class="sources-index"><header class="article-heading"><p class="eyebrow">Reference</p><h1>Source excerpts</h1><p class="lede">Selected passages from the reviewed engine checkout (d61d8d62, 11 November 2026). Paths and line numbers locate the implementation in the repository.</p></header><section class="evidence" id="docs-Authority-PROJECT_INTENT-md-L12"><h3>Project intent</h3><p><code>docs/Authority/PROJECT_INTENT.md · line 12</code></p><details><summary>Read the excerpt</summary><pre><code>  11  The reference feeling is Cubase on an Atari: you sat down, ideas went in immediately, and the machine sort of disappeared. Only notes and parts to arrange nothing more. One hand on the device, attention on the music.
-  12
+<article class="sources-index"><header class="article-heading"><p class="eyebrow">Reference</p><h1>Source excerpts</h1><p class="lede">Selected passages from the reviewed engine checkout (c8851d2a, 12 November 2026). Paths and line numbers locate the implementation in the repository.</p></header><section class="evidence" id="docs-Authority-PROJECT_INTENT-md-L13"><h3>Project intent</h3><p><code>docs/Authority/PROJECT_INTENT.md · line 13</code></p><details><summary>Read the excerpt</summary><pre><code>  12
   13  ## The workflow it serves
   14
   15  Everything in the firmware exists to serve this loop:
@@ -25,40 +24,30 @@
   19  3. **Refine** — surgical timing/note edits to fine-tune the groove (piano roll, faders) never stopping the music.
   20  4. **Remix** — rearrange and retrigger parts in realtime; capture this jam itself as a new way of music creation.
   21  5. **Song** — massage the captured vibe with the parts at hand and tools to fix small mistakes on the fly or fine tune grooves into a finished structure.
-  22</code></pre></details></section><section class="evidence" id="include-ContentEngine-EngineConfig-h-L73"><h3>Engine configuration</h3><p><code>include/ContentEngine/EngineConfig.h · line 73</code></p><details><summary>Read the excerpt</summary><pre><code>  72                &quot;plan § 5.1 figures (one writer, two edit runs, the preview partition)&quot;);
-  73  constexpr uint8_t kHistoryDepth = 99;  // undo states held across all slots (owner 2026-11-05: shared, oldest evicted)
+  22
+  23  Steps 1, 2, and 4 are the identity of the device. Step 3 exists *in service of the groove* — the editor is a tool inside the instrument, not the product. Step 5 is where Phase 3 (jam/arrangement capture) is headed.</code></pre></details></section><section class="evidence" id="include-ContentEngine-EngineConfig-h-L73"><h3>Engine configuration</h3><p><code>include/ContentEngine/EngineConfig.h · line 73</code></p><details><summary>Read the excerpt</summary><pre><code>  72                &quot;the pool&#x27;s partitions (one writer, two edit runs, the preview partition)&quot;);
+  73  constexpr uint8_t kHistoryDepth = 99;  // hot undo states across all slots (the oldest goes cold on the card, DEC-254)
   74  constexpr uint8_t kSlotCount = 64;
   75  constexpr uint8_t kInlinePagesPerRun = 16;
   76
-  77  // OUT-POLY (owner decision 2026-11-04, ratified end-state constant): at most 16 simultaneously sounding MIDI output
+  77  // OUT-POLY: at most 16 simultaneously sounding MIDI output
   78  // note instances per track. It limits output only, never recording, storage, undo history or the piano roll.
   79  constexpr uint8_t kMaxSoundingPerTrack = 16;
-  80  // Continuous controllers (owner decisions 2026-11-05, MidiClass.h): at most 64 values per track per tick, recorded
+  80  // Continuous controllers (MidiClass.h): at most 64 values per track per tick, recorded
   81  // (the writer) and played (the composer leaves later ones out of the window). Device: a controller message on 3 ports
   82  // costs ~0.5 us, so 64 per track take ~31 us per tick and ~250 us for 8 tracks (~24 % of a 1.04 ms tick at 300 BPM).
-  83  constexpr uint8_t kMaxContinuousPerTick = 64;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2112"><h3>Firmware port setup</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2112</code></p><details><summary>Read the excerpt</summary><pre><code>2111    phase(kPhaseDisplay);
-2112    Serial8.begin(31250);
-2113    Serial8.addMemoryForWrite(gDinTx, sizeof gDinTx);
-2114    gHost.begin();
-2115    phase(kPhasePorts);
-2116    gBootStartUs = micros();
-2117    if (gCard.begin()) {
-2118      gEngine.attachCard(gCard);
-2119      gEngine.startBootLoad();
-2120    } else {
-2121      Serial.println(&quot;#CAP,BOOT,card,absent&quot;);
-2122      // Why: the card&#x27;s own error, then the partition table (sector 0) when the card answered.</code></pre></details></section><section class="evidence" id="include-Globals-h-L45"><h3>Base-module pin assignments</h3><p><code>include/Globals.h · line 45</code></p><details><summary>Read the excerpt</summary><pre><code>  44  // MIDI transport notes 36–39 align numerically by convention; namespaces differ (MIDI vs pinMode).
-  45  namespace Buttons {
-  46    constexpr int ENCODER_PIN_A = 29;
-  47    constexpr int ENCODER_PIN_B = 30;
-  48    constexpr int ENCODER_BUTTON_PIN = 31;
-  49    constexpr int BUTTON_A_PIN = 36;  // Record / play / delete action family
-  50    constexpr int BUTTON_B_PIN = 37;  // Track select / mute / delete action family
-  51    constexpr int BUTTON_C_PIN = 38;  // Loop / note edit mode switch (NOTE_EDIT_MODE)
-  52    constexpr int BUTTON_D_PIN = 39;  // Play / stop transport action family
-  53    // Legacy aliases (same pins as BUTTON_A/B)
-  54    const int PLAY   = BUTTON_A_PIN;
-  55    const int RECORD = BUTTON_B_PIN;</code></pre></details></section><section class="evidence" id="lib-SSD1322_OLED-include-SSD1322_Config-h-L9"><h3>OLED signal pins</h3><p><code>lib/SSD1322_OLED/include/SSD1322_Config.h · line 9</code></p><details><summary>Read the excerpt</summary><pre><code>   8  // Display Configuration
+  83  constexpr uint8_t kMaxContinuousPerTick = 64;</code></pre></details></section><section class="evidence" id="src-MidiPorts-h-L74"><h3>Firmware port setup</h3><p><code>src/MidiPorts.h · line 74</code></p><details><summary>Read the excerpt</summary><pre><code>  73    void begin(uint8_t* dinTx, size_t dinTxBytes) {
+  74      Serial8.begin(31250);
+  75      Serial8.addMemoryForWrite(dinTx, dinTxBytes);
+  76      host.begin();
+  77    }
+  78
+  79    /// The host driver&#x27;s transmit state; call with interrupts off (a completion empties a buffer, the timer fills one).
+  80    hosttx::State hostTxState() {
+  81      using namespace midiports;
+  82      const MIDIDeviceBase&amp; d = hostMidi;
+  83      return {d.*field(TxPipe{}) != nullptr, d.*field(Tx1{}), d.*field(Tx2{}), static_cast&lt;uint32_t&gt;(d.*field(TxSize{}) / 4)};
+  84    }</code></pre></details></section><section class="evidence" id="lib-SSD1322_OLED-include-SSD1322_Config-h-L9"><h3>OLED signal pins</h3><p><code>lib/SSD1322_OLED/include/SSD1322_Config.h · line 9</code></p><details><summary>Read the excerpt</summary><pre><code>   8  // Display Configuration
    9  struct SSD1322_CONFIG {
   10      // Pin Configuration
   11      int OLED_CS_PIN = 10;
@@ -69,315 +58,315 @@
   16
   17      // Display Dimensions
   18      int OLED_WIDTH = 256;
-  19      int OLED_HEIGHT = 64;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L308"><h3>Encoder wiring</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 308</code></p><details><summary>Read the excerpt</summary><pre><code> 307
- 308  // ---- The GPIO encoder (surface slice E; legacy pins `Buttons::ENCODER_PIN_A/B`, `ENCODER_BUTTON_PIN`) ------------------
- 309  // Quadrature on 29 / 30 (the Encoder library&#x27;s interrupts, four counts a detent, as legacy `GpioButtonManager`), the push
- 310  // on 31 to ground (pull-up), debounced: a level held `kEncoderDebounceMs` is taken.
- 311  constexpr uint8_t kEncoderPinA = 29, kEncoderPinB = 30, kEncoderButtonPin = 31;
- 312  constexpr uint32_t kEncoderDebounceMs = 5;
- 313  Encoder gEncoder(kEncoderPinA, kEncoderPinB);
- 314  long gEncoderDetents = 0;
- 315  bool gEncoderDown = false, gEncoderRaw = false;
- 316  uint32_t gEncoderRawMs = 0;
- 317  void serviceEncoder(uint32_t ms) {
- 318    const long detents = gEncoder.read() / 4;</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2117"><h3>Hardware setup</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2117</code></p><details><summary>Read the excerpt</summary><pre><code>2116    gBootStartUs = micros();
-2117    if (gCard.begin()) {
-2118      gEngine.attachCard(gCard);
-2119      gEngine.startBootLoad();
-2120    } else {
-2121      Serial.println(&quot;#CAP,BOOT,card,absent&quot;);
-2122      // Why: the card&#x27;s own error, then the partition table (sector 0) when the card answered.
-2123      static uint8_t mbr[512];
-2124      const unsigned beginError = SD.sdfs.sdErrorCode(), beginData = SD.sdfs.sdErrorData();
-2125      const bool read = SD.sdfs.card() &amp;&amp; SD.sdfs.card()-&gt;readSector(0, mbr);
-2126      Serial.printf(&quot;#ENGINE,card,begin_error=%u,begin_data=%u,sd_error=%u,sd_data=%u,mbr_read=%u,sig=%02x%02x,part1_type=%02x,part1_lba=%lu,&quot;
-2127                    &quot;boot_jump=%02x,fs=%.8s\n&quot;,</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L177"><h3>MIDI playback outputs</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 177</code></p><details><summary>Read the excerpt</summary><pre><code> 176
- 177  void transmitAll(uint32_t nowUs) {
- 178    ProductionHub::Sent buf[kSendPerPass];
- 179    uint8_t n = gEngine.transmit(kPortDin, nowUs, buf, kSendPerPass);
- 180    for (uint8_t i = 0; i &lt; n; ++i) sendDin(buf[i].status, buf[i].data1, buf[i].data2);
- 181    n = gEngine.transmit(kPortUsbDevice, nowUs, buf, kSendPerPass);
- 182    for (uint8_t i = 0; i &lt; n; ++i)
- 183      usbMIDI.send(buf[i].status &amp; 0xF0, buf[i].data1, buf[i].data2, (buf[i].status &amp; 0x0F) + 1, 0);
- 184    if (n != 0) {
- 185      usbMIDI.send_now();
- 186      gLastUsbTxUs = micros();
- 187    }</code></pre></details></section><section class="evidence" id="platformio-ini-L277"><h3>Engine build</h3><p><code>platformio.ini · line 277</code></p><details><summary>Read the excerpt</summary><pre><code> 276  ;   pio run -e teensy41-engine -t upload
- 277  [env:teensy41-engine]
- 278  extends = env:teensy41
- 279  extra_scripts =
- 280  build_src_filter = -&lt;*&gt; +&lt;EngineFirmware/&gt;
- 281  build_flags =
- 282  	${env:teensy41.build_flags}
- 283  	-D ENGINE_FIRMWARE=1
- 284
- 285  ; Host unit tests: pio test -e native (see .cursor/rules/Testing-Workflow.mdc)
- 286  ; fixed-memory-engine E5 device grain bench (test image, not firmware): production engine placement, DWT-timed
- 287  ; grains, results on USB serial. No src/, so the firmware&#x27;s RAM1 budget gate does not apply.</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1702"><h3>Record action</h3><p><code>include/ContentEngine/Surface.h · line 1702</code></p><details><summary>Read the excerpt</summary><pre><code>1701
-1702    void toggleRecord(uint8_t t) {
-1703      if (control().recordQueued(t)) {  // armed (legacy `handleArmedRecordPress`): start the transport, else cancel
-1704        if (!clock_-&gt;running()) startClock();
-1705        else control().cancelQueued(t);
-1706        return;
-1707      }
-1708      if (transport().writingTrack() == t) {
-1709        endTake(t);
-1710        return;
-1711      }
-1712      const uint8_t slot = selectedSlot(t);</code></pre></details></section><section class="evidence" id="include-ContentEngine-TrackControl-h-L101"><h3>Ending a take on a bar line</h3><p><code>include/ContentEngine/TrackControl.h · line 101</code></p><details><summary>Read the excerpt</summary><pre><code> 100    }
- 101    Result queueStop(uint8_t t, uint32_t clock) {
- 102      if (x_-&gt;writingTrack() != t) return Result::NotWriting;
- 103      Pending&amp; p = pending_[t];
- 104      p.stop = true;
- 105      p.stopAt = clock;
- 106      p.trimEnd = 0;
- 107      if (x_-&gt;mode() == Transport::Mode::Recording &amp;&amp; bar_ != 0) {  // E9.8i: half a bar past a bar line ends there
- 108        const uint32_t into = clock % bar_, start = clock - x_-&gt;writePosition(clock);
- 109        if (into != 0 &amp;&amp; into &lt;= bar_ / 2 &amp;&amp; clock - into &gt; start) p.trimEnd = clock - into;
- 110      }
- 111      return Result::Ok;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1126"><h3>Undo gesture</h3><p><code>include/ContentEngine/Surface.h · line 1126</code></p><details><summary>Read the excerpt</summary><pre><code>1125      switch (b) {
-1126        case kRecord:
-1127          if (p == Press::Double &amp;&amp; edit_.editing()) edit_.undo(nowMs_);
-1128          else if (p == Press::Triple &amp;&amp; edit_.editing()) edit_.redo(nowMs_);
-1129          else if (p == Press::Short) toggleRecord(t);
-1130          else if (p == Press::Double) control().undo(slot, tick_, us_, us());
-1131          else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
-1132          else control().clear(slot, tick_, us_, us());
-1133          return;
-1134        case kTrackSwitch:
-1135          if (p == Press::Short) switchTrack(static_cast&lt;uint8_t&gt;((t + 1) % kTracks));
-1136          else if (p == Press::Double) control().undo(slot, tick_, us_, us());</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-h-L327"><h3>Undo depth</h3><p><code>include/ContentEngine/History.h · line 327</code></p><details><summary>Read the excerpt</summary><pre><code> 326    /// Undo steps available on the slot (the `U:` level).
- 327    uint8_t undoDepth(uint8_t slot) const {
- 328      const Slot&amp; s = slots_[slot];
- 329      uint8_t n = 0;
- 330      for (uint8_t e = s.current; e != kNone &amp;&amp; n &lt; Depth; e = entries_[e].older) ++n;
- 331      if (n == 0) return 0;
- 332      const uint32_t d = (n - 1u) + coldCount(slot) + (s.emptyBelow ? 1u : 0u);  // DEC-254: the cold steps below count
- 333      return static_cast&lt;uint8_t&gt;(d &gt; 255 ? 255 : d);
- 334    }
- 335    uint8_t redoDepth(uint8_t slot) const {
- 336      const Slot&amp; s = slots_[slot];
- 337      uint8_t n = 0;</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L94"><h3>Card-backed history</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 94</code></p><details><summary>Read the excerpt</summary><pre><code>  93
-  94  Each slot keeps up to **99 undo states of its own** (`kSlotDepth`); its 100th forgets that slot&#x27;s own oldest step,
-  95  never another slot&#x27;s. The states live in two tiers:
-  96
-  97  - **Hot** — in PSRAM, a shared table of 99 entries across all slots (the current states included). Undo and redo
-  98    among hot states are instant.
-  99  - **Cold** — a descriptor in PSRAM only (revision, loop length, and per run its record sector), with the rows on the
- 100    card. When the hot table is full, the oldest undo step anywhere is *demoted* to cold instead of forgotten — when every
- 101    run it lists is already on the card; an unsaved one is forgotten as before. The same happens, one step every 50 ms at
- 102    most, when the content pool runs low (below 1/8 of its pages). Redo steps, a slot&#x27;s current state and a session&#x27;s
- 103    protected start are never demoted.
- 104</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1726"><h3>Slot launch</h3><p><code>include/ContentEngine/Surface.h · line 1726</code></p><details><summary>Read the excerpt</summary><pre><code>1725    /// next launch step — a 16th of the bar playing, or a bar of the 8-bar page playing.
-1726    void stepPress(uint8_t note) {
-1727      if (note == kBarStepBase - 1 || edit_.editing() || edit_.entering() || loopEdit_ || popup_ || browsing()) return;
-1728      const uint8_t t = selected();
-1729      const auto&amp; x = transport();
-1730      if (!x.playing(t) || x.writingTrack() == t) return;
-1731      const ManifestId m = x.contentOf(x.playingSlot(t));
-1732      const uint32_t loop = m == kNoManifest ? 0 : x.loopLength(m);
-1733      if (loop == 0) return;
-1734      const uint32_t pos = (tick_ - x.origin(t)) % loop;
-1735      constexpr uint32_t kPage = 8 * kBar;
-1736      // DEC-283 amendment 1 (owner 2026-11-10: the buttons absolute everywhere): a place in the stored loop — the 16th of</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L1475"><h3>Launch setting</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 1475</code></p><details><summary>Read the excerpt</summary><pre><code>1474      Serial.printf(&quot;#ENGINE,switch-at,%s\n&quot;, switchAtName());
-1475    } else if (std::strcmp(verb, &quot;launch-q&quot;) == 0) {  // launch-q 16|8|4|bar: the launch quantisation (slice B, EEPROM)
-1476      if (arg != nullptr &amp;&amp; std::strcmp(arg, &quot;bar&quot;) == 0) storeLaunchGrid(1);
-1477      else if (arg != nullptr &amp;&amp; launchDivisionValid(static_cast&lt;uint32_t&gt;(a)) &amp;&amp; a != 1) storeLaunchGrid(static_cast&lt;uint8_t&gt;(a));
-1478      Serial.printf(&quot;#ENGINE,launch-q,%s\n&quot;, launchGridName());
-1479    } else if (std::strcmp(verb, &quot;groove&quot;) == 0) {  // groove TEMPLATE AMOUNT [SCOPE]: the shown slot (DEC-287, slice 2)
-1480      ContentEngine::groove::Settings s;
-1481      s.tmpl = static_cast&lt;uint8_t&gt;(a);
-1482      s.amount = static_cast&lt;uint8_t&gt;(b &gt; 100 ? 100 : b &lt; 0 ? 0 : b);
-1483      const char* third = second != nullptr ? std::strchr(second + 1, &#x27; &#x27;) : nullptr;
-1484      s.scope = static_cast&lt;uint8_t&gt;(third != nullptr ? std::atoi(third + 1) : 0);
-1485      const uint8_t slot = gSurface.shown(c.selectedTrack());</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1160"><h3>Edit gesture</h3><p><code>include/ContentEngine/Surface.h · line 1160</code></p><details><summary>Read the excerpt</summary><pre><code>1159          return;
-1160        case kEditMode:  // DEC-291 (owner 2026-11-10): short = the track buttons&#x27; select / mute mode, in every mode;
-1161          // long (released before `kEditExitMs`) = into NOTE_EDIT, then NOTE_EDIT ↔ LOOP_EDIT; held `kEditExitMs` =
-1162          // out of the edit modes (`service`, while held)
-1163          if (p == Press::Short) trackMute_ = !trackMute_;
-1164          else if (p == Press::Long) cycleEdit(t);
-1165          return;
-1166        case kLength:
-1167          if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
-1168            if (p == Press::Short &amp;&amp; !empty(shownSlot(t))) {  // the other range, as in performance (DEC-284 am. 2, 3)
-1169              switchRange(shownSlot(t));
-1170              return;</code></pre></details></section><section class="evidence" id="include-ContentEngine-EditSurface-h-L465"><h3>Step editing</h3><p><code>include/ContentEngine/EditSurface.h · line 465</code></p><details><summary>Read the excerpt</summary><pre><code> 464    /// A step&#x27;s press: its first note, or the next after the selected one (the cycle); an empty step gets a 16th C4.
- 465    void stepPress(uint8_t k, uint32_t ms) {
- 466      uint32_t tick;
- 467      if (!stepTick(k, tick)) return;
- 468      int16_t stack[32];
- 469      const uint8_t n = stackAt(tick, stack);
- 470      if (n == 0) {
- 471        bracket_ = tick;
- 472        create(ms, kSixteenth);
- 473        return;
- 474      }
- 475      uint8_t idx = 0;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1421"><h3>Range selection</h3><p><code>include/ContentEngine/Surface.h · line 1421</code></p><details><summary>Read the excerpt</summary><pre><code>1420    /// start), 16ths of its bar. Refused when the start lies at or past the stored loop&#x27;s end.
-1421    void loopRange(bool bars, uint8_t a, uint8_t b) {
-1422      const uint8_t t = selected(), slot = shownSlot(t);
-1423      auto&amp; x = transport();
-1424      const ManifestId c = x.contentOf(slot);
-1425      if (c == kNoManifest) return;
-1426      beyondEnd(c);
-1427      const uint32_t loop = e_-&gt;manifests().manifest(c).loopLengthTicks;
-1428      constexpr uint32_t kBar = EditSurface&lt;Engine&gt;::kBar, kStep = EditSurface&lt;Engine&gt;::kSixteenth;
-1429      const uint32_t pos = x.playing(t) &amp;&amp; x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
-1430      const uint32_t at = (frameStart_ + pos) % frame_;
-1431      const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L529"><h3>Groove faders</h3><p><code>include/ContentEngine/Surface.h · line 529</code></p><details><summary>Read the excerpt</summary><pre><code> 528    }
- 529    /// The GROOVE bank&#x27;s faders (CC 20–23 on channel 16): F1 A&#x27;s groove, F2 A&#x27;s amount, F3 B&#x27;s groove, F4 B&#x27;s amount.
- 530    /// True: taken. The fields are in the same order (A&#x27;s groove, A&#x27;s amount, B&#x27;s groove, B&#x27;s amount).
- 531    bool grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) {
- 532      if (type != 0xB0 || channel != 15 || d1 &lt; kGrooveCc || d1 &gt;= kGrooveCc + kGrooveFields) return false;
- 533      const uint8_t field = static_cast&lt;uint8_t&gt;(d1 - kGrooveCc);
- 534      if ((faderSeen_ &amp; (1u &lt;&lt; field)) == 0) {  // the DROID reports each fader as the bank opens: where it is, not a move
- 535        faderSeen_ = static_cast&lt;uint8_t&gt;(faderSeen_ | (1u &lt;&lt; field));
- 536        return true;
- 537      }
- 538      const Heard col = columnOf(field);
- 539      groove::Settings&amp; g = columnSettings(col);</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1106"><h3>Groove controls</h3><p><code>include/ContentEngine/Surface.h · line 1106</code></p><details><summary>Read the excerpt</summary><pre><code>1105      }
-1106      if (groove_ &amp;&amp; b == kLength) {  // DEC-295 am. 5: ADD compares — single A ↔ B, double OFF, hold the cycle
-1107        grooveCompare(p);
-1108        return;
-1109      }
-1110      if (groove_ &amp;&amp; p == Press::Long) {  // the GROOVE window (DEC-289): a long press of any other button applies
-1111        closeGroove();
-1112        return;
-1113      }
-1114      if (groove_ &amp;&amp; (b == kPlayStop || b == kTransport)) return;  // PLAY/STOP: its hold (note 43) applies; no stop
-1115      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
-1116        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q (DEC-295 am. 1)</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L112"><h3>How the looper stores undo history</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 112</code></p><details><summary>Read the excerpt</summary><pre><code> 111  Cold states are saved in the slot&#x27;s state record (its cold section) and come back at boot as descriptors; the boot
- 112  reads only hot states&#x27; rows. Milestones (the library) carry each slot&#x27;s hot states only.
- 113
- 114  Diagnostics: `!ENGINE history` (`history_cold`: cold steps per slot), `!ENGINE take` (`#ENGINE,cold`: demoted,
- 115  pressure; `#ENGINE,fetch`; `#ENGINE,runstore`; `#ENGINE,grain_worst` per job class).
- 116
- 117  ## The library file inside
- 118
- 119  | Area | Sectors | What it holds |
- 120  |---|---|---|
- 121  | Index header A / B | 0–1 | count, where the next milestone goes, the next sequence number |
- 122  | Index records | 2–513 | 4,096 records of 64 B: sequence, set, stage and stage number (`SET 2 T01` on screen), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |</code></pre></details></section><section class="evidence" id="include-ContentEngine-Browser-h-L237"><h3>Sets browser controls</h3><p><code>include/ContentEngine/Browser.h · line 237</code></p><details><summary>Read the excerpt</summary><pre><code> 236    // ---- Navigation --------------------------------------------------------------------------------------------------
- 237    /// HOLD TRACK on the performance screen: the top level, `SAVE` selected.
- 238    void open() {
- 239      view_ = View::Top;
- 240      request_ = Request{};
- 241      selected_ = 1;
- 242      first_ = 0;
- 243      scroll();
- 244    }
- 245    void close() { view_ = View::Closed; }
- 246    bool isOpen() const { return view_ != View::Closed; }
- 247    View view() const { return view_; }</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L1037"><h3>Save and load in the firmware</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 1037</code></p><details><summary>Read the excerpt</summary><pre><code>1036  /// The browser (slice 3): kept current while closed, and what it asks carried out.
-1037  FLASHMEM __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // DEC-254: from flash (RAM1 room)
-1038    if (!gBrowserReady) return;
-1039    library::CheckpointHeader cp{};
-1040    const bool hasCheckpoint = gEngine.library().checkpoint(cp);
-1041    if (!gBrowser.isOpen()) {
-1042      gBrowser.setWorking(gSet, gBase);
-1043      const Evidence now = evidenceNow(), &amp;at = gEvidenceAt;
-1044      const uint32_t commits = now.commits - at.commits, records = now.records - at.records;
-1045      ProductionBrowser::Activity a;
-1046      a.build = commits != 0;
-1047      a.takesOnly = records != 0 &amp;&amp; now.recordsWithOthers - at.recordsWithOthers == records &amp;&amp; commits &lt;= records;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Browser-h-L10"><h3>Browser rows and controls</h3><p><code>include/ContentEngine/Browser.h · line 10</code></p><details><summary>Read the excerpt</summary><pre><code>   9  //   milestone. Sets are listed newest first, a set&#x27;s milestones newest first.
-  10  // * Views (owner 2026-11-09: saving and loading split, no return row; the dividers name the intent). Top: `&lt; CLOSE`,
-  11  //   `SAVE SET`, a `LOAD SET` divider (not selectable), then the working set and the other sets, newest first, and
-  12  //   `TRASH` last (the second way in). A set:
-  13  //   `&lt; SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash (DEC-268): `&lt; SETS`, `EMPTY TRASH`, a
-  14  //   `RESTORE SET/STAGE` divider, then what is in it newest first. The save popup
-  15  //   (`SAVE CURRENT`): `AS NEW SET` (Sketch 01 of the next set number), then every stage with the id it would get, the
-  16  //   suggested one selected; beside it the working set&#x27;s history from its base. A failure: what, why, `NOTHING CHANGED`,
-  17  //   over the view it came from.
-  18  // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
-  19  //   says for the selected row; a double TRACK opens the trash (and from it, the sets). HOLD TRACK on a set or a stage
-  20  //   asks to move it to the trash (DEC-268: `YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it</code></pre></details></section><section class="evidence" id="include-ContentEngine-LibraryWriter-h-L34"><h3>Snapshot contents</h3><p><code>include/ContentEngine/LibraryWriter.h · line 34</code></p><details><summary>Read the excerpt</summary><pre><code>  33    /// Captures and pins every slot&#x27;s chain (call `release` when done). `noteIdHigh`: the note-id high-water mark of T0.
-  34    void capture(Runs&amp; runs, Manifests&amp; manifests, const HistoryT&amp; history, uint32_t noteIdHigh) {
-  35      release(manifests, runs);
-  36      runs_ = &amp;runs;
-  37      noteIdHigh_ = noteIdHigh;
-  38      used_ = 0;
-  39      for (uint8_t s = 0; s &lt; Slots; ++s) {
-  40        first_[s] = used_;
-  41        count_[s] = history.chain(s, ids_ + used_, static_cast&lt;uint8_t&gt;(kMaxStates - used_), current_[s], below_[s]);
-  42        for (uint8_t i = 0; i &lt; count_[s]; ++i) manifests.pin(ids_[used_ + i]);
-  43        used_ = static_cast&lt;uint8_t&gt;(used_ + count_[s]);
-  44        bytes_[s] = count_[s] ? sizeOf(manifests, s) : 0;</code></pre></details></section><section class="evidence" id="include-ContentEngine-EditSurface-h-L58"><h3>Note-edit motor feedback</h3><p><code>include/ContentEngine/EditSurface.h · line 58</code></p><details><summary>Read the excerpt</summary><pre><code>  57  //   step); undo / redo restore the step&#x27;s selection as the causing note; leaving keeps the results as published.
-  58  // * Motor feedback (owner 2026-11-06; legacy `NoteEditDependentFaderSnapshot`, which was off by default): the DROID&#x27;s
-  59  //   motor faders follow the selection — at the session&#x27;s opening and after undo, redo, delete or create all four;
-  60  //   after an F1 select F2–F4; after an F2 move F3 (the start&#x27;s offset in its new 16th); after NOTELEN F2 and F3. An
-  61  //   F3 move writes nothing: F2 shows the reference 16th, which F3 offsets from (owner 2026-11-06: F2 followed F3, its
-  62  //   landing read as a move took the note a 16th on, and F3 was pushed). A fader is written as its value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4
-  63  //   CC 2 / 3 channel 15), then its trigger note (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released
-  64  //   after `kMotorGateMs` (legacy 24 ticks at 120 BPM). A fader the musician moves has its position sent back as a
-  65  //   value alone (legacy ValueOnly): the DROID&#x27;s stored start value — where its `clear` sends the motor — stays with
-  66  //   the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4&#x27;s `clear`, and those are the 16th-step LEDs 2 /
-  67  //   3: a stale stored value sent F4 back to an old pitch whenever those LEDs changed (owner 2026-11-06). While a
-  68  //   written fader&#x27;s motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L240"><h3>Engine button and fader definitions</h3><p><code>include/ContentEngine/Surface.h · line 240</code></p><details><summary>Read the excerpt</summary><pre><code> 239    // Channel 16 button notes (MidiConfig) and their detector indices.
- 240    static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
- 241    static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
- 242    /// DEC-289 amendment 2: the GROOVE window&#x27;s own note — the DROID patch&#x27;s PLAY/STOP long press (`longpress`, the
- 243    /// legacy extended transport&#x27;s QUANTIZE note 43); its press toggles the window.
- 244    static constexpr uint8_t kGrooveNote = 43;
- 245    static constexpr uint32_t kVelocityHoldMs = 600;
- 246    static constexpr uint32_t kNewLoopBars = 4;  // an empty loop&#x27;s length (owner 2026-11-10: 4; a global setting later)  // NOTELEN held this long: velocity mode (the long press)
- 247    static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
- 248    static constexpr uint8_t kBarStepBase = 17, kStepNotes = 25;  // 16ths 0–15, bars 17–24 (channel 16; 16 unused)
- 249    /// The DROID&#x27;s fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`; legacy `sendEditSessionMidi`).
- 250    static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1800"><h3>LED assignments</h3><p><code>include/ContentEngine/Surface.h · line 1800</code></p><details><summary>Read the excerpt</summary><pre><code>1799    // ---- LEDs -----------------------------------------------------------------------------------------------------
-1800    void desired(uint32_t lastTick, uint32_t ms, uint8_t* want) {
-1801      auto&amp; x = transport();
-1802      auto&amp; c = control();
-1803      const uint8_t t = c.selectedTrack();
-1804      for (uint8_t i = 0; i &lt; kTracks; ++i) {
-1805        bool content = false;
-1806        for (uint8_t s = 0; s &lt; kSlotsPerTrack &amp;&amp; !content; ++s) content = !empty(static_cast&lt;uint8_t&gt;(i * kSlotsPerTrack + s));
-1807        // DEC-291: in mute mode the track LEDs show what sounds — unmuted with content full, muted dim, empty dark
-1808        want[kTrackBase + i] = trackMute_ ? (!content ? 0 : control().muted(i) ? 32 : 127)
-1809                                          : (i == t ? 127 : content ? 32 : 0);
-1810      }</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L233"><h3>Input routing</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 233</code></p><details><summary>Read the excerpt</summary><pre><code> 232
- 233  void channelMessage(uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
- 234    if (Surface&lt;EngineRoot&gt;::controlPlane(status)) {  // the DROID&#x27;s: never recorded, never thru
- 235      gSurface.input(status, d1, d2, millis());
- 236      if (gTrace) {
- 237        const auto&amp; ed = gSurface.edit();
- 238        EditNote n{};
- 239        const bool sel = ed.selected(n);
- 240        Serial.printf(&quot;#IN,%lu,%02x,%u,%u,editing=%u,sel=%u,why=%u,refused=%u,depth=%u,tick=%lu,pitch=%u,bracket=%lu\n&quot;,
- 241                      static_cast&lt;unsigned long&gt;(millis()), status, d1, d2, ed.editing(), sel,
- 242                      static_cast&lt;unsigned&gt;(ed.lastWhy()), ed.lastRefusal(), gEngine.noteEdit().depth(),
- 243                      sel ? static_cast&lt;unsigned long&gt;(n.tick) : 0ul, sel ? n.pitch : 0u,</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L328"><h3>Button decoder</h3><p><code>include/ContentEngine/Surface.h · line 328</code></p><details><summary>Read the excerpt</summary><pre><code> 327    /// The DROID control plane: channels 13–16 are the surface&#x27;s, never recorded nor thru.
- 328    static bool controlPlane(uint8_t status) { return (status &amp; 0xF0) &lt; 0xF0 &amp;&amp; (status &amp; 0x0F) &gt;= 12; }
- 329
- 330    /// A control-plane message at `ms`.
- 331    void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
- 332      const uint8_t type = status &amp; 0xF0, channel = status &amp; 0x0F;
- 333      if (groove_ &amp;&amp; grooveFader(type, channel, d1, d2, ms)) return;  // DEC-289: the GROOVE window&#x27;s faders
- 334      if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
- 335        const int16_t pb = static_cast&lt;int16_t&gt;(static_cast&lt;int32_t&gt;(d1 | (d2 &lt;&lt; 7)) - 8192);
- 336        if (channel == 15 &amp;&amp; loopEdit_) startFader(pb, ms);
- 337        else if (channel == 14 &amp;&amp; loopEdit_) coarseTempo(pb, ms);
- 338        else if (channel == 13 &amp;&amp; (loopEdit_ || popup_)) lengthFader(pb, ms);</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineDisplay-h-L15"><h3>OLED layout</h3><p><code>src/EngineFirmware/EngineDisplay.h · line 15</code></p><details><summary>Read the excerpt</summary><pre><code>  14  // The layout (no sidebar; every field has a fixed place and shows `-` when it has nothing to show):
-  15  // * Left column (x 0–21): the 8 tracks&#x27; numbers. While the clock runs, each track&#x27;s activity level (Cubase&#x27;s activity
-  16  //   column): the last NoteOn&#x27;s velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden track.
-  17  //   While it does not, the legacy state letter (`trackStateToLetter`: R recording, O overdubbing, A armed, P playing,
-  18  //   S stopped with content in its selected slot, - its selected slot empty, M muted or hidden by another track&#x27;s solo
-  19  //   — the selected track shows its real state); the selected track&#x27;s letter pulses (1 Hz, brightness 7–13; legacy 4–10).
-  20  // * Piano roll (x 22–255, rows 0–45; four dark rows under it, no rule before the status band): the shown slot — the
-  21  //   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4
-  22  //   bars), the engine&#x27;s tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (owner
-  23  //   2026-11-06: too crowded; BARS and the position say where the page is).
-  24  // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number
-  25  //   right-aligned, no leading zeros):</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L1410"><h3>Framebuffer export</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 1410</code></p><details><summary>Read the excerpt</summary><pre><code>1409      report(verb, 0);
-1410    } else if (std::strcmp(verb, &quot;fbdump&quot;) == 0) {  // the last frame drawn: `scripts/render_display_dump.py`
-1411      gDisplay.dump();
-1412    } else if (std::strcmp(verb, &quot;oled-test&quot;) == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes
-1413      gDisplay.selfTest(a != 0);
-1414      gDisplay.hold(millis(), 3000);
-1415    } else if (std::strcmp(verb, &quot;oled-clock&quot;) == 0 || std::strcmp(verb, &quot;oled-phase&quot;) == 0 ||
-1416               std::strcmp(verb, &quot;frame-ms&quot;) == 0 || std::strcmp(verb, &quot;oled-flip&quot;) == 0) {
-1417      // Panel timing (diagnostics): oled-clock 0xB1; frame-ms 16; oled-flip 1 / 0 (off-screen frames); no arg reports.
-1418      const long v = arg != nullptr ? std::strtol(arg, nullptr, 0) : 0;
-1419      const bool clock = verb[5] == &#x27;c&#x27;, phase = verb[5] == &#x27;p&#x27;, flip = verb[5] == &#x27;f&#x27;;
-1420      gDisplay.tune(clock ? static_cast&lt;uint8_t&gt;(v) : 0, phase ? static_cast&lt;uint8_t&gt;(v) : 0,</code></pre></details></section><section class="evidence" id="include-ContentEngine-StatusView-h-L28"><h3>Save indicators</h3><p><code>include/ContentEngine/StatusView.h · line 28</code></p><details><summary>Read the excerpt</summary><pre><code>  27    /// `failed`: the persistence&#x27;s counters (an increase is a completed / failed save).
+  19      int OLED_HEIGHT = 64;</code></pre></details></section><section class="evidence" id="src-GpioEncoder-h-L4"><h3>Encoder wiring</h3><p><code>src/GpioEncoder.h · line 4</code></p><details><summary>Read the excerpt</summary><pre><code>   3  //
+   4  // The GPIO encoder: quadrature on pins 29 / 30 (the Encoder library&#x27;s interrupts, four counts a detent) and the push on
+   5  // 31 to ground (pull-up), debounced — a level held `kDebounceMs` is taken. Turns and pushes go to the surface.
+   6
+   7  #pragma once
+   8
+   9  #if defined(ENGINE_FIRMWARE)
+  10
+  11  #include &lt;Arduino.h&gt;
+  12  #include &lt;Encoder.h&gt;
+  13
+  14  #include &quot;Firmware.h&quot;</code></pre></details></section><section class="evidence" id="src-main-cpp-L168"><h3>Hardware setup</h3><p><code>src/main.cpp · line 168</code></p><details><summary>Read the excerpt</summary><pre><code> 167  // ---- Start ----------------------------------------------------------------------------------------------------------
+ 168  FLASHMEM void setup() {  // once at boot, from flash (RAM1 room)
+ 169    BootHealth::phase(kPhaseSetup);
+ 170    health.begin(watchdogWarningIsr, usbIsrCounted);
+ 171    // The title first: before the wait for USB serial (up to 3 s without a host), until the boot load has ended.
+ 172    fw.display.begin();
+ 173    fw.display.drawTitle();
+ 174    Serial.begin(115200);
+ 175    while (!Serial &amp;&amp; millis() &lt; 3000) {
+ 176      BootHealth::feedWatchdog();
+ 177      delay(10);
+ 178    }</code></pre></details></section><section class="evidence" id="src-MidiPorts-h-L123"><h3>MIDI playback outputs</h3><p><code>src/MidiPorts.h · line 123</code></p><details><summary>Read the excerpt</summary><pre><code> 122    /// Each port&#x27;s due playback messages to the wire; the host port&#x27;s are drained (playback never goes to the DROID).
+ 123    void transmit(ContentEngine::EngineRoot&amp; engine, uint32_t nowUs) {
+ 124      using namespace ContentEngine;
+ 125      ProductionHub::Sent buf[kSendPerPass];
+ 126      uint8_t n = engine.transmit(kPortDin, nowUs, buf, kSendPerPass);
+ 127      for (uint8_t i = 0; i &lt; n; ++i) sendDin(buf[i].status, buf[i].data1, buf[i].data2);
+ 128      n = engine.transmit(kPortUsbDevice, nowUs, buf, kSendPerPass);
+ 129      for (uint8_t i = 0; i &lt; n; ++i)
+ 130        usbMIDI.send(buf[i].status &amp; 0xF0, buf[i].data1, buf[i].data2, (buf[i].status &amp; 0x0F) + 1, 0);
+ 131      if (n != 0) {
+ 132        usbMIDI.send_now();
+ 133        lastUsbTxUs = micros();</code></pre></details></section><section class="evidence" id="platformio-ini-L53"><h3>Engine build</h3><p><code>platformio.ini · line 53</code></p><details><summary>Read the excerpt</summary><pre><code>  52  ;   pio run -e teensy41-capture-serial -t upload
+  53  [env:teensy41-capture-serial]
+  54  extends = env:teensy41
+  55  extra_scripts =
+  56  build_src_filter = -&lt;*&gt; +&lt;main.cpp&gt;
+  57  build_flags =
+  58  	${env:teensy41.build_flags}
+  59  	-D ENGINE_FIRMWARE=1
+  60
+  61  ; The engine&#x27;s earlier name (E9.8a), kept for scripts and notes that use it.
+  62  [env:teensy41-engine]
+  63  extends = env:teensy41-capture-serial</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L923"><h3>Record action</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 923</code></p><details><summary>Read the excerpt</summary><pre><code> 922
+ 923    void toggleRecord(uint8_t t) {
+ 924      if (control().recordQueued(t)) {  // armed: start the transport, else cancel
+ 925        if (!clock_-&gt;running()) startClock();
+ 926        else control().cancelQueued(t);
+ 927        return;
+ 928      }
+ 929      if (transport().writingTrack() == t) {
+ 930        endTake(t);
+ 931        return;
+ 932      }
+ 933      const uint8_t slot = selectedSlot(t);</code></pre></details></section><section class="evidence" id="include-ContentEngine-Playback-TrackControl-h-L98"><h3>Ending a take on a bar line</h3><p><code>include/ContentEngine/Playback/TrackControl.h · line 98</code></p><details><summary>Read the excerpt</summary><pre><code>  97    }
+  98    Result queueStop(uint8_t t, uint32_t clock) {
+  99      if (x_-&gt;writingTrack() != t) return Result::NotWriting;
+ 100      Pending&amp; p = pending_[t];
+ 101      p.stop = true;
+ 102      p.stopAt = clock;
+ 103      p.trimEnd = 0;
+ 104      if (x_-&gt;mode() == Transport::Mode::Recording &amp;&amp; bar_ != 0) {  // half a bar past a bar line ends there
+ 105        const uint32_t into = clock % bar_, start = clock - x_-&gt;writePosition(clock);
+ 106        if (into != 0 &amp;&amp; into &lt;= bar_ / 2 &amp;&amp; clock - into &gt; start) p.trimEnd = clock - into;
+ 107      }
+ 108      return Result::Ok;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L673"><h3>Undo gesture</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 673</code></p><details><summary>Read the excerpt</summary><pre><code> 672      switch (b) {
+ 673        case kRecord:
+ 674          if (p == Press::Double &amp;&amp; edit_.editing()) edit_.undo(nowMs_);
+ 675          else if (p == Press::Triple &amp;&amp; edit_.editing()) edit_.redo(nowMs_);
+ 676          else if (p == Press::Short) toggleRecord(t);
+ 677          else if (p == Press::Double) control().undo(slot, tick_, us_, us());
+ 678          else if (p == Press::Triple) control().redo(slot, tick_, us_, us());
+ 679          else control().clear(slot, tick_, us_, us());
+ 680          return;
+ 681        case kTrackSwitch:
+ 682          if (p == Press::Short) switchTrack(static_cast&lt;uint8_t&gt;((t + 1) % kTracks));
+ 683          else if (p == Press::Double) control().undo(slot, tick_, us_, us());</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-SlotUndoHistory-h-L326"><h3>Undo depth</h3><p><code>include/ContentEngine/History/SlotUndoHistory.h · line 326</code></p><details><summary>Read the excerpt</summary><pre><code> 325    /// Undo steps available on the slot (the `U:` level).
+ 326    uint8_t undoDepth(uint8_t slot) const {
+ 327      const Slot&amp; s = slots_[slot];
+ 328      uint8_t n = 0;
+ 329      for (uint8_t e = s.current; e != kNone &amp;&amp; n &lt; Depth; e = entries_[e].older) ++n;
+ 330      if (n == 0) return 0;
+ 331      const uint32_t d = (n - 1u) + coldCount(slot) + (s.emptyBelow ? 1u : 0u);  // the cold steps below count
+ 332      return static_cast&lt;uint8_t&gt;(d &gt; 255 ? 255 : d);
+ 333    }
+ 334    uint8_t redoDepth(uint8_t slot) const {
+ 335      const Slot&amp; s = slots_[slot];
+ 336      uint8_t n = 0;</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L98"><h3>Card-backed history</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 98</code></p><details><summary>Read the excerpt</summary><pre><code>  97
+  98  Each slot keeps up to **99 undo states of its own** (`kSlotDepth`); its 100th forgets that slot&#x27;s own oldest step,
+  99  never another slot&#x27;s. The states live in two tiers:
+ 100
+ 101  - **Hot** — in PSRAM, a shared table of 99 entries across all slots (the current states included). Undo and redo
+ 102    among hot states are instant.
+ 103  - **Cold** — a descriptor in PSRAM only (revision, loop length, and per run its record sector), with the rows on the
+ 104    card. When the hot table is full, the oldest undo step anywhere is *demoted* to cold instead of forgotten — when every
+ 105    run it lists is already on the card; an unsaved one is forgotten as before. The same happens, one step every 50 ms at
+ 106    most, when the content pool runs low (below 1/8 of its pages). Redo steps, a slot&#x27;s current state and a session&#x27;s
+ 107    protected start are never demoted.
+ 108</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L947"><h3>Slot launch</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 947</code></p><details><summary>Read the excerpt</summary><pre><code> 946    /// next launch step — a 16th of the bar playing, or a bar of the 8-bar page playing.
+ 947    void stepPress(uint8_t note) {
+ 948      if (note == kBarStepBase - 1 || edit_.editing() || edit_.entering() || loopEdit_ || popup_ || browsing()) return;
+ 949      const uint8_t t = selected();
+ 950      const auto&amp; x = transport();
+ 951      if (!x.playing(t) || x.writingTrack() == t) return;
+ 952      const ManifestId m = x.contentOf(x.playingSlot(t));
+ 953      const uint32_t loop = m == kNoManifest ? 0 : x.loopLength(m);
+ 954      if (loop == 0) return;
+ 955      const uint32_t pos = (tick_ - x.origin(t)) % loop;
+ 956      constexpr uint32_t kPage = 8 * kBar;
+ 957      // The buttons are absolute everywhere (DEC-283): a place in the stored loop — the 16th of its bar playing, the bar</code></pre></details></section><section class="evidence" id="src-SerialCommands-h-L316"><h3>Launch setting</h3><p><code>src/SerialCommands.h · line 316</code></p><details><summary>Read the excerpt</summary><pre><code> 315        Serial.printf(&quot;#ENGINE,switch-at,%s\n&quot;, settings.switchAtName());
+ 316      } else if (std::strcmp(verb, &quot;launch-q&quot;) == 0) {  // launch-q 16|8|4|bar: the launch quantisation (EEPROM)
+ 317        if (arg != nullptr &amp;&amp; std::strcmp(arg, &quot;bar&quot;) == 0) settings.storeLaunchGrid(1);
+ 318        else if (arg != nullptr &amp;&amp; DeviceSettings::launchDivisionValid(static_cast&lt;uint32_t&gt;(a)) &amp;&amp; a != 1) settings.storeLaunchGrid(static_cast&lt;uint8_t&gt;(a));
+ 319        Serial.printf(&quot;#ENGINE,launch-q,%s\n&quot;, settings.launchGridName());
+ 320      } else if (std::strcmp(verb, &quot;groove&quot;) == 0) {  // groove TEMPLATE AMOUNT [SCOPE]: the shown slot
+ 321        ContentEngine::groove::Settings s;
+ 322        s.tmpl = static_cast&lt;uint8_t&gt;(a);
+ 323        s.amount = static_cast&lt;uint8_t&gt;(b &gt; 100 ? 100 : b &lt; 0 ? 0 : b);
+ 324        const char* third = second != nullptr ? std::strchr(second + 1, &#x27; &#x27;) : nullptr;
+ 325        s.scope = static_cast&lt;uint8_t&gt;(third != nullptr ? std::atoi(third + 1) : 0);
+ 326        const uint8_t slot = fw.surface.shown(c.selectedTrack());</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L707"><h3>Edit gesture</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 707</code></p><details><summary>Read the excerpt</summary><pre><code> 706          return;
+ 707        case kEditMode:  // short = the track buttons&#x27; select / mute mode, in every mode;
+ 708          // long (released before `kEditExitMs`) = into NOTE_EDIT, then NOTE_EDIT ↔ LOOP_EDIT; held `kEditExitMs` =
+ 709          // out of the edit modes (`service`, while held)
+ 710          if (p == Press::Short) trackMute_ = !trackMute_;
+ 711          else if (p == Press::Long) cycleEdit(t);
+ 712          return;
+ 713        case kLength:
+ 714          if (loopEdit_) {  // LOOP_EDIT: an empty slot gets an empty loop (short or long); long: the length popup
+ 715            if (p == Press::Short &amp;&amp; !empty(shownSlot(t))) {  // the other range, as in performance (3)
+ 716              switchRange(shownSlot(t));
+ 717              return;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceNoteEdit-h-L460"><h3>Step editing</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h · line 460</code></p><details><summary>Read the excerpt</summary><pre><code> 459    /// A step&#x27;s press: its first note, or the next after the selected one (the cycle); an empty step gets a 16th C4.
+ 460    void stepPress(uint8_t k, uint32_t ms) {
+ 461      uint32_t tick;
+ 462      if (!stepTick(k, tick)) return;
+ 463      int16_t stack[32];
+ 464      const uint8_t n = stackAt(tick, stack);
+ 465      if (n == 0) {
+ 466        bracket_ = tick;
+ 467        create(ms, kSixteenth);
+ 468        return;
+ 469      }
+ 470      uint8_t idx = 0;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceLoopEdit-h-L180"><h3>Range selection</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceLoopEdit.h · line 180</code></p><details><summary>Read the excerpt</summary><pre><code> 179  template &lt;typename Engine&gt;
+ 180  inline auto ControlSurface&lt;Engine&gt;::loopRange(bool bars, uint8_t a, uint8_t b) -&gt; void {
+ 181    const uint8_t t = selected(), slot = shownSlot(t);
+ 182    auto&amp; x = transport();
+ 183    const ManifestId c = x.contentOf(slot);
+ 184    if (c == kNoManifest) return;
+ 185    beyondEnd(c);
+ 186    const uint32_t loop = e_-&gt;manifests().manifest(c).loopLengthTicks;
+ 187    constexpr uint32_t kBar = ControlSurfaceNoteEdit&lt;Engine&gt;::kBar, kStep = ControlSurfaceNoteEdit&lt;Engine&gt;::kSixteenth;
+ 188    const uint32_t pos = x.playing(t) &amp;&amp; x.playingSlot(t) == slot ? (tick_ - x.origin(t)) % loop : 0;
+ 189    const uint32_t at = (playStart_ + pos) % storedTicks_;
+ 190    const uint32_t unit = bars ? kBar : kStep, base = bars ? at / (8 * kBar) * (8 * kBar) : at / kBar * kBar;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceGroove-h-L342"><h3>Groove faders</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceGroove.h · line 342</code></p><details><summary>Read the excerpt</summary><pre><code> 341  template &lt;typename Engine&gt;
+ 342  inline auto ControlSurface&lt;Engine&gt;::grooveFader(uint8_t type, uint8_t channel, uint8_t d1, uint8_t d2, uint32_t ms) -&gt; bool {
+ 343    if (type != 0xB0 || channel != 15 || d1 &lt; kGrooveCc || d1 &gt;= kGrooveCc + kGrooveFields) return false;
+ 344    const uint8_t field = static_cast&lt;uint8_t&gt;(d1 - kGrooveCc);
+ 345    if ((faderSeen_ &amp; (1u &lt;&lt; field)) == 0) {  // the DROID reports each fader as the bank opens: where it is, not a move
+ 346      faderSeen_ = static_cast&lt;uint8_t&gt;(faderSeen_ | (1u &lt;&lt; field));
+ 347      return true;
+ 348    }
+ 349    if (landing(field, ms)) return true;  // its motor&#x27;s travel to the value written, not a move
+ 350    const Heard col = columnOf(field);
+ 351    groove::Settings&amp; g = columnSettings(col);
+ 352    const groove::Settings before = g;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L653"><h3>Groove controls</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 653</code></p><details><summary>Read the excerpt</summary><pre><code> 652      }
+ 653      if (groove_ &amp;&amp; b == kLength) {  // ADD compares — single A ↔ B, double OFF, hold the cycle
+ 654        grooveCompare(p);
+ 655        return;
+ 656      }
+ 657      if (groove_ &amp;&amp; p == Press::Long) {  // the GROOVE window: a long press of any other button applies
+ 658        closeGroove();
+ 659        return;
+ 660      }
+ 661      if (groove_ &amp;&amp; (b == kPlayStop || b == kTransport)) return;  // PLAY/STOP: its hold (note 43) applies; no stop
+ 662      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
+ 663        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L116"><h3>How the looper stores undo history</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 116</code></p><details><summary>Read the excerpt</summary><pre><code> 115  Cold states are saved in the slot&#x27;s state record (its cold section) and come back at boot as descriptors; the boot
+ 116  reads only hot states&#x27; rows. Milestones (the library) carry each slot&#x27;s hot states only.
+ 117
+ 118  Diagnostics: `!ENGINE history` (`history_cold`: cold steps per slot), `!ENGINE take` (`#ENGINE,cold`: demoted,
+ 119  pressure; `#ENGINE,fetch`; `#ENGINE,runstore`; `#ENGINE,grain_worst` per job class).
+ 120
+ 121  ## The library file inside
+ 122
+ 123  | Area | Sectors | What it holds |
+ 124  |---|---|---|
+ 125  | Index header A / B | 0–1 | count, where the next milestone goes, the next sequence number |
+ 126  | Index entries | 2–513 | 4,096 entries of 64 B: sequence, set, stage and stage number (`SET 2 T01` on screen), parent, wall time, tempo, loop count, shortest / longest loop, place in the log, a 2-bit-per-slot mosaic |</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-SetBrowser-h-L236"><h3>Sets browser controls</h3><p><code>include/ContentEngine/ControlSurface/SetBrowser.h · line 236</code></p><details><summary>Read the excerpt</summary><pre><code> 235    // ---- Navigation --------------------------------------------------------------------------------------------------
+ 236    /// HOLD TRACK on the performance screen: the top level, `SAVE` selected.
+ 237    void open() {
+ 238      view_ = View::Top;
+ 239      request_ = Request{};
+ 240      selected_ = 1;
+ 241      first_ = 0;
+ 242      scroll();
+ 243    }
+ 244    void close() { view_ = View::Closed; }
+ 245    bool isOpen() const { return view_ != View::Closed; }
+ 246    View view() const { return view_; }</code></pre></details></section><section class="evidence" id="src-LibraryOperations-h-L659"><h3>Save and load in the firmware</h3><p><code>src/LibraryOperations.h · line 659</code></p><details><summary>Read the excerpt</summary><pre><code> 658    /// The browser: kept current while closed, and what it asks carried out.
+ 659    FIRMWARE_COLD __attribute__((noinline)) void serviceBrowser(uint32_t nowUs) {  // from flash (RAM1 room)
+ 660      if (!browserReady) return;
+ 661      library::CheckpointHeader cp{};
+ 662      const bool hasCheckpoint = fw.engine.library().checkpoint(cp);
+ 663      if (!browser.isOpen()) {
+ 664        browser.setWorking(set, base);
+ 665        const Evidence now = evidenceNow(), &amp;at = evidenceAt;
+ 666        const uint32_t commits = now.commits - at.commits, records = now.records - at.records;
+ 667        ProductionBrowser::Activity a;
+ 668        a.build = commits != 0;
+ 669        a.takesOnly = records != 0 &amp;&amp; now.recordsWithOthers - at.recordsWithOthers == records &amp;&amp; commits &lt;= records;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-SetBrowser-h-L10"><h3>Browser rows and controls</h3><p><code>include/ContentEngine/ControlSurface/SetBrowser.h · line 10</code></p><details><summary>Read the excerpt</summary><pre><code>   9  //   milestone. Sets are listed newest first, a set&#x27;s milestones newest first.
+  10  // * Views (saving and loading split, no return row; the dividers name the intent). Top: `&lt; CLOSE`, `SAVE SET`, a `LOAD
+  11  //   SET` divider (not selectable), then the working set and the other sets, newest first, and `TRASH` last (the second
+  12  //   way in). A set: `&lt; SETS`, a `LOAD STAGE` divider, then its milestones newest first. The trash: `&lt; SETS`, `EMPTY
+  13  //   TRASH`, a `RESTORE SET/STAGE` divider, then what is in it newest first. The save popup (`SAVE CURRENT`): `AS NEW
+  14  //   SET` (Sketch 01 of the next set number), then every stage with the id it would get, the suggested one selected;
+  15  //   beside it the working set&#x27;s history from its base. A failure: what, why, `NOTHING CHANGED`, over the view it came
+  16  //   from.
+  17  // * Buttons (rules 2–4): RECORD up, EDIT down (stopping at both ends, passing the divider); TRACK does what the hint
+  18  //   says for the selected row; a double TRACK opens the trash (and from it, the sets). HOLD TRACK on a set or a stage
+  19  //   asks to move it to the trash (`YES` / `CANCEL`, CANCEL selected; TRACK confirms, HOLD TRACK cancels); it closes the
+  20  //   save popup and a failure, changing nothing. In the trash TRACK restores an item; `EMPTY TRASH` asks again before</code></pre></details></section><section class="evidence" id="include-ContentEngine-Storage-LibraryWriter-h-L35"><h3>Snapshot contents</h3><p><code>include/ContentEngine/Storage/LibraryWriter.h · line 35</code></p><details><summary>Read the excerpt</summary><pre><code>  34    /// Captures and pins every slot&#x27;s chain (call `release` when done). `noteIdHigh`: the note-id high-water mark of T0.
+  35    void capture(Runs&amp; runs, Manifests&amp; manifests, const HistoryT&amp; history, uint32_t noteIdHigh) {
+  36      release(manifests, runs);
+  37      runs_ = &amp;runs;
+  38      noteIdHigh_ = noteIdHigh;
+  39      used_ = 0;
+  40      for (uint8_t s = 0; s &lt; Slots; ++s) {
+  41        first_[s] = used_;
+  42        count_[s] = history.chain(s, ids_ + used_, static_cast&lt;uint8_t&gt;(kMaxStates - used_), current_[s], below_[s]);
+  43        for (uint8_t i = 0; i &lt; count_[s]; ++i) manifests.pin(ids_[used_ + i]);
+  44        used_ = static_cast&lt;uint8_t&gt;(used_ + count_[s]);
+  45        bytes_[s] = count_[s] ? sizeOf(manifests, s) : 0;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceNoteEdit-h-L54"><h3>Note-edit motor feedback</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h · line 54</code></p><details><summary>Read the excerpt</summary><pre><code>  53  //   restore the step&#x27;s selection as the causing note; leaving keeps the results as published.
+  54  // * Motor feedback: the DROID&#x27;s motor faders follow the selection — at the session&#x27;s opening and after undo, redo,
+  55  //   delete or create all four; after an F1 select F2–F4; after an F2 move F3 (the start&#x27;s offset in its new 16th);
+  56  //   after NOTELEN F2 and F3. An F3 move writes nothing: F2 shows the reference 16th, which F3 offsets from (if F2
+  57  //   followed F3, its landing, read as a move, would take the note a 16th on and push F3). A fader is written as its
+  58  //   value (F1 pitch bend channel 16, F2 pitch bend channel 14, F3 / F4 CC 2 / 3 channel 15), then its trigger note
+  59  //   (`clear`: channel 16 / 14 note 0, channel 15 note 1 / 2), released after `kMotorGateMs`. A fader the musician moves
+  60  //   has its position sent back as a value alone: the DROID&#x27;s stored start value — where its `clear` sends the motor —
+  61  //   stays with the fader. The patch also reads channel 15 notes 1 / 2 as F3 / F4&#x27;s `clear`, and those are the 16th-step
+  62  //   LEDs 2 / 3: a stale stored value would send F4 back to an old pitch whenever those LEDs change. While a written
+  63  //   fader&#x27;s motor travels (`kMotorSettleMs` after the write, and until it has been quiet `kMotorQuietMs`) its messages
+  64  //   are not moves, nor where it comes to rest (within `kMotorLandingPb` / `kMotorLandingCc` of the value: the DROID&#x27;s</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L115"><h3>Engine button and fader definitions</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 115</code></p><details><summary>Read the excerpt</summary><pre><code> 114    // Channel 16 button notes (MidiConfig) and their detector indices.
+ 115    static constexpr uint8_t kRecordNote = 36, kTrackSwitchNote = 37, kTransportNote = 39, kPlayStopNote = 40;
+ 116    static constexpr uint8_t kLengthNote = 35, kEditModeNote = 38;
+ 117    /// The GROOVE window&#x27;s own note — the DROID patch&#x27;s PLAY/STOP long press (`longpress`, note
+ 118    /// 43); its press toggles the window.
+ 119    static constexpr uint8_t kGrooveNote = 43;
+ 120    static constexpr uint32_t kVelocityHoldMs = 600;
+ 121    static constexpr uint32_t kNewLoopBars = 4;  // an empty loop&#x27;s length (4; a global setting later)  // NOTELEN held this long: velocity mode (the long press)
+ 122    static constexpr uint8_t kSlotBase = 50, kTrackBase = 60, kLedChannel = 14;  // channel 15 (0-based 14)
+ 123    static constexpr uint8_t kBarStepBase = 17, kStepNotes = 25;  // 16ths 0–15, bars 17–24 (channel 16; 16 unused)
+ 124    /// The DROID&#x27;s fader bank: Program Change on channel 16 (`_EDIT_NOTE_STATE`).
+ 125    static constexpr uint8_t kProgramChannel = 15;  // channel 16 (0-based 15)</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceLeds-h-L150"><h3>LED assignments</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceLeds.h · line 150</code></p><details><summary>Read the excerpt</summary><pre><code> 149  template &lt;typename Engine&gt;
+ 150  inline auto ControlSurface&lt;Engine&gt;::desired(uint32_t lastTick, uint32_t ms, uint8_t* want) -&gt; void {
+ 151    auto&amp; x = transport();
+ 152    auto&amp; c = control();
+ 153    const uint8_t t = c.selectedTrack();
+ 154    for (uint8_t i = 0; i &lt; kTracks; ++i) {
+ 155      bool content = false;
+ 156      for (uint8_t s = 0; s &lt; kSlotsPerTrack &amp;&amp; !content; ++s) content = !empty(static_cast&lt;uint8_t&gt;(i * kSlotsPerTrack + s));
+ 157      // In mute mode the track LEDs show what sounds — unmuted with content full, muted dim, empty dark
+ 158      want[kTrackBase + i] = trackMute_ ? (!content ? 0 : control().muted(i) ? 32 : 127)
+ 159                                        : (i == t ? 127 : content ? 32 : 0);
+ 160    }</code></pre></details></section><section class="evidence" id="src-MidiInput-h-L96"><h3>Input routing</h3><p><code>src/MidiInput.h · line 96</code></p><details><summary>Read the excerpt</summary><pre><code>  95
+  96    void channelMessage(uint8_t status, uint8_t d1, uint8_t d2, uint32_t nowUs) {
+  97      using namespace ContentEngine;
+  98      if (ControlSurface&lt;EngineRoot&gt;::controlPlane(status)) {  // the DROID&#x27;s: never recorded, never thru
+  99        fw.surface.input(status, d1, d2, millis());
+ 100        if (trace) {
+ 101          const auto&amp; ed = fw.surface.edit();
+ 102          EditNote n{};
+ 103          const bool sel = ed.selected(n);
+ 104          Serial.printf(&quot;#IN,%lu,%02x,%u,%u,editing=%u,sel=%u,why=%u,refused=%u,depth=%u,tick=%lu,pitch=%u,bracket=%lu\n&quot;,
+ 105                        static_cast&lt;unsigned long&gt;(millis()), status, d1, d2, ed.editing(), sel,
+ 106                        static_cast&lt;unsigned&gt;(ed.lastWhy()), ed.lastRefusal(), fw.engine.noteEdit().depth(),</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L204"><h3>Button decoder</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 204</code></p><details><summary>Read the excerpt</summary><pre><code> 203    /// The DROID control plane: channels 13–16 are the surface&#x27;s, never recorded nor thru.
+ 204    static bool controlPlane(uint8_t status) { return (status &amp; 0xF0) &lt; 0xF0 &amp;&amp; (status &amp; 0x0F) &gt;= 12; }
+ 205
+ 206    /// A control-plane message at `ms`.
+ 207    void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
+ 208      const uint8_t type = status &amp; 0xF0, channel = status &amp; 0x0F;
+ 209      if (groove_ &amp;&amp; grooveFader(type, channel, d1, d2, ms)) return;  // the GROOVE window&#x27;s faders
+ 210      if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
+ 211        const int16_t pb = static_cast&lt;int16_t&gt;(static_cast&lt;int32_t&gt;(d1 | (d2 &lt;&lt; 7)) - 8192);
+ 212        if (channel == 15 &amp;&amp; loopEdit_) startFader(pb, ms);
+ 213        else if (channel == 14 &amp;&amp; loopEdit_) coarseTempo(pb, ms);
+ 214        else if (channel == 13 &amp;&amp; (loopEdit_ || popup_)) lengthFader(pb, ms);</code></pre></details></section><section class="evidence" id="include-Teensy-OledScreen-h-L14"><h3>OLED layout</h3><p><code>include/Teensy/OledScreen.h · line 14</code></p><details><summary>Read the excerpt</summary><pre><code>  13  // The layout (no sidebar; every field has a fixed place and shows `-` when it has nothing to show):
+  14  // * Left column (x 0–21): the 8 tracks&#x27; numbers. While the clock runs, each track&#x27;s activity level (Cubase&#x27;s activity
+  15  //   column): the last NoteOn&#x27;s velocity, falling over 0.5 s (`ClockOutput::level`), dim on a muted or solo-hidden
+  16  //   track. While it does not, the state letter (R recording, O overdubbing, A armed, P playing, S stopped with content
+  17  //   in its selected slot, - its selected slot empty, M muted or hidden by another track&#x27;s solo — the selected track
+  18  //   shows its real state); the selected track&#x27;s letter pulses (1 Hz, brightness 7–13).
+  19  // * Piano roll (x 22–255, rows 0–45; four dark rows under it, no rule before the status band): the shown slot — the
+  20  //   whole loop up to 16 bars, else a 16-bar page following the playhead — with bar lines (and beat lines up to 4 bars),
+  21  //   the engine&#x27;s tiles and live overlay (`EngineRoot::drawRollBand`) and the playhead. No overview strip (too crowded;
+  22  //   BARS and the position say where the page is).
+  23  // * Status band (rows 50–63, the values on the bottom row; 3 × 5 labels over 5 × 7 values, every number right-aligned,
+  24  //   no leading zeros):</code></pre></details></section><section class="evidence" id="src-SerialCommands-h-L251"><h3>Framebuffer export</h3><p><code>src/SerialCommands.h · line 251</code></p><details><summary>Read the excerpt</summary><pre><code> 250        report(verb, 0);
+ 251      } else if (std::strcmp(verb, &quot;fbdump&quot;) == 0) {  // the last frame drawn: `scripts/render_display_dump.py`
+ 252        fw.display.dump();
+ 253      } else if (std::strcmp(verb, &quot;oled-test&quot;) == 0) {  // oled-test 1: blocking white; oled-test 0: DMA stripes
+ 254        fw.display.selfTest(a != 0);
+ 255        fw.display.hold(millis(), 3000);
+ 256      } else if (std::strcmp(verb, &quot;oled-clock&quot;) == 0 || std::strcmp(verb, &quot;oled-phase&quot;) == 0 ||
+ 257                 std::strcmp(verb, &quot;frame-ms&quot;) == 0 || std::strcmp(verb, &quot;oled-flip&quot;) == 0) {
+ 258        // Panel timing (diagnostics): oled-clock 0xB1; frame-ms 16; oled-flip 1 / 0 (off-screen frames); no arg reports.
+ 259        const long v = arg != nullptr ? std::strtol(arg, nullptr, 0) : 0;
+ 260        const bool clock = verb[5] == &#x27;c&#x27;, phase = verb[5] == &#x27;p&#x27;, flip = verb[5] == &#x27;f&#x27;;
+ 261        fw.display.tune(clock ? static_cast&lt;uint8_t&gt;(v) : 0, phase ? static_cast&lt;uint8_t&gt;(v) : 0,</code></pre></details></section><section class="evidence" id="include-ContentEngine-Display-StatusView-h-L28"><h3>Save indicators</h3><p><code>include/ContentEngine/Display/StatusView.h · line 28</code></p><details><summary>Read the excerpt</summary><pre><code>  27    /// `failed`: the persistence&#x27;s counters (an increase is a completed / failed save).
   28    SaveDots update(uint32_t nowMs, bool writing, bool unsaved, uint32_t saves, uint32_t failed) {
   29      if (saves != saves_) {
   30        saves_ = saves;
@@ -388,84 +377,84 @@
   35        failed_ = failed;
   36        failedAt_ = nowMs;
   37        failedSeen_ = true;
-  38      }</code></pre></details></section><section class="evidence" id="include-ContentEngine-ClockOutput-h-L18"><h3>Thru and mute</h3><p><code>include/ContentEngine/ClockOutput.h · line 18</code></p><details><summary>Read the excerpt</summary><pre><code>  17  // * E9.4: mute / solo gate a track (`setAudible`): going silent ends what it sounds on every port at once and frees its
-  18  //   keys; while silent its NoteOns are dropped (counted) and their NoteOffs find no key. Live MIDI thru (`thruNoteOn` /
-  19  //   `thruNoteOff` / `thruEvent`) plays the input on a track&#x27;s ports; its notes hold `kThruSlots` keys of their own with
-  20  //   generations (top bit set: never a composed key), so a fast repeated note is a new note, not swallowed by the
-  21  //   previous one&#x27;s pending NoteOff. Thru is not gated by mute: the musician hears what they play.
-  22  // * Output channel (E9.7b, the legacy playback rule `remappedPlaybackChannel`): a track with a MIDI channel set sends
-  23  //   every channel message (notes, controllers, pitch bend, program change, aftertouch) on that channel, whatever channel
-  24  //   it was recorded on; `kAsRecorded` keeps the recorded channel. Thru follows the same rule.
-  25  // No allocation.
-  26
-  27  #pragma once
-  28</code></pre></details></section><section class="evidence" id="platformio-ini-L280"><h3>Engine build filter</h3><p><code>platformio.ini · line 280</code></p><details><summary>Read the excerpt</summary><pre><code> 279  extra_scripts =
- 280  build_src_filter = -&lt;*&gt; +&lt;EngineFirmware/&gt;
- 281  build_flags =
- 282  	${env:teensy41.build_flags}
- 283  	-D ENGINE_FIRMWARE=1
- 284
- 285  ; Host unit tests: pio test -e native (see .cursor/rules/Testing-Workflow.mdc)
- 286  ; fixed-memory-engine E5 device grain bench (test image, not firmware): production engine placement, DWT-timed
- 287  ; grains, results on USB serial. No src/, so the firmware&#x27;s RAM1 budget gate does not apply.
- 288  ;   pio test -e teensy41-engine-bench -f test_content_engine_grain_bench
- 289  [env:teensy41-engine-bench]
- 290  extends = env:teensy41</code></pre></details></section><section class="evidence" id="include-MidiConfig-h-L47"><h3>Legacy map</h3><p><code>include/MidiConfig.h · line 47</code></p><details><summary>Read the excerpt</summary><pre><code>  46  // --- Channels ---
-  47  namespace Channels {
-  48    constexpr uint8_t DEFAULT = 1;             // Legacy default
-  49    constexpr uint8_t TRACK_SELECT = 16;       // DROID track row (notes 60-67)
-  50    constexpr uint8_t LED_FEEDBACK = 15;       // All LEDs (16th, tick, bar, main controls)
-  51    constexpr uint8_t MAIN_CONTROLS_LED = 15;  // Play/stop LED same channel as other LEDs
-  52    constexpr uint8_t TRANSPORT = 15;          // Alias for MAIN_CONTROLS_LED (play/stop LED)
-  53    constexpr uint8_t FADER = 15;              // Faders 3,4 (fine CC2, note-value CC3)
-  54    constexpr uint8_t FADER_COARSE = 14;      // Fader 2 coarse pitchbend
-  55    constexpr uint8_t SELECT = 16;             // Fader 1 (select), buttons, loop length
-  56  }
-  57</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L331"><h3>Input decoder</h3><p><code>include/ContentEngine/Surface.h · line 331</code></p><details><summary>Read the excerpt</summary><pre><code> 330    /// A control-plane message at `ms`.
- 331    void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
- 332      const uint8_t type = status &amp; 0xF0, channel = status &amp; 0x0F;
- 333      if (groove_ &amp;&amp; grooveFader(type, channel, d1, d2, ms)) return;  // DEC-289: the GROOVE window&#x27;s faders
- 334      if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
- 335        const int16_t pb = static_cast&lt;int16_t&gt;(static_cast&lt;int32_t&gt;(d1 | (d2 &lt;&lt; 7)) - 8192);
- 336        if (channel == 15 &amp;&amp; loopEdit_) startFader(pb, ms);
- 337        else if (channel == 14 &amp;&amp; loopEdit_) coarseTempo(pb, ms);
- 338        else if (channel == 13 &amp;&amp; (loopEdit_ || popup_)) lengthFader(pb, ms);
- 339        else if (channel == 15) edit_.select(pb, ms);
- 340        else if (channel == 13) edit_.coarse(pb, ms);
- 341        return;</code></pre></details></section><section class="evidence" id="include-ContentEngine-EditSurface-h-L971"><h3>Motor messages</h3><p><code>include/ContentEngine/EditSurface.h · line 971</code></p><details><summary>Read the excerpt</summary><pre><code> 970    }
- 971    static MotorMsg value(uint8_t i, int32_t v) {
- 972      if (i &lt; 2) {  // pitch bend, 14 bits
- 973        const int32_t raw = v + 8192 &lt; 0 ? 0 : v + 8192 &gt; 16383 ? 16383 : v + 8192;
- 974        return MotorMsg{static_cast&lt;uint8_t&gt;(i == 0 ? 0xEF : 0xED), static_cast&lt;uint8_t&gt;(raw &amp; 0x7F),
- 975                        static_cast&lt;uint8_t&gt;(raw &gt;&gt; 7)};
- 976      }
- 977      return MotorMsg{0xBE, static_cast&lt;uint8_t&gt;(i == 2 ? 2 : 3), static_cast&lt;uint8_t&gt;(v &amp; 0x7F)};
- 978    }
- 979    static MotorMsg trigger(uint8_t i, bool on) {
- 980      static const uint8_t kChannel[4] = {15, 13, 14, 14}, kNote[4] = {0, 0, 1, 2};
- 981      return MotorMsg{static_cast&lt;uint8_t&gt;((on ? 0x90 : 0x80) | kChannel[i]), kNote[i], static_cast&lt;uint8_t&gt;(on ? 127 : 0)};</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L273"><h3>Reference patch</h3><p><code>droid/midilooper_v1.ini · line 273</code></p><details><summary>Read the excerpt</summary><pre><code> 272
- 273  [midiout]
- 274      select = _EDIT_MODE
- 275      selectat = 2
- 276      cc1 = _SEND_GROOVE_A
- 277      cc2 = _SEND_AMOUNT_A
- 278      cc3 = _SEND_GROOVE_B
- 279      cc4 = _SEND_AMOUNT_B
- 280      ccnumber1 = 20
- 281      ccnumber2 = 21
- 282      ccnumber3 = 22
- 283      ccnumber4 = 23</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L284"><h3>Physical input ports</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 284</code></p><details><summary>Read the excerpt</summary><pre><code> 283
- 284  void pollInput(uint32_t nowUs) {
- 285    for (uint8_t i = 0; i &lt; kInputPerPass &amp;&amp; Serial8.available(); ++i) gDin.feed(static_cast&lt;uint8_t&gt;(Serial8.read()), nowUs);
- 286    for (uint8_t i = 0; i &lt; kInputPerPass &amp;&amp; usbMIDI.read(); ++i) {
- 287      ++gUsbIn;
- 288      const uint8_t type = usbMIDI.getType();
- 289      if (type &gt;= 0xF8) {
- 290        realtime(type, nowUs);
- 291      } else if (type &gt;= 0x80 &amp;&amp; type &lt; 0xF0) {
- 292        channelMessage(static_cast&lt;uint8_t&gt;(type | ((usbMIDI.getChannel() - 1) &amp; 0x0F)), usbMIDI.getData1(),
- 293                       usbMIDI.getData2(), nowUs);
- 294      }</code></pre></details></section><section class="evidence" id="docs-Authority-PROJECT_INTENT-md-L61"><h3>Shared action-layer goal</h3><p><code>docs/Authority/PROJECT_INTENT.md · line 61</code></p><details><summary>Read the excerpt</summary><pre><code>  60  3. **Priority order: reliability first, then Phase 3 jam/arrangement capture.** Reliability means fixing known bugs *and* a verification regime (`pio test -e native` plus structured manual hardware tests) so changes stop breaking things.
+  38      }</code></pre></details></section><section class="evidence" id="include-ContentEngine-Playback-ClockOutput-h-L17"><h3>Thru and mute</h3><p><code>include/ContentEngine/Playback/ClockOutput.h · line 17</code></p><details><summary>Read the excerpt</summary><pre><code>  16  // * Mute / solo gate a track (`setAudible`): going silent ends what it sounds on every port at once and frees its keys;
+  17  //   while silent its NoteOns are dropped (counted) and their NoteOffs find no key. Live MIDI thru (`thruNoteOn` /
+  18  //   `thruNoteOff` / `thruEvent`) plays the input on a track&#x27;s ports; its notes hold `kThruSlots` keys of their own with
+  19  //   generations (top bit set: never a composed key), so a fast repeated note is a new note, not swallowed by the
+  20  //   previous one&#x27;s pending NoteOff. Thru is not gated by mute: the musician hears what they play.
+  21  // * Output channel: a track with a MIDI channel set sends every channel message (notes, controllers, pitch bend,
+  22  //   program change, aftertouch) on that channel, whatever channel it was recorded on; `kAsRecorded` keeps the recorded
+  23  //   channel. Thru follows the same rule.
+  24  // No allocation.
+  25
+  26  #pragma once
+  27</code></pre></details></section><section class="evidence" id="src-main-cpp-L208"><h3>Card setup at boot</h3><p><code>src/main.cpp · line 208</code></p><details><summary>Read the excerpt</summary><pre><code> 207    health.bootStartUs = micros();
+ 208    if (fw.card.begin()) {
+ 209      fw.engine.attachCard(fw.card);
+ 210      fw.engine.startBootLoad();  // the slots load in grains; `loop` reports it when done
+ 211    } else {
+ 212      reportCardAbsent();
+ 213    }
+ 214    BootHealth::phase(kPhaseCard);
+ 215  }
+ 216
+ 217  // ---- Run ------------------------------------------------------------------------------------------------------------
+ 218  void loop() {</code></pre></details></section><section class="evidence" id="platformio-ini-L56"><h3>Engine build filter</h3><p><code>platformio.ini · line 56</code></p><details><summary>Read the excerpt</summary><pre><code>  55  extra_scripts =
+  56  build_src_filter = -&lt;*&gt; +&lt;main.cpp&gt;
+  57  build_flags =
+  58  	${env:teensy41.build_flags}
+  59  	-D ENGINE_FIRMWARE=1
+  60
+  61  ; The engine&#x27;s earlier name (E9.8a), kept for scripts and notes that use it.
+  62  [env:teensy41-engine]
+  63  extends = env:teensy41-capture-serial
+  64
+  65  ; Host unit tests: pio test -e native (see .cursor/rules/Testing-Workflow.mdc)
+  66  ; fixed-memory-engine E5 device grain bench (test image, not firmware): production engine placement, DWT-timed</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L207"><h3>Input decoder</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 207</code></p><details><summary>Read the excerpt</summary><pre><code> 206    /// A control-plane message at `ms`.
+ 207    void input(uint8_t status, uint8_t d1, uint8_t d2, uint32_t ms) {
+ 208      const uint8_t type = status &amp; 0xF0, channel = status &amp; 0x0F;
+ 209      if (groove_ &amp;&amp; grooveFader(type, channel, d1, d2, ms)) return;  // the GROOVE window&#x27;s faders
+ 210      if (type == 0xE0) {  // pitch bend: F1 select (channel 16), F2 coarse (channel 14); LOOP_EDIT: F4 tempo (channel 15)
+ 211        const int16_t pb = static_cast&lt;int16_t&gt;(static_cast&lt;int32_t&gt;(d1 | (d2 &lt;&lt; 7)) - 8192);
+ 212        if (channel == 15 &amp;&amp; loopEdit_) startFader(pb, ms);
+ 213        else if (channel == 14 &amp;&amp; loopEdit_) coarseTempo(pb, ms);
+ 214        else if (channel == 13 &amp;&amp; (loopEdit_ || popup_)) lengthFader(pb, ms);
+ 215        else if (channel == 15) edit_.select(pb, ms);
+ 216        else if (channel == 13) edit_.coarse(pb, ms);
+ 217        return;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurfaceNoteEdit-h-L966"><h3>Motor messages</h3><p><code>include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h · line 966</code></p><details><summary>Read the excerpt</summary><pre><code> 965    }
+ 966    static MotorMsg value(uint8_t i, int32_t v) {
+ 967      if (i &lt; 2) {  // pitch bend, 14 bits
+ 968        const int32_t raw = v + 8192 &lt; 0 ? 0 : v + 8192 &gt; 16383 ? 16383 : v + 8192;
+ 969        return MotorMsg{static_cast&lt;uint8_t&gt;(i == 0 ? 0xEF : 0xED), static_cast&lt;uint8_t&gt;(raw &amp; 0x7F),
+ 970                        static_cast&lt;uint8_t&gt;(raw &gt;&gt; 7)};
+ 971      }
+ 972      return MotorMsg{0xBE, static_cast&lt;uint8_t&gt;(i == 2 ? 2 : 3), static_cast&lt;uint8_t&gt;(v &amp; 0x7F)};
+ 973    }
+ 974    static MotorMsg trigger(uint8_t i, bool on) {
+ 975      static const uint8_t kChannel[4] = {15, 13, 14, 14}, kNote[4] = {0, 0, 1, 2};
+ 976      return MotorMsg{static_cast&lt;uint8_t&gt;((on ? 0x90 : 0x80) | kChannel[i]), kNote[i], static_cast&lt;uint8_t&gt;(on ? 127 : 0)};</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L301"><h3>Reference patch</h3><p><code>droid/midilooper_v1.ini · line 301</code></p><details><summary>Read the excerpt</summary><pre><code> 300
+ 301  [midiout]
+ 302      select = _EDIT_MODE
+ 303      selectat = 2
+ 304      cc1 = _SEND_GROOVE_A
+ 305      cc2 = _SEND_AMOUNT_A
+ 306      cc3 = _SEND_GROOVE_B
+ 307      cc4 = _SEND_AMOUNT_B
+ 308      ccnumber1 = 20
+ 309      ccnumber2 = 21
+ 310      ccnumber3 = 22
+ 311      ccnumber4 = 23</code></pre></details></section><section class="evidence" id="src-MidiInput-h-L32"><h3>Physical input ports</h3><p><code>src/MidiInput.h · line 32</code></p><details><summary>Read the excerpt</summary><pre><code>  31
+  32    void poll(uint32_t nowUs) {
+  33      for (uint8_t i = 0; i &lt; kInputPerPass &amp;&amp; Serial8.available(); ++i) din_.feed(*this, static_cast&lt;uint8_t&gt;(Serial8.read()), nowUs);
+  34      for (uint8_t i = 0; i &lt; kInputPerPass &amp;&amp; usbMIDI.read(); ++i) {
+  35        ++diag.usbIn;
+  36        const uint8_t type = usbMIDI.getType();
+  37        if (type &gt;= 0xF8) {
+  38          realtime(type, nowUs);
+  39        } else if (type &gt;= 0x80 &amp;&amp; type &lt; 0xF0) {
+  40          channelMessage(static_cast&lt;uint8_t&gt;(type | ((usbMIDI.getChannel() - 1) &amp; 0x0F)), usbMIDI.getData1(),
+  41                         usbMIDI.getData2(), nowUs);
+  42        }</code></pre></details></section><section class="evidence" id="docs-Authority-PROJECT_INTENT-md-L61"><h3>Shared action-layer goal</h3><p><code>docs/Authority/PROJECT_INTENT.md · line 61</code></p><details><summary>Read the excerpt</summary><pre><code>  60  3. **Priority order: reliability first, then Phase 3 jam/arrangement capture.** Reliability means fixing known bugs *and* a verification regime (`pio test -e native` plus structured manual hardware tests) so changes stop breaking things.
   61  4. **One surface-agnostic action layer, in both directions.** GPIO and MIDI controls map onto the same actions (input), and faders/LEDs/display share one feedback path (output). Today actions live only in `MidiButtonActions` and fader feedback is coupled to `MidiFaderManager`.
   62  5. **Portability target (fall iteration): Randomwaves Drumboy Pro** — an open-source (MIT) STM32 Cortex-M7 groovebox, C++, with MIDI I/O, SD card, 5.3-inch LCD, pads, and 8 encoders. Refactoring must separate a **platform-independent core** (track/loop/slot logic, clock math, undo, note editing, gesture-to-action mapping) from a **thin platform layer** (MIDI transport, storage, display, controls, timers, PSRAM allocation — all Teensy/Arduino-specific today: `USBHost_t36`, `EXTMEM`, Arduino `SD`/MIDI, SSD1322 driver). Whatever compiles for `pio test -e native` is the platform-independent surface; growing that surface is the measure of progress.
   63
@@ -487,106 +476,106 @@
   18
   19  Record (36) short toggles record/overdub according to state. Record ends at a bar boundary; overdub ends immediately. Play/stop (40) controls the selected track. Transport (39) controls the internal clock; incoming external clock controls transport when active. Under a running external clock, transport (39) is a local stop and start instead: every track stops while the clock runs on, and the next press brings the tracks back at the next bar line; with the master stopped it does nothing. Nothing is sent back to the master. A transport start starts the unmuted tracks&#x27; selected filled slots as well as armed recordings.
   20
-  21  Track double toggles mute; long toggles solo. The playing slot&#x27;s short press also toggles mute. Slot double launches a filled slot at the next launch step — a queued one sooner than its loop end; on an empty slot, or a track taking, it is the short press. The launch step is global: `!ENGINE launch-q 16|8|4|bar` (default 1/16, kept in EEPROM). Slot triple redoes; slot long is [copy mode](#copy-mode). Record long clears the selected slot. Next track (37) long opens the sets browser. A long press of any button closes every window (the sets browser, the get-a-loop picker, the length popup). In the browser a double TRK moves a stage (or, on `MOVE SET TO TRASH`, the set) to the trash at once, and a triple TRK right after brings it back.</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L317"><h3>Encoder input</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 317</code></p><details><summary>Read the excerpt</summary><pre><code> 316  uint32_t gEncoderRawMs = 0;
- 317  void serviceEncoder(uint32_t ms) {
- 318    const long detents = gEncoder.read() / 4;
- 319    if (detents != gEncoderDetents) {
- 320      gSurface.encoderTurn(static_cast&lt;int32_t&gt;(detents - gEncoderDetents), ms);
- 321      gEncoderDetents = detents;
- 322    }
- 323    const bool raw = digitalRead(kEncoderButtonPin) == LOW;
- 324    if (raw != gEncoderRaw) {
- 325      gEncoderRaw = raw;
- 326      gEncoderRawMs = ms;
- 327    } else if (raw != gEncoderDown &amp;&amp; ms - gEncoderRawMs &gt;= kEncoderDebounceMs) {</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L453"><h3>Encoder actions</h3><p><code>include/ContentEngine/Surface.h · line 453</code></p><details><summary>Read the excerpt</summary><pre><code> 452    /// The encoder turned `detents` (signed) at `ms`: in NOTE_EDIT the selected note&#x27;s option, accelerated as legacy.
- 453    void encoderTurn(int32_t detents, uint32_t ms) {
- 454      const uint32_t interval = ms - encoderMs_;
- 455      encoderMs_ = ms;
- 456      if (groove_ &amp;&amp; detents != 0) {  // DEC-289: the GROOVE window&#x27;s selected field
- 457        grooveNudge(detents, ms);
- 458        return;
- 459      }
- 460      if (detents == 0 || !edit_.editing()) return;
- 461      const uint8_t k = heldStep();
- 462      if (k != 0xFF &amp;&amp; lockStep_ == 0xFF) {  // a held step: its note now, without waiting for the lock&#x27;s hold
- 463        lockStep_ = k;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1072"><h3>Picker Down binding</h3><p><code>include/ContentEngine/Surface.h · line 1072</code></p><details><summary>Read the excerpt</summary><pre><code>1071          if (b == kLength) browser_-&gt;pickUp();
-1072          else if (b == kPlayStop) browser_-&gt;pickDown();
-1073          else if (b == kRecord) browser_-&gt;pickLeft();
-1074          else if (b == kEditMode) browser_-&gt;pickRight();
-1075        }
-1076        return;
-1077      }
-1078      for (uint8_t i = 0; i &lt; times; ++i) {
-1079        if (b == kRecord &amp;&amp; p != Press::Long) browser_-&gt;up();
-1080        else if (b == kEditMode &amp;&amp; p != Press::Long) browser_-&gt;down();
-1081      }
-1082    }</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L329"><h3>DROID transport note</h3><p><code>droid/midilooper_v1.ini · line 329</code></p><details><summary>Read the excerpt</summary><pre><code> 328      note4 = 35
- 329      note5 = 39
- 330      channel = 16
- 331      usb = 1
- 332      velocity1 = 1
- 333      velocity2 = 1
- 334      velocity3 = 1
- 335      velocity4 = 1
- 336      velocity5 = 127
- 337
- 338  [button]
- 339      button = B2.32</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L348"><h3>DROID hold trigger</h3><p><code>droid/midilooper_v1.ini · line 348</code></p><details><summary>Read the excerpt</summary><pre><code> 347      shortpress = _TRIGGER_START_STOP
- 348      longpress = _TRIGGER_GROOVE
- 349      button = B3.29
- 350
- 351  # B3.29 held: the GROOVE window (DEC-289 amendment 2) — the button&#x27;s long press as its own note, 43 on channel 16
- 352  # (the legacy extended transport&#x27;s QUANTIZE note): the short press above stays a trigger, so the Teensy never sees
- 353  # the hold itself. Without this patch: hold NOTELEN and press PLAY/STOP.
- 354  [midiout]
- 355      notegate1 = _TRIGGER_GROOVE
- 356      note1 = 43
- 357      channel = 16
- 358      usb = 1</code></pre></details></section><section class="evidence" id="README-md-L43"><h3>First-session walkthrough</h3><p><code>README.md · line 43</code></p><details><summary>Read the excerpt</summary><pre><code>  42  4. **Build variations.** Record into another slot, then press a filled slot to queue it at the playing loop&#x27;s end (double-press to launch it at the next 16th instead). With the transport stopped, a press only selects the slot that the next start plays. Hold a slot to copy it onto another slot (see [copy mode](#copy-mode)). Select other tracks to build the arrangement; use mute and solo to bring parts in and out.
-  43  5. **Edit while listening.** Press Edit for NOTE_EDIT, press again for LOOP_EDIT, and hold Edit to return to performance. Use the four faders as described below.
-  44
-  45  Settled changes autosave once saving has been enabled during setup. See the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md) for recording states, editing details and storage behavior.
+  21  Track double toggles mute; long toggles solo. The playing slot&#x27;s short press also toggles mute. Slot double launches a filled slot at the next launch step — a queued one sooner than its loop end; on an empty slot, or a track taking, it is the short press. The launch step is global: `!ENGINE launch-q 16|8|4|bar` (default 1/16, kept in EEPROM). Slot triple redoes; slot long is [copy mode](#copy-mode). Record long clears the selected slot. Next track (37) long opens the sets browser. A long press of any button closes every window (the sets browser, the get-a-loop picker, the length popup). In the browser a double TRK moves a stage (or, on `MOVE SET TO TRASH`, the set) to the trash at once, and a triple TRK right after brings it back.</code></pre></details></section><section class="evidence" id="src-GpioEncoder-h-L30"><h3>Encoder input</h3><p><code>src/GpioEncoder.h · line 30</code></p><details><summary>Read the excerpt</summary><pre><code>  29
+  30    void service(uint32_t ms) {
+  31      const long detents = encoder_.read() / 4;
+  32      if (detents != detents_) {
+  33        surface.encoderTurn(static_cast&lt;int32_t&gt;(detents - detents_), ms);
+  34        detents_ = detents;
+  35      }
+  36      const bool raw = digitalRead(kButtonPin) == LOW;
+  37      if (raw != raw_) {
+  38        raw_ = raw;
+  39        rawMs_ = ms;
+  40      } else if (raw != down_ &amp;&amp; ms - rawMs_ &gt;= kDebounceMs) {</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L329"><h3>Encoder actions</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 329</code></p><details><summary>Read the excerpt</summary><pre><code> 328    /// The encoder turned `detents` (signed) at `ms`: in NOTE_EDIT the selected note&#x27;s option, accelerated.
+ 329    void encoderTurn(int32_t detents, uint32_t ms) {
+ 330      const uint32_t interval = ms - encoderMs_;
+ 331      encoderMs_ = ms;
+ 332      if (groove_ &amp;&amp; detents != 0) {  // the GROOVE window&#x27;s selected field
+ 333        grooveNudge(detents, ms);
+ 334        return;
+ 335      }
+ 336      if (detents == 0 || !edit_.editing()) return;
+ 337      const uint8_t k = heldStep();
+ 338      if (k != 0xFF &amp;&amp; lockStep_ == 0xFF) {  // a held step: its note now, without waiting for the lock&#x27;s hold
+ 339        lockStep_ = k;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L619"><h3>Picker Down binding</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 619</code></p><details><summary>Read the excerpt</summary><pre><code> 618          if (b == kLength) browser_-&gt;pickUp();
+ 619          else if (b == kPlayStop) browser_-&gt;pickDown();
+ 620          else if (b == kRecord) browser_-&gt;pickLeft();
+ 621          else if (b == kEditMode) browser_-&gt;pickRight();
+ 622        }
+ 623        return;
+ 624      }
+ 625      for (uint8_t i = 0; i &lt; times; ++i) {
+ 626        if (b == kRecord &amp;&amp; p != Press::Long) browser_-&gt;up();
+ 627        else if (b == kEditMode &amp;&amp; p != Press::Long) browser_-&gt;down();
+ 628      }
+ 629    }</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L357"><h3>DROID transport note</h3><p><code>droid/midilooper_v1.ini · line 357</code></p><details><summary>Read the excerpt</summary><pre><code> 356      note4 = 35
+ 357      note5 = 39
+ 358      channel = 16
+ 359      usb = 1
+ 360      velocity1 = 1
+ 361      velocity2 = 1
+ 362      velocity3 = 1
+ 363      velocity4 = 1
+ 364      velocity5 = 127
+ 365
+ 366  [button]
+ 367      button = B2.32</code></pre></details></section><section class="evidence" id="droid-midilooper_v1-ini-L376"><h3>DROID hold trigger</h3><p><code>droid/midilooper_v1.ini · line 376</code></p><details><summary>Read the excerpt</summary><pre><code> 375      shortpress = _TRIGGER_START_STOP
+ 376      longpress = _TRIGGER_GROOVE
+ 377      button = B3.29
+ 378
+ 379  # B3.29 held: the GROOVE window (DEC-289 amendment 2) — the button&#x27;s long press as its own note, 43 on channel 16
+ 380  # (the legacy extended transport&#x27;s QUANTIZE note): the short press above stays a trigger, so the Teensy never sees
+ 381  # the hold itself. Without this patch: hold NOTELEN and press PLAY/STOP.
+ 382  [midiout]
+ 383      notegate1 = _TRIGGER_GROOVE
+ 384      note1 = 43
+ 385      channel = 16
+ 386      usb = 1</code></pre></details></section><section class="evidence" id="README-md-L45"><h3>First-session walkthrough</h3><p><code>README.md · line 45</code></p><details><summary>Read the excerpt</summary><pre><code>  44  4. **Build variations.** Record into another slot, then press a filled slot to queue it at the playing loop&#x27;s end (double-press to launch it at the next 16th instead). With the transport stopped, a press only selects the slot that the next start plays. Hold a slot to copy it onto another slot (see [copy mode](#copy-mode)). Select other tracks to build the arrangement; use mute and solo to bring parts in and out.
+  45  5. **Edit while listening.** Press Edit for NOTE_EDIT, press again for LOOP_EDIT, and hold Edit to return to performance. Use the four faders as described below.
   46
-  47  ## MIDI controller: button gestures
+  47  Settled changes autosave once saving has been enabled during setup. See the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md) for recording states, editing details and storage behavior.
   48
-  49  The same buttons provide their main action with a short press and secondary actions with double, triple or long presses. A short press can wait for the double-press window; a long press is normally at least 600 ms.
+  49  ## MIDI controller: button gestures
   50
-  51  | Control | Short press | Double press | Triple press | Long press / hold |
-  52  |---------|-------------|--------------|--------------|-------------------|
-  53  | **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute; with the transport stopped, only select | Launch at the next launch step (1/16 by default) | Redo | [Copy mode](#copy-mode) |</code></pre></details></section><section class="evidence" id="README-md-L57"><h3>README gesture table</h3><p><code>README.md · line 57</code></p><details><summary>Read the excerpt</summary><pre><code>  56  | **Next track** | Select next track | Undo | Redo | Open the sets browser |
-  57  | **Transport** | Global start / stop (with an external clock: stop / start the tracks locally, also while the master is stopped — they start on its next clock pulse as a bar line); with NOTELEN held: the GROOVE window; in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window (needs the patch&#x27;s long-press note 43 on the DROID) |
-  58  | **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
-  59  | **Edit** | Track buttons: switch between select and mute mode (in mute mode their LEDs show the mute state: bright playing, dim muted), in every mode | — | — | Long (0.6 s): enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT; held 1.5 s: leave edit mode |
-  60  | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
-  61  | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
-  62  | **NOTELEN in LOOP_EDIT** | Switch between the two remembered button ranges, edits kept; an empty slot gets a four-bar loop | Play the whole stored loop | — | Open length popup (FULL, A, B, 1–8, 16–128 bars) |
-  63  | **16th steps 1–16** (performance) | Restart the playing slot at that 16th of the bar playing, at the next launch step | — | — | — |
-  64  | **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
-  65  | **16th steps 1–16** (NOTE_EDIT) | Select the step&#x27;s note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step&#x27;s note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |
-  66  | **Bars 1–8** (NOTE_EDIT) | — | — | — | [Copy mode](#copy-mode) for that bar |
-  67  | **16th steps / Bars** (LOOP_EDIT) | Hold one and press another (either way): that range becomes the loop — the left one its new start, the buttons covered its length (16ths allow odd lengths). The buttons are absolute places in the stored loop | That one bar / 16th becomes the loop | — | — |</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1114"><h3>Window gesture handler</h3><p><code>include/ContentEngine/Surface.h · line 1114</code></p><details><summary>Read the excerpt</summary><pre><code>1113      }
-1114      if (groove_ &amp;&amp; (b == kPlayStop || b == kTransport)) return;  // PLAY/STOP: its hold (note 43) applies; no stop
-1115      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
-1116        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q (DEC-295 am. 1)
-1117        else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
-1118        return;
-1119      }
-1120      if (popup_ &amp;&amp; p == Press::Long &amp;&amp; b != popupButton_) {  // a long press of another button closes the popup, kept
-1121        popup_ = false;
-1122        visitState_ = 0;
-1123        return;
-1124      }</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_UI_UX_GUIDE-md-L83"><h3>Screen-design guide</h3><p><code>docs/Guides/ENGINE_UI_UX_GUIDE.md · line 83</code></p><details><summary>Read the excerpt</summary><pre><code>  82  | **ADD** (NOTELEN) | the **value / compare** key: single toggles A ↔ B, double back to the base (FULL, OFF), hold the mode (a popup, the cycle) |
-  83  | **PLAY/STOP** hold | apply / leave (the DROID sends its long press as note 43); its short press does nothing in a window (never stops the transport) |
-  84  | Any other button held | leave (apply) |
-  85
-  86  ADD&#x27;s pattern is the one NOTELEN already has in performance: single press switches the loop&#x27;s ranges A / B, double the
-  87  whole stored loop (DEC-284 am. 3) — the GROOVE window&#x27;s A / B / OFF follows it (DEC-295 am. 5). Outside windows: EDIT
-  88  short toggles the track buttons&#x27; select / mute mode, its long press cycles NOTE_EDIT ↔ LOOP_EDIT, a 1.5 s hold leaves
-  89  (DEC-291).
-  90
-  91  ## 7. Feedback elements
+  51  The same buttons provide their main action with a short press and secondary actions with double, triple or long presses. A short press can wait for the double-press window; a long press is normally at least 600 ms.
+  52
+  53  | Control | Short press | Double press | Triple press | Long press / hold |
+  54  |---------|-------------|--------------|--------------|-------------------|
+  55  | **Slot 1–8** | Select / arm an empty slot; queue a filled slot at loop end; playing slot toggles mute; with the transport stopped, only select | Launch at the next launch step (1/16 by default) | Redo | [Copy mode](#copy-mode) |</code></pre></details></section><section class="evidence" id="README-md-L59"><h3>README gesture table</h3><p><code>README.md · line 59</code></p><details><summary>Read the excerpt</summary><pre><code>  58  | **Next track** | Select next track | Undo | Redo | Open the sets browser |
+  59  | **Transport** | Global start / stop (with an external clock: stop / start the tracks locally, also while the master is stopped — they start on its next clock pulse as a bar line); with NOTELEN held: the GROOVE window; in the GROOVE window: next field | Return to loop start | — | Open the GROOVE window (needs the patch&#x27;s long-press note 43 on the DROID) |
+  60  | **Track play/stop** | Play / stop selected track (in the GROOVE window: next field) | — | — | Open the GROOVE window |
+  61  | **Edit** | Track buttons: switch between select and mute mode (in mute mode their LEDs show the mute state: bright playing, dim muted), in every mode | — | — | Long (0.6 s): enter NOTE_EDIT (LOOP_EDIT if empty), then cycle NOTE_EDIT ↔ LOOP_EDIT; held 1.5 s: leave edit mode |
+  62  | **NOTELEN in performance** | Switch the shown loop between its two remembered ranges | Play the whole stored loop | — | — |
+  63  | **NOTELEN in NOTE_EDIT** | Toggle start/end editing; create at an empty bracket | Delete selected note / create at empty bracket | — | Move F4 for velocity; release without moving F4 to create a note |
+  64  | **NOTELEN in LOOP_EDIT** | Switch between the two remembered button ranges, edits kept; an empty slot gets a four-bar loop | Play the whole stored loop | — | Open length popup (FULL, A, B, 1–8, 16–128 bars) |
+  65  | **16th steps 1–16** (performance) | Restart the playing slot at that 16th of the bar playing, at the next launch step | — | — | — |
+  66  | **Bars 1–8** (performance) | Restart the playing slot at that bar of the 8-bar page, at the next launch step | — | — | — |
+  67  | **16th steps 1–16** (NOTE_EDIT) | Select the step&#x27;s note, again for the next one stacked there; an empty step gets a 16th C4 | Delete the step&#x27;s note | — | Parameter lock: the faders / encoder edit that note while held, one undo step; held without editing, [copy mode](#copy-mode) |
+  68  | **Bars 1–8** (NOTE_EDIT) | — | — | — | [Copy mode](#copy-mode) for that bar |
+  69  | **16th steps / Bars** (LOOP_EDIT) | Hold one and press another (either way): that range becomes the loop — the left one its new start, the buttons covered its length (16ths allow odd lengths). The buttons are absolute places in the stored loop | That one bar / 16th becomes the loop | — | — |</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L661"><h3>Window gesture handler</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 661</code></p><details><summary>Read the excerpt</summary><pre><code> 660      }
+ 661      if (groove_ &amp;&amp; (b == kPlayStop || b == kTransport)) return;  // PLAY/STOP: its hold (note 43) applies; no stop
+ 662      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
+ 663        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q
+ 664        else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
+ 665        return;
+ 666      }
+ 667      if (popup_ &amp;&amp; p == Press::Long &amp;&amp; b != popupButton_) {  // a long press of another button closes the popup, kept
+ 668        popup_ = false;
+ 669        visitState_ = 0;
+ 670        return;
+ 671      }</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_UI_UX_GUIDE-md-L85"><h3>Screen-design guide</h3><p><code>docs/Guides/ENGINE_UI_UX_GUIDE.md · line 85</code></p><details><summary>Read the excerpt</summary><pre><code>  84  | **ADD** (NOTELEN) | the **value / compare** key: single toggles A ↔ B, double back to the base (FULL, OFF), hold the mode (a popup, the cycle) |
+  85  | **PLAY/STOP** hold | apply / leave (the DROID sends its long press as note 43); its short press does nothing in a window (never stops the transport) |
+  86  | Any other button held | leave (apply) |
+  87
+  88  ADD&#x27;s pattern is the one NOTELEN already has in performance: single press switches the loop&#x27;s ranges A / B, double the
+  89  whole stored loop (DEC-284 am. 3) — the GROOVE window&#x27;s A / B / OFF follows it (DEC-295 am. 5). Outside windows: EDIT
+  90  short toggles the track buttons&#x27; select / mute mode, its long press cycles NOTE_EDIT ↔ LOOP_EDIT, a 1.5 s hold leaves
+  91  (DEC-291).
   92
-  93  - **Save dots** — four single pixels 3 px apart (`SaveIndicator`): dim (2) while pending, one running (8) while the</code></pre></details></section><section class="evidence" id="docs-Guides-FIXED_MEMORY_ENGINE-md-L19"><h3>Fixed-memory guide</h3><p><code>docs/Guides/FIXED_MEMORY_ENGINE.md · line 19</code></p><details><summary>Read the excerpt</summary><pre><code>  18
+  93  ## 7. Feedback elements
+  94
+  95  - **Save dots** — four single pixels 3 px apart (`SaveIndicator`): dim (2) while pending, one running (8) while the</code></pre></details></section><section class="evidence" id="docs-Guides-FIXED_MEMORY_ENGINE-md-L19"><h3>Fixed-memory guide</h3><p><code>docs/Guides/FIXED_MEMORY_ENGINE.md · line 19</code></p><details><summary>Read the excerpt</summary><pre><code>  18
   19  Record (36) short toggles record/overdub according to state. Record ends at a bar boundary; overdub ends immediately. Play/stop (40) controls the selected track. Transport (39) controls the internal clock; incoming external clock controls transport when active. Under a running external clock, transport (39) is a local stop and start instead: every track stops while the clock runs on, and the next press brings the tracks back at the next bar line; with the master stopped it does nothing. Nothing is sent back to the master. A transport start starts the unmuted tracks&#x27; selected filled slots as well as armed recordings.
   20
   21  Track double toggles mute; long toggles solo. The playing slot&#x27;s short press also toggles mute. Slot double launches a filled slot at the next launch step — a queued one sooner than its loop end; on an empty slot, or a track taking, it is the short press. The launch step is global: `!ENGINE launch-q 16|8|4|bar` (default 1/16, kept in EEPROM). Slot triple redoes; slot long is [copy mode](#copy-mode). Record long clears the selected slot. Next track (37) long opens the sets browser. A long press of any button closes every window (the sets browser, the get-a-loop picker, the length popup). In the browser a double TRK moves a stage (or, on `MOVE SET TO TRASH`, the set) to the trash at once, and a triple TRK right after brings it back.
@@ -597,40 +586,40 @@
   26
   27  ### Copy mode
   28
-  29  Hold a slot (in NOTE_EDIT a bar button, or a step you do not edit while holding) for 0.6 s — its LED pulses and a COPY window opens. A short press of another slot / bar / step pastes there and closes the window (one undo step; the target flashes three times): a slot&#x27;s loop into its own runs; a bar or a note replacing what is on that bar / 16th. A double press of a bar / step target merges instead, keeping the notes there; REC&#x27;s / EDIT&#x27;s short press chooses replace / merge first, and the target&#x27;s press then pastes at once. Each pasted note then takes the NOTE_EDIT overlap rule as the causing note (a same-pitch note starting inside it hidden, one sounding into it ended at its start), within the same undo step. A bar&#x27;s or note&#x27;s copy holds its notes as values: copying a note, the bar buttons choose the bar its steps paste in; a track switch or a slot press re-opens NOTE_EDIT there with copy mode kept; and a target past the loop&#x27;s end first lengthens the loop to the end of that bar (one undo step). Before it the track buttons reach other tracks. holding TRK, or holding the source slot again, is LOAD LOOP (the get-a-loop picker for that slot; TRK&#x27;s short press stays the next track). A double press of the source clears it (a slot, or in NOTE_EDIT that bar&#x27;s or 16th&#x27;s notes). A short press of the source cancels; a long hold of another slot / bar / step makes that the source; a long hold of any other button closes it at once; and the window closes by itself 5 s after the last action (a track switch restarts the countdown; its bottom edge shows the time left). A paste or a slot clear selects that slot, so record&#x27;s double undoes it afterwards.</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1004"><h3>External transport handler</h3><p><code>include/ContentEngine/Surface.h · line 1004</code></p><details><summary>Read the excerpt</summary><pre><code>1003    /// DEC-276: the transport button under an external clock — a local stop, or the tracks back at the next bar line.
-1004    void externalTransport() {
-1005      if (!clock_-&gt;running()) {  // DEC-276 am. 2 (owner: &quot;cannot start playing&quot;): a stopped master — start locally,
-1006        clock_-&gt;startOnPulse();   // the next pulse as a bar line, as a Start
-1007        control().transportStart(clock_-&gt;nextTick(), us_, us());
-1008        tick_ = clock_-&gt;nextTick() - 1;
-1009        transportStarted(clock_-&gt;nextTick());
-1010        return;
-1011      }
-1012      auto&amp; x = transport();
-1013      bool active = x.writingTrack() != 0xFF;
-1014      for (uint8_t t = 0; t &lt; kTracks &amp;&amp; !active; ++t)</code></pre></details></section><section class="evidence" id="README-md-L241"><h3>Feature summary</h3><p><code>README.md · line 241</code></p><details><summary>Read the excerpt</summary><pre><code> 240
- 241  The legacy jam controls, multi-slot layering gestures, quantize, extended edit buttons 41–48 and the legacy load/save overlay are not available in the engine. Scene and jam capture remain future work.
- 242
- 243  ![Proposed browser: browsing a long milestone history and loading an earlier take](docs/Plans/images/walk_4_long_history.png)
+  29  Hold a slot (in NOTE_EDIT a bar button, or a step you do not edit while holding) for 0.6 s — its LED pulses and a COPY window opens. A short press of another slot / bar / step pastes there and closes the window (one undo step; the target flashes three times): a slot&#x27;s loop into its own runs; a bar or a note replacing what is on that bar / 16th. A double press of a bar / step target merges instead, keeping the notes there; REC&#x27;s / EDIT&#x27;s short press chooses replace / merge first, and the target&#x27;s press then pastes at once. Each pasted note then takes the NOTE_EDIT overlap rule as the causing note (a same-pitch note starting inside it hidden, one sounding into it ended at its start), within the same undo step. A bar&#x27;s or note&#x27;s copy holds its notes as values: copying a note, the bar buttons choose the bar its steps paste in; a track switch or a slot press re-opens NOTE_EDIT there with copy mode kept; and a target past the loop&#x27;s end first lengthens the loop to the end of that bar (one undo step). Before it the track buttons reach other tracks. holding TRK, or holding the source slot again, is LOAD LOOP (the get-a-loop picker for that slot; TRK&#x27;s short press stays the next track). A double press of the source clears it (a slot, or in NOTE_EDIT that bar&#x27;s or 16th&#x27;s notes). A short press of the source cancels; a long hold of another slot / bar / step makes that the source; a long hold of any other button closes it at once; and the window closes by itself 5 s after the last action (a track switch restarts the countdown; its bottom edge shows the time left). A paste or a slot clear selects that slot, so record&#x27;s double undoes it afterwards.</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L551"><h3>External transport handler</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 551</code></p><details><summary>Read the excerpt</summary><pre><code> 550    /// The transport button under an external clock — a local stop, or the tracks back at the next bar line.
+ 551    void externalTransport() {
+ 552      if (!clock_-&gt;running()) {  // a stopped master (DEC-276): start locally,
+ 553        clock_-&gt;startOnPulse();   // the next pulse as a bar line, as a Start
+ 554        control().transportStart(clock_-&gt;nextTick(), us_, us());
+ 555        tick_ = clock_-&gt;nextTick() - 1;
+ 556        transportStarted(clock_-&gt;nextTick());
+ 557        return;
+ 558      }
+ 559      auto&amp; x = transport();
+ 560      bool active = x.writingTrack() != 0xFF;
+ 561      for (uint8_t t = 0; t &lt; kTracks &amp;&amp; !active; ++t)</code></pre></details></section><section class="evidence" id="README-md-L243"><h3>Feature summary</h3><p><code>README.md · line 243</code></p><details><summary>Read the excerpt</summary><pre><code> 242
+ 243  The legacy jam controls, multi-slot layering gestures, quantize, extended edit buttons 41–48 and the legacy load/save overlay are not available in the engine. Scene and jam capture remain future work.
  244
- 245  See the [browser proposal and all walkthroughs](docs/Plans/engine_sets_browser_proposal.md), and the [current implementation scope](docs/Runtime/CURRENT_WORK.md).
+ 245  ![Proposed browser: browsing a long milestone history and loading an earlier take](docs/Plans/images/walk_4_long_history.png)
  246
- 247  ## Firmware and development
+ 247  See the [browser proposal and all walkthroughs](docs/Plans/engine_sets_browser_proposal.md), and the [current implementation scope](docs/Runtime/CURRENT_WORK.md).
  248
- 249  The fixed-memory engine is the current development runtime. Its content lives in fixed PSRAM pages, immutable runs and versioned manifests; playback and display read bounded derived windows. The legacy firmware remains in the repository and builds in separate environments.
+ 249  ## Firmware and development
  250
- 251  The current checkout is `feature/engine-sets-browser`, branched from `rewrite/fixed-memory-engine`. `dev` is the stable integration reference; its legacy UI and storage descriptions do not describe the engine. See [current work](docs/Runtime/CURRENT_WORK.md) and [project state](docs/Runtime/PROJECT_STATE.md) for progress.</code></pre></details></section><section class="evidence" id="README-md-L132"><h3>Groove templates</h3><p><code>README.md · line 132</code></p><details><summary>Read the excerpt</summary><pre><code> 131
- 132  Grooves: STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH.
- 133
- 134  | Key in the GROOVE window | |
- 135  |-----|---|
- 136  | **REC** / **EDIT** | Select the value above / below; the encoder turns it (its push selects the next) |
- 137  | **NOTELEN** (`[ADD]`) | Switch between A and B (from OFF: A). While cycling: keep the one playing |
- 138  | **NOTELEN** twice | OFF: the loop without groove |
- 139  | **Hold NOTELEN** | Cycle: A and B take turns of two bars, each from its bar line (hold again: stop) |
- 140  | **Next track** (`[TRK]`) | AUTO Q, the checkbox in the title bar: an overdub on this loop is grooved too once it ends |
- 141  | **Hold PLAY/STOP** | Apply: what is playing stays, and the window closes (a long press of any button does the same) |
- 142</code></pre></details></section><section class="evidence" id="include-ContentEngine-Groove-h-L25"><h3>Engine templates</h3><p><code>include/ContentEngine/Groove.h · line 25</code></p><details><summary>Read the excerpt</summary><pre><code>  24  /// Built-in templates (DEC-287; the card&#x27;s library comes later).
+ 251  The firmware is the fixed-memory engine. Its content lives in fixed PSRAM pages, immutable runs and versioned manifests; playback and display read bounded derived windows. `teensy41-capture-serial` builds it; the legacy runtime was removed (its guides are kept as history).
+ 252
+ 253  `dev` is the stable integration reference; its legacy UI and storage descriptions do not describe the engine. See [current work](docs/Runtime/CURRENT_WORK.md) and [project state](docs/Runtime/PROJECT_STATE.md) for progress.</code></pre></details></section><section class="evidence" id="README-md-L134"><h3>Groove templates</h3><p><code>README.md · line 134</code></p><details><summary>Read the excerpt</summary><pre><code> 133
+ 134  Grooves: STRAIGHT (plain 1/16 quantize), MPC 16 at 54 / 58 / 62 / 66 / 71 %, MPC 8 at 58 / 66 %, SP-1200 16 at 54 / 58 / 63 / 67 / 71 %, triplet 8 / 16, JAZZ RIDE, BOSSA, LAID BACK, PUSH.
+ 135
+ 136  | Key in the GROOVE window | |
+ 137  |-----|---|
+ 138  | **REC** / **EDIT** | Select the value above / below; the encoder turns it (its push selects the next) |
+ 139  | **NOTELEN** (`[ADD]`) | Switch between A and B (from OFF: A). While cycling: keep the one playing |
+ 140  | **NOTELEN** twice | OFF: the loop without groove |
+ 141  | **Hold NOTELEN** | Cycle: A and B take turns of two bars, each from its bar line (hold again: stop) |
+ 142  | **Next track** (`[TRK]`) | AUTO Q, the checkbox in the title bar: an overdub on this loop is grooved too once it ends |
+ 143  | **Hold PLAY/STOP** | Apply: what is playing stays, and the window closes (a long press of any button does the same) |
+ 144</code></pre></details></section><section class="evidence" id="include-ContentEngine-Composition-Groove-h-L25"><h3>Engine templates</h3><p><code>include/ContentEngine/Composition/Groove.h · line 25</code></p><details><summary>Read the excerpt</summary><pre><code>  24  /// Built-in templates.
   25  enum Template : uint8_t {
   26    kStraight = 0,
   27    kMpc16_54, kMpc16_58, kMpc16_62, kMpc16_66, kMpc16_71,
@@ -640,96 +629,96 @@
   31    kJazzRide, kBossa, kLaidBack, kPush,
   32    kTemplateCount
   33  };
-  34  /// A template read from a groove file on the card (DEC-290): its table is stored with the state (marker rows).
-  35  constexpr uint8_t kFileTemplate = 0xFE;</code></pre></details></section><section class="evidence" id="include-ContentEngine-Surface-h-L1116"><h3>AUTO Q gesture</h3><p><code>include/ContentEngine/Surface.h · line 1116</code></p><details><summary>Read the excerpt</summary><pre><code>1115      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
-1116        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q (DEC-295 am. 1)
-1117        else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
-1118        return;
-1119      }
-1120      if (popup_ &amp;&amp; p == Press::Long &amp;&amp; b != popupButton_) {  // a long press of another button closes the popup, kept
-1121        popup_ = false;
-1122        visitState_ = 0;
-1123        return;
-1124      }
-1125      switch (b) {
-1126        case kRecord:</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L128"><h3>Storage guide wording</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 128</code></p><details><summary>Read the excerpt</summary><pre><code> 127  changes are not in it): a header sector (tempo, surface state, note-id high-water mark, each slot&#x27;s byte size), then
- 128  each slot&#x27;s file in the store&#x27;s format — its full undo history and each run&#x27;s rows once — each starting on a new
- 129  sector. The largest set is 4,300 sectors (a compile-time check); the log holds at least 485 of those, and about 4,100
- 130  of a typical 509-sector set, so the 4,096-record index is usually the limit reached first.
- 131
- 132  ## One card stream
- 133
- 134  The store and the library share the card&#x27;s single write stream. While a milestone or checkpoint writes, no slot
- 135  autosave starts (it follows when the milestone is done); a slot save already on the card finishes first
- 136  (`Persistence::onCard`). A fetch of a cold undo step runs after any save in progress, and no save starts during it. The library file is created only with the transport stopped, saving approved and no take open
- 137  — at boot or right after `!ENGINE approve-saving` — because preallocating it is file-system work.
- 138</code></pre></details></section><section class="evidence" id="include-ContentEngine-LibraryWriter-h-L41"><h3>Snapshot capture</h3><p><code>include/ContentEngine/LibraryWriter.h · line 41</code></p><details><summary>Read the excerpt</summary><pre><code>  40        first_[s] = used_;
-  41        count_[s] = history.chain(s, ids_ + used_, static_cast&lt;uint8_t&gt;(kMaxStates - used_), current_[s], below_[s]);
-  42        for (uint8_t i = 0; i &lt; count_[s]; ++i) manifests.pin(ids_[used_ + i]);
-  43        used_ = static_cast&lt;uint8_t&gt;(used_ + count_[s]);
-  44        bytes_[s] = count_[s] ? sizeOf(manifests, s) : 0;
-  45      }
-  46      metrics(manifests);
-  47      held_ = true;
-  48    }
-  49    void release(Manifests&amp; manifests, Runs&amp; runs) {
-  50      if (!held_) return;
-  51      for (uint8_t i = 0; i &lt; used_; ++i) manifests.unpin(ids_[i], runs);</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-h-L366"><h3>In-memory chain traversal</h3><p><code>include/ContentEngine/History.h · line 366</code></p><details><summary>Read the excerpt</summary><pre><code> 365    /// the empty slot) and whether the empty slot lies below the oldest. O(states).
- 366    uint8_t chain(uint8_t slot, ManifestId* out, uint8_t max, int16_t&amp; currentIndex, bool&amp; emptyBelow) const {
- 367      const Slot&amp; s = slots_[slot];
- 368      uint8_t n = 0;
- 369      currentIndex = -1;
- 370      for (uint8_t e = s.oldest; e != kNone &amp;&amp; n &lt; max; e = entries_[e].newer) {
- 371        if (e == s.current) currentIndex = n;
- 372        out[n++] = entries_[e].manifest;
- 373      }
- 374      emptyBelow = s.emptyBelow;
- 375      return n;
- 376    }</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-h-L408"><h3>Clearing cold states during a set replacement</h3><p><code>include/ContentEngine/History.h · line 408</code></p><details><summary>Read the excerpt</summary><pre><code> 407      lost_[slot] = 0;
- 408      if (cold_ != nullptr) cold_-&gt;clearCold(slot);
- 409      return true;
- 410    }
- 411    const Stats&amp; stats() const { return stats_; }
- 412    /// States committed so far (any slot): the sets browser&#x27;s evidence of changed content (slice 4).
- 413    uint32_t commits() const { return seq_; }
- 414    /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
- 415    uint16_t lostSteps(uint8_t slot) const { return slot &lt; Slots ? lost_[slot] : 0; }
- 416
- 417   private:
- 418    struct Entry {</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L1574"><h3>Serial checkpoint return</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 1574</code></p><details><summary>Read the excerpt</summary><pre><code>1573                    gEngine.auditionCancel(gLastTick) == ProductionTransport::Result::Ok ? &quot;cancelled&quot; : &quot;none&quot;);
-1574    } else if (std::strcmp(verb, &quot;load&quot;) == 0 || std::strcmp(verb, &quot;return&quot;) == 0) {
-1575      startLoad(verb, arg, nowUs);
-1576    } else if (std::strcmp(verb, &quot;take&quot;) == 0) {  // the take and its overlay (diagnostics)
-1577      auto&amp; x = gEngine.transport();
-1578      const uint8_t w = x.writingSlot();
-1579      const ManifestId m = w == ProductionTransport::kNoSlot ? kNoManifest : x.contentOf(w);
-1580      const ManifestId h = w == ProductionTransport::kNoSlot ? kNoManifest : gEngine.history().current(w);
-1581      Serial.printf(&quot;#ENGINE,clock,timeout_age_us=%lu\n&quot;, static_cast&lt;unsigned long&gt;(gClock.timeoutAgeUs()));
-1582      // Worst stage times (µs): input, serial, ticks, jobs, grains, send, surface, leds, screen; saves so far.
-1583      Serial.printf(&quot;#ENGINE,stages,input=%lu,serial=%lu,ticks=%lu,jobs=%lu,grains=%lu,send=%lu,surface=%lu,leds=%lu,&quot;
-1584                    &quot;screen=%lu,saves=%lu,save_failed=%lu,heartbeats=%lu,host_dropped=%lu,host_deferred=%lu,host_pipe=%u\n&quot;,</code></pre></details></section><section class="evidence" id="src-EngineFirmware-EngineMain-cpp-L2105"><h3>Per-track startup assignment</h3><p><code>src/EngineFirmware/EngineMain.cpp · line 2105</code></p><details><summary>Read the excerpt</summary><pre><code>2104    // note was recorded on; live thru follows the selected track&#x27;s channel.
-2105    for (uint8_t t = 0; t &lt; kTrackCount; ++t) gEngine.output().setChannel(t, static_cast&lt;uint8_t&gt;(t + 1));
-2106    gClock.init(kDefaultTempo, kTicksPerBar);
-2107    loadSwitchAt();
-2108    pinMode(kEncoderButtonPin, INPUT_PULLUP);
-2109    loadLaunchGrid();
-2110    gSurface.init(gEngine, gClock);
-2111    phase(kPhaseDisplay);
-2112    Serial8.begin(31250);
-2113    Serial8.addMemoryForWrite(gDinTx, sizeof gDinTx);
-2114    gHost.begin();
-2115    phase(kPhasePorts);</code></pre></details></section><section class="evidence" id="include-ContentEngine-ClockOutput-h-L104"><h3>Output channel setting</h3><p><code>include/ContentEngine/ClockOutput.h · line 104</code></p><details><summary>Read the excerpt</summary><pre><code> 103    /// The track&#x27;s MIDI channel, 1..16 (kAsRecorded: as recorded).
- 104    void setChannel(uint8_t t, uint8_t channel) { channel_[t] = channel &lt;= 16 ? channel : kAsRecorded; }
- 105    uint8_t channel(uint8_t t) const { return channel_[t]; }
- 106
- 107    /// Mute / solo: a track going silent ends what it sounds now, on every port.
- 108    void setAudible(uint8_t t, bool audible, uint32_t nowUs) {
- 109      if (audible_[t] == audible) return;
- 110      audible_[t] = audible;
- 111      if (audible) return;
- 112      for (uint8_t s = 0; s &lt; PerTrack; ++s) {
- 113        Key&amp; k = keys_[t][s];
- 114        if (k.runId == kFree) continue;</code></pre></details></section></article>
+  34  /// A template read from a groove file on the card: its table is stored with the state (marker rows).
+  35  constexpr uint8_t kFileTemplate = 0xFE;</code></pre></details></section><section class="evidence" id="include-ContentEngine-ControlSurface-ControlSurface-h-L663"><h3>AUTO Q gesture</h3><p><code>include/ContentEngine/ControlSurface/ControlSurface.h · line 663</code></p><details><summary>Read the excerpt</summary><pre><code> 662      if (groove_ &amp;&amp; (b == kRecord || b == kEditMode || b == kTrackSwitch)) {  // the load / save window&#x27;s
+ 663        if (p == Press::Short &amp;&amp; b == kTrackSwitch) toggleAutoQ(nowMs_);  // TRK: AUTO Q
+ 664        else if (p == Press::Short) nextGrooveField(b == kRecord ? -1 : 1);  // REC up, EDIT down
+ 665        return;
+ 666      }
+ 667      if (popup_ &amp;&amp; p == Press::Long &amp;&amp; b != popupButton_) {  // a long press of another button closes the popup, kept
+ 668        popup_ = false;
+ 669        visitState_ = 0;
+ 670        return;
+ 671      }
+ 672      switch (b) {
+ 673        case kRecord:</code></pre></details></section><section class="evidence" id="docs-Guides-ENGINE_STORAGE-md-L132"><h3>Storage guide wording</h3><p><code>docs/Guides/ENGINE_STORAGE.md · line 132</code></p><details><summary>Read the excerpt</summary><pre><code> 131  changes are not in it): a header sector (tempo, the saved selection, note-id high-water mark, each slot&#x27;s byte size), then
+ 132  each slot&#x27;s file in the store&#x27;s format — its full undo history and each run&#x27;s rows once — each starting on a new
+ 133  sector. The largest set is 4,300 sectors (a compile-time check); the log holds at least 485 of those, and about 4,100
+ 134  of a typical 509-sector set, so the 4,096-entry index is usually the limit reached first.
+ 135
+ 136  ## One card stream
+ 137
+ 138  The store and the library share the card&#x27;s single write stream. While a milestone or checkpoint writes, no slot
+ 139  autosave starts (it follows when the milestone is done); a slot save already on the card finishes first
+ 140  (`Persistence::onCard`). A fetch of a cold undo step runs after any save in progress, and no save starts during it. The library file is created only with the transport stopped, saving approved and no take open
+ 141  — at boot or right after `!ENGINE approve-saving` — because preallocating it is file-system work.
+ 142</code></pre></details></section><section class="evidence" id="include-ContentEngine-Storage-LibraryWriter-h-L42"><h3>Snapshot capture</h3><p><code>include/ContentEngine/Storage/LibraryWriter.h · line 42</code></p><details><summary>Read the excerpt</summary><pre><code>  41        first_[s] = used_;
+  42        count_[s] = history.chain(s, ids_ + used_, static_cast&lt;uint8_t&gt;(kMaxStates - used_), current_[s], below_[s]);
+  43        for (uint8_t i = 0; i &lt; count_[s]; ++i) manifests.pin(ids_[used_ + i]);
+  44        used_ = static_cast&lt;uint8_t&gt;(used_ + count_[s]);
+  45        bytes_[s] = count_[s] ? sizeOf(manifests, s) : 0;
+  46      }
+  47      metrics(manifests);
+  48      held_ = true;
+  49    }
+  50    void release(Manifests&amp; manifests, Runs&amp; runs) {
+  51      if (!held_) return;
+  52      for (uint8_t i = 0; i &lt; used_; ++i) manifests.unpin(ids_[i], runs);</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-SlotUndoHistory-h-L365"><h3>In-memory chain traversal</h3><p><code>include/ContentEngine/History/SlotUndoHistory.h · line 365</code></p><details><summary>Read the excerpt</summary><pre><code> 364    /// the empty slot) and whether the empty slot lies below the oldest. O(states).
+ 365    uint8_t chain(uint8_t slot, ManifestId* out, uint8_t max, int16_t&amp; currentIndex, bool&amp; emptyBelow) const {
+ 366      const Slot&amp; s = slots_[slot];
+ 367      uint8_t n = 0;
+ 368      currentIndex = -1;
+ 369      for (uint8_t e = s.oldest; e != kNone &amp;&amp; n &lt; max; e = entries_[e].newer) {
+ 370        if (e == s.current) currentIndex = n;
+ 371        out[n++] = entries_[e].manifest;
+ 372      }
+ 373      emptyBelow = s.emptyBelow;
+ 374      return n;
+ 375    }</code></pre></details></section><section class="evidence" id="include-ContentEngine-History-SlotUndoHistory-h-L407"><h3>Clearing cold states during a set replacement</h3><p><code>include/ContentEngine/History/SlotUndoHistory.h · line 407</code></p><details><summary>Read the excerpt</summary><pre><code> 406      lost_[slot] = 0;
+ 407      if (cold_ != nullptr) cold_-&gt;clearCold(slot);
+ 408      return true;
+ 409    }
+ 410    const Stats&amp; stats() const { return stats_; }
+ 411    /// States committed so far (any slot): the sets browser&#x27;s evidence of changed content.
+ 412    uint32_t commits() const { return seq_; }
+ 413    /// Steps the slot has lost to eviction (undo states and dropped redo states), saturating.
+ 414    uint16_t lostSteps(uint8_t slot) const { return slot &lt; Slots ? lost_[slot] : 0; }
+ 415
+ 416   private:
+ 417    struct Entry {</code></pre></details></section><section class="evidence" id="src-SerialCommands-h-L415"><h3>Serial checkpoint return</h3><p><code>src/SerialCommands.h · line 415</code></p><details><summary>Read the excerpt</summary><pre><code> 414                      fw.engine.auditionCancel(fw.lastTick) == ProductionTransport::Result::Ok ? &quot;cancelled&quot; : &quot;none&quot;);
+ 415      } else if (std::strcmp(verb, &quot;load&quot;) == 0 || std::strcmp(verb, &quot;return&quot;) == 0) {
+ 416        library.startLoad(verb, arg, nowUs);
+ 417      } else if (std::strcmp(verb, &quot;take&quot;) == 0) {  // the take and its overlay (diagnostics)
+ 418        auto&amp; x = fw.engine.transport();
+ 419        const uint8_t w = x.writingSlot();
+ 420        const ManifestId m = w == ProductionTransport::kNoSlot ? kNoManifest : x.contentOf(w);
+ 421        const ManifestId h = w == ProductionTransport::kNoSlot ? kNoManifest : fw.engine.history().current(w);
+ 422        Serial.printf(&quot;#ENGINE,clock,timeout_age_us=%lu\n&quot;, static_cast&lt;unsigned long&gt;(fw.clock.timeoutAgeUs()));
+ 423        // Worst stage times (µs): input, serial, ticks, jobs, grains, send, surface, leds, screen; saves so far.
+ 424        Serial.printf(&quot;#ENGINE,stages,input=%lu,serial=%lu,ticks=%lu,jobs=%lu,grains=%lu,send=%lu,surface=%lu,leds=%lu,&quot;
+ 425                      &quot;screen=%lu,saves=%lu,save_failed=%lu,heartbeats=%lu,host_dropped=%lu,host_deferred=%lu,host_pipe=%u\n&quot;,</code></pre></details></section><section class="evidence" id="src-main-cpp-L196"><h3>Per-track startup assignment</h3><p><code>src/main.cpp · line 196</code></p><details><summary>Read the excerpt</summary><pre><code> 195    // follows the selected track&#x27;s channel.
+ 196    for (uint8_t t = 0; t &lt; kTrackCount; ++t) fw.engine.output().setChannel(t, static_cast&lt;uint8_t&gt;(t + 1));
+ 197    fw.clock.init(kDefaultTempo, kTicksPerBar);
+ 198    settings.loadSwitchAt();
+ 199    encoder.begin();
+ 200    settings.loadLaunchGrid();
+ 201    fw.surface.init(fw.engine, fw.clock);
+ 202    BootHealth::phase(kPhaseDisplay);
+ 203
+ 204    ports.begin(gDinTx, sizeof gDinTx);
+ 205    BootHealth::phase(kPhasePorts);
+ 206</code></pre></details></section><section class="evidence" id="include-ContentEngine-Playback-ClockOutput-h-L103"><h3>Output channel setting</h3><p><code>include/ContentEngine/Playback/ClockOutput.h · line 103</code></p><details><summary>Read the excerpt</summary><pre><code> 102    /// The track&#x27;s MIDI channel, 1..16 (kAsRecorded: as recorded).
+ 103    void setChannel(uint8_t t, uint8_t channel) { channel_[t] = channel &lt;= 16 ? channel : kAsRecorded; }
+ 104    uint8_t channel(uint8_t t) const { return channel_[t]; }
+ 105
+ 106    /// Mute / solo: a track going silent ends what it sounds now, on every port.
+ 107    void setAudible(uint8_t t, bool audible, uint32_t nowUs) {
+ 108      if (audible_[t] == audible) return;
+ 109      audible_[t] = audible;
+ 110      if (audible) return;
+ 111      for (uint8_t s = 0; s &lt; PerTrack; ++s) {
+ 112        Key&amp; k = keys_[t][s];
+ 113        if (k.runId == kFree) continue;</code></pre></details></section></article>
 <footer><span>MidiLooper Manual</span><span><a href="assets/LICENSE.txt">License</a> <b>·</b> <a href="implementation-notes.html">Implementation notes</a></span></footer>
 </main></div>
 <dialog id="search-dialog" aria-labelledby="search-title"><h2 id="search-title" class="visually-hidden">Search the manual</h2><div class="search-box"><svg class="ico " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></svg><input id="search-field" type="search" placeholder="Search topics, controls, or commands…" aria-label="Search topics, controls, or commands" autocomplete="off"><button id="close-search" aria-label="Close search">Esc</button></div><p id="search-status" role="status"></p><div id="search-results"></div></dialog>

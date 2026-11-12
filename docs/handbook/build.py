@@ -15,7 +15,7 @@ DIST = HERE / "dist"
 TEMPLATE = Template((HERE / "layout.html").read_text())
 REPO_PATTERN = re.compile(r'<a href="REPO/([^"#]+)#L(\d+)">([^<]+)</a>')
 HEADING = re.compile(r'<h2 id="([^"]+)">(.*?)</h2>', re.S)
-CHECKED_REVISION = "d61d8d628bb8525b3473cb0a416d474aa9d738c7"
+CHECKED_REVISION = "c8851d2a4613b0e2aff83050e1feb80fa3ca0623"
 
 # slug, navigation title, icon, heading, introductory paragraph
 GROUPS = [
@@ -45,18 +45,18 @@ PAGES = [(group, *page) for group, pages in GROUPS for page in pages]
 
 # Source links work offline. REPO links in article fragments use the same resolver.
 REFERENCES = {
-    "index": [("Project intent", "docs/Authority/PROJECT_INTENT.md", 12), ("Engine configuration", "include/ContentEngine/EngineConfig.h", 73)],
-    "setup": [("Hardware setup", "src/EngineFirmware/EngineMain.cpp", 2117), ("MIDI playback outputs", "src/EngineFirmware/EngineMain.cpp", 177), ("OLED pins", "lib/SSD1322_OLED/include/SSD1322_Config.h", 9), ("Engine build", "platformio.ini", 277)],
-    "first-recording": [("Record action", "include/ContentEngine/Surface.h", 1702), ("Ending a take on a bar line", "include/ContentEngine/TrackControl.h", 101)],
-    "overdub-undo": [("Undo gesture", "include/ContentEngine/Surface.h", 1126), ("Undo depth", "include/ContentEngine/History.h", 327), ("Card-backed history", "docs/Guides/ENGINE_STORAGE.md", 94)],
-    "switching": [("Slot launch", "include/ContentEngine/Surface.h", 1726), ("Launch setting", "src/EngineFirmware/EngineMain.cpp", 1475)],
-    "editing": [("Edit gesture", "include/ContentEngine/Surface.h", 1160), ("Step editing", "include/ContentEngine/EditSurface.h", 465), ("Range selection", "include/ContentEngine/Surface.h", 1421)],
-    "groove": [("Groove faders", "include/ContentEngine/Surface.h", 529), ("Groove controls", "include/ContentEngine/Surface.h", 1106)],
-    "library": [("Browser rows and controls", "include/ContentEngine/Browser.h", 10), ("Snapshot contents", "include/ContentEngine/LibraryWriter.h", 34), ("Card format", "docs/Guides/ENGINE_STORAGE.md", 94)],
-    "midi-controls": [("Button decoder", "include/ContentEngine/Surface.h", 328), ("MIDI ports", "src/EngineFirmware/EngineMain.cpp", 233)],
-    "screens": [("OLED layout", "src/EngineFirmware/EngineDisplay.h", 15), ("Framebuffer export", "src/EngineFirmware/EngineMain.cpp", 1410), ("Save indicators", "include/ContentEngine/StatusView.h", 28)],
+    "index": [("Project intent", "docs/Authority/PROJECT_INTENT.md", 13), ("Engine configuration", "include/ContentEngine/EngineConfig.h", 73)],
+    "setup": [("Hardware setup", "src/main.cpp", 168), ("MIDI playback outputs", "src/MidiPorts.h", 123), ("OLED pins", "lib/SSD1322_OLED/include/SSD1322_Config.h", 9), ("Engine build", "platformio.ini", 53)],
+    "first-recording": [("Record action", "include/ContentEngine/ControlSurface/ControlSurface.h", 923), ("Ending a take on a bar line", "include/ContentEngine/Playback/TrackControl.h", 98)],
+    "overdub-undo": [("Undo gesture", "include/ContentEngine/ControlSurface/ControlSurface.h", 673), ("Undo depth", "include/ContentEngine/History/SlotUndoHistory.h", 326), ("Card-backed history", "docs/Guides/ENGINE_STORAGE.md", 98)],
+    "switching": [("Slot launch", "include/ContentEngine/ControlSurface/ControlSurface.h", 947), ("Launch setting", "src/SerialCommands.h", 316)],
+    "editing": [("Edit gesture", "include/ContentEngine/ControlSurface/ControlSurface.h", 707), ("Step editing", "include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h", 460), ("Range selection", "include/ContentEngine/ControlSurface/ControlSurfaceLoopEdit.h", 180)],
+    "groove": [("Groove faders", "include/ContentEngine/ControlSurface/ControlSurfaceGroove.h", 342), ("Groove controls", "include/ContentEngine/ControlSurface/ControlSurface.h", 653)],
+    "library": [("Browser rows and controls", "include/ContentEngine/ControlSurface/SetBrowser.h", 10), ("Snapshot contents", "include/ContentEngine/Storage/LibraryWriter.h", 35), ("Card format", "docs/Guides/ENGINE_STORAGE.md", 98)],
+    "midi-controls": [("Button decoder", "include/ContentEngine/ControlSurface/ControlSurface.h", 204), ("MIDI ports", "src/MidiInput.h", 96)],
+    "screens": [("OLED layout", "include/Teensy/OledScreen.h", 14), ("Framebuffer export", "src/SerialCommands.h", 251), ("Save indicators", "include/ContentEngine/Display/StatusView.h", 28)],
     "architecture": [],
-    "troubleshooting": [("Thru and mute", "include/ContentEngine/ClockOutput.h", 18), ("Card setup at boot", "src/EngineFirmware/EngineMain.cpp", 2117)],
+    "troubleshooting": [("Thru and mute", "include/ContentEngine/Playback/ClockOutput.h", 17), ("Card setup at boot", "src/main.cpp", 208)],
     "implementation-notes": [],
 }
 
@@ -190,7 +190,7 @@ def main():
         evidence.append(f'<section class="evidence" id="{tag}"><h3>{escape(label)}</h3><p><code>{escape(file)} · line {line}</code></p>'
                         f'<details><summary>Read the excerpt</summary><pre><code>{escape(excerpt)}</code></pre></details></section>')
     title = "Source excerpts"
-    desc = f"Selected passages from the reviewed engine checkout ({CHECKED_REVISION[:8]}, 11 November 2026). Paths and line numbers locate the implementation in the repository."
+    desc = f"Selected passages from the reviewed engine checkout ({CHECKED_REVISION[:8]}, 12 November 2026). Paths and line numbers locate the implementation in the repository."
     page("sources", title, desc, '<article class="sources-index">' + section_header("Reference", title, desc) + "".join(evidence) + '</article>', "chapter")
 
 
