@@ -17100,3 +17100,25 @@ static_assert(sizeof(ProductionPersistence) <= 7776u + 1024u + 45752u + 347648u 
   owner 2026-11-10: boot shows the last selected slot, no switch on screen
   owner 2026-11-10
 ```
+
+## DEC-299 — The engine is header-only and the firmware one compilation unit
+
+**Date:** 2026-11-12 (recorded after the fact). **Owner:** "good to record it because it was chosen without any
+rationale at the beginning".
+
+**Decision:** the engine's code lives in headers (`include/ContentEngine/`, `include/Teensy/`); the firmware is one
+compilation unit, `src/main.cpp`, which includes it. Large classes are split into part headers with `inline`
+out-of-class definitions (CODE_HYGIENE.md § 2), not into `.cpp` files.
+
+**Rationale:**
+1. The engine's types are templates over their storage and hardware (`Persistence<Card, Pool, Runs, …>`,
+   `ControlSurface<Engine>`, `SpanWindowComposer<Pool, Runs, …>`); a template's definition must be visible where it is
+   instantiated.
+2. The same headers build natively with small capacities and fakes (`CardIo`, `ColdSink` and the template parameters
+   at the hardware boundary): the native suites test the engine without the Teensy.
+3. One compilation unit lets the compiler inline across the tick path (the grain budget g = 810 µs).
+4. RAM1 / flash placement is per function by attribute (`CE_COLD`, `DISPLAY_COLD`, `FLASHMEM`); the linker script
+   places only library objects by name, so separate objects would not move code without notice.
+
+**Tried and rejected:** none built. **Revisit if:** compile time becomes a bottleneck — the non-template Teensy
+adapters (`OledScreen`, `SdCardIo`) could become `.cpp` files, with their placement checked against the RAM1 gates.
