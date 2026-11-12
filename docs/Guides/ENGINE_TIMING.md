@@ -18,13 +18,14 @@ belongs to the legacy runtime. The engine firmware prints none of those rows; it
 | A tick | 2,604 µs at 120 BPM; 1,041.67 µs at 300 BPM (the fastest case every budget is checked at) | — |
 | A window | 1,536 ticks (2 bars of 4/4): the unit a track's playback is composed in, ahead of time | `EngineRoot.h` `kWindowTicks` |
 | Checkpoint spacing | 4 windows (8 bars) | `kCheckpointSpacing` |
-| External clock | a missing pulse is a timeout after 500 ms (`#ENGINE,clock,timeout_age_us`); a gap over 200 ms between pulses is recorded (`#ENGINE,gap`) | `main.cpp` `realtime` |
+| External clock | a missing pulse is a timeout after 500 ms (`#ENGINE,clock,timeout_age_us`); a gap over 200 ms between pulses is recorded (`#ENGINE,gap`) | `MidiInput::realtime` (`src/MidiInput.h`) |
 | Watchdog | 4 s without a main-loop pass resets the board; the next boot reports where it hung | DEC-266 — hardware watchdog, `!ENGINE boot` |
 
 ## The main loop and its budget
 
-Each main-loop pass reads input, advances ticks, sends due MIDI, runs **one worker grain**, then the surface, LEDs and
-screen. Playback is never composed inside a tick: it is composed a window ahead by worker jobs, so the tick path only
+Each main-loop pass reads input, advances ticks, sends due MIDI, runs **worker grains** (up to `kGrainsPerPass` = 8,
+a tick that comes due between them played first), then the surface, LEDs and screen — the nine stages of `loop()` in
+`src/main.cpp`. Playback is never composed inside a tick: it is composed a window ahead by worker jobs, so the tick path only
 plays what is already composed.
 
 | Budget | Value | Meaning | Source |

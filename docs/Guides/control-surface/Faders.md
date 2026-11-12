@@ -1,6 +1,6 @@
 # Faders
 
-Current fixed-memory engine (`teensy41-engine`), checked 2026-11-08. All channels below are one-based. The reference [DROID patch](../../../droid/midilooper_v1.ini) selects bank 1 for NOTE_EDIT and bank 0 for LOOP_EDIT.
+The fixed-memory engine (`teensy41-capture-serial`). All channels below are one-based. The reference [DROID patch](../../../droid/midilooper_v1.ini) selects bank 1 for NOTE_EDIT, bank 0 for LOOP_EDIT and bank 2 for the GROOVE window (the firmware sends the Program Change).
 
 ## NOTE_EDIT
 
@@ -22,6 +22,12 @@ For a notched DROID F2, scale its notch number to 0–1 (divide by 24), and its 
 
 On LOOP_EDIT entry the firmware parks all four motors, sending values and the patch's clear triggers: F1/F2 notes 100/101 on channel 16; F3/F4 notes 1/2 on channel 15. Length/start changes coalesce into one undo step per visit while the previous change remains current.
 
+## GROOVE window
+
+- **F1 / F2:** column A's groove template and amount; **F3 / F4:** column B's — CC 20–23 on channel 16.
+
+On opening the window the firmware moves all four motors to A's and B's values (a value on CC 20–23, then the patch's clear note 102–105 on channel 16); their travel, and the first report as the bank opens, are not moves. A value changed rebuilds only the column heard; the columns are saved with the slot when the visit changed them. See the [UI / UX guide](../ENGINE_UI_UX_GUIDE.md) for the window itself.
+
 F2 also works while the loop-length popup is open. See the [engine guide](../FIXED_MEMORY_ENGINE.md) for popup controls, loop-window behavior and the current feature boundary.
 
-Sources: [Surface.h](../../../include/ContentEngine/Surface.h), [EditSurface.h](../../../include/ContentEngine/EditSurface.h). The older [motorfader](../DROID_MOTORFADER_PITCHBEND.md) and [fader-state](../FADER_STATE_SYSTEM.md) guides describe the legacy implementation.
+Sources: [ControlSurface.h](../../../include/ContentEngine/ControlSurface/ControlSurface.h) (with `ControlSurfaceLoopEdit.h` and `ControlSurfaceGroove.h`), [ControlSurfaceNoteEdit.h](../../../include/ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h). The older [motorfader](../DROID_MOTORFADER_PITCHBEND.md) and [fader-state](../FADER_STATE_SYSTEM.md) guides describe the legacy implementation.

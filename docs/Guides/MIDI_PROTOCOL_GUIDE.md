@@ -1,5 +1,7 @@
 # MIDI protocol guide
 
+> **Historical — the legacy runtime (removed in E9.8d, 2026-11-11).** This guide documents the legacy v3 runtime, its owners and its test tooling, none of which is in the firmware any more; `teensy41-capture-serial` now builds the fixed-memory engine. Kept as history: do not apply its APIs, limits, gestures or procedures to the engine. Current runtime: [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) (structure, limits, diagnostics), [ENGINE_UI_UX_GUIDE.md](ENGINE_UI_UX_GUIDE.md) (controls and screens), [ENGINE_STORAGE.md](ENGINE_STORAGE.md), [ENGINE_TIMING.md](ENGINE_TIMING.md).
+
 **Applies to:** current v3 (`dev`) firmware and the MIDI 1.0 transport paths.
 
 **Normative source:** [M2-104-UM UMP Format & MIDI 2.0 Protocol v1.1.2](https://amei-music.github.io/midi2.0-docs/amei-pdf/M2-104-UM_v1-1-2_UMP_and_MIDI_2-0_Protocol_Specification.pdf), published 2023-11-10.

@@ -1,5 +1,7 @@
 # MIDI receiver ingress receipts
 
+> **Historical — the legacy runtime (removed in E9.8d, 2026-11-11).** This guide documents the legacy v3 runtime, its owners and its test tooling, none of which is in the firmware any more; `teensy41-capture-serial` now builds the fixed-memory engine. Kept as history: do not apply its APIs, limits, gestures or procedures to the engine. Current runtime: [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) (structure, limits, diagnostics), [ENGINE_UI_UX_GUIDE.md](ENGINE_UI_UX_GUIDE.md) (controls and screens), [ENGINE_STORAGE.md](ENGINE_STORAGE.md), [ENGINE_TIMING.md](ENGINE_TIMING.md).
+
 Optional receiver metadata on the existing USB-device transfer, Serial8 DIN byte and USB-host word queues. Decision: [DEC-125 — pinned receiver ingress receipts](../DECISION_LOG.md#dec-125--pinned-receiver-ingress-receipts). Verification/resource evidence: [I5 — ingress execution](../../openspec/changes/windowed-playback-generation/evidence/2026-10-13-i5-running-capture-service/INGRESS-EXECUTION.md).
 
 ## Build and maintenance

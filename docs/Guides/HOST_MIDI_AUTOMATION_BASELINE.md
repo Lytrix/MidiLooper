@@ -1,5 +1,7 @@
 # Host-side MIDI automation baseline
 
+> **Historical — the legacy runtime (removed in E9.8d, 2026-11-11).** This guide documents the legacy v3 runtime, its owners and its test tooling, none of which is in the firmware any more; `teensy41-capture-serial` now builds the fixed-memory engine. Kept as history: do not apply its APIs, limits, gestures or procedures to the engine. Current runtime: [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) (structure, limits, diagnostics), [ENGINE_UI_UX_GUIDE.md](ENGINE_UI_UX_GUIDE.md) (controls and screens), [ENGINE_STORAGE.md](ENGINE_STORAGE.md), [ENGINE_TIMING.md](ENGINE_TIMING.md).
+
 Goal: run a repeatable local hardware-in-the-loop baseline where a Mac script drives the connected Teensy over USB MIDI to:
 - select each track,
 - record dense chromatic notes + CC data,

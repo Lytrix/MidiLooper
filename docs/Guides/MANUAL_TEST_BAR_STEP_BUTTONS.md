@@ -1,5 +1,7 @@
 # Manual Test Guide: Bar Step Buttons
 
+> **Historical — the legacy runtime (removed in E9.8d, 2026-11-11).** This guide documents the legacy v3 runtime, its owners and its test tooling, none of which is in the firmware any more; `teensy41-capture-serial` now builds the fixed-memory engine. Kept as history: do not apply its APIs, limits, gestures or procedures to the engine. Current runtime: [FIXED_MEMORY_ENGINE.md](FIXED_MEMORY_ENGINE.md) (structure, limits, diagnostics), [ENGINE_UI_UX_GUIDE.md](ENGINE_UI_UX_GUIDE.md) (controls and screens), [ENGINE_STORAGE.md](ENGINE_STORAGE.md), [ENGINE_TIMING.md](ENGINE_TIMING.md).
+
 This document describes how to manually test the Bar Step Button Handler. Notes 0-15 (16th steps) and 17-24 (bars) on channel 16 trigger mode-specific actions in Loop Edit and Note Edit.
 
 ## Enabling Test Logging

@@ -10,9 +10,9 @@ whole, [`FIXED_MEMORY_ENGINE.md`](FIXED_MEMORY_ENGINE.md).
 
 | File | Size | Holds | Source |
 |---|---|---|---|
-| `/MidiLooper/engine/store.bin` | about 1 GiB (2 sectors, two state records per slot, a 1 GiB run area) | the autosave, the run-once store (DEC-254): each run written once as its own record, per slot two alternating state records (its states, hot and cold), and the surface state | `Persistence.h`, `RunStore.h`, `SetFile.h` |
+| `/MidiLooper/engine/store.bin` | about 1 GiB (2 sectors, two state records per slot, a 1 GiB run area) | the autosave, the run-once store (DEC-254): each run written once as its own record, per slot two alternating state records (its states, hot and cold), and the surface state | `Persistence.h` (with `PersistenceSaving.h`, `PersistenceLoading.h`), `RunStore.h`, `SlotFile.h` |
 | `/MidiLooper/engine/store.bak` | the DEC-253 store | the store of before DEC-254 (whole slot copies), kept: read once at boot only when there is no `store.bin` (migration), never written | `Persistence.h` |
-| `/MidiLooper/library/library.bin` | 1 GiB | milestones (saved versions of the whole set) and the one recovery checkpoint | `Library.h`, `LibraryWriter.h` |
+| `/MidiLooper/library/library.bin` | 1 GiB | milestones (saved versions of the whole set) and the one recovery checkpoint | `SetLibraryFormat.h`, `LibraryWriter.h`, `LibraryLoader.h` |
 
 Each file is created once, **preallocated in one contiguous run**, and after that is only read and written by card
 sector address (`SdCardIo`): no directory lookup, no allocation, no file-system flush. The file system is used only to

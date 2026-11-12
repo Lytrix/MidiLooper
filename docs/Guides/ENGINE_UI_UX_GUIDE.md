@@ -3,8 +3,10 @@
 Status: guide (2026-11-11), for the fixed-memory engine's screen, windows and DROID controls. It collects the design
 language and the workflow decisions the owner has made so far, so new screens and windows start from them. Not
 authority: where it and a `DEC-###` in [`DECISION_LOG.md`](../DECISION_LOG.md) disagree, the decision wins, and the
-guide is corrected. Code: `include/Teensy/OledScreen.h` (drawing), `include/ContentEngine/ControlSurface/ControlSurface.h` (input,
-gestures, window state), `droid/midilooper_v1.ini` (the DROID patch).
+guide is corrected. Code: `include/Teensy/OledScreen.h` (drawing; the windows in `OledScreenBrowser.h` and `OledScreenPerformance.h`),
+`include/ContentEngine/ControlSurface/ControlSurface.h` (input, gestures, window state; the GROOVE window, LOOP_EDIT,
+copy mode and LEDs in its `ControlSurface*.h` parts, NOTE_EDIT in `ControlSurfaceNoteEdit.h`), `src/ScreenView.h`
+(what the screen is told each pass), `droid/midilooper_v1.ini` (the DROID patch).
 
 ## 1. Principles
 
