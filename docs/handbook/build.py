@@ -36,6 +36,7 @@ GROUPS = [
         ("screens", "Screen guide", "screen", "Read the OLED", "Follow the playhead, check which slot you are editing and see when the looper has saved your take."),
     ]),
     ("Reference", [
+        ("architecture", "How it fits together", "cpu", "How the firmware fits together", "Follow MIDI from the controller and the keyboard through the engine to the outputs, and one played note until it plays back."),
         ("troubleshooting", "Troubleshooting", "tool", "Troubleshooting", "Use the display and one known MIDI message to narrow down a silent loop, a waiting take or an unexpected button action."),
         ("implementation-notes", "Implementation notes", "code", "Implementation notes", "Where the firmware, DROID patch and written controls differ, what you can do on the instrument today, and what could be improved."),
     ]),
@@ -54,6 +55,7 @@ REFERENCES = {
     "library": [("Browser rows and controls", "include/ContentEngine/Browser.h", 10), ("Snapshot contents", "include/ContentEngine/LibraryWriter.h", 34), ("Card format", "docs/Guides/ENGINE_STORAGE.md", 94)],
     "midi-controls": [("Button decoder", "include/ContentEngine/Surface.h", 328), ("MIDI ports", "src/EngineFirmware/EngineMain.cpp", 233)],
     "screens": [("OLED layout", "src/EngineFirmware/EngineDisplay.h", 15), ("Framebuffer export", "src/EngineFirmware/EngineMain.cpp", 1410), ("Save indicators", "include/ContentEngine/StatusView.h", 28)],
+    "architecture": [],
     "troubleshooting": [("Thru and mute", "include/ContentEngine/ClockOutput.h", 18), ("Card setup at boot", "src/EngineFirmware/EngineMain.cpp", 2117)],
     "implementation-notes": [],
 }

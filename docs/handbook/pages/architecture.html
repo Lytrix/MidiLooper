@@ -1,0 +1,21 @@
+<h2 id="components">The components</h2>
+<figure class="diagram"><img src="assets/engine-components.svg" width="680" height="590" loading="lazy" alt="Inputs from the DROID controller, the computer and DIN, and USB serial pass through the firmware modules ControlSurface, MidiInput and SerialCommands into EngineRoot, whose gestures, composition, playback and storage drive the DROID feedback, MIDI out, the OLED screen and the SD card."><figcaption>Purple: the firmware modules in <code>src/</code>. Teal: the engine, <code>EngineRoot</code>. Gray: hardware and the engine's parts.</figcaption></figure>
+<ul>
+  <li><strong>Inputs.</strong> The DROID controller sends its buttons and faders on MIDI channels 13–16, which are never recorded. The computer and a DIN interface send notes and MIDI clock. USB serial carries <code>!ENGINE</code> commands from the host scripts.</li>
+  <li><strong>Firmware modules.</strong> <code>ControlSurface</code> turns the DROID's messages and the encoder into gestures and windows. <code>MidiInput</code> sends the clock to the engine's clock and notes to the engine at the last played tick. <code>SerialCommands</code> is the console for diagnostics and tests. The library, the saved selection, the device settings, the encoder, the screen view and the boot health check sit beside them.</li>
+  <li><strong>The engine.</strong> Gestures write a slot's states: a take, an overdub wrap, an edit or an undo. Composition jobs turn a state into windows of playback ahead of time, in steps of at most 810 µs. Playback plays those windows tick by tick. Storage saves every slot and the milestones to the card in the background.</li>
+  <li><strong>Outputs.</strong> Playback goes to DIN and the computer; the LEDs, fader bank and motor positions go to the DROID; the OLED draws the piano roll and status band; the SD card holds the store and the library.</li>
+</ul>
+<p>The firmware's main loop calls these parts in nine stages each pass: input, serial commands, due ticks, background work, output, the control surface, feedback, the screen and a health check.</p>
+
+<h2 id="note-path">A note's path</h2>
+<figure class="diagram"><img src="assets/engine-note-path.svg" width="680" height="270" loading="lazy" alt="A played note passes MidiInput, CaptureWriter, SlotTransport, a composer job and PlaybackTrack before MidiPorts sends it out."></figure>
+<ol>
+  <li><strong>MidiInput</strong> reads the note from DIN, USB or the DROID's USB host port and hands it to the engine.</li>
+  <li><strong>CaptureWriter</strong> writes it into the take, reserving room for its note-off at the same time.</li>
+  <li><strong>SlotTransport</strong> publishes the slot's new state when the loop wraps. That state is one undo step.</li>
+  <li>A <strong>composer job</strong> merges the slot's takes into the next window of playback, a few steps at a time, ahead of the playhead.</li>
+  <li><strong>PlaybackTrack</strong> plays the composed window at its ticks.</li>
+  <li><strong>MidiPorts</strong> sends the note to DIN and USB.</li>
+</ol>
+<p>Nothing is composed while a tick plays. Work that grows with a loop's layers is cut into short steps, and a tick that comes due between two steps plays first, which keeps the timing steady even with many overdubs.</p>

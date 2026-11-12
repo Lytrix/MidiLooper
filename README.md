@@ -248,15 +248,15 @@ See the [browser proposal and all walkthroughs](docs/Plans/engine_sets_browser_p
 
 ## Firmware and development
 
-The fixed-memory engine is the current development runtime. Its content lives in fixed PSRAM pages, immutable runs and versioned manifests; playback and display read bounded derived windows. The legacy firmware remains in the repository and builds in separate environments.
+The firmware is the fixed-memory engine. Its content lives in fixed PSRAM pages, immutable runs and versioned manifests; playback and display read bounded derived windows. `teensy41-capture-serial` builds it; the legacy runtime was removed (its guides are kept as history).
 
-The current checkout is `feature/engine-sets-browser`, branched from `rewrite/fixed-memory-engine`. `dev` is the stable integration reference; its legacy UI and storage descriptions do not describe the engine. See [current work](docs/Runtime/CURRENT_WORK.md) and [project state](docs/Runtime/PROJECT_STATE.md) for progress.
+`dev` is the stable integration reference; its legacy UI and storage descriptions do not describe the engine. See [current work](docs/Runtime/CURRENT_WORK.md) and [project state](docs/Runtime/PROJECT_STATE.md) for progress.
 
-Start with the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md). It covers recording, editing, memory limits, autosave and the current feature boundary. The [documentation index](docs/README.md) separates current engine guides from legacy references.
+[How the firmware fits together](docs/Guides/ENGINE_ARCHITECTURE.md) shows the components and a note's path through them in two diagrams (also in the [manual](docs/handbook/dist/architecture.html)). Start with the [engine user guide](docs/Guides/FIXED_MEMORY_ENGINE.md). It covers recording, editing, memory limits, autosave and the current feature boundary. The [documentation index](docs/README.md) separates current engine guides from legacy references.
 
 ### Development and older versions
 
-[Engine architecture and limits](docs/Guides/FIXED_MEMORY_ENGINE.md#engine-structure-and-limits) · [native test workflow](.cursor/rules/Testing-Workflow.mdc) · [architecture authority](docs/Authority/README.md) · [license](LICENSE)
+[How the firmware fits together](docs/Guides/ENGINE_ARCHITECTURE.md) · [Engine architecture and limits](docs/Guides/FIXED_MEMORY_ENGINE.md#engine-structure-and-limits) · [native test workflow](.cursor/rules/Testing-Workflow.mdc) · [architecture authority](docs/Authority/README.md) · [license](LICENSE)
 
 Run the host suite with `python scripts/test_native.py full`. Firmware changes also need the applicable device verification; a successful upload alone does not prove boot or content parity.
 

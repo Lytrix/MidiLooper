@@ -1,4 +1,4 @@
-> **Current development runtime (2026-11-08):** start with the [fixed-memory engine guide](Guides/FIXED_MEMORY_ENGINE.md) and [README](../README.md). `teensy41-engine` builds the engine; `teensy41-capture-serial` builds the retained legacy runtime. The v1/v2/v3 branch descriptions below are historical firmware references. Current checkout: `feature/engine-sets-browser`, from `rewrite/fixed-memory-engine`.
+> **The firmware is the fixed-memory engine:** start with [how the firmware fits together](Guides/ENGINE_ARCHITECTURE.md), the [fixed-memory engine guide](Guides/FIXED_MEMORY_ENGINE.md) and the [README](../README.md). `teensy41-capture-serial` builds it (`teensy41-engine` is the same build); the legacy runtime was removed in E9.8d (2026-11-11). The v1/v2/v3 branch descriptions below are historical firmware references.
 >
 > The [Sets browser walkthroughs](Plans/engine_sets_browser_proposal.md#5-walkthroughs-initial-browser), including `walk_4_long_history.png`, illustrate a proposed UI. Consult [CURRENT_WORK](Runtime/CURRENT_WORK.md) for what is being implemented.
 

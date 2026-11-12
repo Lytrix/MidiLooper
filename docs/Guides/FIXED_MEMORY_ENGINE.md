@@ -80,6 +80,8 @@ The RTC is valid from 2025–2099; otherwise the engine reports TIME NOT SET rat
 
 ## Engine structure and limits
 
+Two diagrams of the components and a note's path: [ENGINE_ARCHITECTURE.md](ENGINE_ARCHITECTURE.md).
+
 [ContentEngine](../../include/ContentEngine/) owns platform-independent content, in area folders (layout and names: [NAMING.md § Engine source layout](../Authority/NAMING.md), DEC-296); [include/Teensy/](../../include/Teensy/) holds the Teensy-only screen and card adapters. The engine is header-only and the firmware one compilation unit (DEC-299 — header-only engine). [main.cpp](../../src/main.cpp) reads as the firmware's table of contents: `setup()` (how it starts) and a `loop()` of nine numbered stages over named modules in [src/](../../src/) — `MidiInput`, `MidiPorts`, `GpioEncoder`, `DeviceSettings`, `SavedSelection`, `ScreenView`, `BootHealth`, and the coordinators `LibraryOperations` and `SerialCommands`; their shared parts are in `Firmware.h`. `teensy41-capture-serial` builds it (`teensy41-engine` is the same build); the legacy runtime was removed in E9.8d.
 
 The accepted architecture is [DEC-252 — fixed pages, immutable runs and versioned manifests](../DECISION_LOG.md#dec-252--one-bounded-content-engine-direct-cutover-to-fixed-pages-immutable-runs-and-versioned-manifests), with [fixed-memory engine OpenSpec](../../openspec/changes/fixed-memory-engine/design.md). Allocations and capacities are reserved at boot; accepted note closures have reserved space. Composition derives overlap rather than storing its consequences. Jobs build derived playback windows, edit indexes and display tiles under manifest-qualified identities.
