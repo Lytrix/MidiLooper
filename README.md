@@ -169,7 +169,7 @@ NOTELEN switches F2/F3 between start and end editing. Shortening a loop keeps no
 
 ## MIDI controller example: DROID
 
-The pictured DROID implementation uses a button grid, four motorized faders and the supplied [midilooper_v1.ini patch](droid/midilooper_v1.ini). The patch changes fader banks between NOTE_EDIT and LOOP_EDIT, and the firmware sends motor positions and button LED feedback. [Detailed fader and motor setup](docs/Guides/control-surface/Faders.md).
+The pictured DROID implementation uses a button grid, four motorized faders and the supplied [midilooper_v1.ini patch](droid/midilooper_v1.ini). The patch changes fader banks between NOTE_EDIT, LOOP_EDIT and the GROOVE window, and the firmware sends motor positions and button LED feedback. [Detailed fader and motor setup](docs/Guides/control-surface/Faders.md).
 
 You can configure another MIDI controller to send the same messages. Button mappings below are **MIDI note numbers on channel 16**, with channels numbered 1–16. Use momentary buttons: NoteOn when pressed, NoteOff when released. The firmware detects the gestures; the controller does not need separate mappings for short, double or long presses.
 
