@@ -102,7 +102,7 @@
 
 #include "ContentEngine/ControlSurface/PressDetector.h"
 #include "ContentEngine/ControlSurface/SetBrowser.h"
-#include "ContentEngine/ControlSurface/NoteEditSurface.h"
+#include "ContentEngine/ControlSurface/ControlSurfaceNoteEdit.h"
 #include "ContentEngine/Timing/EngineClock.h"
 
 namespace ContentEngine {
