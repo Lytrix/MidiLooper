@@ -43,8 +43,6 @@ struct Counters {
   uint32_t cumulativeAllocatedBytes = 0;
   /// Bytes returned to the pool over the whole run (monotonic).
   uint32_t cumulativeFreedBytes = 0;
-  /// Allocations that got a shadow entry.
-  uint32_t trackedBlocks = 0;
   /// Allocations that could not get a shadow entry (table full). Excluded from live.
   uint32_t untrackedBlocks = 0;
   /// Frees with no shadow entry (never counted as live).
@@ -68,7 +66,9 @@ struct Counters {
   uint32_t liveBytesByClass[kSizeClassCount] = {};
   uint32_t liveBlocksByClass[kSizeClassCount] = {};
 
-  /// Size classes plus bracket tags for attribution.
+  /// Size classes plus bracket tags for attribution. `kTagCount` is one past the
+  /// highest enumerator (`TagCanonicalPassInputs = 16`): slot 17 is unused but stays
+  /// sized so the printed `tags=` vector length does not change.
   static constexpr size_t kTagCount = 18;
   /// Net bytes attributed to each bracket tag (see `beginTag`). Exact: the tag is
   /// stored per shadow entry, so a free decrements the tag that allocated it
@@ -126,9 +126,6 @@ void recordPoolFree(void* pointer);
 /// Record that the pool refused a request of `bytes`. Emits a bounded diagnostic so
 /// the refused size and the denial context survive on serial; never allocates.
 void recordPoolRefusal(size_t bytes);
-
-/// Zero the counters and the shadow table. Cold path only.
-void reset();
 
 #if defined(__IMXRT1062__)
 /// Enter/leave an attribution bracket. Nesting is supported to depth 4; the tag is

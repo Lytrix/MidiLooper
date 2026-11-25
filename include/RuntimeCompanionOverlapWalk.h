@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimePlaybackView.h"
@@ -12,19 +12,22 @@ enum class RuntimeCompanionOverlapResult : uint8_t { Pending, ActionReady, Compl
 /// publication are not performed here.
 class RuntimeCompanionOverlapWalk {
  public:
-  enum class ActionKind : uint8_t { Shorten, Delete };
+  enum class ActionType : uint8_t { Shorten, Delete };
   struct Action {
-    ActionKind kind = ActionKind::Shorten;
+    ActionType kind = ActionType::Shorten;
     NoteId noteId = kInvalidNoteId;
     uint32_t endTick = 0;
+    /// Native-test contract probe (no production reader): the source index the
+    /// action was matched from, asserted to survive a denied re-step.
     size_t sourceIndex = 0;
   };
   bool available() const { return phase_ == Phase::Idle || phase_ == Phase::Complete; }
   bool begin(const NoteUtils::DisplayNote* notes, size_t count, NoteId target,
              uint8_t pitch, uint32_t start, uint32_t newEnd, uint32_t loopLength);
   RuntimeCompanionOverlapResult step(size_t inputQuantum);
+  /// Native-test contract probe (no production caller): asserts the bounded
+  /// per-grain input ceiling.
   size_t lastStepInputCount() const { return lastStepInputCount_; }
-  bool actionReady() const { return actionReady_; }
   const Action& action() const { return action_; }
   bool consumeAction();
   void discard();

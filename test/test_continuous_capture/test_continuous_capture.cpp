@@ -15,8 +15,10 @@
 #include "../test_support/LoopCaptureTestDeps.cpp"
 #include "../../src/Loop.cpp"
 #include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Track/RuntimePlaybackBridge.cpp"
+#include "../../src/Track/RuntimePlaybackBridgeRead.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 #include "../../src/Loop/LoopPreparedCompanionHistory.cpp"
 #include "../../src/Track/RuntimeNotePairLookup.cpp"
@@ -1515,7 +1517,7 @@ ImmutableLoopSnapshotRef buildFixtureRoot(Loop& loop,
   LoopSnapshotChangeSet changes;
   auto addEvent = [&](uint32_t tick, uint8_t pitch, NoteId id, bool noteOn) {
     SnapshotEventChange change{};
-    change.kind = SnapshotChangeKind::Add;
+    change.kind = SnapshotChangeType::Add;
     change.next.loopId = loop.loopId;
     change.next.eventId = eventId++;
     change.next.canonicalOrder = canonicalOrder++;
@@ -1527,7 +1529,7 @@ ImmutableLoopSnapshotRef buildFixtureRoot(Loop& loop,
   for (const FixtureSnapshotNote& note : notes) {
     const NoteId id = noteId++;
     SnapshotNoteChange add{};
-    add.kind = SnapshotChangeKind::Add;
+    add.kind = SnapshotChangeType::Add;
     add.next.loopId = loop.loopId;
     add.next.noteId = id;
     add.next.pitch = note.pitch;

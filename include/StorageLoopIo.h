@@ -180,9 +180,12 @@ struct LoopSnapshotBodyFormatV1ReadResult {
   ImmutableLoopSnapshotRef loopSnapshot;
 };
 
-/// Parse + validate LSV1 bytes. Never publishes; returns candidate snapshot or failure.
+#if defined(PIO_UNIT_TEST_NATIVE)
+/// Native-only monolithic byte oracle: parse + validate LSV1 bytes without publishing.
+/// Production load uses `stepLoopSnapshotBodyFormatV1LoadParse`.
 bool readLoopSnapshotBodyFormatV1(const uint8_t* data, size_t size,
                                   LoopSnapshotBodyFormatV1ReadResult& out);
+#endif
 
 size_t measureLoopSnapshotBodyFormatV1Bytes(const PersistedLoopSnapshot& metadata,
                                               const PersistedLoopSnapshot& persistedOracle,
@@ -226,7 +229,6 @@ bool writeLoopSnapshotBodyFormatV1SaveTail(const StorageIo& io,
 
 /// RC-P1: bounded grains for deferred LSV1 snapshot tail save (ExecutionBounds row 14).
 constexpr uint32_t kLsv1SaveIoChunkBytes = 512u;
-constexpr uint32_t kLsv1SaveOrderingFlushBatch = 16u;
 
 enum class LoopSnapshotBodyFormatV1SaveStepResult : uint8_t {
   MoreWork = 0,

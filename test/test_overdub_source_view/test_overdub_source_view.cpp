@@ -3957,7 +3957,7 @@ ImmutableLoopSnapshotRef buildSnapshotWithNotes(LoopId loopId, uint32_t loopLeng
   LoopSnapshotChangeSet changes;
   for (size_t i = 0; i < count; ++i) {
     SnapshotNoteChange add{};
-    add.kind = SnapshotChangeKind::Add;
+    add.kind = SnapshotChangeType::Add;
     add.next.loopId = loopId;
     add.next.noteId = specs[i].noteId;
     add.next.pitch = specs[i].pitch;
@@ -4210,7 +4210,7 @@ void test_snapshot_span_cache_keeps_sealed_hide_without_merge_omitted_202713() {
        {std::tuple<NoteId, uint8_t, uint32_t, uint32_t>{26, 73, 1452, 1500},
         std::tuple<NoteId, uint8_t, uint32_t, uint32_t>{27, 74, 1500, 1554}}) {
     SnapshotNoteChange add{};
-    add.kind = SnapshotChangeKind::Add;
+    add.kind = SnapshotChangeType::Add;
     add.next.loopId = loop.loopId;
     add.next.noteId = std::get<0>(geometry);
     add.next.pitch = std::get<1>(geometry);
@@ -4293,7 +4293,7 @@ void test_snapshot_source_uses_bounded_overdub_window() {
                                    Config::TICKS_PER_BAR * 20u + 140u},
        }) {
     SnapshotNoteChange add{};
-    add.kind = SnapshotChangeKind::Add;
+    add.kind = SnapshotChangeType::Add;
     add.next.loopId = loop.loopId;
     add.next.noteId = geometry[0];
     add.next.pitch = 60;

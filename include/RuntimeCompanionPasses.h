@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include <optional>
@@ -37,6 +37,14 @@ class RuntimeCompanionPasses {
              const PlaybackViewSourceIdentity& source, uint32_t loopLength);
   RuntimePlaybackOrderBuildResult step(size_t quantum);
   bool idle() const { return phase_ == Phase::Idle; }
+  /// Admission predicate: may `begin*()` be called now? This worker treats a denied run as
+  /// restartable, so Denied is admitted as well - unlike the workers whose Denied is terminal.
+  bool available() const {
+    return phase_ == Phase::Idle || phase_ == Phase::Complete || phase_ == Phase::Denied;
+  }
+  /// True when `begin*()` captured this class's own expected source identity; a bare pointer
+  /// comparison inside a compound guard hid that meaning.
+  bool sourceIdentityMatches() const { return source_ != nullptr && *source_ == expected_; }
   bool ready(const PlaybackViewSourceIdentity& source) const;
   bool matchesOwners(const RuntimeCanonicalPassInputs& inputs, const RuntimeCaptureCompanions& rows) const;
   const MidiEvent* data() const;
@@ -44,10 +52,10 @@ class RuntimeCompanionPasses {
   size_t size() const;
   // A completed result may be adopted only by its original canonical owner
   // after the matching source transaction committed. No stale data() access.
-  bool normalizationMatches(const RuntimeCanonicalPassInputs& inputs,
+  bool mergedMatches(const RuntimeCanonicalPassInputs& inputs,
                             const PlaybackViewSourceIdentity& committed) const;
-  size_t normalizedEventCount() const { return count_; }
-  size_t normalizedPassCount() const { return passCount_; }
+  size_t mergedEventCount() const { return count_; }
+  size_t mergedPassCount() const { return passCount_; }
   void discard();
   uint64_t generation() const { return generation_; }
   const MidiEvent* inputEvent(Origin origin) const;

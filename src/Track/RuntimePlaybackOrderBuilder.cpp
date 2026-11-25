@@ -1,19 +1,18 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackOrderBuilder.h"
+#include "Utils/NoteEditMem.h"
+#include "Utils/PlaybackEventOrder.h"
 
 #include <algorithm>
 #include <limits>
 
 #include "Utils/IntervalProjection.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define PLAYBACK_ORDER_MAINTENANCE_MEM FLASHMEM
-#else
-#define PLAYBACK_ORDER_MAINTENANCE_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define PLAYBACK_ORDER_MAINTENANCE_MEM NOTE_EDIT_MEM
 
 PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::begin(RuntimePlaybackView& view, uint32_t loopLengthTicks, RuntimePlaybackOrderMode mode) {
   if (!begin(view.storage, loopLengthTicks, nullptr, mode)) {
@@ -124,8 +123,8 @@ PLAYBACK_ORDER_MAINTENANCE_MEM bool RuntimePlaybackOrderBuilder::isBefore(uint16
   }
   const MidiEvent& leftEvent = storage.events[left];
   const MidiEvent& rightEvent = storage.events[right];
-  const uint8_t leftKind = leftEvent.isNoteOff() ? 0 : (leftEvent.isNoteOn() ? 1 : 2);
-  const uint8_t rightKind = rightEvent.isNoteOff() ? 0 : (rightEvent.isNoteOn() ? 1 : 2);
+  const uint8_t leftKind = PlaybackEventOrder::eventKind(leftEvent);
+  const uint8_t rightKind = PlaybackEventOrder::eventKind(rightEvent);
   if (leftKind != rightKind) {
     return leftKind < rightKind;
   }

@@ -1,20 +1,17 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #include "RuntimePlaybackView.h"
+#include "Utils/NoteEditMem.h"
 
-#include <algorithm>
 #include <cstdlib>
 #include <new>
 
 #include "Utils/InternalHeapFirstAllocator.h"
 
-#if defined(__IMXRT1062__)
-#include <Arduino.h>
-#define RUNTIME_PLAYBACK_VIEW_COLD_MEM FLASHMEM
-#else
-#define RUNTIME_PLAYBACK_VIEW_COLD_MEM
-#endif
+// Placement alias: the subsystem's cold code already shares `NOTE_EDIT_MEM` (see the sibling
+// companion TUs), so this name documents the local rationale without redefining placement.
+#define RUNTIME_PLAYBACK_VIEW_COLD_MEM NOTE_EDIT_MEM
 
 namespace {
 
@@ -35,10 +32,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void releaseExternalMemoryFirst(void* memory) {
   } else {
     std::free(memory);
   }
-}
-
-bool ledgerEntryEquals(const ActiveNoteLedger::Entry& a, const ActiveNoteLedger::Entry& b) {  return a.channel == b.channel && a.note == b.note && a.noteId == b.noteId &&
-         a.startTick == b.startTick && a.velocity == b.velocity;
 }
 
 }  // namespace
@@ -82,7 +75,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool LedgerBoundarySummary::matches(const ActiveN
   size_t index = 0;
   bool same = true;
   ledger.forEachActive([&](uint8_t, uint8_t, const ActiveNoteLedger::Entry& entry) {
-    if (index >= count || !ledgerEntryEquals(openNotes[index], entry)) {
+    if (index >= count || !activeNoteEntriesMatch(openNotes[index], entry)) {
       same = false;
     }
     ++index;
@@ -359,8 +352,7 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM bool FixedPlaybackBridgeStorage::matchesAffectedL
     while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
     if (index == ledgerBoundary.count) { same = false; return; }
     const auto& old = ledgerBoundary.openNotes[index++];
-    same = same && old.channel == entry.channel && old.note == entry.note &&
-        old.noteId == entry.noteId && old.startTick == entry.startTick && old.velocity == entry.velocity;
+    same = same && activeNoteEntriesMatch(old, entry);
   });
   while (index < ledgerBoundary.count && !relevant(ledgerBoundary.openNotes[index])) ++index;
   return same && index == ledgerBoundary.count;
@@ -372,153 +364,6 @@ bool FixedPlaybackBridgeStorage::append(const PlaybackBridgeRecord& record) {
   }
   records[recordCount++] = record;
   return true;
-}
-
-RUNTIME_PLAYBACK_VIEW_COLD_MEM bool CaptureAdmissionStaging::prewarm() {
-  return storage.prewarm(RuntimePlaybackViewConfig::kCaptureStagingEvents);
-}
-
-void CaptureAdmissionStaging::reset() {
-  storage.clear();
-  captureGeneration = 0;
-  frozenGeneration = 0;
-  frozen = false;
-  reservedStagingCredits = 0;
-  reservedBridgeCredits = 0;
-  reservedStopFinalizationCredits = 0;
-  reservations.fill(CaptureNoteReservation{});
-}
-
-bool CaptureAdmissionStaging::freeze(uint32_t generation) {
-  if (!storage.isPrewarmed() || frozen || generation != captureGeneration) {
-    return false;
-  }
-  frozenGeneration = generation;
-  frozen = true;
-  return true;
-}
-
-size_t CaptureAdmissionStaging::openReservationCount() const {
-  size_t count = 0;
-  for (const CaptureNoteReservation& reservation : reservations) {
-    if (reservation.open) {
-      ++count;
-    }
-  }
-  return count;
-}
-
-bool CaptureAdmissionStaging::reserveIndependentEvent() {
-  if (frozen || !hasCredits(1, 1, 0)) {
-    return false;
-  }
-  ++reservedBridgeCredits;
-  return true;
-}
-
-void CaptureAdmissionStaging::releaseIndependentEvent() {
-  reservedBridgeCredits -= std::min(reservedBridgeCredits, static_cast<size_t>(1));
-}
-
-CaptureNoteReservation* CaptureAdmissionStaging::firstOpenReservation() {
-  for (CaptureNoteReservation& reservation : reservations) {
-    if (reservation.open) {
-      return &reservation;
-    }
-  }
-  return nullptr;
-}
-
-bool CaptureAdmissionStaging::hasCredits(uint16_t stagingCredits, uint16_t bridgeCredits,
-                                         uint16_t stopFinalizationCredits) const {
-  const size_t stagingCapacity = storage.capacity >= storage.eventCount
-                                     ? storage.capacity - storage.eventCount
-                                     : 0;
-  const size_t bridgeCapacity = RuntimePlaybackViewConfig::kBridgeCount *
-                                RuntimePlaybackViewConfig::kRecordsPerBridge;
-  const size_t stopCapacity = RuntimePlaybackViewConfig::kMaxCaptureNoteReservations;
-  return stagingCredits <= stagingCapacity - std::min(stagingCapacity, reservedStagingCredits) &&
-         bridgeCredits <= bridgeCapacity - std::min(bridgeCapacity, reservedBridgeCredits) &&
-         stopFinalizationCredits <=
-             stopCapacity - std::min(stopCapacity, reservedStopFinalizationCredits);
-}
-
-CaptureNoteReservation* CaptureAdmissionStaging::reserve(
-    NoteId noteId, uint8_t channel, uint8_t note, uint16_t stagingCredits, uint16_t bridgeCredits,
-    uint16_t stopFinalizationCredits) {
-  if (frozen || noteId == kInvalidNoteId ||
-      matchingOpenReservation(noteId, channel, note) != nullptr ||
-      !hasCredits(stagingCredits, bridgeCredits, stopFinalizationCredits)) {
-    return nullptr;
-  }
-  for (CaptureNoteReservation& reservation : reservations) {
-    if (!reservation.open && reservation.noteId == kInvalidNoteId) {
-      reservation = CaptureNoteReservation{noteId, channel, note, stagingCredits, bridgeCredits,
-                                            stopFinalizationCredits, SIZE_MAX, true};
-      reservedStagingCredits += stagingCredits;
-      reservedBridgeCredits += bridgeCredits;
-      reservedStopFinalizationCredits += stopFinalizationCredits;
-      return &reservation;
-    }
-  }
-  return nullptr;
-}
-
-CaptureNoteReservation* CaptureAdmissionStaging::matchingOpenReservation(NoteId noteId,
-                                                                           uint8_t channel,
-                                                                           uint8_t note) {
-  for (CaptureNoteReservation& reservation : reservations) {
-    if (reservation.open && reservation.noteId == noteId && reservation.channel == channel &&
-        reservation.note == note) {
-      return &reservation;
-    }
-  }
-  return nullptr;
-}
-
-bool CaptureAdmissionStaging::appendContinuationNoteOn(const MidiEvent& event) {
-  if (frozen || !event.isNoteOn() || event.noteId == kInvalidNoteId) {
-    return false;
-  }
-  CaptureNoteReservation* reservation =
-      reserve(event.noteId, event.channel, event.data.noteData.note, 2, 2, 1);
-  if (reservation == nullptr) {
-    return false;
-  }
-  if (storage.append(event)) {
-    reservation->noteOnStagingIndex = storage.eventCount - 1;
-    return true;
-  }
-  close(*reservation);
-  return false;
-}
-
-bool CaptureAdmissionStaging::appendReservedNoteOff(const MidiEvent& event, bool retainPair) {
-  if (!event.isNoteOff()) {
-    return false;
-  }
-  CaptureNoteReservation* reservation =
-      matchingOpenReservation(event.noteId, event.channel, event.data.noteData.note);
-  if (reservation == nullptr || !storage.append(event)) {
-    return false;
-  }
-  if (!retainPair) {
-    (void)storage.discardEvent(reservation->noteOnStagingIndex);
-    (void)storage.discardEvent(storage.eventCount - 1);
-  }
-  close(*reservation);
-  return true;
-}
-
-void CaptureAdmissionStaging::close(CaptureNoteReservation& reservation) {
-  reservedStagingCredits -= std::min(reservedStagingCredits,
-                                     static_cast<size_t>(reservation.stagingCredits));
-  reservedBridgeCredits -= std::min(reservedBridgeCredits,
-                                    static_cast<size_t>(reservation.bridgeCredits));
-  reservedStopFinalizationCredits -=
-      std::min(reservedStopFinalizationCredits,
-               static_cast<size_t>(reservation.stopFinalizationCredits));
-  reservation = CaptureNoteReservation{};
 }
 
 void RuntimePlaybackViewLifecycle::reset() {
@@ -538,6 +383,18 @@ bool RuntimePlaybackViewLifecycle::retainCurrent(
   return true;
 }
 
+void RuntimePlaybackViewLifecycle::installRetainedCurrentView(
+    std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
+    uint8_t previousAnchor) {
+  current = ready;
+  retained = current;
+  views[current].published = false;
+  ready = kNoView;
+  build = previousAnchor;
+  idle = kNoView;
+  views[build].resetMetadata();
+}
+
 bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
     std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views) {
   if (current >= views.size() || ready >= views.size() || current == ready ||
@@ -545,14 +402,7 @@ bool RuntimePlaybackViewLifecycle::installPreparedCurrent(
       retained != kNoView) {
     return false;
   }
-  const uint8_t oldCurrent = current;
-  current = ready;
-  views[current].published = false;
-  retained = current;
-  ready = kNoView;
-  build = oldCurrent;
-  idle = kNoView;
-  views[build].resetMetadata();
+  installRetainedCurrentView(views, current);
   return true;
 }
 
@@ -563,14 +413,7 @@ bool RuntimePlaybackViewLifecycle::replaceRetainedWithReady(
       !views[ready].complete || !views[ready].rawCoveragePrepared) {
     return false;
   }
-  const uint8_t oldCurrent = retained;
-  current = ready;
-  retained = current;
-  views[current].published = false;
-  ready = kNoView;
-  build = oldCurrent;
-  idle = kNoView;
-  views[build].resetMetadata();
+  installRetainedCurrentView(views, retained);
   return true;
 }
 
@@ -787,10 +630,6 @@ RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadata() {
   frozenStagingIndex = 1;
   lifecycle.reset();
   bridgeLifecycle.reset();
-}
-
-RUNTIME_PLAYBACK_VIEW_COLD_MEM void RuntimePlaybackViewSet::resetMetadataPreserveRetained() {
-  resetMetadataPreserveView(lifecycle.retained);
 }
 
 RUNTIME_PLAYBACK_VIEW_COLD_MEM uint8_t RuntimePlaybackViewSet::firstRecordReturnWindowIndex() const {

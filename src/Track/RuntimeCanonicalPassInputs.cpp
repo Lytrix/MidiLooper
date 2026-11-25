@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCanonicalPassInputs.h"
 #include "LoopPasses.h"
@@ -7,40 +7,31 @@
 #include <new>
 
 namespace {
-NOTE_EDIT_MEM void* canonicalInputAllocate(size_t bytes) {
-  void* memory = extmem_malloc(bytes);
-  return memory != nullptr ? memory : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void canonicalInputFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM RuntimeCanonicalPassInputs::RuntimeCanonicalPassInputs() = default;
 NOTE_EDIT_MEM RuntimeCanonicalPassInputs::~RuntimeCanonicalPassInputs() {
   // Explicit runtime discard handles live borrowed workers; destruction must
   // not dereference a worker that may already have been destroyed.
   for (size_t i = 0; i < capacity_; ++i) { raw_[i].~MidiEvent(); effective_[i].~MidiEvent(); }
-  canonicalInputFree(raw_); canonicalInputFree(effective_); canonicalInputFree(outputs_); canonicalInputFree(nextOutputs_);
-  canonicalInputFree(selectedPasses_); canonicalInputFree(selectedHistory_);
-  canonicalInputFree(captureOrder_); canonicalInputFree(captureScratch_);
+  externalFirstFree(raw_); externalFirstFree(effective_); externalFirstFree(outputs_); externalFirstFree(nextOutputs_);
+  externalFirstFree(selectedPasses_); externalFirstFree(selectedHistory_);
+  externalFirstFree(captureOrder_); externalFirstFree(captureScratch_);
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
   if (capacity_) return capacity_ == capacity;
-  auto* raw = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
-  auto* effective = static_cast<MidiEvent*>(canonicalInputAllocate(capacity * sizeof(MidiEvent)));
-  auto* outputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
-  auto* nextOutputs = static_cast<RuntimeCompanionPasses::Pass*>(canonicalInputAllocate(capacity * sizeof(RuntimeCompanionPasses::Pass)));
-  auto* selected = static_cast<SealedPass*>(canonicalInputAllocate(capacity * sizeof(SealedPass)));
-  auto* history = static_cast<const EditPass**>(canonicalInputAllocate(RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
-  auto* order = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
-  auto* scratch = static_cast<uint16_t*>(canonicalInputAllocate(capacity * sizeof(uint16_t)));
+  auto* raw = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+  auto* effective = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+  auto* outputs = static_cast<RuntimeCompanionPasses::Pass*>(externalFirstAlloc(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+  auto* nextOutputs = static_cast<RuntimeCompanionPasses::Pass*>(externalFirstAlloc(capacity * sizeof(RuntimeCompanionPasses::Pass)));
+  auto* selected = static_cast<SealedPass*>(externalFirstAlloc(capacity * sizeof(SealedPass)));
+  auto* history = static_cast<const EditPass**>(externalFirstAlloc(RuntimePlaybackViewConfig::kRecordsPerBridge * sizeof(const EditPass*)));
+  auto* order = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* scratch = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
   if (!raw || !effective || !outputs || !nextOutputs || !selected || !history || !order || !scratch) {
-    canonicalInputFree(raw); canonicalInputFree(effective); canonicalInputFree(outputs); canonicalInputFree(nextOutputs);
-    canonicalInputFree(selected); canonicalInputFree(history);
-    canonicalInputFree(order); canonicalInputFree(scratch); return false;
+    externalFirstFree(raw); externalFirstFree(effective); externalFirstFree(outputs); externalFirstFree(nextOutputs);
+    externalFirstFree(selected); externalFirstFree(history);
+    externalFirstFree(order); externalFirstFree(scratch); return false;
   }
   for (size_t i = 0; i < capacity; ++i) {
     new (&raw[i]) MidiEvent(); new (&effective[i]) MidiEvent();
@@ -62,11 +53,9 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredGrainsUpperBound(
     size_t capacity, size_t passes, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX || passes > capacity) return UINT64_MAX;
-  const auto ceilGrains = [quantum](size_t visits) -> uint64_t {
-    return visits == 0 ? 0 : 1 + (visits - 1) / quantum;
-  };
   return 1 + uint64_t(passes) * ((rows ? history : 0) +
-      ceilGrains(capacity + LoopEventStoreConfig::POOL_CHUNK_COUNT) + ceilGrains(capacity) + 3);
+      RuntimePlaybackOrderBuilder::ceilGrains(capacity + LoopEventStoreConfig::POOL_CHUNK_COUNT, quantum) +
+          RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + 3);
 }
 NOTE_EDIT_MEM void RuntimeCanonicalPassInputs::discard() {
   ++generation_; normalizedOwner_ = nullptr; releaseApply(); read_.discard(); work_.reset(); apply_ = nullptr;
@@ -79,7 +68,7 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::begin(
     RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
     const SealedPass* passes, size_t passCount, const EditPass* history, size_t rowCount,
     const PlaybackViewSourceIdentity& source, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       !capacity_ || passCount > capacity_ || (!passes && passCount) ||
       (!history && rowCount) || rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge ||
       !apply.available() || !loopLength) return false;
@@ -89,7 +78,7 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::begin(
   return true;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::valid(bool checkCommandEpoch) const {
-  return source_ && *source_ == expected_ &&
+  return sourceIdentityMatches() &&
       (!preparedCaptureOrder_ || preparedCaptureOrder_->storageGeneration == preparedCaptureOrderGeneration_) &&
       (!current_ || (current_->playbackRevision == expected_.playbackRevision &&
                      current_->sourceGeneration == expected_.sourceGeneration &&
@@ -168,19 +157,19 @@ NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::resumeCurrentAfterAppend(
   return true;
 }
 
-NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::adoptCommittedNormalization(
+NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::adoptCommittedMerge(
     const LoopPasses& passes, const PlaybackViewSourceIdentity& source,
     const CurrentSource& live, const RuntimeCompanionPasses& resolved) {
   if (!current_ || loopPasses_ != &passes || !includeCapture_ ||
-      !resolved.normalizationMatches(*this, source) ||
+      !resolved.mergedMatches(*this, source) ||
       live.playbackRevision != source.playbackRevision ||
       live.sourceGeneration != source.sourceGeneration || live.loopLengthTicks != loopLength_ ||
       &current_->playbackRevision != &live.playbackRevision ||
       &current_->sourceGeneration != &live.sourceGeneration ||
       &current_->loopLengthTicks != &live.loopLengthTicks ||
       &current_->storageGeneration != &live.storageGeneration) return false;
-  const size_t normalizedCount = resolved.normalizedEventCount();
-  const size_t normalizedPasses = resolved.normalizedPassCount();
+  const size_t normalizedCount = resolved.mergedEventCount();
+  const size_t normalizedPasses = resolved.mergedPassCount();
   ++generation_; releaseApply(); read_.discard(); captureOrderBuild_.discard();
   std::swap(raw_, effective_); std::swap(outputs_, nextOutputs_);
   count_ = normalizedCount; pass_ = normalizedPasses;
@@ -211,15 +200,18 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredFrozenTailGrainsUpper
     size_t capacity, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX) return UINT64_MAX;
+  // `+ 4` is this bound's fixed slack: the per-pass setup/transition turns the merge adds around
+  // the entry grains. It participates in the upper bound, so measure before changing it.
   return RuntimePlaybackOrderBuilder::requiredGrains(capacity, quantum) +
-      2 * (1 + (capacity - 1) / quantum) +
+      2 * RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) +
       (rows ? history : 0) + 4;
 }
 NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredPreparedFrozenTailGrainsUpperBound(
     size_t capacity, size_t rows, size_t quantum) {
   const auto history = RuntimeCompanionApply::requiredHistoryGrainsUpperBound(capacity, rows, quantum);
   if (history == UINT64_MAX) return UINT64_MAX;
-  return 3 * (1 + (capacity - 1) / quantum) + (rows ? history : 0) + 4;
+  // Same fixed `+ 4` slack as the full bound above (tail setup/transition turns).
+  return 3 * RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + (rows ? history : 0) + 4;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::appendFrozenOverdub(
     const FrozenSource& live, const PreparedCaptureOrder* preparedOrder) {
@@ -270,7 +262,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCanonicalPassInputs::requiredSelectedGrainsUpperBo
   const auto preparation = requiredGrainsUpperBound(capacity, capacity, rows, quantum);
   if (preparation == UINT64_MAX) return UINT64_MAX;
   const uint64_t visits = uint64_t(capacity) * (capacity + 1) + rows;
-  return preparation + (visits ? 1 + (visits - 1) / quantum : 0) + capacity + 4;
+  return preparation + RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum) + capacity + 4;
 }
 NOTE_EDIT_MEM bool RuntimeCanonicalPassInputs::ready() const { return phase_ == Phase::Complete && valid(); }
 NOTE_EDIT_MEM const CaptureAdmissionStaging* RuntimeCanonicalPassInputs::frozenCapture() const {

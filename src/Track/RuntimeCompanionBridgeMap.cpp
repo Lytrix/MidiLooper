@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionBridgeMap.h"
 #include "Utils/NoteEditMem.h"
@@ -31,15 +31,6 @@ NOTE_EDIT_MEM bool sameCompanionInputEvent(const MidiEvent& a, const MidiEvent& 
     default: return true; // Remaining MIDI types have no payload.
   }
 }
-NOTE_EDIT_MEM void* companionMapAllocate(size_t bytes) {
-  void* result = extmem_malloc(bytes);
-  return result != nullptr ? result : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void companionMapFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::inputEventsMatch(const MidiEvent& a, const MidiEvent& b) {
   return sameCompanionInputEvent(a, b);
@@ -47,8 +38,8 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::inputEventsMatch(const MidiEvent& 
 NOTE_EDIT_MEM RuntimeCompanionBridgeMap::~RuntimeCompanionBridgeMap() {
   if (records_ != nullptr)
     for (size_t i = 0; i < capacity_; ++i) records_[i].~PlaybackBridgeRecord();
-  companionMapFree(records_); companionMapFree(recordRanks_); companionMapFree(baseRanks_);
-  companionMapFree(baseIndex_);
+  externalFirstFree(records_); externalFirstFree(recordRanks_); externalFirstFree(baseRanks_);
+  externalFirstFree(baseIndex_);
 }
 NOTE_EDIT_MEM uint64_t RuntimeCompanionBridgeMap::requiredPerPassGrainsUpperBound(
     size_t baseCount, size_t candidateCount, size_t quantum) {
@@ -59,18 +50,18 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionBridgeMap::requiredPerPassGrainsUpperBoun
   for (size_t width = 1; width < baseCount; width *= 2) ++levels;
   for (size_t count = baseCount; count; count /= 2) ++searchLevels;
   const uint64_t visits = 4*b + 2*b*levels + a*(searchLevels+2);
-  return (visits ? 1 + (visits-1)/quantum : 0) + 4;
+  return RuntimePlaybackOrderBuilder::ceilGrains(visits, quantum) + 4;
 }
 
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::prewarm(size_t capacity) {
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kRecordsPerBridge) return false;
   if (capacity_ != 0) return capacity == capacity_;
-  auto* records = static_cast<PlaybackBridgeRecord*>(companionMapAllocate(capacity * sizeof(PlaybackBridgeRecord)));
-  auto* ranks = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
-  auto* baseRanks = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
-  auto* baseIndex = static_cast<uint16_t*>(companionMapAllocate(capacity * sizeof(uint16_t)));
+  auto* records = static_cast<PlaybackBridgeRecord*>(externalFirstAlloc(capacity * sizeof(PlaybackBridgeRecord)));
+  auto* ranks = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* baseRanks = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
+  auto* baseIndex = static_cast<uint16_t*>(externalFirstAlloc(capacity * sizeof(uint16_t)));
   if (records == nullptr || ranks == nullptr || baseRanks == nullptr || baseIndex == nullptr) {
-    companionMapFree(records); companionMapFree(ranks); companionMapFree(baseRanks); companionMapFree(baseIndex); return false;
+    externalFirstFree(records); externalFirstFree(ranks); externalFirstFree(baseRanks); externalFirstFree(baseIndex); return false;
   }
   for (size_t i = 0; i < capacity; ++i) new (&records[i]) PlaybackBridgeRecord();
   records_ = records; recordRanks_ = ranks; baseRanks_ = baseRanks; capacity_ = capacity;
@@ -87,7 +78,7 @@ NOTE_EDIT_MEM void RuntimeCompanionBridgeMap::discard() {
 NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::begin(
     const RuntimeCompanionApply& applied, const MidiEvent* base, size_t baseCount,
     const PlaybackViewSourceIdentity& source) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || baseCount > capacity_ || applied.size() > capacity_ ||
       applied.isHistoryBatch() || !applied.matchesInput(base, baseCount, source)) return false;
   discard(); applied_ = &applied; base_ = base; baseCount_ = baseCount;
@@ -98,7 +89,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::begin(
     const RuntimeCompanionPasses& prepared, const MidiEvent* base, size_t baseCount,
     const RuntimeCompanionPasses::Origin* baseOrigins,
     const PlaybackViewSourceIdentity& baseSource, const PlaybackViewSourceIdentity& preparedSource) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || baseCount > capacity_ || prepared.size() > capacity_ ||
       (baseCount != 0 && (base == nullptr || baseOrigins == nullptr)) || !prepared.ready(preparedSource)) return false;
   discard(); prepared_ = &prepared; base_ = base; baseCount_ = baseCount; baseOrigins_ = baseOrigins;
@@ -127,7 +118,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionBridgeMap::valid() const {
       baseView_->coverage.loopLengthTicks != coverage_.loopLengthTicks)) return false;
   if (prepared_ != nullptr) return prepared_->generation() == generation_ &&
       prepared_->ready(preparedSource_) && prepared_->size() == candidateCount_ &&
-      baseIdentity_ != nullptr && *baseIdentity_ == source_;
+      sourceIdentityMatches();
   return applied_ != nullptr && applied_->generation() == generation_ &&
          !applied_->isHistoryBatch() && applied_->matchesInput(base_, baseCount_, source_) && applied_->size() == candidateCount_;
 }

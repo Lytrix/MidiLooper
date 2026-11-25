@@ -7,12 +7,12 @@
 
 namespace CommittedMidiScratch {
 
-RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
+RefreshType refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
                     const void*& scratchIdentity, Loop& loop) {
   const uint32_t revision = loop.playbackRevision;
   const void* matchIdentity = loop.publishedSnapshotIdentity();
   if (isFresh(scratchRevision, revision, scratchIdentity, matchIdentity)) {
-    return RefreshKind::Reused;
+    return RefreshType::Reused;
   }
 
   SessionMidiEventVec sessionEvents;
@@ -21,13 +21,13 @@ RefreshKind refresh(MidiEventVec& scratch, uint32_t& scratchRevision,
     scratch.assign(sessionEvents.begin(), sessionEvents.end());
     scratchRevision = revision;
     scratchIdentity = observedIdentity;
-    return RefreshKind::FromSnapshot;
+    return RefreshType::FromSnapshot;
   }
 
   scratch.clear();
   scratchRevision = revision;
   scratchIdentity = nullptr;
-  return RefreshKind::HoldEmpty;
+  return RefreshType::HoldEmpty;
 }
 
 }  // namespace CommittedMidiScratch

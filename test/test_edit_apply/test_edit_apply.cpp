@@ -19,6 +19,7 @@
 #include "../../src/Track/RuntimeCanonicalPassInputs.cpp"
 #include "../../src/Track/RuntimeCaptureCompanions.cpp"
 #include "../../src/Track/RuntimePlaybackView.cpp"
+#include "../../src/Track/RuntimeCaptureStaging.cpp"
 #include "../../src/Track/RuntimePlaybackOrderBuilder.cpp"
 #include "../../src/Loop/LoopPasses.cpp"
 #include "../../src/LoopEventStore.cpp"
@@ -4681,8 +4682,8 @@ void test_companion_overlap_walk_holds_actions_and_preserves_legacy_action_order
     if (result != RuntimeCompanionOverlapResult::ActionReady) continue;
     TEST_ASSERT_TRUE(actions < 4);
     TEST_ASSERT_EQUAL_UINT(ids[actions], walk.action().noteId);
-    TEST_ASSERT_EQUAL(actions < 2 ? RuntimeCompanionOverlapWalk::ActionKind::Shorten
-                                 : RuntimeCompanionOverlapWalk::ActionKind::Delete, walk.action().kind);
+    TEST_ASSERT_EQUAL(actions < 2 ? RuntimeCompanionOverlapWalk::ActionType::Shorten
+                                 : RuntimeCompanionOverlapWalk::ActionType::Delete, walk.action().kind);
     if (actions < 2) TEST_ASSERT_EQUAL_UINT32(99, walk.action().endTick);
     const size_t index = walk.action().sourceIndex;
     TEST_ASSERT_EQUAL(RuntimeCompanionOverlapResult::Denied, walk.step(0));
@@ -4734,7 +4735,7 @@ void test_companion_overlap_walk_matches_actual_length_application() {
       TEST_ASSERT_TRUE(walk.lastStepInputCount() <= quantum);
       if (result == RuntimeCompanionOverlapResult::ActionReady) {
         const auto action = walk.action();
-        if (action.kind == RuntimeCompanionOverlapWalk::ActionKind::Shorten)
+        if (action.kind == RuntimeCompanionOverlapWalk::ActionType::Shorten)
           shortenNoteEndById(actual, action.noteId, action.endTick, nullptr);
         else applyDeleteNoteById(actual, action.noteId, length, nullptr);
         TEST_ASSERT_TRUE(walk.consumeAction());
@@ -5169,10 +5170,10 @@ void assertCompanionBridgeMapping(const RuntimeCompanionApply& apply, const Midi
                                reconstructed, "ranked companion bridge mapping matches candidate");
 }
 
-void assertBoundedCompanionApply(const MidiEventVec& input, RuntimeCompanionApply::Kind kind,
+void assertBoundedCompanionApply(const MidiEventVec& input, RuntimeCompanionApply::Type kind,
                                  NoteId target, uint32_t end, uint32_t length, size_t quantum) {
   auto expected = input;
-  if (kind == RuntimeCompanionApply::Kind::Delete) applyDeleteNoteById(expected, target, length, nullptr);
+  if (kind == RuntimeCompanionApply::Type::Delete) applyDeleteNoteById(expected, target, length, nullptr);
   else applyChangeLengthById(expected, target, end, length, nullptr);
   const auto frozen = input;
   CompanionApplyFixture fixture;
@@ -5227,8 +5228,8 @@ void test_bounded_companion_apply_matches_delete_and_length_reference() {
     }
     const NoteId target = fixture % 6;
     const uint32_t end = (rng() % 36) * 96;
-    assertBoundedCompanionApply(events, fixture % 4 ? RuntimeCompanionApply::Kind::Length
-               : RuntimeCompanionApply::Kind::Delete, target, end, length, 1 + fixture % 7);
+    assertBoundedCompanionApply(events, fixture % 4 ? RuntimeCompanionApply::Type::Length
+               : RuntimeCompanionApply::Type::Delete, target, end, length, 1 + fixture % 7);
   }
 }
 
@@ -5237,10 +5238,10 @@ void test_bounded_companion_apply_synthesizes_off_and_keeps_shortening_order() {
                       MidiEvent::NoteOff(200, 1, 61)};
   events[0].noteId = 1; events[1].noteId = 2;
   for (size_t quantum : {1u, 3u, 32u}) {
-    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 700, 768, quantum);
-    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 768, 768, quantum);
-    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 2, 150, 768, quantum);
-    assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Delete, 2, 0, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Length, 1, 700, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Length, 1, 768, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Length, 2, 150, 768, quantum);
+    assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Delete, 2, 0, 768, quantum);
   }
 }
 
@@ -5251,7 +5252,7 @@ void test_bounded_companion_apply_capacity_and_stale_source_hide_partial_candida
   fixture.prewarm(1);
   PlaybackViewSourceIdentity source{1, 1, events.data()};
   TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
-                                     RuntimeCompanionApply::Kind::Length, 1, 700, 768));
+                                     RuntimeCompanionApply::Type::Length, 1, 700, 768));
   auto result = RuntimePlaybackOrderBuildResult::Pending;
   for (size_t i = 0; i < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, result);
@@ -5259,9 +5260,9 @@ void test_bounded_companion_apply_capacity_and_stale_source_hide_partial_candida
   TEST_ASSERT_EQUAL_UINT(1, events.size());
   TEST_ASSERT_TRUE(fixture.pair.available());
   TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
-                                     RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+                                     RuntimeCompanionApply::Type::Length, 1, 768, 768));
   TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
-                                      RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+                                      RuntimeCompanionApply::Type::Length, 1, 768, 768));
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Pending, fixture.apply.step(1));
   ++source.sourceGeneration;
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Denied, fixture.apply.step(1));
@@ -5269,13 +5270,13 @@ void test_bounded_companion_apply_capacity_and_stale_source_hide_partial_candida
   --source.sourceGeneration;
   TEST_ASSERT_FALSE(fixture.apply.ready(source));
   TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
-                                     RuntimeCompanionApply::Kind::Length, 1, 768, 768));
+                                     RuntimeCompanionApply::Type::Length, 1, 768, 768));
   result = RuntimePlaybackOrderBuildResult::Pending;
   for (size_t i = 0; i < 200 && result == RuntimePlaybackOrderBuildResult::Pending; ++i) result = fixture.apply.step(1);
   TEST_ASSERT_EQUAL(RuntimePlaybackOrderBuildResult::Complete, result);
   const auto* output = fixture.apply.data();
   TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, output, fixture.apply.size(), source,
-                                      RuntimeCompanionApply::Kind::Delete, 1, 0, 768));
+                                      RuntimeCompanionApply::Type::Delete, 1, 0, 768));
   TEST_ASSERT_EQUAL_PTR(output, fixture.apply.data());
   ++source.playbackRevision;
   TEST_ASSERT_NULL(fixture.apply.data());
@@ -6360,13 +6361,13 @@ void test_bounded_companion_apply_maximum_candidate_order_and_helper_exclusion()
     auto off = MidiEvent::NoteOff(2 * i + 1, 1, 60); off.noteId = i + 1;
     events.push_back(on); events.push_back(off);
   }
-  assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Length, 1, 3, 3072, 32);
-  assertBoundedCompanionApply(events, RuntimeCompanionApply::Kind::Delete, 1, 0, 3072, 1);
+  assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Length, 1, 3, 3072, 32);
+  assertBoundedCompanionApply(events, RuntimeCompanionApply::Type::Delete, 1, 0, 3072, 1);
   CompanionApplyFixture fixture; fixture.prewarm(2048);
   PlaybackViewSourceIdentity source{1, 1, events.data()};
   TEST_ASSERT_TRUE(fixture.spans.begin(fixture.pair, events.data(), events.size(), 60, 3072));
   TEST_ASSERT_FALSE(fixture.apply.begin(fixture.work, events.data(), events.size(), source,
-                                      RuntimeCompanionApply::Kind::Length, 1, 3, 3072));
+                                      RuntimeCompanionApply::Type::Length, 1, 3, 3072));
   TEST_ASSERT_EQUAL(RuntimeCompanionSpanResult::Pending, fixture.spans.step(1));
   fixture.spans.discard();
 }
@@ -6586,7 +6587,7 @@ void test_companion_bridge_map_guards_source_capacity_and_cancellation() {
   TEST_ASSERT_FALSE(mapping.prewarm(4));
   TEST_ASSERT_FALSE(mapping.begin(fixture.apply, base.data(), base.size(), source));
   TEST_ASSERT_TRUE(fixture.apply.begin(fixture.work, base.data(), base.size(), source,
-                                     RuntimeCompanionApply::Kind::Delete, 1, 0, 768));
+                                     RuntimeCompanionApply::Type::Delete, 1, 0, 768));
   while (fixture.apply.step(32) == RuntimePlaybackOrderBuildResult::Pending) {}
   RuntimeCompanionBridgeMap tooSmall;
   TEST_ASSERT_FALSE(tooSmall.prewarm(0));

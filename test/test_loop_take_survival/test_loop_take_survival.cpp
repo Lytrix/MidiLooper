@@ -1940,7 +1940,7 @@ void test_session_exit_pass_change_skips_note_already_on_parent() {
   const LoopSnapshotChangeSet* changes = loop.pendingSnapshotConstructionChanges();
   if (changes != nullptr) {
     for (const SnapshotNoteChange& change : changes->notes) {
-      TEST_ASSERT_FALSE(change.kind == SnapshotChangeKind::Add && change.next.pitch == 60);
+      TEST_ASSERT_FALSE(change.kind == SnapshotChangeType::Add && change.next.pitch == 60);
     }
   }
   if (loop.hasPendingSnapshotPublish()) {
@@ -2323,7 +2323,7 @@ ImmutableLoopSnapshotRef buildLegacyScratchSnapshot(LoopId loopId, uint32_t loop
   auto empty = std::make_shared<const LoopSnapshot>(LoopSnapshot(loopId, loopLength, 0, 8, 8));
   LoopSnapshotChangeSet changes;
   SnapshotNoteChange add{};
-  add.kind = SnapshotChangeKind::Add;
+  add.kind = SnapshotChangeType::Add;
   add.next.loopId = loopId;
   add.next.noteId = noteId;
   add.next.pitch = pitch;
@@ -2365,7 +2365,7 @@ void test_legacy_committed_scratch_snapshot_identity_freshness() {
   const void* scratchIdentity = nullptr;
 
   TEST_ASSERT_EQUAL(
-      static_cast<int>(CommittedMidiScratch::RefreshKind::FromSnapshot),
+      static_cast<int>(CommittedMidiScratch::RefreshType::FromSnapshot),
       static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
                                                      loop)));
   const void* identityA = loop.publishedSnapshotIdentity();
@@ -2376,7 +2376,7 @@ void test_legacy_committed_scratch_snapshot_identity_freshness() {
   const size_t scratchSizeA = scratch.size();
 
   TEST_ASSERT_EQUAL(
-      static_cast<int>(CommittedMidiScratch::RefreshKind::Reused),
+      static_cast<int>(CommittedMidiScratch::RefreshType::Reused),
       static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
                                                      loop)));
   TEST_ASSERT_EQUAL_PTR(identityA, scratchIdentity);
@@ -2392,7 +2392,7 @@ void test_legacy_committed_scratch_snapshot_identity_freshness() {
   TEST_ASSERT_EQUAL_PTR(snapshotB.get(), identityB);
 
   TEST_ASSERT_EQUAL(
-      static_cast<int>(CommittedMidiScratch::RefreshKind::FromSnapshot),
+      static_cast<int>(CommittedMidiScratch::RefreshType::FromSnapshot),
       static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
                                                      loop)));
   TEST_ASSERT_EQUAL_PTR(identityB, scratchIdentity);
@@ -2417,7 +2417,7 @@ void test_legacy_committed_scratch_snapshot_identity_freshness() {
   ++loop.playbackRevision;
   TEST_ASSERT_FALSE(loop.publishedSnapshotIsCurrent());
   TEST_ASSERT_EQUAL(
-      static_cast<int>(CommittedMidiScratch::RefreshKind::HoldEmpty),
+      static_cast<int>(CommittedMidiScratch::RefreshType::HoldEmpty),
       static_cast<int>(CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity,
                                                      loop)));
   TEST_ASSERT_NULL(scratchIdentity);
@@ -2440,9 +2440,9 @@ void test_committed_scratch_hold_empty_without_snapshot_or_c1_a() {
   const void* scratchIdentity = nullptr;
   CommittedMidiScratch::invalidate(scratch, scratchRevision, scratchIdentity);
 
-  const CommittedMidiScratch::RefreshKind refresh =
+  const CommittedMidiScratch::RefreshType refresh =
       CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity, loop);
-  TEST_ASSERT_EQUAL(CommittedMidiScratch::RefreshKind::HoldEmpty, refresh);
+  TEST_ASSERT_EQUAL(CommittedMidiScratch::RefreshType::HoldEmpty, refresh);
   TEST_ASSERT_TRUE(scratch.empty());
   TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, scratchRevision);
   TEST_ASSERT_NULL(scratchIdentity);
@@ -2464,9 +2464,9 @@ void test_committed_scratch_hold_empty_during_session_exit_gap() {
   MidiEventVec scratch;
   uint32_t scratchRevision = UINT32_MAX;
   const void* scratchIdentity = nullptr;
-  const CommittedMidiScratch::RefreshKind refresh =
+  const CommittedMidiScratch::RefreshType refresh =
       CommittedMidiScratch::refresh(scratch, scratchRevision, scratchIdentity, loop);
-  TEST_ASSERT_EQUAL(CommittedMidiScratch::RefreshKind::HoldEmpty, refresh);
+  TEST_ASSERT_EQUAL(CommittedMidiScratch::RefreshType::HoldEmpty, refresh);
   TEST_ASSERT_TRUE(scratch.empty());
   TEST_ASSERT_EQUAL_UINT32(loop.playbackRevision, scratchRevision);
   TEST_ASSERT_NULL(scratchIdentity);
@@ -2563,7 +2563,7 @@ void test_rematerialize_edit_view_uses_snapshot_span_note_ids() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -2575,21 +2575,21 @@ void test_rematerialize_edit_view_uses_snapshot_span_note_ids() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 
@@ -2660,7 +2660,7 @@ void test_copy_note_edit_commit_base_uses_snapshot_span_note_ids() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -2672,21 +2672,21 @@ void test_copy_note_edit_commit_base_uses_snapshot_span_note_ids() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 
@@ -2800,7 +2800,7 @@ void test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -2812,21 +2812,21 @@ void test_try_copy_note_edit_opened_snapshot_events_uses_span_note_ids() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 
@@ -2879,7 +2879,7 @@ void test_copy_idle_validate_events_uses_snapshot_span_note_ids() {
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -2891,21 +2891,21 @@ void test_copy_idle_validate_events_uses_snapshot_span_note_ids() {
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 
@@ -2979,7 +2979,7 @@ void test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids()
   LoopSnapshotChangeSet changes;
 
   SnapshotNoteChange noteChange{};
-  noteChange.kind = SnapshotChangeKind::Add;
+  noteChange.kind = SnapshotChangeType::Add;
   noteChange.next.loopId = 1;
   noteChange.next.noteId = 7;
   noteChange.next.pitch = 60;
@@ -2991,21 +2991,21 @@ void test_try_copy_current_snapshot_display_notes_in_window_uses_span_note_ids()
   MidiEvent noteOn = MidiEvent::NoteOn(100, 1, 60, 100);
   noteOn.noteId = 7;
   SnapshotEventChange noteOnChange{};
-  noteOnChange.kind = SnapshotChangeKind::Add;
+  noteOnChange.kind = SnapshotChangeType::Add;
   noteOnChange.next = {1, 1, 0, noteOn};
   changes.events.push_back(noteOnChange);
 
   MidiEvent noteOff = MidiEvent::NoteOff(200, 1, 60);
   noteOff.noteId = 7;
   SnapshotEventChange noteOffChange{};
-  noteOffChange.kind = SnapshotChangeKind::Add;
+  noteOffChange.kind = SnapshotChangeType::Add;
   noteOffChange.next = {1, 2, 1, noteOff};
   changes.events.push_back(noteOffChange);
 
   MidiEvent onlyStoreOn = MidiEvent::NoteOn(400, 1, 69, 100);
   onlyStoreOn.noteId = 64;
   SnapshotEventChange onlyStoreOnChange{};
-  onlyStoreOnChange.kind = SnapshotChangeKind::Add;
+  onlyStoreOnChange.kind = SnapshotChangeType::Add;
   onlyStoreOnChange.next = {1, 3, 2, onlyStoreOn};
   changes.events.push_back(onlyStoreOnChange);
 

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionPasses.h"
 #include "RuntimeCanonicalPassInputs.h"
@@ -8,22 +8,13 @@
 #include <new>
 
 namespace {
-NOTE_EDIT_MEM void* companionPassAllocate(size_t bytes) {
-  void* memory = extmem_malloc(bytes);
-  return memory != nullptr ? memory : std::malloc(bytes);
-}
-NOTE_EDIT_MEM void companionPassFree(void* memory) {
-  if (memory == nullptr) return;
-  if (isInExternalMemoryPool(memory)) extmem_free(memory);
-  else std::free(memory);
-}
 }
 NOTE_EDIT_MEM RuntimeCompanionPasses::~RuntimeCompanionPasses() {
   // Borrowed owners need not outlive destruction; do not dereference them here.
   for (size_t buffer = 0; buffer < 2; ++buffer) {
     if (events_[buffer] != nullptr)
       for (size_t i = 0; i < capacity_; ++i) events_[buffer][i].~MidiEvent();
-    companionPassFree(events_[buffer]); companionPassFree(origins_[buffer]);
+    externalFirstFree(events_[buffer]); externalFirstFree(origins_[buffer]);
   }
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::prewarm(size_t capacity) {
@@ -31,11 +22,11 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::prewarm(size_t capacity) {
   if (capacity_ != 0) return capacity == capacity_;
   MidiEvent* events[2]; Origin* origins[2];
   for (size_t i = 0; i < 2; ++i) {
-    events[i] = static_cast<MidiEvent*>(companionPassAllocate(capacity * sizeof(MidiEvent)));
-    origins[i] = static_cast<Origin*>(companionPassAllocate(capacity * sizeof(Origin)));
+    events[i] = static_cast<MidiEvent*>(externalFirstAlloc(capacity * sizeof(MidiEvent)));
+    origins[i] = static_cast<Origin*>(externalFirstAlloc(capacity * sizeof(Origin)));
   }
   if (events[0] == nullptr || events[1] == nullptr || origins[0] == nullptr || origins[1] == nullptr) {
-    for (size_t i = 0; i < 2; ++i) { companionPassFree(events[i]); companionPassFree(origins[i]); }
+    for (size_t i = 0; i < 2; ++i) { externalFirstFree(events[i]); externalFirstFree(origins[i]); }
     return false;
   }
   for (size_t buffer = 0; buffer < 2; ++buffer) {
@@ -50,7 +41,7 @@ NOTE_EDIT_MEM uint64_t RuntimeCompanionPasses::requiredGrainsUpperBound(
     size_t capacity, size_t passCount, size_t historyCount, size_t rowCount, size_t quantum) {
   const auto apply = RuntimeCompanionApply::requiredContinuationGrainsUpperBound(capacity, historyCount, rowCount, quantum);
   if (apply == UINT64_MAX || passCount > RuntimePlaybackViewConfig::kEventsPerView) return UINT64_MAX;
-  return 1 + uint64_t(passCount)*((rowCount ? apply : 0) + 1 + (capacity-1)/quantum + 4);
+  return 1 + uint64_t(passCount)*((rowCount ? apply : 0) + RuntimePlaybackOrderBuilder::ceilGrains(capacity, quantum) + 4);
 }
 NOTE_EDIT_MEM void RuntimeCompanionPasses::releaseApply() {
   if (borrowed_ && apply_ != nullptr && apply_->generation() == applyGeneration_) apply_->discard();
@@ -67,7 +58,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
     RuntimeCompanionApply& apply, const RuntimeCompanionApply::Work& work,
     const Pass* passes, size_t passCount, const EditPass* rows, size_t rowCount,
     const PlaybackViewSourceIdentity& source, uint32_t loopLength) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete && phase_ != Phase::Denied) ||
+  if (!available() ||
       capacity_ == 0 || !apply.available() || (passes == nullptr && passCount != 0) ||
       passCount > RuntimePlaybackViewConfig::kEventsPerView || (rows == nullptr && rowCount != 0) ||
       rowCount > RuntimePlaybackViewConfig::kRecordsPerBridge || loopLength == 0) return false;
@@ -76,9 +67,9 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   phase_ = passCount == 0 ? Phase::Complete : Phase::Start; return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::valid() const {
-  return source_ != nullptr && *source_ == expected_ &&
+  return sourceIdentityMatches() &&
          (!inputOwner_ || (inputOwner_->generation() == inputGeneration_ && inputOwner_->ready() &&
-                          inputOwner_->normalizedScratchMatches(*this, generation_))) &&
+                          inputOwner_->mergedScratchMatches(*this, generation_))) &&
          (!rowOwner_ || (rowOwner_->preparationGeneration() == rowGeneration_ &&
                         inputOwner_ && inputOwner_->frozenCapture() &&
                         rowOwner_->ready(*inputOwner_->frozenCapture()))) &&
@@ -91,7 +82,7 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   if (!inputs.ready() || inputs.loopLength() != loopLength) return false;
   if (!begin(apply, work, inputs.data(), inputs.passCount(), rows, rowCount, source, loopLength)) return false;
   inputOwner_ = &inputs; inputGeneration_ = inputs.generation();
-  inputs.claimNormalizedScratch(*this, generation_); return true;
+  inputs.claimMergedScratch(*this, generation_); return true;
 }
 NOTE_EDIT_MEM bool RuntimeCompanionPasses::ready(const PlaybackViewSourceIdentity& source) const {
   return phase_ == Phase::Complete && valid() && source == expected_;
@@ -109,10 +100,10 @@ NOTE_EDIT_MEM bool RuntimeCompanionPasses::begin(
   if (!begin(apply, work, inputs, rows.data(capture->frozenGeneration), rows.size(), source, loopLength)) return false;
   rowOwner_ = &rows; rowGeneration_ = rows.preparationGeneration(); return true;
 }
-NOTE_EDIT_MEM bool RuntimeCompanionPasses::normalizationMatches(
+NOTE_EDIT_MEM bool RuntimeCompanionPasses::mergedMatches(
     const RuntimeCanonicalPassInputs& inputs, const PlaybackViewSourceIdentity& committed) const {
   return phase_ == Phase::Complete && inputOwner_ == &inputs &&
-      inputGeneration_ == inputs.generation() && inputs.normalizedScratchMatches(*this, generation_) &&
+      inputGeneration_ == inputs.generation() && inputs.mergedScratchMatches(*this, generation_) &&
       expected_.playbackRevision == committed.playbackRevision &&
       expected_.sourceGeneration == committed.sourceGeneration;
 }
@@ -145,8 +136,8 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
     }
     if (rowCount_ == 0) {
       if (input.count > capacity_ - count_) return deny();
-      if (inputOwner_) inputOwner_->normalizedDescriptors()[pass_] =
-          {inputOwner_->normalizedScratch() + count_, input.count};
+      if (inputOwner_) inputOwner_->mergedDescriptors()[pass_] =
+          {inputOwner_->mergedScratch() + count_, input.count};
       left_ = right_ = output_ = 0; phase_ = Phase::Merge;
       return RuntimePlaybackOrderBuildResult::Pending;
     }
@@ -161,8 +152,8 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
     if (result == RuntimePlaybackOrderBuildResult::Denied) return deny();
     if (result == RuntimePlaybackOrderBuildResult::Complete) {
       if (apply_->size() > capacity_ - count_) return deny();
-      if (inputOwner_) inputOwner_->normalizedDescriptors()[pass_] =
-          {inputOwner_->normalizedScratch() + count_, apply_->size()};
+      if (inputOwner_) inputOwner_->mergedDescriptors()[pass_] =
+          {inputOwner_->mergedScratch() + count_, apply_->size()};
       left_ = right_ = output_ = 0; phase_ = Phase::Merge;
     }
   } else if (phase_ == Phase::Merge) {
@@ -180,7 +171,7 @@ NOTE_EDIT_MEM RuntimePlaybackOrderBuildResult RuntimeCompanionPasses::step(size_
         origins_[1-current_][output_] = origins_[current_][left_++];
       } else {
         events_[1-current_][output_] = addition[right_];
-        if (inputOwner_) inputOwner_->normalizedScratch()[count_ + right_] = addition[right_];
+        if (inputOwner_) inputOwner_->mergedScratch()[count_ + right_] = addition[right_];
         const uint32_t origin = provenance ? provenance[right_] : static_cast<uint32_t>(right_);
         ++right_;
         origins_[1-current_][output_] = {static_cast<uint16_t>(pass_),

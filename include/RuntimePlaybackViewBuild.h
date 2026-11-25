@@ -1,4 +1,4 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
@@ -9,44 +9,44 @@
 #include "RuntimePlaybackOrderBuilder.h"
 #include "RuntimePlaybackViewFill.h"
 
-enum class RuntimePlaybackViewBuildGrain : uint8_t { Fill, Order, Complete, Denied };
-
 /// Persistent build state for one unpublished view. Fill and order remain
 /// distinct owner-selected grains: a call can never copy source entries and
 /// merge order entries in the same active-transport turn.
 class RuntimePlaybackViewBuild {
  public:
+  /// One owner-selected grain per call. `Idle` before a build, `Complete`/`Denied` terminal; this is
+  /// the build's own stage, so it is the class's type rather than a second parallel enum.
+  enum class Grain : uint8_t { Idle, Fill, Order, Complete, Denied };
+
   bool begin(RuntimePlaybackView& destination, const RuntimeCompanionPasses& baseline,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::PlaybackCoverage);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::PlaybackCoverage);
   bool begin(RuntimePlaybackView& destination, const MidiEvent* source, size_t sourceCount,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
   bool begin(RuntimePlaybackView& destination, const RuntimePlaybackViewSource& source,
              const PlaybackViewSourceIdentity& sourceIdentity,
              const PlaybackCoverageInterval& coverage, const EmissionCursor& cursorAnchor,
              const LedgerBoundarySummary& ledgerBoundary,
-             RuntimePlaybackViewFillScope scope = RuntimePlaybackViewFillScope::AllSource);
+             RuntimePlaybackViewFillCoverage scope = RuntimePlaybackViewFillCoverage::AllSource);
 
-  RuntimePlaybackViewBuildGrain nextGrain() const;
-  RuntimePlaybackViewBuildGrain stepFill(size_t entryQuantum);
-  RuntimePlaybackViewBuildGrain stepOrder(size_t entryQuantum);
+  Grain nextGrain() const;
+  Grain stepFill(size_t entryQuantum);
+  Grain stepOrder(size_t entryQuantum);
   bool active() const;
   // Cancel an in-flight build. When a retained view must survive a runtime
   // reset, pass its address so the borrowed destination metadata is kept.
   void discard(const RuntimePlaybackView* preserveDestination = nullptr);
 
  private:
-  enum class Phase : uint8_t { Idle, Fill, Order, Complete, Denied };
-
   RuntimePlaybackViewFill fill_;
   RuntimePlaybackOrderBuilder order_;
   RuntimePlaybackView* destination_ = nullptr;
-  Phase phase_ = Phase::Idle;
+  Grain phase_ = Grain::Idle;
 };
 
 /// The proof inputs for one owner-local long-loop refill. The contract does

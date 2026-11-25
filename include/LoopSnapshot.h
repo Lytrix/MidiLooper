@@ -123,7 +123,7 @@ struct LoopSnapshotEvent {
 using LoopSnapshotNoteRef = std::shared_ptr<const LoopSnapshotNote>;
 using LoopSnapshotEventRef = std::shared_ptr<const LoopSnapshotEvent>;
 
-// Child ownership slots are mutable solely for final-reference retirement.
+// Child ownership slots are mutable solely for final-reference release.
 // Published/shared nodes remain immutable; release only clears exclusive nodes.
 template <typename Reference>
 struct SnapshotMembership {
@@ -187,7 +187,7 @@ struct SnapshotEventRoot {
   SnapshotBarPageDirectory<LoopSnapshotEventRef> pages;
 };
 
-enum class SnapshotChangeKind : uint8_t {
+enum class SnapshotChangeType : uint8_t {
   Add,
   Replace,
   Remove,
@@ -196,14 +196,14 @@ enum class SnapshotChangeKind : uint8_t {
 /// Existing semantic owners provide the previous reference and the settled next
 /// value. Snapshot construction does not recompute overlap or pairing.
 struct SnapshotNoteChange {
-  SnapshotChangeKind kind = SnapshotChangeKind::Add;
+  SnapshotChangeType kind = SnapshotChangeType::Add;
   LoopSnapshotNoteRef previous;
   LoopSnapshotNote next;
 };
 
 /// Existing event-stream order is carried into the indexed event view.
 struct SnapshotEventChange {
-  SnapshotChangeKind kind = SnapshotChangeKind::Add;
+  SnapshotChangeType kind = SnapshotChangeType::Add;
   LoopSnapshotEventRef previous;
   LoopSnapshotEvent next;
 };
@@ -234,9 +234,9 @@ struct SnapshotWrapJournalFragment {
 /// Complete immutable effective-state root after construction is frozen.
 class LoopSnapshot {
  public:
-  /// Owner-local final-reference retirement; drain before destroying during active
+  /// Owner-local final-reference release; drain before destroying during active
   /// transport. No semantic reader or weak-reference resurrection may acquire the
-  /// retired root. Shared descendants remain untouched. Fixed depth, no allocation.
+  /// released root. Shared descendants remain untouched. Fixed depth, no allocation.
   class ReleaseCursor {
    public:
     ReleaseCursor() = default;
@@ -328,7 +328,6 @@ class LoopSnapshotConstruction {
   }
   bool failed() const { return failed_; }
   LoopSnapshotFailureReason failureReason() const { return failureReason_; }
-  size_t completedChangeCount() const { return nextChangeIndex_; }
   size_t completedUnitCount() const { return completedUnits_; }
   size_t totalChangeCount() const { return changes_.notes.size() + changes_.events.size(); }
 
@@ -342,10 +341,6 @@ class LoopSnapshotConstruction {
       size_t units, LoopSnapshotFailureReason reason = LoopSnapshotFailureReason::Injected) {
     failAfterUnits_ = units;
     injectedReason_ = reason;
-  }
-  void clearFailureInjectionForTest() {
-    failAfterUnits_ = kNoFailureInjection;
-    injectedReason_ = LoopSnapshotFailureReason::Injected;
   }
 #endif
 

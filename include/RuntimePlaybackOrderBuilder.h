@@ -1,4 +1,4 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
@@ -47,6 +47,12 @@ class RuntimePlaybackOrderBuilder {
   /// ordered retained inputs finish after fill; this worst-case bound is unchanged.
   static size_t workEntriesUpperBound(size_t eventCount);
   static size_t requiredGrains(size_t eventCount, size_t entryQuantum);
+  /// Ceiling of `count` units in grains of `quantum`; zero units need zero grains. Every worker's
+  /// `required*GrainsUpperBound` is assembled from this, so a bound change moves them together.
+  /// Callers must guarantee `quantum != 0` (their entry guards already do).
+  static constexpr uint64_t ceilGrains(uint64_t count, uint64_t quantum) {
+    return count == 0 ? 0 : 1 + (count - 1) / quantum;
+  }
   bool active() const { return phase_ != Phase::Idle && phase_ != Phase::Complete; }
   bool complete() const { return phase_ == Phase::Complete; }
   size_t orderedEventCount() const { return orderedEventCount_; }

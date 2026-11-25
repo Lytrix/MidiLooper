@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #include "RuntimeCompanionSpanWalk.h"
 #include "Utils/InternalHeapFirstAllocator.h"
@@ -8,14 +8,12 @@
 NOTE_EDIT_MEM RuntimeCompanionSpanWalk::RuntimeCompanionSpanWalk() = default;
 NOTE_EDIT_MEM RuntimeCompanionSpanWalk::~RuntimeCompanionSpanWalk() {
   if (flags_ == nullptr) return;
-  if (isInExternalMemoryPool(flags_)) extmem_free(flags_);
-  else std::free(flags_);
+  externalFirstFree(flags_);
 }
 NOTE_EDIT_MEM bool RuntimeCompanionSpanWalk::prewarm(size_t capacity) {
   if (flags_ != nullptr) return capacity == capacity_;
   if (capacity == 0 || capacity > RuntimePlaybackViewConfig::kEventsPerView) return false;
-  flags_ = static_cast<uint8_t*>(extmem_malloc(capacity));
-  if (flags_ == nullptr) flags_ = static_cast<uint8_t*>(std::malloc(capacity));
+  flags_ = static_cast<uint8_t*>(externalFirstAlloc(capacity));
   if (flags_ == nullptr) return false;
   capacity_ = capacity;
   return true;
@@ -36,7 +34,7 @@ NOTE_EDIT_MEM void RuntimeCompanionSpanWalk::discard() {
 NOTE_EDIT_MEM bool RuntimeCompanionSpanWalk::begin(
     RuntimeNotePairLookup& wrapLookup, const MidiEvent* events, size_t count,
     uint8_t pitch, uint32_t loopLength, const uint8_t* retainedRows) {
-  if ((phase_ != Phase::Idle && phase_ != Phase::Complete) || flags_ == nullptr ||
+  if (!available() || flags_ == nullptr ||
       !wrapLookup.available() || count > capacity_ || (events == nullptr && count != 0) ||
       loopLength == 0 || loopLength > INT32_MAX || pitch >= 128) return false;
   discard();

@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 #include "RuntimeNotePairLookup.h"
@@ -21,7 +21,6 @@ class RuntimeCompanionSpanWalk {
              uint8_t pitch, uint32_t loopLength, const uint8_t* retained = nullptr);
   RuntimeCompanionSpanResult step(size_t inputQuantum);
   const CanonicalNoteSpan& span() const { return span_; }
-  bool spanReady() const { return spanReady_; }
   bool consumeSpan();
   size_t lastStepInputCount() const { return visited_; }
   void discard();

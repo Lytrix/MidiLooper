@@ -1,4 +1,4 @@
-// Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 // Licensed under the PolyForm Noncommercial 1.0.0
 #pragma once
 
@@ -111,6 +111,8 @@ class RuntimePlaybackBridgeCursor {
   const MidiEvent* peek() const;
   bool advance();
   void acknowledgeThroughPhase(uint32_t phase);
+  /// Native-test contract probe (no production caller): asserts emitted-event
+  /// identity (projection cycle and same-phase ordinal) on the bridge cursor.
   const EmissionCursor& emissionCursor() const { return emitted_; }
   bool matchesBaseStorage(const RuntimePlaybackView& base) const {
     return base_ == &base && baseStorageGeneration_ == base.storageGeneration;

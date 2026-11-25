@@ -1,4 +1,4 @@
-//  Copyright (c) 2026 Lytrix (Eelke Jager)
+//  Copyright (c)  2026 Lytrix (Eelke Jager)
 //  Licensed under the PolyForm Noncommercial 1.0.0
 
 #pragma once
@@ -160,10 +160,30 @@ struct PlaybackHeldNoteClosure {
   MidiEvent originalOff{};
   uint64_t relativeTick = UINT64_MAX;
   uint32_t nextOnPhase = UINT32_MAX;
-  uint8_t flags = 0; // Affected, original Off found, inherited from a predecessor.
+  /// This closure still affects the window's ordering.
+  static constexpr uint8_t kAffected = 1;
+  /// The walk that produced this closure found the original Off.
+  static constexpr uint8_t kOriginalOffFound = 2;
+  /// Inherited from a predecessor window rather than found in this one.
+  static constexpr uint8_t kInherited = 4;
+  uint8_t flags = 0;
   uint32_t rank = 0;
-  bool resolved() const { return (flags & 3) == 3 && relativeTick != UINT64_MAX; }
+  bool resolved() const {
+    return (flags & (kAffected | kOriginalOffFound)) == (kAffected | kOriginalOffFound) &&
+           relativeTick != UINT64_MAX;
+  }
 };
+
+/// Per-bridge cycle mask: the projection cycles an entry is emitted in. Bit order is the
+/// emission order (this cycle, then the two following, then the steady stream), and `kAll`
+/// is the common "every cycle" case.
+namespace PlaybackBridgeCycleMask {
+constexpr uint8_t kCurrent = 1;
+constexpr uint8_t kNext = 2;
+constexpr uint8_t kSecond = 4;
+constexpr uint8_t kSteady = 8;
+constexpr uint8_t kAll = kCurrent | kNext | kSecond | kSteady;
+}  // namespace PlaybackBridgeCycleMask
 
 struct FixedPlaybackBridgeStorage {
   uint64_t storageGeneration = 0;
@@ -329,8 +349,13 @@ struct RuntimePlaybackViewLifecycle {
   bool publishCompletedBuildAsReady(
       std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
       PlaybackViewHandoffMode mode = PlaybackViewHandoffMode::Audible);
-  bool buildIsPending() const { return build != kNoView; }
-  bool hasReadySuccessor() const { return ready != kNoView; }
+ private:
+  /// Shared tail of both "promote a prepared view to current" transitions: the ready view becomes
+  /// current and retained, `previousAnchor` becomes the build slot, and the other roles clear.
+  /// The callers own their own entry guards.
+  void installRetainedCurrentView(
+      std::array<RuntimePlaybackView, RuntimePlaybackViewConfig::kViewCount>& views,
+      uint8_t previousAnchor);
 };
 
 /// Selected and candidate bridges have independent fixed buffers.  Beginning a
@@ -401,7 +426,7 @@ struct RuntimePlaybackViewSet {
 
   /// Reserve this slot's playback representation. `reserveWholeTake` must be the owning
   /// loop's `fullTakePlaybackViewAdmissible()` answer; false keeps the three rolling views
-  /// and both capture stagings (the windowed lanes and capture admission need them) and
+  /// and both capture stagings (the three rolling windows and capture admission need them) and
   /// leaves the bridges, their bases and the prepared pair unreserved.
   bool prewarm(bool reserveWholeTake = true);
   /// True when the whole-take representation was reserved and can still be published.
@@ -414,9 +439,6 @@ struct RuntimePlaybackViewSet {
   /// selected, because that bridge is the live authoritative representation.
   bool releaseWholeTakeViews();
   void resetMetadata();
-  // Invalidate ordinary candidates while retaining the non-audible first-record
-  // return view and its source identity. Used by cache refresh during capture.
-  void resetMetadataPreserveRetained();
   /// Preserve exactly one view across a metadata reset and make it the current
   /// view, leaving the other two as build/idle. `keep` must be a valid view index.
   void resetMetadataPreserveView(uint8_t keep);
